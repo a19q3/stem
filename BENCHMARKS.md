@@ -1055,3 +1055,49 @@ initial block download and when the block-view JSON contained derived fields.
 [CKB transaction verification](https://github.com/nervosnetwork/ckb/blob/119598b0a1146a569068ac80bdba7eb5f6292fd3/tx-pool/src/process.rs#L715-L744)
 [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
 [18 successful and failed rounds](benchmarks/2026-11-25-stem-clock-recovery-ckb-relay.json.xz).
+
+## Default Jolteon runtime and ordinary retention
+
+The default `stem run` command was tested with ordinary replicas and one
+archive. The most delayed replica in the four-node payment run recovered
+226 blocks after more than 220 missed blocks. All four agreed at height
+231 within 4.47 seconds from restart. The 64-block ordinary window kept
+each local finality index to 64 certificates. A read-only RocksDB scan
+found 65–67 retained proposal bodies on ordinary replicas. The archive
+held all 272 certificates and 274 proposal bodies at shutdown. The
+replicas independently rejected requests for expired data. The archive
+served the same old Headers and certificates.
+
+The real CKB stake run exercised two committee handoffs. The late observer
+replayed 230 blocks, and the three replicas agreed at height 250 within
+5.41 seconds of restart. A fresh ordinary observer restored the
+15,607-byte CKB-pinned snapshot at height 253 and followed to height 255.
+The restart and restored snapshot ran after the earlier epoch boundary was
+outside the ordinary window. A separate CKB run froze, retired and slashed
+250 CKB. Four default replicas settled 1,199.99 CKB and 1,200 xUDT units,
+reconciled both L1 payouts and returned pending Capacity to zero.
+
+Two independent four-node native composition runs verified the same
+dual-Type-Script transfer, rejection of input policy removal, sponsored
+two-asset OTX, atomic two-head Lineage, fee-only rollback and a height-32
+Keeper wake. The harness authenticated the transaction and receipt Merkle
+paths under Jolteon finality and matched all four replicas.
+
+| Four same-host validators, 32 signed payments | Time to all-replica visibility | Payments/s including drain |
+| --- | ---: | ---: |
+| Default Jolteon runner | 2.572 s | 12.44 |
+| CometBFT 0.38.26 comparison build | 2.685 s | 11.92 |
+
+Both runs offered 16 payments/s with 300 ms cadence or commit wait,
+2.5-second proposer timeout and the same payments and weights. This
+single short pair measures finite workloads. The 16-member Jolteon
+fault case finalized all 32 payments with two consecutive leaders
+offline and reached a common height 17 after the restart. The first
+comparison run reached the Unix socket path limit and succeeded after
+moving its work directory to a shorter path. Both logs are archived.
+
+The default release workspace suite passed 438 tests. Twelve opt-in
+checks were ignored by that command, including the live composition and
+database inspections run separately above. The Go proof tests and the
+native systemd unit syntax check also passed. [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
+[Raw records](benchmarks/2026-11-25-stem-default-jolteon.json.xz).
