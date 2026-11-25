@@ -73,6 +73,42 @@ must report a positive `replayed_blocks` count and agree with the survivors
 on the execution Header. Recovery peers must have retained the missing
 payloads and finality certificates.
 
+To check the CKB relay path, run the 128-replica Jolteon fixture using
+`--validators 128 --offline 0 --transactions 32 --offered 16 --cadence 300
+--timeout 2500`. It leaves a signed proof and an archive to feed to the
+two-node CKB test. Build `jolteon-checkpoint` for RISC-V as shown below.
+
+```sh
+python3 tools/jolteon_ckb_relay_localnet.py --binary /path/to/stem --l1 /path/to/ckb \
+  --direct-checkpoint /path/to/jolteon-checkpoint --stem-run /tmp/stem-jolteon-128 \
+  --output /tmp/stem-jolteon-ckb-relay --l1-port 22900 --relay-port 22910
+```
+
+The fixture checks both nodes' default transaction pool settings. It submits
+the checkpoint to one node and waits for the second node to admit it through
+CKB P2P and include it in a block. The IntegrationTest RPC is used to generate
+devnet blocks. Setup blocks are imported with normal verification.
+
+Export a snapshot from a stopped replica after it finalizes the exact Header
+you intend to pin. Independently verify the canonical, sufficiently confirmed
+CKB checkpoint Cell and obtain its Stem Header ID. Use that ID as
+`--trusted-header` when installing the snapshot on a fresh observer.
+
+```sh
+stem jolteon-snapshot export --home /path/to/stopped-archive --genesis stem.json \
+  --snapshot state.bin --certificate finality.json
+stem jolteon-snapshot restore --home /path/to/new-observer --genesis stem.json \
+  --snapshot state.bin --certificate finality.json --key-file observer.key \
+  --trusted-header "$confirmed_stem_header_id"
+```
+
+Start the observer normally without `--initialize`. The restored journal
+permanently disables voting and survives later handoffs. Its transaction
+counter starts at the snapshot. Signing nodes recover with their retained
+vote journals and certified blocks. The CKB-backed stake fixture's
+`--snapshot-restore --observer-extra-lag 220` exercises long-gap replay,
+checkpoint-pinned installation and live follow-up in the same run.
+
 To measure the portable verifier with the signed proofs captured in the matrix, build and run the two probes.
 
 ```sh

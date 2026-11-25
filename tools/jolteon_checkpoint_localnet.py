@@ -31,7 +31,7 @@ class Relay:
     def header(self, height):
         return bytes.fromhex(self.client.header(height)["header"])
 
-    def advance(self, height, secp, *, proof_file=None, terminal=False, probe=False):
+    def advance(self, height, secp, *, proof_file=None, terminal=False, probe=False, submit=None):
         if self.publications and height == self.publications[-1]["height"]:
             return dependency(self.point)
         label = f"checkpoint-{height}"
@@ -71,7 +71,7 @@ class Relay:
             self.rejections["replayed_handoff"] = self.l1.reject(sign("replay-handoff", previous["tip"], binary(previous["witness"])))
         signed = sign(label, bundle["tip"], raw)
         estimated = int(self.l1.call("estimate_cycles", signed["json"])["cycles"], 16)
-        tx = self.l1.send(signed)
+        tx = (submit or self.l1.send)(signed)
         self.point, self.funding = point(tx, 0), point(tx, 1)
         self.publications.append({"height": height, "transaction": tx, "estimated_cycles": estimated,
                                   "witness_bytes": len(raw), "l1_inclusion": self.l1.prove_committed(tx)})
