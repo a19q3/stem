@@ -1633,3 +1633,43 @@ CometBFT comparison feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
 [Raw runs, signed transactions and rejection evidence](benchmarks/2026-11-26-stem-intercell.json.xz).
+
+## Stem-native UDT settlement
+
+Revision `30a562f` deploys the RISC-V Stem UDT and escrow programs
+through the real CKB bridge. The fixture runs four Jolteon replicas
+and CKB 0.210.0. It issues 1,000 application UDT units and exports
+250 through Intercell. CKB verifies the checkpoint, mints 250
+mapped units and permits a separately signed transfer.
+
+In the partial return, the new owner burns 150 CKB mapped units.
+Stem releases 150 original units and leaves 100 in escrow for the
+100 CKB-side units still circulating. The full return burns all 250
+mapped units, releases all 250 originals and leaves just the fixed
+100 CKB bond in the Stem escrow. The CKB mailbox also retains its
+bond while an independent input pays relay fees.
+
+| Operation | Partial return bytes | Partial cycles | Full return bytes | Full cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Stem export | 1,109 | 2,012,504 | 1,109 | 2,012,504 |
+| CKB mapped mint | 2,187 | 4,288,686 | 1,983 | 4,243,635 |
+| CKB mapped transfer | 526 | 1,663,904 | 526 | 1,665,256 |
+| CKB mapped burn | 1,542 | 3,423,593 | 1,441 | 3,351,028 |
+| Stem redemption | 2,252 | 14,007,294 | 2,131 | 14,004,073 |
+
+CKB cycles are estimates from the devnet before submission. Stem cycles
+come from the committed execution receipts. Stem redemption includes
+12,000,000 cycles for three guardian signatures. Checkpoint publication
+and the CKB anchor update are separate transactions.
+
+The fixture rejects unbacked, inflated or redirected CKB minting,
+replayed mint and redemption, missing or insufficient burns, arbitrary
+export nonces, escrow bond theft, redirection on return and export of an
+asset Cell carrying a second Type Script. The ordinary CKB/xUDT bridge
+and bidirectional Intercell regressions passed. The Rust workspace passed
+446 tests with 12 ignored. The Go proof suite passed. The archive
+includes the initial compiler error, successive contract fingerprints,
+all successful devnet runs and signed rejection cases.
+
+[Reproduction](OPERATIONS.md#exercise-stem-native-udt-settlement) ·
+[Raw reports, proofs and rejections](benchmarks/2026-11-26-stem-udt-settlement.json.xz).
