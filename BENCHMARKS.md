@@ -2457,3 +2457,57 @@ ignored. The Go proof suite and CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
 [Raw runs, resource samples, signed transactions and inclusion proofs](benchmarks/2026-11-26-stem-wide-epoch-p2p.json.xz).
+
+## Automatic CKB checkpoint successor discovery
+
+Revision `3b932ed` tested the optional `auto_follow` publisher
+mode on CKB 0.210.0 and a three-process Stem network. The local
+CKB Indexer found candidates by the exact checkpoint Type Script.
+The existing verifier independently checked their canonical
+inclusion height, confirmation depth, predecessor, checkpoint
+proof and committee handoff before updating the journal.
+
+The losing publisher returned `awaiting_successor` before the
+winning spend reached two CKB confirmations. It then adopted
+the winner and published with its own fee input. When its own
+pending transaction reached the chain, the usual
+`awaiting_confirmations` and `confirmed` results included its
+wallet funding information. A fresh journal discovered five
+updates across two committee handoffs. Two dependent updates
+landed in CKB block 66. After pinning the first transaction,
+the next automatic poll correctly found the later position
+in that same block. The valid unrelated checkpoint used a
+distinct Type ID, so discovery did not pick it up. Both manual
+and automatic polling halted after the pinned confirmed
+CKB block was replaced.
+
+A separately funded publisher then submitted 65 advances
+from the existing checkpoint. Automatic recovery applied 64
+updates on the first poll and one on the second. The original
+publisher then confirmed a new update at Stem height 94 using
+its unchanged, separately tracked fee input.
+
+| Final run | Verified updates | Resulting Stem height | Local CLI wall time |
+| --- | ---: | ---: | ---: |
+| Recover competing spend | 1 | 20 | 17.4 ms |
+| Follow from inside the same CKB block | 1 | 27 | 19.2 ms |
+| Follow from a fresh journal | 5 | 27 | 24.2 ms |
+| First batch of the 65-update backlog | 64 | 92 | 89.6 ms |
+| Second batch | 1 | 93 | 20.1 ms |
+
+These are single-host invocation times including process startup,
+RPC, proof verification and journal I/O. They start after the
+respective CKB blocks reached the required depth.
+
+The first long-history fixture tried to reduce a checkpoint
+from 1,001 to 1,000 CKB. CKB rejected it. The rerun inherited
+the live predecessor's Capacity and completed all 65 advances.
+The archive includes the failed trial, signed transactions,
+Indexer responses summarized by the publisher, and confirmed
+inclusion proofs. The manual-adoption, single-publisher reorg,
+funded-handoff, and bidirectional Intercell regressions passed.
+The Rust release workspace passed 456 tests with 14 ignored,
+and the Go proof suite and CometBFT comparison build passed.
+
+[Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
+[Raw runs, included transactions and journal outcomes](benchmarks/2026-11-26-stem-publisher-auto-follow.json.xz).

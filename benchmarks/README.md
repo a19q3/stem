@@ -72,4 +72,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Funded 128-member boundary and successor over CKB P2P | [Report](../BENCHMARKS.md#128-member-epoch-boundary-relayed-over-ckb-p2p), [peer traces, committed cycles, exact transactions and failed attempts](2026-11-26-stem-wide-epoch-p2p.json.xz) |
 
+| Automatic CKB checkpoint adoption and paged catch-up | [Report](../BENCHMARKS.md#automatic-ckb-checkpoint-successor-discovery), [transactions, journal outcomes, failures and regressions](2026-11-26-stem-publisher-auto-follow.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
