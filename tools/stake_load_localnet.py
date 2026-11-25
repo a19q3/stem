@@ -103,11 +103,21 @@ def measure(args, workload, nodes):
                 while time.monotonic() < deadline:
                     limit = min(int(rpc.call("status")["sync_info"]["latest_block_height"]) for rpc in clients)
                     while cursor < limit:
-                        cursor += 1
+                        height = cursor + 1
+                        try:
+                            execution = clients[0].call("block_results", height=height)
+                        except RuntimeError as exc:
+                            error = exc.args[0] if exc.args else None
+                            pending = (isinstance(error, dict)
+                                       and error.get("data") == f"could not find results for height #{height}")
+                            if pending:
+                                # The block store can publish a height before the state store has its results.
+                                break
+                            raise
                         observed = (time.time_ns() - start) / 1e9
-                        data = clients[0].call("block", height=cursor)["block"]["data"]["txs"] or []
-                        execution = clients[0].call("block_results", height=cursor)
+                        data = clients[0].call("block", height=height)["block"]["data"]["txs"] or []
                         receipts = execution["txs_results"] or []
+                        cursor = height
                         if len(receipts) != len(data):
                             raise AssertionError("incomplete CometBFT execution results")
                         for encoded, result in zip(data, receipts):
