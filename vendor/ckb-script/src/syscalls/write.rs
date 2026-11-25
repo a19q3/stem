@@ -1,6 +1,7 @@
 use crate::syscalls::{INVALID_FD, SPAWN_YIELD_CYCLES_BASE, WRITE};
+use crate::types::DataPieceId;
 use crate::types::{Fd, FdArgs, Message, VmContext, VmId};
-use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
+use ckb_vm::snapshot2::DataSource;
 use ckb_vm::{
     Error as VMError, Memory, Register, SupportMachine, Syscalls,
     registers::{A0, A1, A2, A7},
@@ -14,9 +15,9 @@ pub struct Write {
 }
 
 impl Write {
-    pub fn new<DL>(vm_id: &VmId, vm_context: &VmContext<DL>) -> Self
+    pub fn new<C>(vm_id: &VmId, vm_context: &VmContext<C>) -> Self
     where
-        DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+        C: DataSource<DataPieceId> + Send + Sync + 'static,
     {
         Self {
             id: *vm_id,

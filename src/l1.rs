@@ -51,7 +51,7 @@ impl Journal {
         let Some(record) = self.db.get(self.key.as_slice())? else {
             return Ok(None);
         };
-        ensure!(record.len() == 40, "invalid bridge journal record");
+        ensure!(record.len() == 40, "invalid guardian journal record");
         let height = u64::from_le_bytes(record[..8].try_into()?);
         let current = node
             .block_hash(height)
@@ -172,7 +172,7 @@ impl Rpc {
         hash.with_context(|| format!("L1 block {height} unavailable"))
     }
 
-    fn committed(&self, hash: &H256) -> Result<(JsonBytes, u64, H256)> {
+    pub fn committed(&self, hash: &H256) -> Result<(JsonBytes, u64, H256)> {
         let response: TransactionWithStatusResponse =
             self.call("get_transaction", json!([hash, "0x0", true]))?;
         ensure!(

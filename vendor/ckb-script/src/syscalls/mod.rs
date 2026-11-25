@@ -17,7 +17,7 @@ mod pipe;
 mod process_id;
 mod read;
 pub(crate) mod spawn;
-mod utils;
+pub(crate) mod utils;
 mod vm_version;
 mod wait;
 mod write;

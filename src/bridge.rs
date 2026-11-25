@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use ckb_hash::{blake2b_256, new_blake2b};
 use ckb_jsonrpc_types::{JsonBytes, OutPoint as JsonOutPoint, Script as JsonScript};
-use fern_bridge_wire::{self as wire, Gate};
 use ckb_types::{
     H256,
     bytes::Bytes,
@@ -10,6 +9,7 @@ use ckb_types::{
     prelude::*,
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use fern_bridge_wire::{self as wire, Gate};
 use serde::{Deserialize, Serialize};
 
 use crate::genesis::Validator;
@@ -489,10 +489,6 @@ impl Bridge {
                 let recipient = args
                     .strip_prefix(anchor.as_slice())
                     .context("incorrect xUDT burn chain")?;
-                ensure!(
-                    recipient.len() <= wire::MAX_RECIPIENT_SIZE,
-                    "xUDT recipient is too large"
-                );
                 let recipient = Script::from_slice(recipient)?;
                 ensure!(
                     lock == xudt_burn_lock(anchor, &recipient),
@@ -504,7 +500,7 @@ impl Bridge {
                 (recipient, Some(amount), Some(asset.l1_type.clone().into()))
             }
         };
-        ScriptHashType::try_from(recipient.hash_type())?;
+        self.validate_payout_lock(&recipient)?;
         let payout = CellOutput::new_builder()
             .capacity(output.capacity())
             .lock(recipient.clone())
@@ -520,6 +516,32 @@ impl Bridge {
             "payout is below L1 occupied capacity"
         );
         Ok(Payout { recipient, units })
+    }
+
+    pub fn validate_payout_lock(&self, recipient: &Script) -> Result<()> {
+        ensure!(
+            recipient.as_slice().len() <= wire::MAX_RECIPIENT_SIZE,
+            "L1 payout recipient is too large"
+        );
+        ensure!(
+            matches!(
+                ScriptHashType::try_from(recipient.hash_type())?,
+                ScriptHashType::Data
+                    | ScriptHashType::Type
+                    | ScriptHashType::Data1
+                    | ScriptHashType::Data2
+            ),
+            "L1 payout recipient uses an unsupported Script hash type"
+        );
+        ensure!(
+            recipient.code_hash() != Byte32::default()
+                && recipient.code_hash().as_slice() != self.deposit_lock.code_hash.as_bytes()
+                && self.xudt.as_ref().is_none_or(
+                    |asset| recipient.code_hash().as_slice() != asset.gate_code_hash.as_bytes()
+                ),
+            "L1 payout recipient uses a reserved code hash"
+        );
+        Ok(())
     }
 
     pub fn verify_asset_balance(

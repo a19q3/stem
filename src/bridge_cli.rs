@@ -295,12 +295,9 @@ impl BridgeCommand {
                 let anchor = spec.validate()?.0.hash();
                 let config = spec.bridge.context("bridge is disabled")?;
                 let recipient: Script = read_json::<JsonScript>(&l1_recipient)?.into();
+                config.validate_payout_lock(&recipient)?;
                 if let Some(units) = units {
                     ensure!(units > 0, "xUDT burn amount must be positive");
-                    ensure!(
-                        recipient.as_slice().len() <= fern_bridge_wire::MAX_RECIPIENT_SIZE,
-                        "xUDT recipient is too large"
-                    );
                     let asset = config.xudt.context("xUDT bridge is disabled")?;
                     let lock: JsonScript = bridge::xudt_burn_lock(&anchor, &recipient).into();
                     let wrapped: JsonScript = asset.sidechain_type().into();

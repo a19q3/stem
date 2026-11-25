@@ -29,6 +29,8 @@ mod snapshots;
 #[cfg(unix)]
 mod socket;
 #[cfg(unix)]
+mod stake_cli;
+#[cfg(unix)]
 mod store;
 #[cfg(all(unix, test))]
 mod tests;
@@ -79,6 +81,11 @@ enum Command {
     Bridge {
         #[command(subcommand)]
         command: bridge_cli::BridgeCommand,
+    },
+    /// Observe the confirmed CKB Stake Registry and sign a snapshot.
+    Stake {
+        #[command(subcommand)]
+        command: stake_cli::StakeCommand,
     },
     /// Run a loopback CKB wallet RPC endpoint backed by a sidechain replica.
     Rpc(ckb_rpc::Serve),
@@ -141,6 +148,7 @@ fn main() -> Result<()> {
         }
         Command::Wallet { command } => command.run(),
         Command::Bridge { command } => command.run(),
+        Command::Stake { command } => command.run(),
         Command::Rpc(serve) => serve.run(),
         Command::GenesisHash { genesis } => {
             let (header, _) = read_genesis(&genesis)?.validate()?;

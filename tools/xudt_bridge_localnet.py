@@ -11,7 +11,7 @@ import time
 
 from bridge_localnet import (
     CKB, FAUCET_ARG, FEE, SIGHASH_CODE, Fixtures, L1, binary, ckb_hash,
-    dependency, hex_bytes, le, output, payout_command, point, prepare_payout, query_withdrawal, reject_cli, rotate_vault, script, script_hash,
+    dependency, hex_bytes, le, output, packed_script, payout_command, point, prepare_payout, query_withdrawal, reject_cli, rotate_vault, script, script_hash,
     sidechain_tx, transaction, vault_state, wait_sidechain_tx, wallet_group, write_key,
 )
 from localnet import Rpc, await_genesis, config_value, execution_proof, export_execution_proof, init_network, run, set_sync_config, write_json
@@ -302,6 +302,26 @@ def scenario(args, l1, f):
              output(custody_cap - 2 * FEE - claim, f.friend_lock, side_type)],
             [burn_info["data"], units(retained_units)], side_deps,
         )
+        # A payout to the vault's own xUDT escrow becomes escrow again on L1.
+        # Construct the raw signed burn to exercise consensus, bypassing the CLI check.
+        reserved_burn = {
+            **burn,
+            "outputs": [
+                {
+                    **burn["outputs"][0],
+                    "lock": {
+                        **burn_info["lock"],
+                        "args": hex_bytes(binary(burn_info["lock"]["args"])[:32]
+                                          + packed_script(escrow["lock"])),
+                    },
+                },
+                burn["outputs"][1],
+            ],
+        }
+        bad_burn = f.sign("burn-to-custody", reserved_burn, [wallet_group(0, [f.friend])])
+        invalid_recipient = sidechain_tx(nodes[0], bad_burn["molecule"], required=False)
+        if "L1 payout recipient uses a reserved code hash" not in invalid_recipient.get("log", ""):
+            raise RuntimeError(f"Unexpected escrow recipient rejection: {invalid_recipient}")
         burned = f.sign("burn", burn, [wallet_group(0, [f.friend])])
         burn_receipt = sidechain_tx(nodes[0], burned["molecule"])
         payout = query_withdrawal(nodes[0], 0)
@@ -402,6 +422,7 @@ def scenario(args, l1, f):
             "payout_authorization": authorization, "payout_prepared_by_cli": True,
             "rejects": {"without_vault": unauthorized_error, "diversion": diversion_error,
                         "sidechain_inflation": inflation["code"], "duplicate_mint": duplicate_code,
+                        "escrow_payout_recipient": invalid_recipient["code"],
                         "wrong_payout_type": wrong_error, "wrong_payout_units": amount_error,
                         "payout_replay": replay_error},
         }

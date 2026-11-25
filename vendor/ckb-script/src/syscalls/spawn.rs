@@ -2,32 +2,31 @@ use crate::syscalls::{
     INDEX_OUT_OF_BOUND, SLICE_OUT_OF_BOUND, SOURCE_ENTRY_MASK, SOURCE_GROUP_FLAG, SPAWN,
     SPAWN_EXTRA_CYCLES_BASE, SPAWN_YIELD_CYCLES_BASE, Source, utils::checked_add_addr,
 };
-use crate::types::{DataLocation, DataPieceId, Fd, Message, SgData, SpawnArgs, VmContext, VmId};
-use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
+use crate::types::{DataLocation, DataPieceId, Fd, Message, SpawnArgs, VmContext, VmId};
 use ckb_vm::{
     Error as VMError, Register,
     machine::SupportMachine,
     memory::Memory,
     registers::{A0, A1, A2, A3, A4, A7},
-    snapshot2::Snapshot2Context,
+    snapshot2::{DataSource, Snapshot2Context},
     syscalls::Syscalls,
 };
 use std::sync::{Arc, Mutex};
 
-pub struct Spawn<DL>
+pub struct Spawn<C>
 where
-    DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+    C: DataSource<DataPieceId> + Send + Sync + 'static,
 {
     id: VmId,
     message_box: Arc<Mutex<Vec<Message>>>,
-    snapshot2_context: Arc<Mutex<Snapshot2Context<DataPieceId, SgData<DL>>>>,
+    snapshot2_context: Arc<Mutex<Snapshot2Context<DataPieceId, C>>>,
 }
 
-impl<DL> Spawn<DL>
+impl<C> Spawn<C>
 where
-    DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+    C: DataSource<DataPieceId> + Send + Sync + 'static,
 {
-    pub fn new(vm_id: &VmId, vm_context: &VmContext<DL>) -> Self {
+    pub fn new(vm_id: &VmId, vm_context: &VmContext<C>) -> Self {
         Self {
             id: *vm_id,
             message_box: Arc::clone(&vm_context.message_box),
@@ -36,10 +35,10 @@ where
     }
 }
 
-impl<Mac, DL> Syscalls<Mac> for Spawn<DL>
+impl<Mac, C> Syscalls<Mac> for Spawn<C>
 where
     Mac: SupportMachine,
-    DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+    C: DataSource<DataPieceId> + Send + Sync + 'static,
 {
     fn initialize(&mut self, _machine: &mut Mac) -> Result<(), VMError> {
         Ok(())

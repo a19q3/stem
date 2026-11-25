@@ -48,7 +48,7 @@ pub struct TransactionScriptsVerifier<
     M: DefaultMachineRunner = Machine,
 > {
     tx_data: Arc<TxData<DL>>,
-    syscall_generator: SyscallGenerator<DL, V, <M as DefaultMachineRunner>::Inner>,
+    syscall_generator: SyscallGenerator<SgData<DL>, V, <M as DefaultMachineRunner>::Inner>,
     syscall_context: V,
     #[cfg(all(has_asm, feature = "vm-reuse"))]
     core_allocator: Option<CoreAllocator<M>>,
@@ -143,7 +143,7 @@ where
         data_loader: DL,
         consensus: Arc<Consensus>,
         tx_env: Arc<TxVerifyEnv>,
-        syscall_generator: SyscallGenerator<DL, V, <M as DefaultMachineRunner>::Inner>,
+        syscall_generator: SyscallGenerator<SgData<DL>, V, <M as DefaultMachineRunner>::Inner>,
         syscall_context: V,
     ) -> TransactionScriptsVerifier<DL, V, M> {
         let tx_data = Arc::new(TxData::new(rtx, data_loader, consensus, tx_env));
@@ -271,7 +271,7 @@ where
     pub fn create_scheduler(
         &self,
         script_group: &ScriptGroup,
-    ) -> Result<Scheduler<DL, V, M>, ScriptError> {
+    ) -> Result<Scheduler<SgData<DL>, V, M>, ScriptError> {
         let sg_data = SgData::new(&self.tx_data, script_group)?;
         let scheduler = Scheduler::new(
             sg_data,

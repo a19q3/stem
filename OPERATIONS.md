@@ -302,3 +302,22 @@ python3 tools/xudt_bridge_localnet.py \
 ```
 
 The fixture uses the deployed xUDT ELF pinned by [Fiber's contract fixtures](https://github.com/nervosnetwork/fiber/blob/4e899912b17ea4859cdb86067e97b2d19ef48f7b/tests/deploy/contracts/README.md). A successful run records both chain transactions, observed payout and escrow balances, the weighted execution proofs and rejection cases. It also proves a pending typed withdrawal before custody rotation and releases it afterward with the incoming signing group.
+
+## Exercise the CKB Stake Registry
+
+Use a local CKB binary, Rust's `riscv64imac-unknown-none-elf` target, and Python with the `cryptography` module. The runner creates a fresh CKB development chain using fixture keys and capacity. It signs L1 transactions with the Fern wallet, deploys the Registry Type ID contract, and reports confirmed transaction and witness proofs.
+
+```sh
+cargo build --locked -p fern
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --manifest-path contracts/Cargo.toml \
+  --release --target riscv64imac-unknown-none-elf
+python3 tools/stake_localnet.py \
+  --binary target/debug/fern --l1 /path/to/ckb \
+  --stake-registry contracts/target/riscv64imac-unknown-none-elf/release/stake-registry \
+  --output target/fern-runs/stake
+```
+
+The runner covers registration, stake increases, guardian-authorized activation and retirement, early withdrawal rejection, CKB-enforced unbonding, voting-evidence verification and slashing, guardian handoff, and withdrawal of the full unslashed bond. It also invokes `fern stake observe` against the running L1 node. Each observation binds the confirmed Registry data, live Stake Cells, prior L1 anchor, and target epoch. `fern stake verify` checks the observations against a separate trust file containing the network identities, prior accepted snapshot, guardian committee and selection policy. The runner writes representative request, observation and trust files under its output directory. Its activation and retirement attestations use development fixtures for Fern committee history.
+
+On the current Fern bridge, the payout path rejects reserved vault-side deposit and xUDT gate code hashes, unsupported hash types, oversized recipient scripts, and outputs below CKB occupied Capacity. A signed typed burn to the vault's own escrow is tested before the valid withdrawal at the same nonce.

@@ -6,10 +6,9 @@ use crate::syscalls::{
 
 use crate::types::{
     DataLocation, DataPieceId, FIRST_FD_SLOT, FIRST_VM_ID, Fd, FdArgs, IterationResult, Message,
-    ReadState, RunMode, SgData, SyscallGenerator, TerminatedResult, VmArgs, VmContext, VmId,
+    ReadState, RunMode, ScriptContext, SyscallGenerator, TerminatedResult, VmArgs, VmContext, VmId,
     VmState, WriteState,
 };
-use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
 use ckb_types::core::Cycle;
 use ckb_vm::snapshot2::Snapshot2Context;
 use ckb_vm::{
@@ -46,16 +45,16 @@ pub(crate) type CoreAllocator<M> = fn(u8, u32, u64) -> <M as DefaultMachineRunne
 /// A scheduler holds & manipulates a core, the scheduler also holds
 /// all CKB-VM machines, each CKB-VM machine also gets a mutable reference
 /// of the core for IO operations.
-pub struct Scheduler<DL, V, M>
+pub struct Scheduler<C, V, M>
 where
-    DL: CellDataProvider,
+    C: ScriptContext,
     M: DefaultMachineRunner,
 {
     /// Immutable context data for current running transaction & script.
-    sg_data: SgData<DL>,
+    sg_data: C,
 
     /// Syscall generator
-    syscall_generator: SyscallGenerator<DL, V, M::Inner>,
+    syscall_generator: SyscallGenerator<C, V, M::Inner>,
     /// Syscall generator context
     syscall_context: V,
     #[cfg(all(has_asm, feature = "vm-reuse"))]
@@ -111,7 +110,7 @@ where
     /// Verify the VM's inherited fd list.
     inherited_fd: BTreeMap<VmId, Vec<Fd>>,
     /// Instantiated vms.
-    instantiated: BTreeMap<VmId, (VmContext<DL>, M)>,
+    instantiated: BTreeMap<VmId, (VmContext<C>, M)>,
     /// Suspended vms.
     suspended: BTreeMap<VmId, Snapshot2<DataPieceId>>,
     /// Terminated vms.
@@ -125,16 +124,16 @@ where
     message_box: Arc<Mutex<Vec<Message>>>,
 }
 
-impl<DL, V, M> Scheduler<DL, V, M>
+impl<C, V, M> Scheduler<C, V, M>
 where
-    DL: CellDataProvider + HeaderProvider + ExtensionProvider + Clone,
+    C: ScriptContext,
     V: Clone,
     M: DefaultMachineRunner,
 {
     /// Create a new scheduler from empty state
     pub fn new(
-        sg_data: SgData<DL>,
-        syscall_generator: SyscallGenerator<DL, V, M::Inner>,
+        sg_data: C,
+        syscall_generator: SyscallGenerator<C, V, M::Inner>,
         syscall_context: V,
     ) -> Self {
         Self {
@@ -168,8 +167,8 @@ where
         self.states.get(vm_id).cloned()
     }
 
-    /// Access the SgData data structure
-    pub fn sg_data(&self) -> &SgData<DL> {
+    /// Access the ScriptContext data structure
+    pub fn sg_data(&self) -> &C {
         &self.sg_data
     }
 
@@ -184,7 +183,7 @@ where
     pub fn peek<F, G, W>(&mut self, vm_id: &VmId, mut f: F, mut g: G) -> Result<W, Error>
     where
         F: FnMut(&mut M) -> Result<W, Error>,
-        G: FnMut(&Snapshot2<DataPieceId>, &SgData<DL>) -> Result<W, Error>,
+        G: FnMut(&Snapshot2<DataPieceId>, &C) -> Result<W, Error>,
     {
         if let Some((_, machine)) = self.instantiated.get_mut(vm_id) {
             return f(machine);
@@ -869,7 +868,7 @@ where
     }
 
     /// Ensure corresponding VM is instantiated and return a mutable reference to it
-    fn ensure_get_instantiated(&mut self, id: &VmId) -> Result<&mut (VmContext<DL>, M), Error> {
+    fn ensure_get_instantiated(&mut self, id: &VmId) -> Result<&mut (VmContext<C>, M), Error> {
         self.ensure_vms_instantiated(&[*id])?;
         self.instantiated
             .get_mut(id)
@@ -924,7 +923,7 @@ where
     fn boot_root_vm_if_needed(&mut self) -> Result<(), Error> {
         if self.states.is_empty() {
             // Booting phase, we will need to initialize the first VM.
-            let program_id = self.sg_data.sg_info.program_data_piece_id.clone();
+            let program_id = self.sg_data.program_data_piece_id();
             assert_eq!(
                 self.boot_vm(
                     &DataLocation {
@@ -972,7 +971,7 @@ where
     // Load the program into an empty vm.
     fn load_vm_program(
         &mut self,
-        context: &VmContext<DL>,
+        context: &VmContext<C>,
         machine: &mut M,
         location: &DataLocation,
         program: Bytes,
@@ -1006,8 +1005,8 @@ where
     }
 
     // Create a new VM instance with syscalls attached
-    fn create_dummy_vm(&self, id: &VmId) -> Result<(VmContext<DL>, M), Error> {
-        let version = &self.sg_data.sg_info.script_version;
+    fn create_dummy_vm(&self, id: &VmId) -> Result<(VmContext<C>, M), Error> {
+        let version = self.sg_data.script_version();
         let allocate = M::Inner::new;
         #[cfg(all(has_asm, feature = "vm-reuse"))]
         let allocate = self.core_allocator.unwrap_or(allocate);

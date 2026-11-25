@@ -1,5 +1,7 @@
 # Fern
 
+The native Many-to-Many ledger and its VM host have a standalone RISC-V test suite. The CKB Stake Registry runs on a CKB development chain, and the application CLI can observe and verify guardian-certified snapshots. The running Fern consensus application still uses the original transaction and committee paths. See the [native architecture](ARCHITECTURE.md) and [L1 staking test](OPERATIONS.md#exercise-the-ckb-stake-registry).
+
 The node pairs a CometBFT 0.38.26 process with the Rust `fern` ABCI application. Each replica keeps an independent RocksDB database and runs CKB transaction resolution, time locks, capacity checks and CKB-VM. Ordinary transactions are standard Molecule-encoded CKB transactions.
 
 The deployment uses a weighted Ed25519 committee with optional Cell-authorized handoffs. CometBFT authenticates and gossips blocks and votes, provides deterministic ordering with more than two-thirds voting power, and retains a validator's signing state across restart. The application checks proposals before voting and commits the live-cell changes, CKB headers and transaction archive in a single synchronous RocksDB batch. Block sync replays the same checks when joining or catching up. This component is isolated from the L1 runtime.
@@ -127,4 +129,4 @@ python3 tools/cellscript_localnet.py \
 
 ## Consensus implementation
 
-The consensus integration uses CometBFT's weighted vote, durable signer and catch-up paths. The local Tondi comparison examined the weighted KarmaDAG liveness diagnostics and native Jolteon implementation. The reported unresolved KarmaDAG liveness case and Jolteon's integration with Tondi-specific ordering, payload and checkpoint services favored the existing CometBFT application boundary.
+The consensus integration uses CometBFT's weighted voting, durable validator signing and catch-up paths. Fern validates proposals and commits application state through ABCI.

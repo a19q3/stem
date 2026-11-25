@@ -13,7 +13,7 @@ use ckb_vm::{SupportMachine, Syscalls};
 pub fn generate_ckb_syscalls<DL, M>(
     vm_id: &VmId,
     sg_data: &SgData<DL>,
-    vm_context: &VmContext<DL>,
+    vm_context: &VmContext<SgData<DL>>,
     debug_printer: &DebugPrinter,
 ) -> Vec<Box<dyn Syscalls<M>>>
 where

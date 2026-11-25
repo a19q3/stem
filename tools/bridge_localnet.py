@@ -36,12 +36,15 @@ def le(number, length):
     return number.to_bytes(length, "little")
 
 
-def script_hash(script):
+def packed_script(script):
     args = binary(script["args"])
     kind = {"data": 0, "type": 1, "data1": 2, "data2": 4}[script["hash_type"]]
-    packed = le(53 + len(args), 4) + le(16, 4) + le(48, 4) + le(49, 4)
-    packed += binary(script["code_hash"]) + bytes([kind]) + le(len(args), 4) + args
-    return ckb_hash(packed)
+    offsets = le(53 + len(args), 4) + le(16, 4) + le(48, 4) + le(49, 4)
+    return offsets + binary(script["code_hash"]) + bytes([kind]) + le(len(args), 4) + args
+
+
+def script_hash(script):
+    return ckb_hash(packed_script(script))
 
 
 def script(code_hash, args="0x", kind="type"):

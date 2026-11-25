@@ -24,6 +24,10 @@ ckb-traits.workspace = true
 byteorder.workspace = true
 ckb-types.workspace = true
 ckb-hash.workspace = true
+fern-ledger = { path = "../../ledger" }
+rayon.workspace = true
+lru.workspace = true
+anyhow.workspace = true
 ckb-vm.workspace = true
 faster-hex.workspace = true
 ckb-logger = { workspace = true, optional = true }
@@ -36,6 +40,7 @@ tokio = { workspace = true, features = ["sync", "macros"] }
 tokio = { version = "1.35.0", features = ["rt-multi-thread"] }
 
 [dev-dependencies]
+ckb-system-scripts = "=0.5.4"
 proptest.workspace = true
 ckb-db.workspace = true
 ckb-store.workspace = true

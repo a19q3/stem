@@ -21,6 +21,7 @@ ckb-jsonrpc-types.workspace = true
 ckb-resource.workspace = true
 ckb-script = { workspace = true, features = ["vm-reuse"] }
 fern-bridge-wire = { path = "bridge-wire" }
+fern-stake = { path = "stake" }
 ckb-traits.workspace = true
 ckb-types.workspace = true
 ckb-verification.workspace = true
@@ -41,7 +42,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "time"] }
 
 [workspace]
-members = ["bridge-wire", "vendor/ckb-script"]
+members = ["bridge-wire", "ledger", "stake", "vendor/ckb-script"]
 default-members = ["."]
 exclude = ["contracts", "vendor/ckb-script/fuzz"]
 resolver = "3"

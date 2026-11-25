@@ -53,8 +53,15 @@ pub type Machine = ckb_vm::TraceMachine<
 /// Debug printer function type
 pub type DebugPrinter = Arc<dyn Fn(&Byte32, &str) + Send + Sync>;
 /// Syscall generator function type
-pub type SyscallGenerator<DL, V, M> =
-    fn(&VmId, &SgData<DL>, &VmContext<DL>, &V) -> Vec<Box<dyn Syscalls<M>>>;
+pub type SyscallGenerator<C, V, M> = fn(&VmId, &C, &VmContext<C>, &V) -> Vec<Box<dyn Syscalls<M>>>;
+
+/// Immutable script data required by the VM process scheduler.
+pub trait ScriptContext: DataSource<DataPieceId> + Clone {
+    /// Machine configuration for this script.
+    fn script_version(&self) -> ScriptVersion;
+    /// Source of the root process executable.
+    fn program_data_piece_id(&self) -> DataPieceId;
+}
 
 /// The version of CKB Script Verifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -950,6 +957,16 @@ impl<DL> SgData<DL> {
     }
 }
 
+impl<DL: CellDataProvider + Clone> ScriptContext for SgData<DL> {
+    fn script_version(&self) -> ScriptVersion {
+        self.sg_info.script_version
+    }
+
+    fn program_data_piece_id(&self) -> DataPieceId {
+        self.sg_info.program_data_piece_id.clone()
+    }
+}
+
 impl<DL> DataSource<DataPieceId> for SgData<DL>
 where
     DL: CellDataProvider,
@@ -1039,26 +1056,26 @@ pub enum VmArgs {
 
 /// Mutable data at virtual machine level
 #[derive(Clone)]
-pub struct VmContext<DL>
+pub struct VmContext<C>
 where
-    DL: CellDataProvider,
+    C: DataSource<DataPieceId>,
 {
     /// Cycles executed before current VM starts
     pub base_cycles: Arc<AtomicU64>,
     /// A mutable reference to scheduler's message box
     pub message_box: Arc<Mutex<Vec<Message>>>,
     /// A snapshot for COW usage
-    pub snapshot2_context: Arc<Mutex<Snapshot2Context<DataPieceId, SgData<DL>>>>,
+    pub snapshot2_context: Arc<Mutex<Snapshot2Context<DataPieceId, C>>>,
 }
 
-impl<DL> VmContext<DL>
+impl<C> VmContext<C>
 where
-    DL: CellDataProvider + Clone,
+    C: DataSource<DataPieceId> + Clone,
 {
     /// Creates a new VM context. It is by design that parameters to this function
     /// are references. It is a reminder that the inputs are designed to be shared
     /// among different entities.
-    pub fn new(sg_data: &SgData<DL>, message_box: &Arc<Mutex<Vec<Message>>>) -> Self {
+    pub fn new(sg_data: &C, message_box: &Arc<Mutex<Vec<Message>>>) -> Self {
         Self {
             base_cycles: Arc::new(AtomicU64::new(0)),
             message_box: Arc::clone(message_box),

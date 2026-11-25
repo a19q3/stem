@@ -1,4 +1,4 @@
-use crate::types::{DataPieceId, SgData, VmContext};
+use crate::types::{DataPieceId, VmContext};
 use crate::{
     cost_model::transferred_byte_cycles,
     syscalls::{
@@ -6,27 +6,26 @@ use crate::{
         SLICE_OUT_OF_BOUND, SOURCE_ENTRY_MASK, SOURCE_GROUP_FLAG, SUCCESS, Source,
     },
 };
-use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
 use ckb_vm::{
     Bytes, Error as VMError, Register, SupportMachine, Syscalls,
     memory::{FLAG_EXECUTABLE, FLAG_FREEZED, Memory},
     registers::{A0, A1, A2, A3, A4, A5, A7},
-    snapshot2::Snapshot2Context,
+    snapshot2::{DataSource, Snapshot2Context},
 };
 use std::sync::{Arc, Mutex};
 
-pub struct LoadCellData<DL>
+pub struct LoadCellData<C>
 where
-    DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+    C: DataSource<DataPieceId> + Send + Sync + 'static,
 {
-    snapshot2_context: Arc<Mutex<Snapshot2Context<DataPieceId, SgData<DL>>>>,
+    snapshot2_context: Arc<Mutex<Snapshot2Context<DataPieceId, C>>>,
 }
 
-impl<DL> LoadCellData<DL>
+impl<C> LoadCellData<C>
 where
-    DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+    C: DataSource<DataPieceId> + Send + Sync + 'static,
 {
-    pub fn new(vm_context: &VmContext<DL>) -> LoadCellData<DL> {
+    pub fn new(vm_context: &VmContext<C>) -> LoadCellData<C> {
         LoadCellData {
             snapshot2_context: Arc::clone(&vm_context.snapshot2_context),
         }
@@ -166,9 +165,9 @@ where
     }
 }
 
-impl<Mac: SupportMachine, DL> Syscalls<Mac> for LoadCellData<DL>
+impl<Mac: SupportMachine, C> Syscalls<Mac> for LoadCellData<C>
 where
-    DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+    C: DataSource<DataPieceId> + Send + Sync + 'static,
 {
     fn initialize(&mut self, _machine: &mut Mac) -> Result<(), VMError> {
         Ok(())

@@ -1,6 +1,7 @@
 //! CKB component to run the type/lock scripts.
 pub mod cost_model;
 mod error;
+pub mod fern;
 #[cfg(all(has_asm, feature = "vm-reuse"))]
 mod reusable_asm;
 mod scheduler;

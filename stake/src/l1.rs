@@ -1,0 +1,429 @@
+//! State transitions enforced by the CKB Stake Registry contract.
+
+use alloc::vec::Vec;
+
+use ed25519_dalek::Signature;
+
+use crate::{
+    Attestation, Authority, DoubleVote, Error, Hash32, Liability, Member, Registry, Result,
+    StakeData, ValidatorKey, digest, public_key,
+};
+
+const EMPTY: Hash32 = [0; 32];
+pub const RELATIVE_BLOCKS: u64 = 1 << 63;
+pub const MAX_DELAY: u64 = (1 << 56) - 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StakeCell {
+    pub owner: Hash32,
+    pub first_active_height: i64,
+    pub first_inactive_height: i64,
+    pub penalty: Hash32,
+}
+
+impl StakeCell {
+    pub const SIZE: usize = 32 + 8 + 8 + 32;
+
+    pub fn encode(self) -> [u8; Self::SIZE] {
+        let mut bytes = [0; Self::SIZE];
+        bytes[..32].copy_from_slice(&self.owner);
+        bytes[32..40].copy_from_slice(&self.first_active_height.to_le_bytes());
+        bytes[40..48].copy_from_slice(&self.first_inactive_height.to_le_bytes());
+        bytes[48..].copy_from_slice(&self.penalty);
+        bytes
+    }
+
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        if data.len() != Self::SIZE {
+            return Err(Error::Encoding);
+        }
+        let result = Self {
+            owner: data[..32].try_into().unwrap(),
+            first_active_height: i64::from_le_bytes(data[32..40].try_into().unwrap()),
+            first_inactive_height: i64::from_le_bytes(data[40..48].try_into().unwrap()),
+            penalty: data[48..].try_into().unwrap(),
+        };
+        if result.owner == EMPTY
+            || result.first_active_height < 0
+            || result.first_inactive_height < 0
+            || (result.first_inactive_height != 0
+                && result.first_active_height >= result.first_inactive_height)
+        {
+            return Err(Error::Encoding);
+        }
+        Ok(result)
+    }
+
+    pub fn verify_record(record: &StakeData, data: &[u8]) -> Result<Self> {
+        let (state, metadata) = data.split_at_checked(24).ok_or(Error::Encoding)?;
+        let fields = [
+            record.bonded_amount,
+            record.activation_epoch,
+            record.exit_epoch.unwrap_or(0),
+        ];
+        if !fields
+            .iter()
+            .zip(state.chunks_exact(8))
+            .all(|(value, bytes)| value.to_le_bytes() == bytes)
+        {
+            return Err(Error::Encoding);
+        }
+        let cell = Self::decode(metadata)?;
+        if cell.commitment() != record.stake_cell_hash {
+            return Err(Error::Identity);
+        }
+        Ok(cell)
+    }
+
+    pub fn commitment(self) -> Hash32 {
+        digest(b"Fern CKB Stake Cell\0", &[&self.encode()])
+    }
+}
+
+pub struct Policy<'a> {
+    pub registry_id: Hash32,
+    pub network_id: Hash32,
+    pub ckb_genesis: Hash32,
+    pub chain_id: &'a str,
+    pub minimum_bond: u64,
+    pub blocks_per_epoch: u64,
+    pub unbonding_blocks: u64,
+}
+
+impl Policy<'_> {
+    pub fn decode(registry_id: Hash32, args: &[u8]) -> Result<Policy<'_>> {
+        if !(121..=170).contains(&args.len()) {
+            return Err(Error::Encoding);
+        }
+        let policy = Policy {
+            registry_id,
+            network_id: args[32..64].try_into().unwrap(),
+            ckb_genesis: args[64..96].try_into().unwrap(),
+            minimum_bond: u64::from_le_bytes(args[96..104].try_into().unwrap()),
+            blocks_per_epoch: u64::from_le_bytes(args[104..112].try_into().unwrap()),
+            unbonding_blocks: u64::from_le_bytes(args[112..120].try_into().unwrap()),
+            chain_id: core::str::from_utf8(&args[120..]).map_err(|_| Error::Encoding)?,
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if [self.registry_id, self.network_id, self.ckb_genesis].contains(&EMPTY)
+            || self.chain_id.is_empty()
+            || self.chain_id.len() > 50
+            || !self
+                .chain_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+            || self.minimum_bond == 0
+            || self.blocks_per_epoch < 3
+            || !(1..=MAX_DELAY).contains(&self.unbonding_blocks)
+        {
+            return Err(Error::Configuration);
+        }
+        Ok(())
+    }
+
+    fn epoch_height(&self, epoch: u64) -> Result<i64> {
+        epoch
+            .checked_mul(self.blocks_per_epoch)
+            .and_then(|value| value.checked_add(1))
+            .and_then(|height| i64::try_from(height).ok())
+            .ok_or(Error::Overflow)
+    }
+}
+
+pub struct GuardianProof<'a> {
+    pub committee: &'a [Member],
+    pub votes: &'a [Attestation],
+}
+
+impl GuardianProof<'_> {
+    pub fn generation(&self) -> Hash32 {
+        let mut bytes = Vec::new();
+        for member in self.committee {
+            bytes.extend_from_slice(&member.key);
+            bytes.extend_from_slice(&member.power.to_le_bytes());
+        }
+        digest(b"Fern CKB Stake authority\0", &[&bytes])
+    }
+
+    pub fn verify(&self, expected_generation: Hash32, message: &Hash32) -> Result<()> {
+        if self.generation() != expected_generation {
+            return Err(Error::Authority);
+        }
+        Authority::new(expected_generation, self.committee)?.verify(message, self.votes)
+    }
+}
+
+pub struct ChangeContext<'a> {
+    pub policy: &'a Policy<'a>,
+    pub old_registry: &'a Registry,
+    pub new_registry: &'a Registry,
+    pub validator: ValidatorKey,
+    pub old: Option<(StakeData, StakeCell)>,
+    pub new: Option<(StakeData, StakeCell)>,
+    pub owner_authorized: bool,
+    pub since: u64,
+    pub fee: u64,
+}
+
+pub enum Action<'a> {
+    Register([u8; 64]),
+    Increase,
+    RequestExit,
+    Activate(GuardianProof<'a>),
+    Retire(GuardianProof<'a>),
+    Withdraw,
+    Slash(DoubleVote),
+}
+
+impl ChangeContext<'_> {
+    pub fn verify(&self, action: Action<'_>) -> Result<()> {
+        verify_sequence(self.policy, self.old_registry, self.new_registry)?;
+        if self.old_registry.guardian_generation != self.new_registry.guardian_generation {
+            return Err(Error::Authority);
+        }
+        let stake_data = |registry: &Registry| {
+            registry
+                .records
+                .binary_search_by_key(&self.validator, |stake| stake.validator_pubkey)
+                .ok()
+                .map(|index| registry.records[index])
+        };
+        let (old_record, new_record) =
+            (stake_data(self.old_registry), stake_data(self.new_registry));
+        if old_record == new_record
+            || !self
+                .old_registry
+                .records
+                .iter()
+                .filter(|stake| stake.validator_pubkey != self.validator)
+                .eq(self
+                    .new_registry
+                    .records
+                    .iter()
+                    .filter(|stake| stake.validator_pubkey != self.validator))
+            || !matches_cell(old_record, self.old)
+            || !matches_cell(new_record, self.new)
+        {
+            return Err(Error::Sequence);
+        }
+        match action {
+            Action::Register(sig) => {
+                let (stake, cell) = self.new.ok_or(Error::Sequence)?;
+                if old_record.is_some()
+                    || !self.owner_authorized
+                    || stake.bonded_amount < self.policy.minimum_bond
+                    || stake.exit_epoch.is_some()
+                    || cell.first_active_height != 0
+                    || cell.first_inactive_height != 0
+                    || cell.penalty != EMPTY
+                {
+                    return Err(Error::Sequence);
+                }
+                self.policy.epoch_height(stake.activation_epoch)?;
+                public_key(&self.validator)?
+                    .verify_strict(
+                        &transition_digest(
+                            b"Fern CKB Stake registration\0",
+                            self.policy,
+                            self.old_registry,
+                            self.new_registry,
+                        ),
+                        &Signature::from_bytes(&sig),
+                    )
+                    .map_err(|_| Error::Signature)
+            }
+            Action::Increase | Action::RequestExit => {
+                let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
+                let (after, new_cell) = self.new.ok_or(Error::Sequence)?;
+                let allowed = match action {
+                    Action::Increase => {
+                        after.bonded_amount > before.bonded_amount
+                            && after.exit_epoch == before.exit_epoch
+                            && old_cell.penalty == EMPTY
+                    }
+                    Action::RequestExit => {
+                        after.bonded_amount == before.bonded_amount && after.exit_epoch.is_some()
+                    }
+                    _ => unreachable!(),
+                };
+                if !allowed
+                    || !self.owner_authorized
+                    || before.exit_epoch.is_some()
+                    || old_cell != new_cell
+                    || before.activation_epoch != after.activation_epoch
+                {
+                    return Err(Error::Sequence);
+                }
+                if let Some(epoch) = after.exit_epoch {
+                    self.policy.epoch_height(epoch)?;
+                }
+                Ok(())
+            }
+            Action::Activate(proof) => {
+                let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
+                let (_, new_cell) = self.new.ok_or(Error::Sequence)?;
+                if before.bonded_amount == 0
+                    || old_cell.first_active_height != 0
+                    || old_cell.first_inactive_height != 0
+                    || new_cell.first_active_height
+                        < self.policy.epoch_height(before.activation_epoch)?
+                    || new_cell
+                        != (StakeCell {
+                            first_active_height: new_cell.first_active_height,
+                            ..old_cell
+                        })
+                {
+                    return Err(Error::Epoch);
+                }
+                self.verify_cell_update(before, new_cell)?;
+                self.certify(b"Fern CKB Stake activation\0", &proof)
+            }
+            Action::Retire(proof) => {
+                let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
+                let (_, new_cell) = self.new.ok_or(Error::Sequence)?;
+                let epoch = before.exit_epoch.ok_or(Error::Epoch)?;
+                if old_cell.first_inactive_height != 0
+                    || new_cell.first_inactive_height < self.policy.epoch_height(epoch)?
+                    || new_cell
+                        != (StakeCell {
+                            first_inactive_height: new_cell.first_inactive_height,
+                            ..old_cell
+                        })
+                {
+                    return Err(Error::Epoch);
+                }
+                self.verify_cell_update(before, new_cell)?;
+                self.certify(b"Fern CKB Stake retirement\0", &proof)
+            }
+            Action::Withdraw => {
+                let (before, cell) = self.old.ok_or(Error::Sequence)?;
+                if self.new.is_some()
+                    || !self.owner_authorized
+                    || cell.first_inactive_height == 0
+                    || (self.since & !MAX_DELAY) != RELATIVE_BLOCKS
+                    || (self.since & MAX_DELAY) < self.policy.unbonding_blocks
+                    || new_record
+                        != Some(StakeData {
+                            bonded_amount: 0,
+                            stake_cell_hash: EMPTY,
+                            ..before
+                        })
+                {
+                    return Err(Error::Sequence);
+                }
+                Ok(())
+            }
+            Action::Slash(evidence) => {
+                let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
+                // One proved double vote forfeits the full positive bond as an L1 fee.
+                // Preserving the Cell keeps the key's retirement history and storage collateral.
+                if before.bonded_amount == 0
+                    || old_cell.penalty != EMPTY
+                    || self.fee < before.bonded_amount
+                {
+                    return Err(Error::Evidence);
+                }
+                let penalty = evidence.verify(
+                    &self.policy.network_id,
+                    self.policy.chain_id,
+                    &Liability {
+                        validator: self.validator,
+                        first_active_height: old_cell.first_active_height,
+                        first_inactive_height: (old_cell.first_inactive_height != 0)
+                            .then_some(old_cell.first_inactive_height),
+                    },
+                )?;
+                self.verify_cell_update(
+                    StakeData {
+                        bonded_amount: 0,
+                        ..before
+                    },
+                    StakeCell {
+                        penalty,
+                        ..old_cell
+                    },
+                )
+            }
+        }
+    }
+
+    fn verify_cell_update(&self, before: StakeData, cell: StakeCell) -> Result<()> {
+        if self.new
+            != Some((
+                StakeData {
+                    stake_cell_hash: cell.commitment(),
+                    ..before
+                },
+                cell,
+            ))
+        {
+            return Err(Error::Sequence);
+        }
+        Ok(())
+    }
+
+    fn certify(&self, domain: &[u8], proof: &GuardianProof<'_>) -> Result<()> {
+        let message = transition_digest(domain, self.policy, self.old_registry, self.new_registry);
+        proof.verify(self.old_registry.guardian_generation, &message)
+    }
+}
+
+fn matches_cell(record: Option<StakeData>, cell: Option<(StakeData, StakeCell)>) -> bool {
+    match (record, cell) {
+        (Some(record), Some((stake, body))) => {
+            record == stake && record.stake_cell_hash == body.commitment()
+        }
+        (Some(record), None) => record.stake_cell_hash == EMPTY,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn verify_sequence(policy: &Policy<'_>, old: &Registry, new: &Registry) -> Result<()> {
+    policy.validate()?;
+    if old.network_id != policy.network_id
+        || new.network_id != policy.network_id
+        || old.sequence.checked_add(1) != Some(new.sequence)
+    {
+        return Err(Error::Sequence);
+    }
+    Ok(())
+}
+
+pub fn verify_rotation(
+    policy: &Policy<'_>,
+    old: &Registry,
+    new: &Registry,
+    departing: &GuardianProof<'_>,
+    arriving: &GuardianProof<'_>,
+) -> Result<()> {
+    verify_sequence(policy, old, new)?;
+    if old.records != new.records || old.guardian_generation == new.guardian_generation {
+        return Err(Error::Authority);
+    }
+    let message = transition_digest(b"Fern CKB Stake authority rotation\0", policy, old, new);
+    departing.verify(old.guardian_generation, &message)?;
+    arriving.verify(new.guardian_generation, &message)
+}
+
+pub fn transition_digest(
+    domain: &[u8],
+    policy: &Policy<'_>,
+    old: &Registry,
+    new: &Registry,
+) -> Hash32 {
+    digest(
+        domain,
+        &[
+            &policy.network_id,
+            &policy.ckb_genesis,
+            &policy.registry_id,
+            &old.commitment(),
+            &new.commitment(),
+        ],
+    )
+}

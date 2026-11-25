@@ -1,6 +1,7 @@
 use crate::syscalls::{PIPE, SPAWN_YIELD_CYCLES_BASE, utils::checked_add_addr};
+use crate::types::DataPieceId;
 use crate::types::{Message, PipeArgs, VmContext, VmId};
-use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
+use ckb_vm::snapshot2::DataSource;
 use ckb_vm::{
     Error as VMError, Register, SupportMachine, Syscalls,
     registers::{A0, A7},
@@ -14,9 +15,9 @@ pub struct Pipe {
 }
 
 impl Pipe {
-    pub fn new<DL>(vm_id: &VmId, vm_context: &VmContext<DL>) -> Self
+    pub fn new<C>(vm_id: &VmId, vm_context: &VmContext<C>) -> Self
     where
-        DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+        C: DataSource<DataPieceId> + Send + Sync + 'static,
     {
         Self {
             id: *vm_id,

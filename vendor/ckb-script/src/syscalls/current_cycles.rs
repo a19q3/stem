@@ -1,5 +1,6 @@
+use crate::types::DataPieceId;
 use crate::{syscalls::CURRENT_CYCLES, types::VmContext};
-use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
+use ckb_vm::snapshot2::DataSource;
 use ckb_vm::{
     Error as VMError, Register, SupportMachine, Syscalls,
     registers::{A0, A7},
@@ -15,9 +16,9 @@ pub struct CurrentCycles {
 }
 
 impl CurrentCycles {
-    pub fn new<DL>(vm_context: &VmContext<DL>) -> Self
+    pub fn new<C>(vm_context: &VmContext<C>) -> Self
     where
-        DL: CellDataProvider + HeaderProvider + ExtensionProvider + Send + Sync + Clone + 'static,
+        C: DataSource<DataPieceId> + Send + Sync + 'static,
     {
         Self {
             base: Arc::clone(&vm_context.base_cycles),

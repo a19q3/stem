@@ -1,0 +1,52 @@
+// Primitives use the canonical CKB Molecule layout.
+array Uint32 [byte; 4];
+array Uint64 [byte; 8];
+array Byte32 [byte; 32];
+vector Bytes <byte>;
+vector BytesVec <Bytes>;
+vector Byte32Vec <Byte32>;
+
+table Script {
+    code_hash: Byte32,
+    hash_type: byte,
+    args: Bytes,
+}
+
+struct OutPoint {
+    tx_hash: Byte32,
+    index: Uint32,
+}
+
+struct CellInput {
+    since: Uint64,
+    previous_output: OutPoint,
+}
+
+struct CellDep {
+    out_point: OutPoint,
+    dep_type: byte,
+}
+
+vector ScriptVec <Script>;
+vector CellDepVec <CellDep>;
+vector CellInputVec <CellInput>;
+vector CellVec <Cell>;
+
+table Cell {
+    capacity: Uint64,
+    lock: Script,
+    type_scripts: ScriptVec,
+    data: Bytes,
+}
+
+table RawTransaction {
+    cell_deps: CellDepVec,
+    header_deps: Byte32Vec,
+    inputs: CellInputVec,
+    outputs: CellVec,
+}
+
+table Transaction {
+    raw: RawTransaction,
+    witnesses: BytesVec,
+}

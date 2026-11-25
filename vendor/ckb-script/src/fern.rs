@@ -1,0 +1,463 @@
+//! CKB-VM host for Fern's native Molecule ledger.
+
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result, ensure};
+use ckb_types::{bytes::Bytes, core::HeaderView, packed::Byte32, prelude::*};
+use ckb_vm::{
+    Error, Register, SupportMachine, Syscalls,
+    memory::Memory,
+    registers::{A0, A3, A4, A5, A7},
+    snapshot2::DataSource,
+};
+use fern_ledger::{Cell, ResolvedTransaction, ScriptGroupKind};
+use lru::LruCache;
+use rayon::prelude::*;
+
+#[cfg(all(has_asm, feature = "vm-reuse"))]
+use crate::reusable_asm::{ReusableMachine as FernMachine, allocate_core};
+#[cfg(not(all(has_asm, feature = "vm-reuse")))]
+use crate::types::Machine as FernMachine;
+use crate::{
+    Scheduler,
+    cost_model::transferred_byte_cycles,
+    syscalls::{
+        Close, CurrentCycles, ExecV2, INDEX_OUT_OF_BOUND, ITEM_MISSING, InheritedFd,
+        LOAD_BLOCK_EXTENSION, LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, LOAD_CELL_SYSCALL_NUMBER,
+        LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, LOAD_HEADER_SYSCALL_NUMBER,
+        LOAD_INPUT_BY_FIELD_SYSCALL_NUMBER, LOAD_INPUT_SYSCALL_NUMBER,
+        LOAD_SCRIPT_HASH_SYSCALL_NUMBER, LOAD_SCRIPT_SYSCALL_NUMBER,
+        LOAD_TRANSACTION_SYSCALL_NUMBER, LOAD_TX_HASH_SYSCALL_NUMBER, LOAD_WITNESS_SYSCALL_NUMBER,
+        LoadCellData, Pipe, ProcessID, Read, SUCCESS, Spawn, VMVersion, Wait, Write,
+        utils::store_data,
+    },
+    types::{DataPieceId, RunMode, ScriptContext, ScriptVersion, VmContext, VmId},
+};
+
+const INPUT: u64 = 1;
+const OUTPUT: u64 = 2;
+const CELL_DEP: u64 = 3;
+const HEADER_DEP: u64 = 4;
+const GROUP_INPUT: u64 = 0x0100_0000_0000_0001;
+const GROUP_OUTPUT: u64 = 0x0100_0000_0000_0002;
+
+pub const LOAD_CELL_TYPE_SCRIPTS: u64 = 2110;
+pub const LOAD_CELL_TYPE_SCRIPT: u64 = 2111;
+pub const LOAD_CELL_TYPE_SCRIPT_HASH: u64 = 2112;
+pub const FIND_CELL_TYPE_SCRIPT: u64 = 2113;
+pub const LOAD_SCRIPT_GROUP: u64 = 2114;
+pub const LOAD_GROUP_INDEX: u64 = 2115;
+pub const LOAD_NETWORK_ID: u64 = 2116;
+
+#[derive(Clone)]
+struct GroupContext {
+    tx: Arc<ResolvedTransaction>,
+    group: usize,
+    program: u32,
+    transaction_id: Byte32,
+    script_hash: Byte32,
+}
+
+impl GroupContext {
+    fn group_index(&self, source: u64, index: usize) -> Option<usize> {
+        let group = &self.tx.groups()[self.group];
+        match source {
+            GROUP_INPUT => group.inputs.get(index).copied(),
+            GROUP_OUTPUT => group.outputs.get(index).copied(),
+            _ => None,
+        }
+    }
+
+    fn cell(&self, source: u64, index: usize) -> Option<&Cell> {
+        Some(match source {
+            INPUT => &self.tx.inputs().get(index)?.cell,
+            OUTPUT => self.tx.outputs().get(index)?,
+            CELL_DEP => &self.tx.cell_deps().get(index)?.cell,
+            GROUP_INPUT => &self.tx.inputs().get(self.group_index(source, index)?)?.cell,
+            GROUP_OUTPUT => self.tx.outputs().get(self.group_index(source, index)?)?,
+            _ => return None,
+        })
+    }
+
+    fn header(&self, source: u64, index: usize) -> Result<&HeaderView, u8> {
+        let origin = match source {
+            INPUT => {
+                &self
+                    .tx
+                    .inputs()
+                    .get(index)
+                    .ok_or(INDEX_OUT_OF_BOUND)?
+                    .origin
+            }
+            CELL_DEP => {
+                &self
+                    .tx
+                    .cell_deps()
+                    .get(index)
+                    .ok_or(INDEX_OUT_OF_BOUND)?
+                    .origin
+            }
+            GROUP_INPUT => {
+                return self.header(
+                    INPUT,
+                    self.group_index(source, index).ok_or(INDEX_OUT_OF_BOUND)?,
+                );
+            }
+            HEADER_DEP => return self.tx.header(index).ok_or(INDEX_OUT_OF_BOUND),
+            _ => return Err(INDEX_OUT_OF_BOUND),
+        };
+        self.tx.header_by_hash(&origin.hash()).ok_or(ITEM_MISSING)
+    }
+}
+
+impl ScriptContext for GroupContext {
+    fn script_version(&self) -> ScriptVersion {
+        ScriptVersion::V2
+    }
+
+    fn program_data_piece_id(&self) -> DataPieceId {
+        DataPieceId::CellDep(self.program)
+    }
+}
+
+impl DataSource<DataPieceId> for GroupContext {
+    fn load_data(&self, id: &DataPieceId, offset: u64, length: u64) -> Option<(Bytes, u64)> {
+        let data = match *id {
+            DataPieceId::Input(index) => self.cell(INPUT, index as usize)?.data(),
+            DataPieceId::Output(index) => self.cell(OUTPUT, index as usize)?.data(),
+            DataPieceId::CellDep(index) => self.cell(CELL_DEP, index as usize)?.data(),
+            DataPieceId::GroupInput(index) => self.cell(GROUP_INPUT, index as usize)?.data(),
+            DataPieceId::GroupOutput(index) => self.cell(GROUP_OUTPUT, index as usize)?.data(),
+            DataPieceId::Witness(index) => self.tx.transaction().witness(index as usize)?,
+            DataPieceId::WitnessGroupInput(index) => self
+                .tx
+                .transaction()
+                .witness(self.group_index(GROUP_INPUT, index as usize)?)?,
+            DataPieceId::WitnessGroupOutput(index) => self
+                .tx
+                .transaction()
+                .witness(self.group_index(GROUP_OUTPUT, index as usize)?)?,
+        };
+        let offset = offset.min(data.len() as u64) as usize;
+        let remaining = data.len() - offset;
+        let read = if length == 0 {
+            remaining
+        } else {
+            length.min(remaining as u64) as usize
+        };
+        Some((data.slice(offset..offset + read), remaining as u64))
+    }
+}
+
+/// Verify the automatically derived Lock and Type Script Groups.
+/// The same transaction cycle budget applies whether groups run serially or in parallel.
+pub fn verify(tx: Arc<ResolvedTransaction>, max_cycles: u64, parallel: bool) -> Result<u64> {
+    let transaction_id = tx.transaction().id(tx.network_id());
+    let run = |group, limit| execute_group(Arc::clone(&tx), &transaction_id, group, limit);
+    let mut total = 0;
+    let group_count = tx.groups().len();
+    let workers = if parallel {
+        rayon::current_num_threads()
+    } else {
+        1
+    };
+    for start in (0..group_count).step_by(workers) {
+        let end = (start + workers).min(group_count);
+        let remaining = max_cycles - total;
+        if end - start == 1 {
+            total = charge(total, run(start, remaining)?, max_cycles)?;
+            continue;
+        }
+
+        let speculative_limit = remaining / (end - start) as u64;
+        let results: Vec<_> = (start..end)
+            .into_par_iter()
+            .map(|group| run(group, speculative_limit))
+            .collect();
+        for (index, result) in results.into_iter().enumerate() {
+            let cycles = match result {
+                Err(error) if error.downcast_ref::<Error>() == Some(&Error::CyclesExceeded) => {
+                    run(start + index, max_cycles - total)?
+                }
+                other => other?,
+            };
+            total = charge(total, cycles, max_cycles)?;
+        }
+    }
+    Ok(total)
+}
+
+/// Caches successful verification with the measured cycle charge.
+pub struct VerificationCache(Mutex<LruCache<Byte32, u64>>);
+
+impl VerificationCache {
+    pub fn new(capacity: usize) -> Self {
+        Self(Mutex::new(LruCache::new(capacity)))
+    }
+
+    pub fn verify(
+        &self,
+        tx: Arc<ResolvedTransaction>,
+        max_cycles: u64,
+        parallel: bool,
+    ) -> Result<u64> {
+        let key = tx.script_cache_key().clone();
+        let found = self.0.lock().expect("VM cache lock").get(&key).copied();
+        if let Some(cycles) = found {
+            return charge(0, cycles, max_cycles);
+        }
+
+        let cycles = verify(tx, max_cycles, parallel)?;
+        self.0.lock().expect("VM cache lock").put(key, cycles);
+        Ok(cycles)
+    }
+}
+
+fn charge(total: u64, cycles: u64, limit: u64) -> Result<u64> {
+    let total = total
+        .checked_add(cycles)
+        .context("transaction cycle overflow")?;
+    ensure!(total <= limit, "transaction cycle budget exceeded");
+    Ok(total)
+}
+
+fn execute_group(
+    tx: Arc<ResolvedTransaction>,
+    transaction_id: &Byte32,
+    index: usize,
+    limit: u64,
+) -> Result<u64> {
+    let group = &tx.groups()[index];
+    let script_hash = group.script.calc_script_hash();
+    let kind = group.kind;
+    let program = tx.program_index(&group.script)?.try_into()?;
+    let context = GroupContext {
+        tx,
+        group: index,
+        program,
+        transaction_id: transaction_id.clone(),
+        script_hash: script_hash.clone(),
+    };
+    let mut scheduler = Scheduler::<_, _, FernMachine>::new(context, syscalls, ());
+    #[cfg(all(has_asm, feature = "vm-reuse"))]
+    {
+        scheduler.core_allocator = Some(allocate_core);
+    }
+    let result = scheduler
+        .run(RunMode::LimitCycles(limit))
+        .with_context(|| format!("{kind:?} Script Group {script_hash:#x}"))?;
+    ensure!(
+        result.exit_code == 0,
+        "{kind:?} Script Group {script_hash:#x} exited with {}",
+        result.exit_code
+    );
+    Ok(result.consumed_cycles)
+}
+
+fn syscalls<M: SupportMachine>(
+    id: &VmId,
+    group: &GroupContext,
+    context: &VmContext<GroupContext>,
+    _: &(),
+) -> Vec<Box<dyn Syscalls<M>>> {
+    vec![
+        Box::new(LoadContext(group.clone())),
+        Box::new(LoadCellData::new(context)),
+        Box::new(VMVersion::new()),
+        Box::new(CurrentCycles::new(context)),
+        Box::new(ExecV2::new(id, context)),
+        Box::new(Spawn::new(id, context)),
+        Box::new(ProcessID::new(id)),
+        Box::new(Pipe::new(id, context)),
+        Box::new(Wait::new(id, context)),
+        Box::new(Write::new(id, context)),
+        Box::new(Read::new(id, context)),
+        Box::new(InheritedFd::new(id, context)),
+        Box::new(Close::new(id, context)),
+    ]
+}
+
+struct LoadContext(GroupContext);
+
+impl<M: SupportMachine> Syscalls<M> for LoadContext {
+    fn initialize(&mut self, _: &mut M) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn ecall(&mut self, machine: &mut M) -> Result<bool, Error> {
+        let number = machine.registers()[A7].to_u64();
+        let index = machine.registers()[A3].to_u64() as usize;
+        let source = machine.registers()[A4].to_u64();
+        let arg = machine.registers()[A5].to_u64();
+        let context = &self.0;
+        let tx = context.tx.transaction();
+        let group = &context.tx.groups()[context.group];
+        let result = match number {
+            LOAD_SCRIPT_SYSCALL_NUMBER => store_data(machine, group.script.as_slice()),
+            LOAD_SCRIPT_HASH_SYSCALL_NUMBER => store_data(machine, context.script_hash.as_slice()),
+            LOAD_TX_HASH_SYSCALL_NUMBER => store_data(machine, context.transaction_id.as_slice()),
+            LOAD_TRANSACTION_SYSCALL_NUMBER => store_data(machine, tx.as_slice()),
+            LOAD_NETWORK_ID => store_data(machine, context.tx.network_id().as_slice()),
+            LOAD_SCRIPT_GROUP => {
+                let mut value = [0; 9];
+                value[0] = match group.kind {
+                    ScriptGroupKind::Lock => 0,
+                    ScriptGroupKind::Type => 1,
+                };
+                value[1..5].copy_from_slice(&(group.inputs.len() as u32).to_le_bytes());
+                value[5..9].copy_from_slice(&(group.outputs.len() as u32).to_le_bytes());
+                store_data(machine, &value)
+            }
+            LOAD_GROUP_INDEX => {
+                let Some(index) = context.group_index(source, index) else {
+                    return Ok(status(machine, INDEX_OUT_OF_BOUND));
+                };
+                store_data(machine, &(index as u32).to_le_bytes())
+            }
+            LOAD_CELL_SYSCALL_NUMBER
+            | LOAD_CELL_BY_FIELD_SYSCALL_NUMBER
+            | LOAD_CELL_TYPE_SCRIPTS
+            | LOAD_CELL_TYPE_SCRIPT
+            | LOAD_CELL_TYPE_SCRIPT_HASH
+            | FIND_CELL_TYPE_SCRIPT => {
+                let Some(cell) = context.cell(source, index) else {
+                    return Ok(status(machine, INDEX_OUT_OF_BOUND));
+                };
+                return load_cell(machine, cell, number, arg);
+            }
+            LOAD_WITNESS_SYSCALL_NUMBER => {
+                let witness = match source {
+                    INPUT | OUTPUT => tx.witness(index),
+                    GROUP_INPUT | GROUP_OUTPUT => context
+                        .group_index(source, index)
+                        .and_then(|i| tx.witness(i)),
+                    _ => None,
+                };
+                let Some(witness) = witness else {
+                    return Ok(status(machine, INDEX_OUT_OF_BOUND));
+                };
+                store_data(machine, &witness)
+            }
+            LOAD_INPUT_SYSCALL_NUMBER | LOAD_INPUT_BY_FIELD_SYSCALL_NUMBER => {
+                let input = match source {
+                    INPUT => tx.input(index),
+                    GROUP_INPUT => context.group_index(source, index).and_then(|i| tx.input(i)),
+                    _ => None,
+                };
+                let Some(input) = input else {
+                    return Ok(status(machine, INDEX_OUT_OF_BOUND));
+                };
+                match (number, arg) {
+                    (LOAD_INPUT_SYSCALL_NUMBER, _) => store_data(machine, input.as_slice()),
+                    (_, 0) => store_data(machine, input.previous_output().as_slice()),
+                    (_, 1) => store_data(machine, input.since().as_slice()),
+                    _ => return Ok(status(machine, ITEM_MISSING)),
+                }
+            }
+            LOAD_HEADER_SYSCALL_NUMBER
+            | LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER
+            | LOAD_BLOCK_EXTENSION => {
+                let header = match context.header(source, index) {
+                    Ok(header) => header,
+                    Err(code) => return Ok(status(machine, code)),
+                };
+                match (number, arg) {
+                    (LOAD_HEADER_SYSCALL_NUMBER, _) => {
+                        store_data(machine, header.data().as_slice())
+                    }
+                    (LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, 0) => {
+                        store_data(machine, &header.epoch().number().to_le_bytes())
+                    }
+                    (LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, 1) => {
+                        let beginning = header
+                            .number()
+                            .checked_sub(header.epoch().index())
+                            .ok_or_else(|| Error::External("invalid header epoch".into()))?;
+                        store_data(machine, &beginning.to_le_bytes())
+                    }
+                    (LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, 2) => {
+                        store_data(machine, &header.epoch().length().to_le_bytes())
+                    }
+                    _ => return Ok(status(machine, ITEM_MISSING)),
+                }
+            }
+            _ => return Ok(false),
+        };
+        finish(machine, result)
+    }
+}
+
+fn load_cell<M: SupportMachine>(
+    machine: &mut M,
+    cell: &Cell,
+    number: u64,
+    arg: u64,
+) -> Result<bool, Error> {
+    let result = match (number, arg) {
+        (LOAD_CELL_SYSCALL_NUMBER, _) => store_data(machine, cell.as_slice()),
+        (LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, 0) => {
+            store_data(machine, &cell.capacity().to_le_bytes())
+        }
+        (LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, 1) => {
+            let data = cell.data();
+            machine.add_cycles_no_checking(transferred_byte_cycles(data.len() as u64))?;
+            store_data(machine, cell.data_hash().as_slice())
+        }
+        (LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, 2) => store_data(machine, cell.lock().as_slice()),
+        (LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, 3) => {
+            let lock = cell.lock();
+            machine
+                .add_cycles_no_checking(transferred_byte_cycles(lock.as_slice().len() as u64))?;
+            store_data(machine, lock.calc_script_hash().as_slice())
+        }
+        (LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, 6) => {
+            let capacity = cell
+                .occupied_capacity()
+                .map_err(|error| Error::External(error.to_string()))?;
+            store_data(machine, &capacity.to_le_bytes())
+        }
+        (LOAD_CELL_TYPE_SCRIPTS, _) => store_data(machine, &cell.type_scripts_bytes()),
+        (LOAD_CELL_TYPE_SCRIPT | LOAD_CELL_TYPE_SCRIPT_HASH, _) => {
+            let Some(script) = cell.type_script(arg as usize) else {
+                return Ok(status(machine, INDEX_OUT_OF_BOUND));
+            };
+            if number == LOAD_CELL_TYPE_SCRIPT {
+                store_data(machine, script.as_slice())
+            } else {
+                machine.add_cycles_no_checking(transferred_byte_cycles(
+                    script.as_slice().len() as u64
+                ))?;
+                store_data(machine, script.calc_script_hash().as_slice())
+            }
+        }
+        (FIND_CELL_TYPE_SCRIPT, _) => {
+            let requested = machine.memory_mut().load_bytes(arg, 32)?;
+            let mut matched = None;
+            for script in cell.type_scripts() {
+                machine.add_cycles_no_checking(transferred_byte_cycles(
+                    script.as_slice().len() as u64
+                ))?;
+                if script.calc_script_hash().as_slice() == requested.as_ref() {
+                    matched = Some(script);
+                    break;
+                }
+            }
+            let Some(matched) = matched else {
+                return Ok(status(machine, ITEM_MISSING));
+            };
+            store_data(machine, matched.as_slice())
+        }
+        _ => return Ok(status(machine, ITEM_MISSING)),
+    };
+    finish(machine, result)
+}
+
+fn finish<M: SupportMachine>(machine: &mut M, written: Result<u64, Error>) -> Result<bool, Error> {
+    machine.add_cycles_no_checking(transferred_byte_cycles(written?))?;
+    Ok(status(machine, SUCCESS))
+}
+
+fn status<M: SupportMachine>(machine: &mut M, code: u8) -> bool {
+    machine.set_register(A0, M::REG::from_u8(code));
+    true
+}
