@@ -17,7 +17,7 @@ use clap::Subcommand;
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
-use stem::native_store::{BridgeGenesis, LaneGenesis, lane_id};
+use stem::native_store::{BridgeGenesis, LaneGenesis};
 use stem_bridge_wire::{Gate, NATIVE_VAULT_SIZE, XUDT_VAULT_SIZE};
 use stem_ledger::{
     Cell, Transaction,
@@ -221,10 +221,10 @@ impl BridgeCommand {
                     output
                         .type_()
                         .to_opt()
-                        .is_some_and(|script| script.calc_script_hash() == lane.vault_type_hash),
+                        .is_some_and(|script| script == lane.vault_type),
                     "initial vault differs from configured Type ID"
                 );
-                let lock = deposit_lock(&lane.vault_type_hash, &data)?;
+                let lock = deposit_lock(&lane.vault_type.calc_script_hash(), &data)?;
                 let mut data = DEPOSIT_MEMO.to_vec();
                 data.extend_from_slice(spec.network.as_slice());
                 data.extend_from_slice(cell.as_slice());
@@ -320,7 +320,7 @@ fn observe(
         before
             .type_()
             .to_opt()
-            .is_some_and(|script| script.calc_script_hash() == lane.vault_type_hash),
+            .is_some_and(|script| script == lane.vault_type),
         "consolidation input is outside the configured vault Type ID"
     );
     let (tx, height, consolidation_block) = committed(rpc, &request.consolidation)?;
@@ -335,7 +335,7 @@ fn observe(
             output
                 .type_()
                 .to_opt()
-                .is_some_and(|script| script.calc_script_hash() == lane.vault_type_hash)
+                .is_some_and(|script| script == lane.vault_type)
         });
     let (index, (after, successor)) = vaults
         .next()
@@ -345,7 +345,7 @@ fn observe(
         "L1 transaction is not a vault consolidation"
     );
 
-    let expected = deposit_lock(&lane.vault_type_hash, &vault_data)?;
+    let expected = deposit_lock(&lane.vault_type.calc_script_hash(), &vault_data)?;
     let gate = match &lane.l1_type {
         Some(token) => {
             let asset = stem_bridge_wire::vault_asset(&vault_data)
@@ -396,7 +396,9 @@ fn observe(
         {
             let args = lock.args().raw_data();
             let (vault, role) = stem_bridge_wire::gate(&args).context("invalid xUDT gate")?;
-            if vault.as_slice() != lane.vault_type_hash.as_slice() || role == Gate::Escrow {
+            if vault.as_slice() != lane.vault_type.calc_script_hash().as_slice()
+                || role == Gate::Escrow
+            {
                 continue;
             }
             let Gate::Deposit { chain, recipient } = role else {
@@ -504,10 +506,7 @@ fn find_lane<'a>(bridge: &'a BridgeGenesis, id: &Byte32) -> Result<&'a LaneGenes
     bridge
         .lanes
         .iter()
-        .find(|lane| {
-            let asset = lane.l1_type.as_ref().map(Script::calc_script_hash);
-            lane_id(&bridge.l1_genesis, &lane.vault_type_hash, asset.as_ref()) == *id
-        })
+        .find(|lane| lane.id(&bridge.l1_genesis) == *id)
         .context("unknown bridge lane")
 }
 

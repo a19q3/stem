@@ -45,8 +45,29 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     let native_code = fixture.spec.development_cells.remove(0).1;
     let genesis = hash(25);
     let burn_code = hash(31);
-    let registry = hash(33);
-    let custody = hash(34);
+    let vault_type = |id: u8| {
+        let args = [
+            hash(id),
+            hash(57),
+            hash(58),
+            genesis.clone(),
+            fixture.spec.network.clone(),
+        ];
+        Script::new_builder()
+            .code_hash(hash(59))
+            .hash_type(ScriptHashType::Data2)
+            .args(
+                Bytes::from(
+                    args.iter()
+                        .flat_map(|value| value.as_slice().iter().copied())
+                        .collect::<Vec<_>>(),
+                )
+                .pack(),
+            )
+            .build()
+    };
+    let registry = vault_type(33);
+    let custody = vault_type(34);
     let l1_token = Script::new_builder()
         .code_hash(hash(35))
         .hash_type(ScriptHashType::Data1)
@@ -59,8 +80,8 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         .hash_type(ScriptHashType::Data)
         .args(asset_id.as_bytes())
         .build();
-    let ckb_lane = lane_id(&genesis, &registry, None);
-    let asset_lane = lane_id(&genesis, &custody, Some(&asset_id));
+    let ckb_lane = lane_id(&genesis, &registry.calc_script_hash(), None);
+    let asset_lane = lane_id(&genesis, &custody.calc_script_hash(), Some(&asset_id));
     let recipient = fixture.lock.clone();
     let reserved = recipient
         .clone()
@@ -89,12 +110,12 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         burn_code_hash: burn_code.clone(),
         lanes: vec![
             LaneGenesis {
-                vault_type_hash: registry,
+                vault_type: registry,
                 vault: out(40, 0),
                 l1_type: None,
             },
             LaneGenesis {
-                vault_type_hash: custody,
+                vault_type: custody,
                 vault: out(41, 0),
                 l1_type: Some(l1_token),
             },
@@ -117,6 +138,24 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
                 .build(),
         })),
     });
+    let original = fixture.spec.bridge.as_ref().unwrap().lanes[1]
+        .vault_type
+        .clone();
+    let invalid = tempfile::tempdir()?;
+    for offset in [32, 64] {
+        let mut args = original.args().raw_data().to_vec();
+        args[offset] ^= 1;
+        fixture.spec.bridge.as_mut().unwrap().lanes[1].vault_type = original
+            .clone()
+            .as_builder()
+            .args(Bytes::from(args).pack())
+            .build();
+        assert!(matches!(
+            Store::open(invalid.path(), &fixture.spec, Retention::Archive),
+            Err(error) if error.to_string().contains("same CKB checkpoint")
+        ));
+    }
+    fixture.spec.bridge.as_mut().unwrap().lanes[1].vault_type = original;
     let store_path = tempfile::tempdir()?;
     let mut store = Store::open(store_path.path(), &fixture.spec, Retention::Recent(2))?;
     let make_mint = |deposit,

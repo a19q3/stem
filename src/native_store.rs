@@ -41,8 +41,8 @@ mod state_snapshot;
 
 use bridge::{Bridge, BridgeChanges, StagedBridge};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
-pub use staking::StakeGenesis;
 use staking::{StagedStake, Staking};
+pub use staking::{StakeGenesis, stake_registry_policy};
 pub use state_snapshot::{SnapshotReader, StateSnapshot};
 pub use stem_ledger::protocol::{FeeFundDestination, FeeFundPolicy};
 
@@ -182,6 +182,60 @@ pub struct Spec {
     pub development_cells: Vec<(OutPoint, Cell)>,
 }
 
+impl Spec {
+    pub fn validate_l1_policies(&self) -> Result<()> {
+        use ckb_types::core::ScriptHashType;
+        use stem_stake::finality::VaultPolicy;
+
+        let stake = self
+            .stake
+            .as_ref()
+            .map(|genesis| {
+                let policy = stake_registry_policy(&genesis.registry_type)?;
+                let domain = &genesis.statement.domain;
+                ensure!(
+                    policy.registry_id == domain.registry_id
+                        && policy.network_id == domain.stem_network_id
+                        && policy.ckb_genesis == domain.ckb_genesis,
+                    "Stake Registry Type Script differs from the guardian-authenticated domain"
+                );
+                ensure!(
+                    self.network.as_slice() == policy.network_id
+                        && self.chain_id == policy.chain_id
+                        && genesis.config.minimum_bond == policy.minimum_bond
+                        && genesis.config.blocks_per_epoch == policy.blocks_per_epoch,
+                    "Stem and CKB Stake Registry policies differ"
+                );
+                Ok(policy)
+            })
+            .transpose()?;
+        if let Some(bridge) = &self.bridge {
+            let mut checkpoint = stake.as_ref().map(|policy| policy.checkpoint);
+            for lane in &bridge.lanes {
+                ensure!(
+                    ScriptHashType::try_from(lane.vault_type.hash_type())? == ScriptHashType::Data2
+                        && lane.vault_type.code_hash() != Byte32::default(),
+                    "bridge vault requires a Data2 Type Script"
+                );
+                let policy = VaultPolicy::decode(&lane.vault_type.args().raw_data())?;
+                ensure!(
+                    self.network.as_slice() == policy.network
+                        && bridge.l1_genesis.as_slice() == policy.ckb_genesis
+                        && stake
+                            .as_ref()
+                            .is_none_or(|stake| stake.ckb_genesis == policy.ckb_genesis),
+                    "bridge vault, Stake Registry and Stem must use the same network identities"
+                );
+                ensure!(
+                    *checkpoint.get_or_insert(policy.checkpoint) == policy.checkpoint,
+                    "bridge vaults and Stake Registry must use the same CKB checkpoint"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Retention {
     Recent(u64),
@@ -281,6 +335,7 @@ impl Prepared {
 
 impl Store {
     pub fn open(path: &Path, spec: &Spec, retention: Retention) -> Result<Self> {
+        spec.validate_l1_policies()?;
         ensure!(
             spec.network != Byte32::default(),
             "zero Stem network identity"
@@ -457,12 +512,6 @@ impl Store {
                 spec.development_cells.is_empty(),
                 "a bridged network cannot assign development Capacity"
             );
-            if let Some(stake) = &spec.stake {
-                ensure!(
-                    config.l1_genesis.as_slice() == stake.statement.domain.ckb_genesis,
-                    "bridge and Stake Registry must use the same CKB genesis"
-                );
-            }
             let (bridge, records) = Bridge::initialize(config)?;
             for (name, value) in records {
                 let value = value.context("bridge genesis is missing a record value")?;

@@ -54,6 +54,35 @@ impl CheckpointId {
     }
 }
 
+/// CKB vault Type Script args. Both the vault and Stem genesis use this decoder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VaultPolicy {
+    pub type_id: Hash32,
+    pub checkpoint: CheckpointId,
+    pub ckb_genesis: Hash32,
+    pub network: Hash32,
+}
+
+impl VaultPolicy {
+    pub const SIZE: usize = 5 * 32;
+
+    pub fn decode(args: &[u8]) -> Result<Self> {
+        let args: &[u8; Self::SIZE] = args.try_into().map_err(|_| Error::Encoding)?;
+        if args.chunks_exact(32).any(|part| part == [0; 32]) {
+            return Err(Error::Identity);
+        }
+        Ok(Self {
+            type_id: args[..32].try_into().unwrap(),
+            checkpoint: CheckpointId {
+                code_hash: args[32..64].try_into().unwrap(),
+                type_id: args[64..96].try_into().unwrap(),
+            },
+            ckb_genesis: args[96..128].try_into().unwrap(),
+            network: args[128..160].try_into().unwrap(),
+        })
+    }
+}
+
 /// CKB direct checkpoint Type Script args.
 pub struct CheckpointPolicy<'a> {
     pub type_id: Hash32,

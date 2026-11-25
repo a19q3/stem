@@ -1,7 +1,11 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, ensure};
-use ckb_types::{packed::Byte32, prelude::*};
+use ckb_types::{
+    core::ScriptHashType,
+    packed::{Byte32, Script},
+    prelude::*,
+};
 use stem_ledger::{
     Transaction,
     block::Receipt,
@@ -13,7 +17,7 @@ use stem_stake::{
     StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey,
     jolteon::{COMMITTEE_RECORD, CommitteeChange, evidence::epoch_end_key},
     l1::{
-        APPLIED_REGISTRY_SEQUENCE, RegistryApplication, guardian_generation,
+        APPLIED_REGISTRY_SEQUENCE, Policy, RegistryApplication, guardian_generation,
         registry_application_key,
     },
     rewards::{CURRENT_EPOCH, EpochRewards, epoch_key},
@@ -29,6 +33,7 @@ const AUTHORITY: &[u8] = b"stake/authority";
 /// Network parameters and the initial L1 Registry observation authenticated by guardians.
 #[derive(Clone)]
 pub struct StakeGenesis {
+    pub registry_type: Script,
     pub config: StakeConfig,
     pub signing_window: u64,
     pub limits: Limits,
@@ -36,6 +41,19 @@ pub struct StakeGenesis {
     pub statement: StakeSnapshot,
     pub guardians: Vec<Member>,
     pub signatures: Vec<Attestation>,
+}
+
+/// Open the CKB contract policy without changing the identity signed by guardians.
+pub fn stake_registry_policy(script: &Script) -> Result<Policy<'_>> {
+    ensure!(
+        ScriptHashType::try_from(script.hash_type())? == ScriptHashType::Data2
+            && script.code_hash() != Byte32::default(),
+        "Stake Registry requires a Data2 Type Script"
+    );
+    let args = script.as_reader().args().raw_data();
+    let policy = Policy::decode(script.calc_script_hash().unpack(), args)?;
+    ensure!(args[..32] != [0; 32], "Stake Registry Type ID is zero");
+    Ok(policy)
 }
 
 pub(super) struct Staking {

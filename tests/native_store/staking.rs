@@ -4,7 +4,7 @@ use anyhow::{Context, ensure};
 use ckb_types::packed::Byte32;
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::Value;
-use stem::native_store::StakeGenesis;
+use stem::native_store::{StakeGenesis, stake_registry_policy};
 use stem_ledger::protocol::{
     self, ARRIVING_GUARDIAN, Certificate, Operation, snapshot_body, snapshot_commitment,
     snapshot_digest,
@@ -38,10 +38,27 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         power: 10,
     }];
     let next_generation = guardian_generation(&arriving);
+    let registry_args = [
+        [51; 32].as_slice(),
+        fixture.spec.network.as_slice(),
+        &[50; 32],
+        &1u64.to_le_bytes(),
+        &5u64.to_le_bytes(),
+        &12u64.to_le_bytes(),
+        &[52; 32],
+        &[53; 32],
+        fixture.spec.chain_id.as_bytes(),
+    ]
+    .concat();
+    let registry_type = Script::new_builder()
+        .code_hash([54; 32])
+        .hash_type(ScriptHashType::Data2)
+        .args(Bytes::from(registry_args).pack())
+        .build();
     let domain = StakeDomain {
         stem_network_id: fixture.spec.network.unpack(),
         ckb_genesis: [50; 32],
-        registry_id: [51; 32],
+        registry_id: registry_type.calc_script_hash().unpack(),
     };
     let make_stake = |validator_pubkey, bonded_amount, activation_epoch, exit_epoch| StakeData {
         validator_pubkey,
@@ -87,6 +104,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         blocks_per_epoch: 5,
     };
     fixture.spec.stake = Some(StakeGenesis {
+        registry_type,
         config,
         signing_window: 4,
         limits: protocol::Limits {
@@ -99,6 +117,12 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         guardians: initial_guardians,
         signatures: vec![sign(&initial.signing_digest())],
     });
+    fixture.spec.stake.as_mut().unwrap().config.minimum_bond = 2;
+    assert!(matches!(
+        fixture.spec.validate_l1_policies(),
+        Err(error) if error.to_string().contains("Stake Registry policies differ")
+    ));
+    fixture.spec.stake.as_mut().unwrap().config.minimum_bond = config.minimum_bond;
     let path = tempfile::tempdir()?;
     let mut store = Store::open(path.path(), &fixture.spec, Retention::Recent(4))?;
     assert_eq!(store.genesis_validators(), &[(first, 10)]);
@@ -323,19 +347,13 @@ fn opens_native_genesis_from_ckb_guardian_observations() -> Result<()> {
         serde_json::from_slice(&fs::read(evidence.join("genesis-observations.json"))?)?;
     let observations = observations.as_array().context("validator observations")?;
     let observation = observations.first().context("validator observation")?;
+    let registry_type: Script =
+        serde_json::from_value::<ckb_jsonrpc_types::Script>(trust["registry_type"].clone())?.into();
+    let policy = stake_registry_policy(&registry_type)?;
     let domain = StakeDomain {
-        stem_network_id: hex_value(&trust["stem_network_id"])?
-            .try_into()
-            .ok()
-            .context("network ID")?,
-        ckb_genesis: hex_value(&trust["ckb_genesis"])?
-            .try_into()
-            .ok()
-            .context("CKB genesis")?,
-        registry_id: hex_value(&trust["registry_id"])?
-            .try_into()
-            .ok()
-            .context("stake Registry ID")?,
+        stem_network_id: policy.network_id,
+        ckb_genesis: policy.ckb_genesis,
+        registry_id: policy.registry_id,
     };
     let guardian_generation = hex_value(&observation["guardian_generation"])?
         .try_into()
@@ -397,14 +415,16 @@ fn opens_native_genesis_from_ckb_guardian_observations() -> Result<()> {
     let mut fixture = Fixture::new()?;
     fixture.spec.development_cells.clear();
     fixture.spec.network = domain.stem_network_id.pack();
+    fixture.spec.chain_id = policy.chain_id.to_owned();
     fixture.spec.stake = Some(StakeGenesis {
         config: StakeConfig {
-            minimum_bond: number(&trust["minimum_bond"])?,
+            minimum_bond: policy.minimum_bond,
             shannons_per_power: number(&trust["shannons_per_power"])?,
             max_validators: usize::try_from(number(&trust["max_validators"])?)?,
             max_total_power: number(&trust["max_total_power"])?,
-            blocks_per_epoch: number(&trust["blocks_per_epoch"])?,
+            blocks_per_epoch: policy.blocks_per_epoch,
         },
+        registry_type,
         signing_window: 5,
         limits: protocol::Limits {
             operations: 1,

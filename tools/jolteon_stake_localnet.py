@@ -70,6 +70,33 @@ def reward_epoch(client, verify, epoch):
     return json.loads(bytes.fromhex(response["value"])), checked
 
 
+def validate_checkpoint_policy(args, l1, fixture, scenario, spec, vault):
+    alternate = deploy(args, l1, fixture, spec["network_id"], vault["change_point"],
+        checkpoint_anchor=scenario.foreign_checkpoint, prefix="substitute-")
+    assert alternate["anchor"]["id"] != vault["anchor"]["id"]
+
+    def rejected(name, draft, reason):
+        path = args.output / f"reject-{name}-genesis.json"
+        write_json(path, draft)
+        failure = subprocess.run([args.binary, "genesis-hash", "--genesis", path], text=True, capture_output=True)
+        assert failure.returncode and reason in failure.stderr, failure
+        return failure.stderr
+
+    lane = {"vault_type": alternate["type"], "vault": point(alternate["vault"], 0)}
+    forked = dict(spec, bridge=dict(spec["bridge"], lanes=[lane]))
+    wrong_vault = rejected("different-vault-checkpoint", forked, "same CKB checkpoint")
+    trust = json.loads((args.output / "snapshot-trust.json").read_text())
+    data = binary(trust["registry_type"]["args"])
+    registry_type = dict(trust["registry_type"], args=hex_bytes(data[:152] + alternate["anchor"]["id"] + data[184:]))
+    write_json(args.output / "substitute-registry-trust.json", dict(trust, registry_type=registry_type))
+    wrong_registry = rejected("substituted-registry", dict(spec, stake=dict(spec["stake"], trust="substitute-registry-trust.json")),
+        "genesis observation identifies a different network or epoch")
+    wrong_chain = rejected("different-chain-id", dict(spec, chain_id="wrong-chain"), "Stake Registry policies differ")
+    return {"registry_checkpoint": hex_bytes(vault["anchor"]["id"]), "substitute_checkpoint": hex_bytes(alternate["anchor"]["id"]),
+            "substitute_vault": alternate["vault"], "substitute_vault_inclusion": l1.prove_committed(alternate["vault"]),
+            "vault_rejected": wrong_vault, "registry_substitution_rejected": wrong_registry, "chain_id_rejected": wrong_chain}
+
+
 def reward_quotes(args, scenario, client, verify, genesis, committee, key, metadata, delegations):
     epoch, checked = reward_epoch(client, verify, 0)
     assert int(epoch["budget"], 16) == 520 * CKB, epoch
@@ -543,7 +570,7 @@ def run_epochs(args, l1, scenario, fixture):
         "stake": {"trust": "snapshot-trust.json", "observations": "genesis-observations.json", "signing_window": 5,
                   "limits": {"operations": 1, "bytes": 256 * 1024, "signatures": 8}},
     }
-    vault = lane = None
+    vault = lane = checkpoint_policy = None
     if args.reward_accounting:
         args.xudt = None
         funding = dict(scenario.code["out_point"], index="0x2")
@@ -553,6 +580,7 @@ def run_epochs(args, l1, scenario, fixture):
             fixture.standard, args=hex_bytes(ckb_hash(f"reward-fixture-{index}".encode())[:20]))}
             for index, share in enumerate((6500, 1500, 1000, 1000))]
         network_spec["bridge"] = bridge
+        checkpoint_policy = validate_checkpoint_policy(args, l1, fixture, scenario, network_spec, vault)
     write_json(spec, network_spec)
     write_json(args.output / "genesis-committee.json", genesis_committee)
     write_json(args.output / "public-genesis-header.json",
@@ -839,7 +867,7 @@ def run_epochs(args, l1, scenario, fixture):
             "handoffs": handoffs, "post_handoff_header": verified, "missing_handoff_rejected": wrong_epoch.stderr,
             "altered_handoff_rejected": bad_handoff.stderr,
             "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report, "snapshot_restore": restored,
-            "delegation": delegation, "rewards": rewards,
+            "delegation": delegation, "rewards": rewards, "checkpoint_policy": checkpoint_policy,
         }
     finally:
         for child in processes.values():

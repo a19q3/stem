@@ -396,7 +396,7 @@ fn inspect_payout(
         before
             .type_()
             .to_opt()
-            .is_some_and(|script| script.calc_script_hash() == lane.vault_type_hash),
+            .is_some_and(|script| script == lane.vault_type),
         "payout did not spend the configured vault"
     );
     let (tx, height, block) = committed(rpc, &request.payout)?;
@@ -435,7 +435,7 @@ fn inspect_payout(
             output
                 .type_()
                 .to_opt()
-                .is_some_and(|script| script.calc_script_hash() == lane.vault_type_hash)
+                .is_some_and(|script| script == lane.vault_type)
         });
     let (index, (successor, after_data)) = successors
         .next()

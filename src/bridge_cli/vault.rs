@@ -128,7 +128,7 @@ fn transition(
         output
             .type_()
             .to_opt()
-            .is_some_and(|script| script.calc_script_hash() == lane.vault_type_hash)
+            .is_some_and(|script| script == lane.vault_type)
     };
     let point: OutPoint = at.vault.into();
     let (before, old, origin) = l1_cell(rpc, &point)?;

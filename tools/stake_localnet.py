@@ -482,11 +482,9 @@ class Scenario:
     def verify_genesis_snapshot(self, votes):
         trust = self.args.output / "snapshot-trust.json"
         write_json(trust, {
-            "stem_network_id": hex_bytes(self.network), "ckb_genesis": hex_bytes(self.genesis),
-            "registry_id": hex_bytes(self.registry_id), "target_epoch": 0, "previous": None,
-            "minimum_bond": 100 * CKB, "shannons_per_power": CKB,
+            "registry_type": self.registry_type, "target_epoch": 0, "previous": None,
+            "shannons_per_power": CKB,
             "max_validators": 4, "max_total_power": 800 if getattr(self.args, "delegation_power_cap", False) else 1000,
-            "blocks_per_epoch": 10,
             "guardians": [
                 {"ed25519": hex_bytes(key.public_key().public_bytes_raw()), "power": 1}
                 for key in self.authority

@@ -70,7 +70,7 @@ def wait_for(func, label, seconds=20):
     raise RuntimeError(f"timed out waiting for {label}")
 
 
-def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=None):
+def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=None, *, prefix=""):
     genesis = l1.call("get_block_by_number", "0x0")
     faucet, groups = genesis["transactions"][:2]
     index, funds = next((i, out) for i, out in enumerate(faucet["outputs"]) if out["lock"]["args"] == FAUCET_ARG)
@@ -106,7 +106,7 @@ def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=Non
     deployment = transaction(
         [funding_point], outputs, data, [secp],
     )
-    deployed = l1.send(fixture.sign("deploy", deployment, [wallet_group(0, [fixture.faucet])]))
+    deployed = l1.send(fixture.sign(f"{prefix}deploy", deployment, [wallet_group(0, [fixture.faucet])]))
     vault_code = dependency(point(deployed, 0))
     deposit_code = dependency(point(deployed, 1))
     deposit_hash = hex_bytes(ckb_hash(codes[1]))
@@ -130,7 +130,7 @@ def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=Non
     initial = vault_state(0, 0, deposit_hash, multisig_code)
     tx = transaction([point(deployed, 2)], [output(reserve, lock, vault_type),
                      output(funding - reserve - FEE, fixture.standard)], [initial, "0x"], [vault_code, secp])
-    vault = l1.send(fixture.sign("vault", tx, [wallet_group(0, [fixture.faucet])]))
+    vault = l1.send(fixture.sign(f"{prefix}vault", tx, [wallet_group(0, [fixture.faucet])]))
     return {
         "genesis": genesis["header"]["hash"], "vault": vault, "state": initial, "type": vault_type,
         "vault_hash": vault_hash, "lock": lock, "reserve": reserve, "funding": funding - reserve - FEE,
@@ -183,14 +183,14 @@ def bridge_configuration(args, l1, fixture, vault, token, network):
         "l1_genesis": vault["genesis"], "confirmations": 2, "anchor_height": pinned,
         "anchor_hash": block, "guardian_generation": hex_bytes(ckb_hash(b"Stem CKB bridge fixtures" + binary(network))),
         "guardians": members, "wrapped_code_hash": wrapped, "burn_code_hash": burn,
-        "lanes": [{"vault_type_hash": vault["vault_hash"], "vault": point(vault["vault"], 0)}],
+        "lanes": [{"vault_type": vault["type"], "vault": point(vault["vault"], 0)}],
         "recipient_locks": [{"example": fixture.friend_lock}],
         "reserved_recipient_locks": [vault["lock"]],
         "mint_limits": maximum, "settlement_limits": maximum, "deposits_per_block": 32,
     }
     if token:
         bridge["lanes"].append({
-            "vault_type_hash": token["vault_hash"], "vault": point(token["vault"], 0), "l1_type": token["l1_type"],
+            "vault_type": token["type"], "vault": point(token["vault"], 0), "l1_type": token["l1_type"],
         })
         bridge["reserved_recipient_locks"].append(token["escrow_lock"])
     return bridge, lane

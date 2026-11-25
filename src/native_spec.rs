@@ -96,7 +96,7 @@ struct FundDestination {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Lane {
-    vault_type_hash: H256,
+    vault_type: JsonScript,
     vault: JsonOutPoint,
     l1_type: Option<JsonScript>,
 }
@@ -161,7 +161,7 @@ pub fn load(path: &Path) -> Result<Spec> {
             ))
         })
         .collect::<Result<_>>()?;
-    Ok(Spec {
+    let spec = Spec {
         chain_id: config.chain_id,
         network: config.network_id.pack(),
         genesis_time_ms: config.genesis_time_ms,
@@ -177,7 +177,9 @@ pub fn load(path: &Path) -> Result<Spec> {
         bridge,
         lineage_type: config.lineage_type.map(|hash| hash.pack()),
         keeper: config.keeper,
-    })
+    };
+    spec.validate_l1_policies()?;
+    Ok(spec)
 }
 
 fn load_bridge(bridge: Bridge) -> Result<BridgeGenesis> {
@@ -195,7 +197,7 @@ fn load_bridge(bridge: Bridge) -> Result<BridgeGenesis> {
         .lanes
         .into_iter()
         .map(|lane| LaneGenesis {
-            vault_type_hash: lane.vault_type_hash.pack(),
+            vault_type: lane.vault_type.into(),
             vault: lane.vault.into(),
             l1_type: lane.l1_type.map(Into::into),
         })

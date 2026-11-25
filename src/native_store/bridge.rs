@@ -52,9 +52,16 @@ pub struct BridgeGenesis {
 }
 
 pub struct LaneGenesis {
-    pub vault_type_hash: Byte32,
+    pub vault_type: Script,
     pub vault: OutPoint,
     pub l1_type: Option<Script>,
+}
+
+impl LaneGenesis {
+    pub fn id(&self, genesis: &Byte32) -> Byte32 {
+        let asset = self.l1_type.as_ref().map(Script::calc_script_hash);
+        lane_id(genesis, &self.vault_type.calc_script_hash(), asset.as_ref())
+    }
 }
 
 pub struct RecipientLock {
@@ -197,11 +204,11 @@ impl Bridge {
 
         config.extend_from_slice(&u32::try_from(spec.lanes.len())?.to_le_bytes());
         for lane in &spec.lanes {
+            let vault_type_hash = lane.vault_type.calc_script_hash();
             ensure!(
-                lane.vault_type_hash != Byte32::default()
-                    && !lane.vault.is_null()
+                !lane.vault.is_null()
                     && vaults.insert(lane.vault.clone())
-                    && identities.insert(lane.vault_type_hash.clone()),
+                    && identities.insert(vault_type_hash.clone()),
                 "missing or duplicate vault"
             );
             let l1_hash = lane.l1_type.as_ref().map(Script::calc_script_hash);
@@ -209,7 +216,7 @@ impl Bridge {
                 ScriptHashType::try_from(l1.hash_type())?;
             }
             ensure!(assets.insert(l1_hash.clone()), "duplicate L1 asset");
-            let name = lane_id(&spec.l1_genesis, &lane.vault_type_hash, l1_hash.as_ref());
+            let name = lane_id(&spec.l1_genesis, &vault_type_hash, l1_hash.as_ref());
             config.extend_from_slice(name.as_slice());
             let wrapped = l1_hash.map(|id| {
                 Script::new_builder()

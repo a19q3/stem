@@ -15,7 +15,7 @@ use ckb_std::{
 use stem_bridge_wire::{self as wire, Asset, Gate};
 use stem_contracts::load_checkpoint;
 use stem_stake::{
-    finality::CheckpointId,
+    finality::VaultPolicy,
     patricia::{Commitment, MAX_PATH_BYTES, Namespace, decode_path},
 };
 
@@ -23,36 +23,7 @@ entry!(main);
 default_alloc!();
 
 const EMPTY: [u8; 32] = [0; 32];
-const TYPE_ARGS: usize = 5 * 32;
 const LOCK_ARGS: usize = 32 + 20;
-
-struct Policy {
-    checkpoint: CheckpointId,
-    ckb_genesis: [u8; 32],
-    network: [u8; 32],
-}
-
-impl Policy {
-    fn decode(args: &[u8]) -> Result<Self, Error> {
-        if args.len() != TYPE_ARGS || args[32..].chunks_exact(32).any(|part| part == EMPTY) {
-            return Err(Error::Identity);
-        }
-        Ok(Self {
-            checkpoint: CheckpointId {
-                code_hash: args[32..64].try_into().unwrap(),
-                type_id: args[64..96].try_into().unwrap(),
-            },
-            ckb_genesis: args[96..128].try_into().unwrap(),
-            network: args[128..160].try_into().unwrap(),
-        })
-    }
-
-    fn system_root(&self) -> Result<[u8; 32], Error> {
-        let tip = load_checkpoint(&self.checkpoint, &self.ckb_genesis, &self.network, None)?
-            .ok_or(Error::Proof)?;
-        Ok(tip.state.system_root)
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -164,7 +135,7 @@ fn verify() -> Result<(), Error> {
         return Ok(());
     }
 
-    let policy = Policy::decode(&args)?;
+    let policy = VaultPolicy::decode(&args).map_err(|_| Error::Identity)?;
     let vault = load_script_hash()?;
     type_id::check_type_id(0, 32)?;
 
@@ -429,7 +400,7 @@ fn require_custody_input(code: [u8; 32], authority: &[u8; 20]) -> Result<(), Err
 }
 
 fn verify_release(
-    policy: &Policy,
+    policy: &VaultPolicy,
     vault: &[u8; 32],
     nonce: u64,
     next: &State,
@@ -467,7 +438,15 @@ fn verify_release(
         return Err(Error::Proof);
     }
 
-    let root = policy.system_root()?;
+    let root = load_checkpoint(
+        &policy.checkpoint,
+        &policy.ckb_genesis,
+        &policy.network,
+        None,
+    )?
+    .ok_or(Error::Proof)?
+    .state
+    .system_root;
     let tree = Commitment::new(policy.network, Namespace::System);
     let key = tree.record_key(&wire::pending_key(&lane, nonce));
     let value = tree.value_hash(record);

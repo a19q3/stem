@@ -8,7 +8,7 @@ use ckb_jsonrpc_types::{
 use ckb_types::{
     H256,
     bytes::Bytes,
-    core::{Capacity, ScriptHashType},
+    core::Capacity,
     packed::{CellInput, CellOutput, Script, Transaction},
     prelude::*,
 };
@@ -16,7 +16,7 @@ use clap::{Args, Subcommand};
 use ed25519_dalek::Signer;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stem::native_store::Store;
+use stem::native_store::{Store, stake_registry_policy};
 use stem_ledger::{
     block::Header,
     patricia::Proof,
@@ -27,7 +27,7 @@ use stem_stake::{
     RegistryAnchor, StakeConfig, StakeDomain, StakeSnapshot,
     delegation::{DelegationTree, PrincipalChange},
     jolteon::CommitteeChange,
-    l1::{DelegationId, GuardianProof, Policy, StakeCell, guardian_generation},
+    l1::{DelegationId, GuardianProof, StakeCell, guardian_generation},
     rewards::EpochRewards,
 };
 
@@ -231,17 +231,34 @@ pub struct Verify {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Trust {
-    stem_network_id: H256,
-    ckb_genesis: H256,
-    registry_id: H256,
+    registry_type: JsonScript,
     target_epoch: u64,
     previous: Option<Previous>,
     guardians: Vec<Guardian>,
-    minimum_bond: u64,
     shannons_per_power: u64,
     max_validators: usize,
     max_total_power: u64,
-    blocks_per_epoch: u64,
+}
+
+impl Trust {
+    fn parameters(&self) -> Result<(StakeDomain, StakeConfig)> {
+        let script = self.registry_type.clone().into();
+        let policy = stake_registry_policy(&script)?;
+        Ok((
+            StakeDomain {
+                stem_network_id: policy.network_id,
+                ckb_genesis: policy.ckb_genesis,
+                registry_id: policy.registry_id,
+            },
+            StakeConfig {
+                minimum_bond: policy.minimum_bond,
+                shannons_per_power: self.shannons_per_power,
+                max_validators: self.max_validators,
+                max_total_power: self.max_total_power,
+                blocks_per_epoch: policy.blocks_per_epoch,
+            },
+        ))
+    }
 }
 
 #[derive(Deserialize)]
@@ -477,12 +494,7 @@ impl StakeCommand {
             } => {
                 let registry: Script =
                     read_json_limited::<JsonScript>(&registry_type, 4096)?.into();
-                let registry_id = registry.calc_script_hash().unpack();
-                ensure!(
-                    registry.hash_type() == ScriptHashType::Data2.into(),
-                    "expected a Data2 Stake Registry"
-                );
-                Policy::decode(registry_id, &registry.args().raw_data())?;
+                let registry_id = stake_registry_policy(&registry)?.registry_id;
                 let input: CellInput =
                     read_json_limited::<JsonCellInput>(&first_input, 4096)?.into();
                 let mut nonce = [0; 32];
@@ -563,6 +575,7 @@ impl StakeCommand {
 impl Verify {
     fn run(self) -> Result<()> {
         let trust: Trust = read_json_limited(&self.trust, 128 * 1024)?;
+        let (domain, config) = trust.parameters()?;
         let votes: Vec<Observation> = read_json_limited(&self.observations, 16 * 1024 * 1024)?;
         ensure!(
             (1..=MAX_RECORDS).contains(&votes.len()),
@@ -595,23 +608,12 @@ impl Verify {
             });
         }
         signatures.sort_unstable_by_key(|signature| signature.guardian);
-        let config = StakeConfig {
-            minimum_bond: trust.minimum_bond,
-            shannons_per_power: trust.shannons_per_power,
-            max_validators: trust.max_validators,
-            max_total_power: trust.max_total_power,
-            blocks_per_epoch: trust.blocks_per_epoch,
-        };
         let accepted = trust.previous.map(|prior| AcceptedSnapshot {
             epoch: prior.epoch,
             anchor: (&prior.registry).into(),
         });
         let (accepted, validators) = snapshot.verify(
-            &domain(
-                &trust.stem_network_id,
-                &trust.ckb_genesis,
-                &trust.registry_id,
-            ),
+            &domain,
             accepted,
             &registry,
             &authority,
@@ -639,13 +641,8 @@ impl Observe {
             "invalid observation size or confirmation depth"
         );
         let registry_type: Script = request.registry_type.clone().into();
-        ensure!(
-            ScriptHashType::try_from(registry_type.hash_type())? == ScriptHashType::Data2,
-            "registry requires a Data2 Type Script"
-        );
-        let registry_id = registry_type.calc_script_hash().unpack();
-        let args = registry_type.args().raw_data();
-        let policy = Policy::decode(registry_id, &args)?;
+        let policy = stake_registry_policy(&registry_type)?;
+        let registry_id = policy.registry_id;
         ensure!(
             policy.network_id.as_slice() == request.stem_network_id.as_bytes()
                 && policy.ckb_genesis.as_slice() == request.ckb_genesis.as_bytes(),
@@ -940,6 +937,7 @@ pub(crate) fn native_genesis(
     limits: stem_ledger::protocol::Limits,
 ) -> Result<stem::native_store::StakeGenesis> {
     let trust: Trust = read_json_limited(trust_path, 256 * 1024)?;
+    let (domain, config) = trust.parameters()?;
     let votes: Vec<Observation> = read_json_limited(observations_path, 16 * 1024 * 1024)?;
     ensure!(
         (1..=MAX_RECORDS).contains(&votes.len())
@@ -950,14 +948,7 @@ pub(crate) fn native_genesis(
     let first = &votes[0];
     let statement = first.snapshot();
     ensure!(
-        statement.domain
-            == domain(
-                &trust.stem_network_id,
-                &trust.ckb_genesis,
-                &trust.registry_id
-            )
-            && statement.target_epoch == 0
-            && statement.parent.is_none(),
+        statement.domain == domain && statement.target_epoch == 0 && statement.parent.is_none(),
         "genesis observation identifies a different network or epoch"
     );
     let guardians = trust
@@ -990,13 +981,8 @@ pub(crate) fn native_genesis(
         .collect::<Result<Vec<_>>>()?;
     signatures.sort_unstable_by_key(|signature| signature.guardian);
     Ok(stem::native_store::StakeGenesis {
-        config: StakeConfig {
-            minimum_bond: trust.minimum_bond,
-            shannons_per_power: trust.shannons_per_power,
-            max_validators: trust.max_validators,
-            max_total_power: trust.max_total_power,
-            blocks_per_epoch: trust.blocks_per_epoch,
-        },
+        registry_type: trust.registry_type.into(),
+        config,
         signing_window,
         limits,
         registry: Registry::decode(first.registry_data.as_bytes())?,
