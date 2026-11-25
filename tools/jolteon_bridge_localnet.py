@@ -442,10 +442,14 @@ def bridge_round(args, l1, fixture, children):
             bridge["checkpoint_fee_fund_code"] = fee_fund["lock"]["code_hash"]
     keys = evidence_keys(args)
     members = [{"ed25519": hex_bytes(key), "power": 1} for key, _ in keys]
+    generic_intercell = args.intercell_mailbox and not any(
+        (args.export_udt, args.stem_spore, args.stem_native_object))
+    # The generic receive fixture carries three separately certified references.
+    transaction_cycles = 50_000_000 if generic_intercell else 20_000_000
     spec = {"chain_id": "stem-jolteon-ckb-local", "network_id": network, "genesis_time_ms": 1_735_689_600_000,
             "capacity": {"bond_per_byte": 1_000_000, "state_overhead": 80},
             "limits": {"transaction_count": 64, "transaction_bytes": 2 * 1024 * 1024,
-                       "transaction_cycles": 20_000_000, "block_cycles": 400_000_000, "cell_reads": 1024,
+                       "transaction_cycles": transaction_cycles, "block_cycles": 400_000_000, "cell_reads": 1024,
                        "cell_read_bytes": 64 * 1024 * 1024, "cell_write_bytes": 4 * 1024 * 1024, "header_dep_age": 64},
             "development_validators": members, "bridge": bridge}
     spec_path = args.output / "stem.json"

@@ -14,6 +14,7 @@ from wasm_sdk_fixture import finish_fixture, signing_fixture
 EMPTY = bytes(32)
 MESSAGE_SEND = 0xff00
 MESSAGE_RECEIVE = 0xff01
+MAX_PAYLOAD = 4096
 
 
 def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay, commands, children, *, publisher=None):
@@ -26,7 +27,7 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     code = args.intercell_mailbox.read_bytes()
     mailbox_capacity = 5000 * CKB
     code_capacity = (len(code) + 200) * CKB
-    substitute_capacity = 512 * CKB
+    substitute_capacity = (MAX_PAYLOAD + 512) * CKB
     funded = l1.send(fixture.sign("intercell-fund", transaction(
         [vault["change_point"]],
         [output(code_capacity, fixture.standard), output(mailbox_capacity, fixture.owner_lock),
@@ -99,11 +100,13 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
         return json.loads(run(args.binary, "intercell", "encode", "--request", request))
 
     outgoing = [prepare(label, network, genesis, native_owner, mailbox_id, nonce, payload)
-                for label, nonce, payload in (("event", 41, b"reserve-observation"), ("reply", 8, b"status-request"))]
+                for label, nonce, payload in (("event", 41, b"reserve-observation"),
+                                              ("reply", 8, b"s" * MAX_PAYLOAD))]
     bad_network = prepare("foreign", network, hex_bytes(bytes([77]) * 32), native_owner, mailbox_id, 41, b"same-nonce")
     bad_sender = prepare("wrong-sender", network, genesis, hex_bytes(bytes([32]) * 32), mailbox_id, 41, b"unauthorized")
     alternative_body = prepare("replacement-body", network, genesis, native_owner, mailbox_id, 41, b"different-payload")
     assert alternative_body["id"] == outgoing[0]["id"]
+    oversized_outgoing = {"record": hex_bytes(binary(outgoing[1]["record"]) + b"!")}
 
     def sign_stem(label, input_point, outputs, message=None, kind=MESSAGE_SEND, approvals=None):
         request, draft, context, lock = (args.output / f"intercell-{label}-{part}.json"
@@ -142,6 +145,9 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     change = [cell(part - FEE, native_lock)]
     rejected["stem_cross_network"] = stem_reject(sign_stem("foreign", inputs[0], change, bad_network), "network mismatch")
     rejected["stem_sender_lock"] = stem_reject(sign_stem("wrong-sender", inputs[0], change, bad_sender), "sender or network mismatch")
+    rejected["stem_oversized_payload"] = stem_reject(
+        sign_stem("outbound-oversized", inputs[0], change, oversized_outgoing),
+        "invalid Intercell message")
     wasm_fixture = None
     stems = []
     for i, message in enumerate(outgoing):
@@ -340,9 +346,10 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     rejected["ckb_repeated_consumption"] = ckb_reject("replay", ckb_tx("repeat-delivery", ckb_head,
         ckb_capacity - FEE, mailbox_state(0, root), evidence=replay_witness, checkpoint=checkpoint), 85)
 
-    def publish_ckb(label, target):
+    def publish_ckb(label, target, payload=None):
         nonlocal ckb_head, ckb_capacity, receive_count
-        msg = prepare(label, genesis, network, mailbox_id, target, receive_count, label.encode())
+        msg = prepare(label, genesis, network, mailbox_id, target, receive_count,
+                      label.encode() if payload is None else payload)
         signed = ckb_tx(label, ckb_head, ckb_capacity - FEE,
                         mailbox_state(receive_count + 1, root, binary(msg["record"])))
         cycles = int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
@@ -370,10 +377,10 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
         write_json(path, votes)
         return json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", path))
 
-    def reference(label, out_point, anchor, reason=None):
+    def reference(label, out_point, anchor, reason=None, *, live=False):
         request = args.output / f"intercell-{label}-reference.json"
         write_json(request, {"out_point": out_point, "anchor_height": anchor["height"],
-                            "anchor_hash": anchor["hash"], "live_at_anchor": False})
+                            "anchor_hash": anchor["hash"], "live_at_anchor": live})
         votes = signers("attest-reference", "observations", ["--request", request], reason)
         if reason:
             return votes
@@ -381,7 +388,13 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
         write_json(path, votes)
         return path
 
-    incoming, sent = publish_ckb("ckb-to-stem", native_owner)
+    incoming_body = b"r" * MAX_PAYLOAD
+    at_limit = prepare("oversized-source", genesis, network, mailbox_id, native_owner, receive_count,
+                       incoming_body)
+    rejected["ckb_oversized_payload"] = ckb_reject("oversized source", ckb_tx(
+        "ckb-oversized", ckb_head, ckb_capacity - FEE,
+        mailbox_state(receive_count + 1, root, binary(at_limit["record"]) + b"!")), 82)
+    incoming, sent = publish_ckb("ckb-to-stem", native_owner, incoming_body)
     # A subsequent send spends that mailbox output before the guardians read it.
     wrong_receiver = hex_bytes(bytes([71]) * 32)
     wrong, misdirected = publish_ckb("ckb-to-other-receiver", wrong_receiver)
@@ -403,23 +416,36 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     assert anchor["height"] == anchor_height
     approvals = reference("inbound", sent["point"], anchor)
     wrong_votes = reference("wrong-receiver", misdirected["point"], anchor)
-    counterfeit_votes = reference("counterfeit", point(counterfeit, 0), anchor)
+    counterfeit_votes = reference("counterfeit", point(counterfeit, 0), anchor, live=True)
     alternate_votes = reference("alternate-checkpoint", point(alternate_send, 0), anchor)
+    composed_votes = args.output / "intercell-composed-approvals.json"
+    write_json(composed_votes, [vote for path in (wrong_votes, counterfeit_votes, approvals)
+                               for vote in json.loads(path.read_text())])
+    unrelated_votes = args.output / "intercell-unrelated-approvals.json"
+    write_json(unrelated_votes, [vote for path in (wrong_votes, counterfeit_votes)
+                                for vote in json.loads(path.read_text())])
+    source_mismatch = "uniquely matching certified CKB mailbox output"
     rejected["stem_alternate_checkpoint"] = stem_reject(sign_stem("alternate-checkpoint", inputs[2], change,
-        alternate_message, MESSAGE_RECEIVE, alternate_votes), "differs from the certified mailbox")
+        alternate_message, MESSAGE_RECEIVE, alternate_votes), source_mismatch)
     rejected["stem_non_mailbox_output"] = stem_reject(sign_stem("counterfeit", inputs[2], change, incoming,
-        MESSAGE_RECEIVE, counterfeit_votes), "missing Intercell mailbox type")
+        MESSAGE_RECEIVE, counterfeit_votes), source_mismatch)
+    rejected["stem_unrelated_certificates"] = stem_reject(sign_stem("unrelated", inputs[2], change, incoming,
+        MESSAGE_RECEIVE, unrelated_votes), source_mismatch)
     rejected["stem_receiver_lock"] = stem_reject(sign_stem("wrong-receiver", inputs[2], change, wrong,
         MESSAGE_RECEIVE, wrong_votes), "receiver or network mismatch")
     changed = prepare("inbound-forged", genesis, network, mailbox_id, native_owner, 0, b"changed")
     rejected["stem_forged_source_payload"] = stem_reject(sign_stem("inbound-forged", inputs[2], change, changed,
-        MESSAGE_RECEIVE, approvals), "differs from the certified mailbox")
+        MESSAGE_RECEIVE, approvals), source_mismatch)
+    foreign_receive = prepare("inbound-foreign", genesis, hex_bytes(bytes([77]) * 32), mailbox_id,
+                              native_owner, 0, incoming_body)
+    rejected["stem_receive_cross_network"] = stem_reject(sign_stem("inbound-foreign", inputs[2], change,
+        foreign_receive, MESSAGE_RECEIVE, composed_votes), "receiver or network mismatch")
     forged_tx = bytearray(binary(sign_stem("inbound", inputs[2], change, incoming, MESSAGE_RECEIVE, approvals)))
     signature = binary(json.loads(approvals.read_text())[0]["signature"])
     forged_tx[forged_tx.index(signature)] ^= 1
     rejected["stem_forged_guardian"] = stem_reject(hex_bytes(forged_tx), "Signature")
     delivered_tx = sign_stem("inbound", inputs[2], [cell(part - FEE, native_lock, binary(incoming["record"]))],
-                             incoming, MESSAGE_RECEIVE, approvals)
+                             incoming, MESSAGE_RECEIVE, composed_votes)
     delivered = stem_commit(delivered_tx)
     location = client.locations[delivered["hash"]]
     receipt_query = client.query("/stem/execution", data=hex_bytes(le(location["index"], 4)),
@@ -471,6 +497,7 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
             "outgoing": outgoing, "stem_sends": stems, "outbox_proofs": proofs, "outbox_height": proof_height,
             "ckb_deliveries": ckb_deliveries, "historical_anchor": historical_anchor, "l1_sends": [sent, misdirected], "incoming": incoming,
             "stem_delivery": delivered, "stem_delivery_bytes": len(binary(delivered_tx)),
+            "stem_delivery_reference_count": 3, "largest_payload_bytes": MAX_PAYLOAD,
             "stem_execution": receipt, "application_output": received_cell,
             "foreign_mailbox_creation": l1.prove_committed(foreign), "counterfeit": counterfeit_proof,
             "alternate_checkpoint_send": alternate_proof,

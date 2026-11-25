@@ -62,34 +62,38 @@ pub(in crate::native_store) fn apply(
                 && message.receiver == lock.as_slice(),
             "Intercell receiver or network mismatch"
         );
-        let [raw] = tx.l1_references() else {
-            anyhow::bail!("Intercell receive requires exactly one certified CKB output");
-        };
-        let reference = L1Reference::decode(raw)?;
-        let script = reference
-            .output
-            .type_()
-            .to_opt()
-            .context("missing Intercell mailbox type")?;
-        ensure!(
-            reference.kind == L1ReferenceKind::Historical
-                && script.code_hash() == *code
-                && ScriptHashType::try_from(script.hash_type())? == ScriptHashType::Data2
-                && script.calc_script_hash().as_slice() == message.sender,
-            "Intercell source is not the claimed CKB mailbox"
-        );
-        let policy = MailboxPolicy::decode(&script.args().raw_data())
-            .context("invalid Intercell mailbox policy")?;
-        let state =
-            MailboxState::decode(&reference.data).context("invalid Intercell mailbox state")?;
-        ensure!(
-            policy.ckb_genesis == source
+        // The application can read other certified outputs in the same transaction.
+        // Only the exact historical send from this mailbox authorizes delivery.
+        let mut matches = 0;
+        for raw in tx.l1_references() {
+            let reference = L1Reference::decode(raw)?;
+            let Some(script) = reference.output.type_().to_opt() else {
+                continue;
+            };
+            if reference.kind != L1ReferenceKind::Historical
+                || script.code_hash() != *code
+                || ScriptHashType::try_from(script.hash_type())? != ScriptHashType::Data2
+                || script.calc_script_hash().as_slice() != message.sender
+            {
+                continue;
+            }
+            let policy = MailboxPolicy::decode(&script.args().raw_data())
+                .context("invalid Intercell mailbox policy")?;
+            let state =
+                MailboxState::decode(&reference.data).context("invalid Intercell mailbox state")?;
+            if policy.ckb_genesis == source
                 && policy.stem_network == network.as_slice()
                 && policy.checkpoint_code == checkpoint.code_hash
                 && policy.checkpoint_id == checkpoint.type_id
                 && policy.owner == reference.output.lock().calc_script_hash().as_slice()
-                && state.outgoing == action.data.as_ref(),
-            "Intercell message differs from the certified mailbox output"
+                && state.outgoing == action.data.as_ref()
+            {
+                matches += 1;
+            }
+        }
+        ensure!(
+            matches == 1,
+            "Intercell receive requires one uniquely matching certified CKB mailbox output"
         );
     } else {
         ensure!(
