@@ -5,13 +5,13 @@ use core::arch::asm;
 
 use ckb_hash::blake2b_256;
 use ckb_std::{default_alloc, entry, high_level::load_script};
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
 entry!(main);
 default_alloc!();
 
 const LOAD_GROUP_SEAL: u64 = 2118;
 const LOAD_GROUP_SIGNING_DIGEST: u64 = 2119;
+const SECP256K1_RECOVER: u64 = 2121;
 
 fn load_exact<const N: usize>(number: u64) -> Option<[u8; N]> {
     let mut data = [0; N];
@@ -45,19 +45,21 @@ fn main() -> i8 {
     let Some(digest) = load_exact::<32>(LOAD_GROUP_SIGNING_DIGEST) else {
         return 13;
     };
-    let Ok(signature) = Signature::from_slice(&seal[..64]) else {
-        return 14;
-    };
-    let Some(recovery_id) = RecoveryId::from_byte(seal[64]) else {
-        return 15;
-    };
-    if signature.normalize_s().is_some() {
-        return 16;
+    let mut key = [0u8; 33];
+    let mut result = seal.as_ptr() as u64;
+    unsafe {
+        asm!(
+            "ecall",
+            inout("a0") result,
+            in("a1") digest.as_ptr(),
+            in("a2") key.as_mut_ptr(),
+            in("a7") SECP256K1_RECOVER,
+        );
     }
-    let Ok(key) = VerifyingKey::recover_from_prehash(&digest, &signature, recovery_id) else {
+    if result != 0 {
         return 17;
-    };
-    if blake2b_256(key.to_encoded_point(true).as_bytes())[..20] != args[..] {
+    }
+    if blake2b_256(&key)[..20] != args[..] {
         return 18;
     }
     0

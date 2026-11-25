@@ -6,8 +6,8 @@ use ckb_hash::blake2b_256;
 use ckb_jsonrpc_types::{CellDep, JsonBytes, OutPoint, Script};
 use ckb_types::{H256, bytes::Bytes, packed::Script as PackedScript, prelude::*};
 use clap::Subcommand;
-use stem_ledger::{Cell, CellInput, GroupWitness, Since, Transaction};
 use serde::Deserialize;
+use stem_ledger::{Cell, CellInput, GroupWitness, Since, Transaction};
 
 use crate::{
     bridge_cli::{print_json, read_json_limited},

@@ -11,6 +11,7 @@ typedef unsigned char byte;
 #define MISSING 2
 #define LOAD_INPUT_BY_FIELD 2083
 #define LOAD_CELL_FIELD 2081
+#define LOAD_HEADER_FIELD 2082
 #define LOAD_DATA 2092
 #define LOAD_TYPES 2110
 #define LOAD_TYPE 2111
@@ -19,6 +20,7 @@ typedef unsigned char byte;
 #define LOAD_GROUP 2114
 #define LOAD_GROUP_INDEX 2115
 #define LOAD_GROUP_PROOF 2117
+#define LOAD_BLOCK_CONTEXT 2122
 #define LOAD_SCRIPT 2052
 #define LOAD_SCRIPT_HASH 2062
 
@@ -107,6 +109,19 @@ static int verify(void) {
     return inputs != 1 || outputs != 1 ||
            load(LOAD_GROUP_PROOF, proof, &len, 0, 0, 0) ||
            len != sizeof(proof) || le32(proof) != 42;
+#elif RULE == 11
+    byte context[48], height[8], time[8];
+    len = sizeof(context);
+    if (load(LOAD_BLOCK_CONTEXT, context, &len, 0, 0, 0) || len != sizeof(context))
+        return 32;
+    len = sizeof(height);
+    if (load(LOAD_HEADER_FIELD, height, &len, 0, 5, 0) || len != sizeof(height))
+        return 33;
+    len = sizeof(time);
+    if (load(LOAD_HEADER_FIELD, time, &len, 0, 5, 1) || len != sizeof(time))
+        return 34;
+    return le64(context) != le64(height) + 1 ||
+           le64(context + 8) != le64(time) || le64(time) < 42;
 #elif RULE == 4
     /* Identity args are a specific 36-byte creating OutPoint. The input is
        consumed once, so it cannot create a second instance of this identity. */

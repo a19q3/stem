@@ -6,7 +6,11 @@ use ckb_types::{
     prelude::*,
 };
 
-use crate::{CapacityPolicy, block::HeaderContext, wire};
+use crate::{
+    CapacityPolicy,
+    block::{Header, HeaderContext},
+    wire,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Since {
@@ -115,7 +119,7 @@ impl Origin {
 #[derive(Clone, Copy)]
 pub struct BlockContext<'a> {
     pub candidate: &'a HeaderContext,
-    pub parent_timestamp_ms: u64,
+    pub parent: &'a Header,
     pub capacity: CapacityPolicy,
 }
 
@@ -131,9 +135,9 @@ impl BlockContext<'_> {
                         .checked_add(delay)
                         .context("Since height overflow")?
             }
-            Some(Since::AbsoluteTime(time)) => self.parent_timestamp_ms >= time,
+            Some(Since::AbsoluteTime(time)) => self.parent.context.timestamp_ms >= time,
             Some(Since::RelativeTime(delay)) => {
-                self.parent_timestamp_ms
+                self.parent.context.timestamp_ms
                     >= origin
                         .timestamp_ms
                         .checked_add(delay)

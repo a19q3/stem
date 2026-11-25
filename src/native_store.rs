@@ -9,6 +9,7 @@ use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
 };
+use rayon::prelude::*;
 use stem_ledger::{
     BlockContext, CapacityPolicy, Cell, LiveCell, Origin, ResolvedTransaction, Transaction,
     block::{Header, HeaderContext, Receipt, StateCommitment},
@@ -19,7 +20,6 @@ use stem_ledger::{
     record,
 };
 use stem_vm::VerificationCache;
-use rayon::prelude::*;
 
 mod bridge;
 mod cell_query;
@@ -853,7 +853,7 @@ impl Store {
         let header = |hash: &Byte32| self.resolve_header(hash, context.height);
         let block = BlockContext {
             candidate: context,
-            parent_timestamp_ms: self.tip.context.timestamp_ms,
+            parent: &self.tip,
             capacity: self.capacity,
         };
         let (resolved, changes) = if matches!(tx.operation(), Some(Operation::BridgeMint(_))) {

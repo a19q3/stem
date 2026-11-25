@@ -3,14 +3,14 @@ use std::{path::PathBuf, process::Command};
 use anyhow::{Context, Result, ensure};
 use ckb_types::{packed::Byte32, prelude::*};
 use clap::{Args, Subcommand};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use stem::{native_store::HistoryIndex, native_store::Store};
 use stem_ledger::patricia::Proof;
 use stem_stake::{
     BlockId,
     checkpoint::{Checkpoint, Domain, Update, ZERO_OUT_POINT, stake_snapshot_commitment},
 };
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use crate::{
     bridge_cli::{print_json, read_json_limited},

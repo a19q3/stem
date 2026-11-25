@@ -1,5 +1,9 @@
 //! CKB-VM host for Stem's native Molecule ledger.
 
+mod crypto;
+
+pub use crypto::{SECP256K1_RECOVER, SECP256K1_RECOVERY_CYCLES};
+
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, ensure};
@@ -10,9 +14,9 @@ use ckb_vm::{
     registers::{A0, A3, A4, A5, A7},
     snapshot2::DataSource,
 };
-use stem_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, block::Header};
 use lru::LruCache;
 use rayon::prelude::*;
+use stem_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, block::Header};
 
 use ckb_script::runtime::{
     Close, CurrentCycles, DataPieceId, ExecV2, INDEX_OUT_OF_BOUND, ITEM_MISSING, InheritedFd,
@@ -29,6 +33,7 @@ const INPUT: u64 = 1;
 const OUTPUT: u64 = 2;
 const CELL_DEP: u64 = 3;
 const HEADER_DEP: u64 = 4;
+const COMMITTED_PARENT: u64 = 5;
 const GROUP_INPUT: u64 = 0x0100_0000_0000_0001;
 const GROUP_OUTPUT: u64 = 0x0100_0000_0000_0002;
 
@@ -43,6 +48,7 @@ pub const LOAD_GROUP_PROOF: u64 = 2117;
 pub const LOAD_GROUP_SEAL: u64 = 2118;
 pub const LOAD_GROUP_SIGNING_DIGEST: u64 = 2119;
 pub const LOAD_GROUP_MINTED_UNITS: u64 = 2120;
+pub const LOAD_BLOCK_CONTEXT: u64 = 2122;
 
 #[derive(Clone)]
 struct GroupContext {
@@ -99,6 +105,7 @@ impl GroupContext {
                 );
             }
             HEADER_DEP => return self.tx.header(index).ok_or(INDEX_OUT_OF_BOUND),
+            COMMITTED_PARENT if index == 0 => return Ok(self.tx.parent_header()),
             _ => return Err(INDEX_OUT_OF_BOUND),
         };
         self.tx
@@ -313,6 +320,7 @@ fn syscalls<M: SupportMachine>(
 ) -> Vec<Box<dyn Syscalls<M>>> {
     vec![
         Box::new(LoadContext(group.clone())),
+        Box::new(crypto::Recover),
         Box::new(LoadCellData::new(context)),
         Box::new(VMVersion::new()),
         Box::new(CurrentCycles::new(context)),
@@ -349,6 +357,23 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
             LOAD_TX_HASH_SYSCALL_NUMBER => store_data(machine, context.transaction_id.as_slice()),
             LOAD_TRANSACTION_SYSCALL_NUMBER => store_data(machine, tx.as_slice()),
             LOAD_NETWORK_ID => store_data(machine, context.tx.network_id().as_slice()),
+            LOAD_BLOCK_CONTEXT => {
+                if source != 0 || index != 0 {
+                    return Ok(status(machine, INDEX_OUT_OF_BOUND));
+                }
+                let mut data = [0; 48];
+                data[..8].copy_from_slice(&context.tx.height().to_le_bytes());
+                data[8..16].copy_from_slice(
+                    &context
+                        .tx
+                        .parent_header()
+                        .context
+                        .timestamp_ms
+                        .to_le_bytes(),
+                );
+                data[16..].copy_from_slice(context.tx.parent_id().as_slice());
+                store_data(machine, &data)
+            }
             LOAD_SCRIPT_GROUP => {
                 let mut value = [0; 9];
                 value[0] = match group.kind {

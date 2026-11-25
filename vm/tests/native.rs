@@ -11,7 +11,8 @@ use ckb_types::{
 };
 use stem_ledger::{
     BlockContext, Cell, CellInput, GroupWitness, LiveCell, Origin, ResolvedTransaction,
-    ScriptGroupKind, Transaction, block::HeaderContext,
+    ScriptGroupKind, Transaction,
+    block::{Header, HeaderContext, StateCommitment},
 };
 use stem_vm::{VerificationCache, verify};
 
@@ -84,25 +85,37 @@ impl Network {
     }
 
     fn resolve(&self, id: &Byte32, tx: Transaction) -> Result<Arc<ResolvedTransaction>> {
-        let candidate = HeaderContext {
-            height: 1,
-            timestamp_ms: 0,
-            parent: Byte32::default(),
-            transaction_root: Byte32::default(),
-        };
-        let origin = Origin::new(
-            id,
-            &HeaderContext {
+        self.resolve_at(id, tx, 42)
+    }
+
+    fn resolve_at(
+        &self,
+        id: &Byte32,
+        tx: Transaction,
+        parent_time: u64,
+    ) -> Result<Arc<ResolvedTransaction>> {
+        let parent = Header {
+            context: HeaderContext {
                 height: 0,
-                ..candidate.clone()
+                timestamp_ms: parent_time,
+                parent: Byte32::default(),
+                transaction_root: Byte32::default(),
             },
-        );
+            state: StateCommitment {
+                cell_root: Byte32::default(),
+                system_root: Byte32::default(),
+                history_root: Byte32::default(),
+            },
+            receipt_root: Byte32::default(),
+        };
+        let candidate = HeaderContext::after(id, &parent, 43, Byte32::default())?;
+        let origin = Origin::new(id, &parent.context);
         let tx = ResolvedTransaction::resolve(
             id.clone(),
             tx,
             BlockContext {
                 candidate: &candidate,
-                parent_timestamp_ms: 0,
+                parent: &parent,
                 capacity: Default::default(),
             },
             |point| {
@@ -135,7 +148,7 @@ fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/examples/type_rules.c");
     let compiler = std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into());
     let mut programs = Vec::new();
-    for rule in 1..=10 {
+    for rule in 1..=11 {
         let path = tmp.path().join(format!("rule-{rule}"));
         let output = Command::new(&compiler)
             .args([
@@ -166,6 +179,25 @@ fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
         programs.push(program);
     }
     Ok(programs)
+}
+
+#[test]
+fn block_context_uses_committed_parent_time_and_partitions_cache() -> Result<()> {
+    let mut network = Network::new()?;
+    let binaries = build_contracts(&mut network)?;
+    let type_script = script(&binaries[10], b"");
+    let cell = network.output(vec![type_script], Bytes::new())?;
+    let input = network.add_input(cell.clone());
+    let tx = network.signed(vec![input], vec![cell])?;
+    let accepted = network.resolve_at(&network.id, tx.clone(), 42)?;
+    // The proposed timestamp is 43 in both cases and cannot satisfy this rule.
+    let rejected = network.resolve_at(&network.id, tx, 41)?;
+    assert_ne!(accepted.script_cache_key(), rejected.script_cache_key());
+    let cache = VerificationCache::new(4);
+    let expected = verify(accepted.clone(), CYCLE_LIMIT, false)?;
+    assert_eq!(cache.verify(accepted, CYCLE_LIMIT, true)?, expected);
+    assert!(cache.verify(rejected, CYCLE_LIMIT, true).is_err());
+    Ok(())
 }
 
 #[test]

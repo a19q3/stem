@@ -11,14 +11,14 @@ use ckb_types::{
 };
 use clap::{Args, Subcommand};
 use ed25519_dalek::Signer;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use stem_ledger::protocol::ARRIVING_GUARDIAN;
 use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, MAX_RECORDS, Member, Registry,
     RegistryAnchor, StakeConfig, StakeDomain, StakeSnapshot,
     l1::{GuardianProof, Policy, StakeCell, guardian_generation},
 };
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use crate::{
     bridge_cli::{print_json, read_json_limited, read_key},

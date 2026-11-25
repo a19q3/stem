@@ -15,6 +15,8 @@ use ckb_types::{
 };
 use clap::Subcommand;
 use ed25519_dalek::{Signer, SigningKey};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::json;
 use stem::native_store::{BridgeGenesis, LaneGenesis, lane_id};
 use stem_bridge_wire::{Gate, NATIVE_VAULT_SIZE, XUDT_VAULT_SIZE};
 use stem_ledger::{
@@ -22,8 +24,6 @@ use stem_ledger::{
     protocol::{BridgeMint, Certificate, L1Anchor, MintObservation, VaultUpdate},
 };
 use stem_stake::Attestation;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::json;
 
 use crate::{
     l1::{Journal, Rpc},

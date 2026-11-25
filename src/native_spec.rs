@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ckb_jsonrpc_types::{JsonBytes, OutPoint as JsonOutPoint, Script as JsonScript};
 use ckb_types::{H256, core::ScriptHashType, packed::Script, prelude::*};
+use serde::Deserialize;
 use stem::native_store::{BridgeGenesis, LaneGenesis, Limits, RecipientLock, Spec};
 use stem_ledger::{
     CapacityPolicy, Cell,
     protocol::{L1Anchor, Limits as ProtocolLimits},
 };
 use stem_stake::Member;
-use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

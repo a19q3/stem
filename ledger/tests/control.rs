@@ -9,7 +9,7 @@ use ckb_types::{
 use ed25519_dalek::{Signer, SigningKey};
 use stem_ledger::{
     BlockContext, GroupWitness, ResolvedTransaction, Transaction,
-    block::HeaderContext,
+    block::{Header, HeaderContext, StateCommitment},
     protocol::{
         BlockBudget, BridgeLedger, BridgeSettlement, Certificate, L1Anchor, Lane, Limits,
         Operation, PendingWithdrawal, SettlementAction, SettlementChanges, StakeSnapshot,
@@ -21,6 +21,23 @@ use stem_stake::{Attestation, Authority, Member};
 
 fn hash(byte: u8) -> Byte32 {
     [byte; 32].pack()
+}
+
+fn genesis_header() -> Header {
+    Header {
+        context: HeaderContext {
+            height: 0,
+            timestamp_ms: 0,
+            parent: hash(0),
+            transaction_root: hash(0),
+        },
+        state: StateCommitment {
+            cell_root: hash(0),
+            system_root: hash(0),
+            history_root: hash(0),
+        },
+        receipt_root: hash(0),
+    }
 }
 
 fn point(byte: u8, index: u32) -> OutPoint {
@@ -65,19 +82,15 @@ fn fees_and_resource_caps_are_independent_for_control_transactions() -> Result<(
     );
     assert!(Transaction::new(vec![], vec![], vec![], vec![], vec![]).is_err());
 
-    let block = HeaderContext {
-        height: 1,
-        timestamp_ms: 0,
-        parent: hash(0),
-        transaction_root: hash(0),
-    };
+    let parent = genesis_header();
+    let block = HeaderContext::after(&hash(1), &parent, 0, hash(0))?;
     assert!(
         ResolvedTransaction::resolve(
             hash(1),
             decoded,
             BlockContext {
                 candidate: &block,
-                parent_timestamp_ms: 0,
+                parent: &parent,
                 capacity: Default::default(),
             },
             |_| panic!("control transaction queried Live Cells"),
@@ -672,15 +685,11 @@ fn native_mint_authenticates_exact_capacity_and_outputs() -> Result<()> {
     );
     let grant = VerifiedMint::verify(&tx, &network, &genesis, &previous, &authority, &mut budget)?;
 
-    let header = HeaderContext {
-        height: 1,
-        timestamp_ms: 0,
-        parent: hash(0),
-        transaction_root: hash(0),
-    };
+    let parent = genesis_header();
+    let header = HeaderContext::after(&network, &parent, 0, hash(0))?;
     let context = BlockContext {
         candidate: &header,
-        parent_timestamp_ms: 0,
+        parent: &parent,
         capacity: Default::default(),
     };
     let resolve = |tx| {

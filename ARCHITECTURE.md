@@ -39,9 +39,11 @@ Calls retain the CKB buffer convention. `a0` is the buffer pointer, `a1` points 
 | 2116 | Stem network ID |
 | 2074, 2117, 2118 | Full group witness, proof bytes, seal bytes. Source 0 and index 0 select the current group. Source 1 selects the absolute group at index `a3` |
 | 2119 | Standard authorization digest for the current Lock Group |
+| 2121 | Recover a 33-byte compressed secp256k1 key from a 65-byte compact seal at `a0` and a 32-byte digest at `a1`. Writes the key at `a2`. Returns 4 for an invalid or high-S seal. Each call charges 1,900,000 cycles, including invalid seals. |
+| 2122 | Candidate height and committed parent time as two little-endian u64 values, followed by the 32-byte parent Header ID. Source and index must be zero. |
 | 2072, 2082 | Native Header, or fields height 0, time 1, parent ID 2, transaction root 3, Cell root 4, system root 5, history root 6, receipt root 7 |
 
-The native host uses the existing Cell Data, input, Header and process call numbers. Call 2083 field 1 returns the nine-byte native Since. Spawn and Exec can read group proof bytes using the absolute group index as the witness data index. A creation header is visible when named by a header dep. Stem headers carry no extension data. Fields 4 and 5 under 2081 have no native value. Contracts discover the Type Script set via 2110–2113.
+The native host uses the existing Cell Data, input, Header and process call numbers. Call 2083 field 1 returns the nine-byte native Since. Spawn and Exec can read group proof bytes using the absolute group index as the witness data index. A creation header is visible when named by a header dep. Header source 5 and index 0 read the committed parent directly. The parent ID and candidate height are included in the VM cache key. Stem headers carry no extension data. Fields 4 and 5 under 2081 have no native value. Contracts discover the Type Script set via 2110–2113.
 
 The fixture suite runs independently compiled RISC-V Asset, Collateral, Transfer Policy, Identity, Lifecycle, and Settlement contracts. It signs the transactions with the CKB secp256k1 implementation and checks value conservation, input-side constraint removal, identity forgery, witness tampering, and signature replay across network IDs.
 

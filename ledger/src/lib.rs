@@ -767,6 +767,9 @@ pub struct LiveCell {
 pub struct ResolvedTransaction {
     network_id: Byte32,
     transaction: Transaction,
+    height: u64,
+    parent: Header,
+    parent_id: Byte32,
     inputs: Vec<LiveCell>,
     outputs: Vec<Cell>,
     cell_deps: Vec<LiveCell>,
@@ -844,6 +847,12 @@ impl ResolvedTransaction {
         ensure!(
             network_id != Byte32::default(),
             "zero Stem network identity"
+        );
+        ensure!(
+            block.parent.context.height.checked_add(1) == Some(block.candidate.height)
+                && block.parent.context.timestamp_ms <= block.candidate.timestamp_ms
+                && block.parent.id(&network_id) == block.candidate.parent,
+            "invalid parent block context"
         );
         ensure!(
             transaction
@@ -970,6 +979,9 @@ impl ResolvedTransaction {
         Ok(Self {
             network_id,
             transaction,
+            height: block.candidate.height,
+            parent: block.parent.clone(),
+            parent_id: block.candidate.parent.clone(),
             inputs,
             outputs,
             cell_deps,
@@ -1010,6 +1022,18 @@ impl ResolvedTransaction {
         self.header(*self.headers_by_origin.get(hash)?)
     }
 
+    pub fn height(&self) -> u64 {
+        self.height
+    }
+
+    pub fn parent_header(&self) -> &Header {
+        &self.parent
+    }
+
+    pub fn parent_id(&self) -> &Byte32 {
+        &self.parent_id
+    }
+
     /// All VM-visible data and the full witnessed transaction, in resolution order.
     /// This key is valid only after resolving against the block's current state.
     pub fn script_cache_key(&self) -> &Byte32 {
@@ -1017,6 +1041,8 @@ impl ResolvedTransaction {
             let mut hash = new_blake2b();
             hash.update(b"Stem VM execution context\0");
             hash.update(self.network_id.as_slice());
+            hash.update(&self.height.to_le_bytes());
+            hash.update(self.parent_id.as_slice());
             hash.update(&self.capacity.bond_per_byte.to_le_bytes());
             hash.update(&self.capacity.state_overhead.to_le_bytes());
             hash.update(&[u8::from(self.minted_asset.is_some())]);
@@ -1287,11 +1313,11 @@ mod tests {
             },
             receipt_root: Byte32::default(),
         };
-        let candidate = HeaderContext {
-            height: 12,
-            timestamp_ms: 124,
-            ..origin.context.clone()
+        let parent = Header {
+            context: HeaderContext::after(&network, &origin, 124, Byte32::default())?,
+            ..origin.clone()
         };
+        let candidate = HeaderContext::after(&network, &parent, 125, Byte32::default())?;
         let resolve = |increment| {
             let tx = Transaction::new(
                 Vec::new(),
@@ -1308,7 +1334,7 @@ mod tests {
                 tx,
                 BlockContext {
                     candidate: &candidate,
-                    parent_timestamp_ms: 0,
+                    parent: &parent,
                     capacity: Default::default(),
                 },
                 |_| {

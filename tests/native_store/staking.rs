@@ -3,6 +3,7 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, ensure};
 use ckb_types::packed::Byte32;
 use ed25519_dalek::{Signer, SigningKey};
+use serde_json::Value;
 use stem::native_store::StakeGenesis;
 use stem_ledger::protocol::{
     self, ARRIVING_GUARDIAN, Certificate, Operation, snapshot_body, snapshot_commitment,
@@ -12,7 +13,6 @@ use stem_stake::{
     Anchor, Attestation, Member, Registry, RegistryAnchor, StakeConfig, StakeData, StakeDomain,
     StakeSnapshot, l1::guardian_generation,
 };
-use serde_json::Value;
 
 use super::*;
 

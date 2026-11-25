@@ -68,9 +68,13 @@ CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约�
 
 缓存键覆盖网络、固定 VM 配置、完整 Witness、解析后的 Cells、代码和可见 Header。缓存命中按此前确认的 cycles 计入协议预算。区块同时限制编码字节、交易数、VM cycles、依赖读取字节和写入量。准备提案可以减少重复工作，验证提案与重放都以相同规则计算预算和结果。
 
+标准锁在 RISC-V 内校验恢复的压缩公钥哈希，通过 syscall 2121 进行 secp256k1 恢复。恢复接受低 S 的 65 字节签名，计算结果与原 k256 锁进行差分验证。每次调用在读取 VM 内存前计入 1,900,000 cycles。CKB L1 合约维持 CKB 原生 ABI。
+
 ### Stem Header 与时间
 
 原生 Stem Header 编码高度、共识时间、父 Header ID、状态承诺和执行承诺。运行交易前，以高度、共识时间、父 Header ID 和交易根计算独立的区块上下文 ID，用于认证同块新建 Cell 的创建信息。完整 Header ID 在状态与执行承诺得出后计算。CometBFT 的签名 Header 与 Stem 的执行 Header 分别承担共识证明和应用上下文。Stem 原生 Header 没有 CKB PoW nonce、compact target、难度、Uncle 承诺或 DAO 字段。交易执行删除 NC-Max Proposal Window、Cellbase、Cellbase Maturity、一级与二级发行、矿工奖励和 Nervos DAO 的特殊验证、取款补偿与容量例外。CKB PoW、DAO 等 L1 字段可用于核验真正的 L1 数据，L1 协议继续独立运行。 [CKB L1 区块结构](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0027-block-structure/0027-block-structure.md)
+
+合约可以读取候选高度、已提交父区块的 Unix 毫秒时间及父 Header。候选时间只在提交后供下一块的合约使用。CheckTx、提案准备与执行都提供相同的确定性接口，无需预先知道候选交易根或执行结果。
 
 | 尺度 | 由什么确定 | 用途 |
 | --- | --- | --- |

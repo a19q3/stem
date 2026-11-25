@@ -4,12 +4,12 @@ use super::{HEADER, TIP, index_key};
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{DB, Options, ReadOnlyDB, WriteBatch, WriteOptions, prelude::*};
 use ckb_types::{packed::Byte32, prelude::*};
+use std::path::Path;
 use stem_ledger::block::Header;
 use stem_stake::{
     Hash32,
     history::{self, Frontier},
 };
-use std::path::Path;
 
 const MARKER: &[u8] = b"stem/history-index";
 const PROGRESS: &[u8] = b"stem/history-progress";

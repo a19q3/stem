@@ -9,8 +9,8 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use stem_ledger::block::Header;
 use serde_json::{Value, json};
+use stem_ledger::block::Header;
 
 use super::*;
 
