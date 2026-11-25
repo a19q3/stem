@@ -2334,10 +2334,79 @@ demonstrated pending inclusion backlog across two blocks.
 
 These are single-host bursts using an actual fixed 128-member
 committee, with the archive replica reopened to construct and
-serve the publication witnesses. Full-size epoch handoffs and
-sustained CKB queue pressure remain to be measured. The standalone
+serve the publication witnesses. The next experiment measures a
+[CKB-funded full-size epoch handoff](#ckb-funded-128-member-jolteon-handoff).
+Sustained CKB queue pressure remains to be measured. The standalone
 ordinary proof relay, 456 Rust release tests, Go proof tests and
 the CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
 [Raw runs, competing transactions, inclusion proofs and resource samples](benchmarks/2026-11-26-stem-ckb-checkpoint-contention.json.xz).
+
+## CKB-funded 128-member Jolteon handoff
+
+Revision `9f74f9e` exercised a 128-to-128 change on a single
+i9-13900H host with 129 Stem processes and CKB 0.210.0 devnet.
+The devnet used a 3.5-billion-cycle block budget. The run deployed
+fresh RISC-V builds of the Stake Registry and Jolteon checkpoint.
+Each validator used a distinct consensus key and a separate CKB
+Stake Cell funded by the fixture wallet.
+
+Genesis locked 22,080 CKB of voting principal across 128 Stake
+Cells. The fixture confirmed 256 Registry transitions for
+registration and activation. Before the epoch-1 snapshot, one
+150-CKB validator requested exit, a 255-CKB validator registered
+and activated, and one continuing validator added 40 CKB.
+Registry sequence 260 committed 129 records, including the
+exiting Stake Cell. The successor's 128 voters had 22,225 total
+power. Three guardians independently opened the confirmed L1
+records and the native snapshot was 22,767 bytes.
+
+The snapshot was admitted at a reported Stem tip of height 11.
+The outgoing committee certified the boundary at height 40
+with 87 and 86 votes in the two certificates, representing
+14,820 and 14,850 power out of 22,080. The new committee's
+height-42 proof carried 85 and 86 votes, representing 14,845
+and 14,935 power out of 22,225. One continuing voter stopped
+at height 3 before submission. On restart it showed the
+committed snapshot and the authenticated height-40 boundary.
+All 129 processes agreed on the Header at height 44.
+
+| CKB checkpoint | Stem height | Witness bytes | Estimated CKB-VM cycles |
+| --- | ---: | ---: | ---: |
+| Incumbent execution proof | 10 | 16,994 | 406,869,793 |
+| Epoch handoff | 40 | 22,492 | 410,671,305 |
+| Successor execution proof | 42 | 16,750 | 406,047,056 |
+
+CKB mined each publication and returned its transaction and witness
+inclusion proof. The contract rejected the valid successor proof
+against the old checkpoint when the handoff was skipped, and
+rejected replay of the already applied handoff. The Stem verifier
+also rejected the successor proof when the handoff was omitted.
+Genesis rejected the two-signature guardian sample.
+
+In this single wide run, initial Stake Cell registration and
+activation took 103.83 s. Guardian observation took 0.42 s.
+Admission to successor visibility among running replicas took
+17.03 s. Restart to common height 44 took 0.96 s. The four-member
+fixture used the same height and proof checks. Its paused voter
+represented a larger share of the schedule, so these timing
+samples do not isolate the cost of committee width.
+
+The first four- and 128-member runs reached the successor epoch
+and recovered the paused node. Their test driver stopped because
+it required an increment in the replay fast-path counter. The
+corrected driver verifies the recovered transaction, epoch and
+certified boundary. Both first runs and both successful reruns
+are preserved. The existing delegated-stake, active-slash and
+retirement devnet regression passed with the rebuilt contracts.
+Rust release tests passed 456 with 14 ignored, and the Go proof
+suite and CometBFT comparison build passed.
+
+This round used one CKB node to publish the full-size boundary.
+The earlier two-peer experiment covered ordinary 128-member
+proofs. The wide rotation here replaced one key and changed one
+continuing member's weight.
+
+[Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
+[Raw runs, signed Stake Cell transactions, quorums and CKB proofs](benchmarks/2026-11-26-stem-funded-wide-handoff.json.xz).

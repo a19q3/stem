@@ -68,4 +68,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | 128-member checkpoint contention across CKB peers | [Report](../BENCHMARKS.md#128-member-checkpoint-contention-on-ckb), [matrices, rejected spends, signed transactions and pool traces](2026-11-26-stem-ckb-checkpoint-contention.json.xz) |
 
+| CKB-funded 128-member Jolteon handoff | [Report](../BENCHMARKS.md#ckb-funded-128-member-jolteon-handoff), [signed stakes, finality proofs, failure logs and regression](2026-11-26-stem-funded-wide-handoff.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
