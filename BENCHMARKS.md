@@ -3126,3 +3126,63 @@ comparison build passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Signed workloads, individual timing samples and default-path validation](benchmarks/2026-11-26-stem-admission-batching.json.xz).
+
+## Jolteon leader-directed transaction relay
+
+Revision `3e0bdb6` compared against `8b48524` with 16 local
+replicas and two VM workers per replica. Each rate used byte-identical
+signed commands and genesis. Every command traded through the same
+AMM with two updated Lineage Heads and both asset Type Groups. The
+proposer interval was 250 ms and the block cap was two billion cycles.
+Each run offered traffic for 30 seconds and observed for another 12.
+The same pinned load driver ran all six samples. The archive includes
+the timing of each offered transaction and each observed block.
+
+| Run and planned TPS | Actual offer / admission / all-replica visible TPS in offer window | Visible by end of observation | p99 among observed transactions | Replica CPU seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Broadcast 80 | 80.00 / 79.93 / 73.87 | 2,400 of 2,400 offered | 3.050 s | 254.74 |
+| Directed 80 | 80.00 / 79.90 / 77.43 | 2,400 of 2,400 offered | 1.036 s | 101.19 |
+| Broadcast 240 | 142.13 / 139.97 / 11.83 | 2,333 of 4,264 offered | 35.824 s | 540.82 |
+| Directed 240 | 146.33 / 146.23 / 112.50 | 4,390 of 4,390 offered | 11.779 s | 313.48 |
+| Broadcast 240 repeat | 143.37 / 141.83 / 12.40 | 3,014 of 4,301 offered | 35.944 s | 540.79 |
+| Directed 240 repeat | 142.70 / 142.00 / 104.90 | 4,281 of 4,281 offered | 11.588 s | 306.70 |
+
+At 80 TPS the number of received relays dropped from 36,000 to 4,459,
+and full Store admission checks from 38,400 to 6,859. The sum of
+replica network sends went from 82.8 MB to 65.9 MB. Sampled peak
+aggregate resident memory was 906,000–922,000 KiB. Aggregate process
+writes were 476.5 MB for broadcast and 596.2 MB for directed relay.
+The measured physical writes cover consensus and application data.
+
+At the planned 240 TPS rate, the driver dropped 2,810–2,936 of 7,200
+scheduled submissions before sending. The directed runs saw 22,422
+and 22,876 relays, versus 63,960 and 64,515 with broadcast. Their
+all-replica visibility rates including drain were 123.02 and
+124.65 TPS. The baseline logged three and four observation errors.
+The directed runs logged zero observation errors and had 509 and
+615 transport queue drops across all traffic. For every run the
+separate serial Store verified the finalized Headers, receipts, both
+Head versions and AMM asset supplies. High-rate p99 covers the
+transactions visible within each run's observation window.
+
+The 16-validator fault fixture sent one transaction at view 17, with
+both scheduled relay targets stopped. It confirmed on all 14 live
+replicas after two local relay retries and one client submission.
+The fixture then finished 96 payments, restarted both validators
+and verified the two-chain proof and common execution Header.
+
+A four-voter CKB devnet handoff activated the successor at Stem
+height 40. The retired replica submitted an Intercell transaction to
+the new committee as an observer. All replicas authenticated the
+resulting Header and CKB accepted a historical Outbox proof from the
+previous epoch. The archive retains two rejected workspace test
+attempts caused by the retry test fixture. The corrected fixture uses
+the ledger's ordinary Cell input and checks expiry, committee reset and
+the end of the retry sweep. The locked release workspace passed 465
+tests with 18 ignored. The Go proof suite and frozen CometBFT feature
+check passed. A separate 128-validator localnet finalized 128 signed
+payments and agreed on the execution Header and two-chain proof.
+
+[Load reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
+[Fault reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
+[Signed workloads, raw samples and recovery logs](benchmarks/2026-11-26-stem-jolteon-leader-relay.json.xz).
