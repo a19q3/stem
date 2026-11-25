@@ -858,3 +858,26 @@ monitor RPC disconnected. The final retry was interrupted to clean the
 workspace target directories. All rounds are retained. [Public run archive](benchmarks/2026-11-25-stem-jolteon-runtime.json.xz)
 
 See [commands and timing options](OPERATIONS.md#exercise-the-native-jolteon-path).
+
+## Jolteon verifier in CKB-VM
+
+The portable verifier ran in CKB-VM v0.24.15 assembly mode with VM 2 and
+the instruction cost model. Its RISC-V probe read the real two-chain
+proofs retained by the nominal network runs and compared the authenticated
+parent Header against the offline verification record.
+
+| Members | Proof bytes | Verification cycles |
+| ---: | ---: | ---: |
+| 4 | 974 | 14,526,510 |
+| 16 | 2,128 | 51,764,980 |
+| 32 | 3,220 | 87,572,907 |
+| 64 | 6,044 | 179,311,080 |
+| 100 | 9,254 | 283,988,513 |
+| 128 | 11,628 | 360,531,748 |
+
+Changing the final signature in the four-member proof caused rejection.
+The measured cycles include the probe's input parsing and construction of
+the trusted committee. A complete L1 checkpoint transaction also needs
+Type ID, continuity, committee handoff and Cell validation. The reported
+proofs contain two QCs, so these figures measure a different workload
+from a single signed CometBFT step. [Raw cycle record](benchmarks/2026-11-25-stem-jolteon-ckb-vm.json) [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)

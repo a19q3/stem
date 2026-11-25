@@ -16,7 +16,7 @@ use serde_json::json;
 use stem_ledger::{Transaction, block::Header};
 use stem_stake::{
     Hash32, Member,
-    jolteon::{Committee, Point, Quorum, Share, TimeoutCertificate, TimeoutVote},
+    jolteon::{Committee, FinalityProof, Point, Quorum, Share, TimeoutCertificate, TimeoutVote},
 };
 
 use crate::native_store::{Prepared, Store};
@@ -501,7 +501,7 @@ impl Replica {
             branch.len() >= 2 && branch[branch.len() - 2] == parent,
             "invalid two-chain certificate"
         );
-        let proof = wire::Finality {
+        let proof = FinalityProof {
             parent_header: self.candidates[&parent].proposal.wire.header.clone(),
             parent_qc: child.parent.encode(),
             child_header: child.wire.header.clone(),
@@ -994,32 +994,13 @@ fn members(store: &Store) -> Result<Vec<Member>> {
 }
 
 pub fn verify_finality(store: &Store, raw: &[u8]) -> Result<Header> {
-    ensure!(raw.len() <= 32 * 1024, "oversize Jolteon finality proof");
-    let proof: wire::Finality = wire::canonical(raw)?;
     let committee = Committee::new(
         store.network().unpack(),
         store.genesis_id().unpack(),
         0,
         &members(store)?,
     )?;
-    let parent = Quorum::decode(&proof.parent_qc, committee.size())?;
-    let child = Quorum::decode(&proof.child_qc, committee.size())?;
-    committee.verify_quorum(&parent)?;
-    committee.verify_quorum(&child)?;
-    let parent_header = Header::decode(&proof.parent_header)?;
-    let child_header = Header::decode(&proof.child_header)?;
-    ensure!(
-        parent_header.encode().as_ref() == proof.parent_header
-            && child_header.encode().as_ref() == proof.child_header
-            && parent_header.id(store.network()).as_slice() == parent.point.header
-            && child_header.id(store.network()).as_slice() == child.point.header
-            && child.point.directly_certifies(parent.point)
-            && child_header.context.parent.as_slice() == parent.point.header
-            && parent_header.context.height.checked_add(1) == Some(child_header.context.height)
-            && parent_header.context.timestamp_ms <= child_header.context.timestamp_ms,
-        "Jolteon certificates do not prove the supplied execution Headers"
-    );
-    Ok(parent_header)
+    Header::decode(committee.verify_finality(raw)?.as_bytes())
 }
 
 fn proposal_key(point: Point) -> Vec<u8> {

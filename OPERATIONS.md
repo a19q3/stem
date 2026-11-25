@@ -57,6 +57,21 @@ target/release/stem jolteon-proof --genesis /tmp/stem-jolteon-16/genesis.json \
 
 The fixture checks consecutive failed Leaders, watches surviving weight finalize payments, restarts stopped replicas and checks the execution Header at a common height. It retains the public genesis, signed workload, execution proof and replica diagnostics. For the nominal scale sweep use `--offline 0 --transactions 32 --offered 16 --cadence 300 --timeout 2500` and separate output and port ranges for each size. The `tools/comet_matrix_localnet.py` comparator uses the same fixture against a pinned CometBFT application build. Its `--comet` argument takes the CometBFT executable.
 
+To measure the portable verifier with the signed proofs captured in the matrix, build and run the two probes.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --target-dir target/stem-contracts \
+  --example jolteon-finality-cost
+cargo build --locked --release --manifest-path vendor/ckb-vm/Cargo.toml \
+  --features asm --target-dir target/jolteon-vm-runner --example ckb-vm-runner
+python3 tools/jolteon_finality_cost.py \
+  --runner target/jolteon-vm-runner/release/examples/ckb-vm-runner \
+  --elf target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/jolteon-finality-cost \
+  --archive benchmarks/2026-11-25-stem-jolteon-runtime.json.xz
+```
+
 ## Exercise the native CometBFT path
 
 ```sh

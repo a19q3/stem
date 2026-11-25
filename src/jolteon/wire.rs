@@ -71,18 +71,6 @@ pub struct Journal {
     pub committed_transactions: u64,
 }
 
-#[derive(Clone, Message)]
-pub struct Finality {
-    #[prost(bytes, tag = "1")]
-    pub parent_header: Vec<u8>,
-    #[prost(bytes, tag = "2")]
-    pub parent_qc: Vec<u8>,
-    #[prost(bytes, tag = "3")]
-    pub child_header: Vec<u8>,
-    #[prost(bytes, tag = "4")]
-    pub child_qc: Vec<u8>,
-}
-
 pub fn canonical<T: Message + Default>(raw: &[u8]) -> Result<T> {
     let decoded = T::decode(raw)?;
     ensure!(

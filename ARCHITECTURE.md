@@ -112,6 +112,8 @@ A proposal commits a native execution Header and a certified parent. The voter f
 
 A pair of conflicting, correctly signed votes at one view is portable evidence. The collectors can retain observed pairs. The pinned direct checkpoint and liability checks on CKB still authenticate the frozen CometBFT baseline. The BLS experiment uses independent keys with proofs of possession and keeps individual signatures for evidence. The fixed-epoch network uses Ed25519.
 
+The two-chain proof parser and verifier run without the node or database and fit the CKB RISC-V build. A sparse checkpoint verifier first authenticates the previous MMR frontier against the trusted old Header, appends that exact Header, and checks a canonical suffix to the new finalized Header's history root. The new two-chain proof still needs a trusted committee. A sparse history proof establishes continuity within that trust and cannot replace proofs of committee handoffs. [Verifier measurements](BENCHMARKS.md#jolteon-verifier-in-ckb-vm)
+
 The default `stem run` remains CometBFT. The native replica stops at a stake-driven committee change. Activation requires finalized old-to-new committee handoff, certified time and recovery rules, and direct CKB proof support for checkpoints, withdrawals and stake retirement. Sparse checkpoints also require authenticated history continuity and a trusted recent CKB anchor after substantial periods without updates. The Jolteon proof CLI reports the exact Header certified by the two-QC pair. Authenticating an earlier ancestor requires a separate ancestry proof. [Jolteon paper](https://arxiv.org/abs/2106.10362) [Runtime experiments](BENCHMARKS.md#native-weighted-jolteon)
 
 ## Historical proofs and CKB checkpoints

@@ -1,0 +1,77 @@
+{
+  "title": "Native Jolteon two-chain proof verification in CKB-VM",
+  "date": "2026-11-25",
+  "runtime_network_archive": "benchmarks/2026-11-25-stem-jolteon-runtime.json.xz",
+  "runtime_network_archive_sha256": "de16862c74c6a48584b8521998d5e9f3d3bcd71eafe6350c968bb791e9c54477",
+  "sha256": {
+    "target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/jolteon-finality-cost": "22ff56f562fcb7828406bd75d8ff830ed40b1de9bdeb4091a2ac3b6cffa2b116",
+    "target/jolteon-vm-runner/release/examples/ckb-vm-runner": "eae02a313affc7a6e56ebe9a103c67670814982c0ac9be3a469d801cb7d7d50a",
+    "stake/src/jolteon.rs": "53db62833b6d6190a8483e3e5dd960da0f059fe353f68e62246a3b5d501d5dc8",
+    "contracts/examples/jolteon-finality-cost.rs": "b3931b1665734130e46c8bba1507f21524164f0b1abbf08352d6eeaf83b9e2ea",
+    "tools/jolteon_finality_cost.py": "462802095ead4de0c9238d894fa41e24c7265fc64be6cfd112a0a2e488dab3cd"
+  },
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "ckb_vm_mode": "v0.24.15, assembly VM 2 with estimate_cycles",
+  "tool_command": [
+    "python3",
+    "tools/jolteon_finality_cost.py",
+    "--runner",
+    "target/jolteon-vm-runner/release/examples/ckb-vm-runner",
+    "--elf",
+    "target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/jolteon-finality-cost",
+    "--archive",
+    "benchmarks/2026-11-25-stem-jolteon-runtime.json.xz"
+  ],
+  "scope": "The probe checks signed execution Headers against a provided trusted genesis committee. It runs as a RISC-V program and excludes CKB transaction I/O, locking, state transitions and handoff verification.",
+  "runs": [
+    {
+      "members": 4,
+      "proof_bytes": 974,
+      "exit": 0,
+      "cycles": 14526510,
+      "stdout": "asm exit=Ok(0) cycles=14526510 r[a1]=178504\n"
+    },
+    {
+      "members": 4,
+      "case": "changed Ed25519 signature",
+      "exit": 1,
+      "cycles": 14505830,
+      "stdout": "asm exit=Ok(1) cycles=14505830 r[a1]=178504\n"
+    },
+    {
+      "members": 16,
+      "proof_bytes": 2128,
+      "exit": 0,
+      "cycles": 51764980,
+      "stdout": "asm exit=Ok(0) cycles=51764980 r[a1]=178568\n"
+    },
+    {
+      "members": 32,
+      "proof_bytes": 3220,
+      "exit": 0,
+      "cycles": 87572907,
+      "stdout": "asm exit=Ok(0) cycles=87572907 r[a1]=178568\n"
+    },
+    {
+      "members": 64,
+      "proof_bytes": 6044,
+      "exit": 0,
+      "cycles": 179311080,
+      "stdout": "asm exit=Ok(0) cycles=179311080 r[a1]=178584\n"
+    },
+    {
+      "members": 100,
+      "proof_bytes": 9254,
+      "exit": 0,
+      "cycles": 283988513,
+      "stdout": "asm exit=Ok(0) cycles=283988513 r[a1]=178584\n"
+    },
+    {
+      "members": 128,
+      "proof_bytes": 11628,
+      "exit": 0,
+      "cycles": 360531748,
+      "stdout": "asm exit=Ok(0) cycles=360531748 r[a1]=178600\n"
+    }
+  ]
+}

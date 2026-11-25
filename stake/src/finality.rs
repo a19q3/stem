@@ -254,11 +254,11 @@ fn verify_link(
     }
 }
 
-fn native_height(header: &[u8; NATIVE_HEADER_BYTES]) -> u64 {
+pub(crate) fn native_height(header: &[u8; NATIVE_HEADER_BYTES]) -> u64 {
     u64::from_le_bytes(header[..8].try_into().expect("fixed native height"))
 }
 
-fn native_id(network: &Hash32, header: &[u8; NATIVE_HEADER_BYTES]) -> Hash32 {
+pub(crate) fn native_id(network: &Hash32, header: &[u8; NATIVE_HEADER_BYTES]) -> Hash32 {
     digest(b"Stem Header\0", &[network, header])
 }
 

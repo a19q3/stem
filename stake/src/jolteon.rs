@@ -2,11 +2,74 @@
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use ed25519_dalek::Signature;
+use prost::Message;
 
-use crate::{Authority, Error, Hash32, Member, Result, compact::SignerBitmap, digest};
+use crate::{
+    Authority, Error, Hash32, Member, Result,
+    compact::SignerBitmap,
+    digest,
+    finality::{NATIVE_HEADER_BYTES, native_height, native_id},
+    history::Frontier,
+};
 
 pub const MAX_MEMBERS: usize = 128;
 const LEADER_SLOTS: usize = 10_000;
+const MAX_PROOF_BYTES: usize = 32 * 1024;
+
+/// Two certified Headers. The child certifies the parent at the next view.
+#[derive(Clone, Message)]
+pub struct FinalityProof {
+    #[prost(bytes, tag = "1")]
+    pub parent_header: Vec<u8>,
+    #[prost(bytes, tag = "2")]
+    pub parent_qc: Vec<u8>,
+    #[prost(bytes, tag = "3")]
+    pub child_header: Vec<u8>,
+    #[prost(bytes, tag = "4")]
+    pub child_qc: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalizedHeader {
+    network: Hash32,
+    header: [u8; NATIVE_HEADER_BYTES],
+}
+
+impl FinalizedHeader {
+    pub fn as_bytes(&self) -> &[u8; NATIVE_HEADER_BYTES] {
+        &self.header
+    }
+
+    pub fn height(&self) -> u64 {
+        native_height(&self.header)
+    }
+
+    /// Checks an MMR extension from a previously authenticated checkpoint.
+    pub fn verify_extension(
+        &self,
+        checkpoint: &[u8; NATIVE_HEADER_BYTES],
+        checkpoint_frontier: &[u8],
+        suffix: &[Hash32],
+    ) -> Result<()> {
+        let height = native_height(checkpoint);
+        let mut frontier = Frontier::decode(self.network, checkpoint_frontier)?;
+        if height >= self.height()
+            || frontier.count() != height
+            || frontier.root() != *history_root(checkpoint)
+        {
+            return Err(Error::Anchor);
+        }
+        frontier.append(height, &native_id(&self.network, checkpoint))?;
+        if !frontier.verify_extension(self.height(), history_root(&self.header), suffix) {
+            return Err(Error::Anchor);
+        }
+        Ok(())
+    }
+}
+
+fn history_root(header: &[u8; NATIVE_HEADER_BYTES]) -> &Hash32 {
+    header[144..176].try_into().expect("fixed history root")
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Point {
@@ -325,6 +388,43 @@ impl Committee {
         )
     }
 
+    pub fn verify_finality(&self, bytes: &[u8]) -> Result<FinalizedHeader> {
+        if bytes.len() > MAX_PROOF_BYTES {
+            return Err(Error::Encoding);
+        }
+        let proof = FinalityProof::decode(bytes).map_err(|_| Error::Encoding)?;
+        if proof.encode_to_vec() != bytes {
+            return Err(Error::Encoding);
+        }
+        let parent = Quorum::decode(&proof.parent_qc, self.size())?;
+        let child = Quorum::decode(&proof.child_qc, self.size())?;
+        let parent_header = proof
+            .parent_header
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::Encoding)?;
+        let child_header = proof
+            .child_header
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::Encoding)?;
+        if !child.point.directly_certifies(parent.point)
+            || native_id(&self.network, parent_header) != parent.point.header
+            || native_id(&self.network, child_header) != child.point.header
+            || child_header[16..48] != parent.point.header
+            || native_height(parent_header).checked_add(1) != Some(native_height(child_header))
+            || timestamp(parent_header) > timestamp(child_header)
+        {
+            return Err(Error::Sequence);
+        }
+        self.verify_quorum(&parent)?;
+        self.verify_quorum(&child)?;
+        Ok(FinalizedHeader {
+            network: self.network,
+            header: *parent_header,
+        })
+    }
+
     /// The network collector has already verified these individual votes.
     pub fn assemble_quorum(&self, point: Point, votes: &BTreeMap<u16, [u8; 64]>) -> Result<Quorum> {
         let mut bitmap = vec![0u8; self.size().div_ceil(8)];
@@ -392,6 +492,10 @@ impl Committee {
         }
         Ok(())
     }
+}
+
+fn timestamp(header: &[u8; NATIVE_HEADER_BYTES]) -> u64 {
+    u64::from_le_bytes(header[8..16].try_into().expect("fixed timestamp"))
 }
 
 // Smooth weighted round robin, with integer apportionment for large raw powers.
@@ -489,6 +593,71 @@ mod tests {
         assert!(next_epoch.verify_quorum(&quorum).is_err());
         encoded[Point::SIZE] |= 1 << 7;
         assert!(Quorum::decode(&encoded, members.len()).is_err());
+    }
+
+    #[test]
+    fn certified_header_accepts_only_an_extension_of_the_anchored_history() {
+        let (keys, members) = fixture();
+        let network = [8; 32];
+        let mut frontier = Frontier::empty(network);
+        let mut index = BTreeMap::new();
+        let mut checkpoint = [0; NATIVE_HEADER_BYTES];
+        let mut checkpoint_frontier = Vec::new();
+        let mut headers = Vec::new();
+        let mut last = [0; 32];
+        for height in 0u64..=8 {
+            let mut header = [0; NATIVE_HEADER_BYTES];
+            header[..8].copy_from_slice(&height.to_le_bytes());
+            header[16..48].copy_from_slice(&last);
+            header[144..176].copy_from_slice(&frontier.root());
+            if height == 2 {
+                checkpoint = header;
+                checkpoint_frontier = frontier.encode();
+            }
+            last = native_id(&network, &header);
+            frontier
+                .append_indexed(height, &last, |start, level, node| {
+                    index.insert((start, level), node);
+                })
+                .unwrap();
+            headers.push(header);
+        }
+        let committee =
+            Committee::new(network, native_id(&network, &headers[0]), 0, &members).unwrap();
+        let certify = |view: u64| {
+            let point = Point {
+                view,
+                parent_view: view - 1,
+                header: native_id(&network, &headers[view as usize]),
+            };
+            let digest = committee.vote_digest(point);
+            let votes = [0, 1, 3]
+                .into_iter()
+                .map(|i| (i, share(&keys, i, digest).signature))
+                .collect();
+            committee.assemble_quorum(point, &votes).unwrap().encode()
+        };
+        let proof = FinalityProof {
+            parent_header: headers[7].to_vec(),
+            parent_qc: certify(7),
+            child_header: headers[8].to_vec(),
+            child_qc: certify(8),
+        }
+        .encode_to_vec();
+        let certified = committee.verify_finality(&proof).unwrap();
+        let suffix = crate::history::extension(3, 7, |start, level| {
+            index.get(&(start, level)).copied().ok_or(Error::Anchor)
+        })
+        .unwrap();
+        assert_eq!(certified.as_bytes(), &headers[7]);
+        certified
+            .verify_extension(&checkpoint, &checkpoint_frontier, &suffix)
+            .unwrap();
+        checkpoint[80] ^= 1;
+        assert_eq!(
+            certified.verify_extension(&checkpoint, &checkpoint_frontier, &suffix),
+            Err(Error::Anchor)
+        );
     }
 
     #[test]
