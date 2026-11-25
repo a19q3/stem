@@ -107,6 +107,27 @@ the checkpoint to one node and waits for the second node to admit it through
 CKB P2P and include it in a block. The IntegrationTest RPC is used to generate
 devnet blocks. Setup blocks are imported with normal verification.
 
+Add `--checkpoint-proofs 3` to the Stem fixture for the competing
+publisher run. Keep its archive and validator fixture files. The CKB
+fixture reopens the stopped archive to serve the exact proofs. It uses
+two isolated CKB pools for the competing spends, then connects them
+and verifies canonical adoption and P2P relay of the next publication.
+
+```sh
+python3 tools/jolteon_ckb_relay_localnet.py --binary /path/to/stem --l1 /path/to/ckb \
+  --direct-checkpoint /path/to/jolteon-checkpoint --stem-run /tmp/stem-jolteon-128 \
+  --output /tmp/stem-jolteon-ckb-contention --l1-port 22900 --relay-port 22910 \
+  --background-checkpoints 16 --ckb-block-cycles 3500000000
+```
+
+Use a fresh output directory for each trial. Set
+`--background-checkpoints 0` for the single-update control, or
+`4` or `8` for intermediate bursts. Omitting `--ckb-block-cycles`
+uses the devnet's consensus setting. Each background transaction
+creates an independent checkpoint Type ID, and each proof still
+runs under the stock CKB transaction pool policy. The reports retain
+pending-pool observations and both nodes' witness inclusion proofs.
+
 Export a snapshot from a stopped replica after it finalizes the exact Header
 you intend to pin. Independently verify the canonical, sufficiently confirmed
 CKB checkpoint Cell and obtain its Stem Header ID. Use that ID as

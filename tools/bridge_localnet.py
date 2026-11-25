@@ -98,6 +98,12 @@ class L1(CkbRpc):
         run(args.l1, "init", "-C", self.home, "--chain", "dev",
             "--rpc-port", str(args.l1_port), "--p2p-port", str(args.l1_port + 1),
             "--ba-arg", FAUCET_ARG, "--genesis-message", "stem-local-bridge")
+        if (block_cycles := getattr(args, "ckb_block_cycles", None)) is not None:
+            spec = self.home / "specs/dev.toml"
+            updated, count = re.subn(r"(?m)^max_block_cycles = [0-9_]+$", f"max_block_cycles = {block_cycles}", spec.read_text())
+            if count != 1:
+                raise ValueError("CKB dev spec does not have a unique max_block_cycles setting")
+            spec.write_text(updated)
         config = self.home / "ckb.toml"
         config.write_text(re.sub(r"(?m)^modules = \[(.*)\]",
                                  r'modules = [\1, "IntegrationTest"]', config.read_text(), count=1))

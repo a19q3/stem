@@ -262,6 +262,19 @@ def scenario(args):
             "processes": [process_resources(nodes[i].pid) for i in everybody],
             "processes_before": start_metrics,
         }
+        if args.checkpoint_proofs:
+            heights = range(agreed_height - args.checkpoint_proofs + 1, agreed_height + 1)
+            assert heights.start > 0, "not enough finalized blocks for the requested checkpoint proofs"
+            checkpoints = []
+            for height in heights:
+                signed = rpc(peers[-1], FINALITY, struct.pack("<Q", height))
+                path = args.output / f"checkpoint-proof-{height}.json"
+                assert not signed["handoff"] and signed["epoch"] == 0, signed.keys()
+                write_json(path, signed["proof"])
+                verified = json.loads(run(args.binary, "jolteon-proof", "--genesis", spec, "--proof", path))
+                assert verified == rpc(peers[-1], HEADER, struct.pack("<Q", height)), verified
+                checkpoints.append({"height": height, "proof_file": path.name, "header": verified})
+            report["checkpoint_proofs"] = checkpoints
         if args.fee_calibration:
             query = json.dumps({"path": "/stem/extinguished-fees", "height": agreed_height, "prove": True}).encode()
             fee = rpc(peers[-1], QUERY, query)
@@ -309,6 +322,8 @@ def main():
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)
     parser.add_argument("--offered", type=float, default=16)
+    parser.add_argument("--checkpoint-proofs", type=int, choices=range(0, 5), default=0,
+                        help="save verified consecutive exact-height proofs from the live archive")
     parser.add_argument("--fee-calibration", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.validators <= 128 or min(args.transactions, args.offline_blocks, args.recovery_seconds) < 1:

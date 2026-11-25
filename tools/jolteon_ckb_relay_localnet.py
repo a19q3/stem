@@ -5,11 +5,11 @@ import argparse
 import json
 from pathlib import Path
 import time
-import tomllib
 from types import SimpleNamespace
 
 from bridge_localnet import CKB, FAUCET_ARG, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, output, point, transaction, wallet_group
 from jolteon_checkpoint_localnet import Relay
+from jolteon_checkpoint_contention import connect, default_pool_policies, import_setup_blocks, run_contention
 from localnet import write_json
 from native_bridge_localnet import wait_for
 
@@ -30,22 +30,8 @@ def scenario(args, origin, peer):
         [hex_bytes(program), "0x", "0x"], [secp])
     deployed = origin.send(fixture.sign("deploy-checkpoint", deployment, [wallet_group(0, [fixture.faucet])]))
 
-    # Seed the second devnet past its old genesis through the normal block verifier.
-    # The measured checkpoint transaction itself is sent only to the origin.
-    tip_height = int(origin.call("get_tip_block_number"), 16)
-    for height in range(1, tip_height + 1):
-        block = origin.call("get_block_by_number", hex(height))
-        block_hash = block["header"].pop("hash")
-        for uncle in block["uncles"]:
-            uncle["header"].pop("hash")
-        for tx in block["transactions"]:
-            tx.pop("hash")
-        assert peer.call("submit_block", "0", block) == block_hash
-    node = peer.call("local_node_info")
-    origin.call("add_node", node["node_id"], f"/ip4/127.0.0.1/tcp/{args.relay_port + 1}")
-    wait_for(lambda: origin.call("get_peers"), "CKB relay peer connection", seconds=20)
-    tip = origin.call("get_tip_header")["hash"]
-    wait_for(lambda: peer.call("get_tip_header")["hash"] == tip, "peer syncing checkpoint deployment", seconds=30)
+    tip_height = import_setup_blocks(origin, peer)
+    tip = connect(origin, peer, args.relay_port)
     network_spec = args.stem_run / "genesis.json"
     genesis_spec = json.loads(network_spec.read_text())
     members = genesis_spec["development_validators"]
@@ -54,9 +40,7 @@ def scenario(args, origin, peer):
     data = {"hash": hex_bytes(ckb_hash(program)), "id": ckb_hash(le(0, 8) + binary(deployed) + le(1, 4) + le(0, 8)),
             "code": dependency(point(deployed, 0)), "seed": point(deployed, 1),
             "genesis": genesis["header"]["hash"], "network": genesis_spec["network_id"]}
-    policies = [tomllib.loads((node.home / "ckb.toml").read_text())["tx_pool"] for node in (origin, peer)]
-    assert all(policy["max_tx_verify_cycles"] == 70_000_000 and policy["min_fee_rate"] == 1_000
-               for policy in policies), policies
+    policies = default_pool_policies(origin, peer)
     observed = {"verified_setup_blocks": tip_height, "setup_tip": tip}
 
     def submit(signed):
@@ -107,15 +91,24 @@ def main():
         parser.add_argument("--" + name, type=lambda path: Path(path).resolve(), required=True)
     parser.add_argument("--l1-port", type=int, default=22900)
     parser.add_argument("--relay-port", type=int, default=22910)
+    parser.add_argument("--background-checkpoints", type=int, choices=range(17),
+                        help="run competing publishers and relay this many independent checkpoint transactions")
+    parser.add_argument("--ckb-block-cycles", type=int, help="set the devnet block cycle budget for both CKB nodes")
     args = parser.parse_args()
+    if args.ckb_block_cycles is not None and args.ckb_block_cycles <= 0:
+        parser.error("--ckb-block-cycles must be positive")
     args.output.mkdir(parents=True, mode=0o700)
     peer_output = args.output / "receiver"
     peer_output.mkdir(mode=0o700)
     origin = L1(args)
     try:
-        peer = L1(SimpleNamespace(l1=args.l1, l1_port=args.relay_port, output=peer_output))
+        peer = L1(SimpleNamespace(l1=args.l1, l1_port=args.relay_port, output=peer_output,
+                                  ckb_block_cycles=args.ckb_block_cycles))
         try:
-            scenario(args, origin, peer)
+            if args.background_checkpoints is None:
+                scenario(args, origin, peer)
+            else:
+                run_contention(args, origin, peer)
         finally:
             peer.stop()
     finally:
