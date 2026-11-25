@@ -18,7 +18,7 @@ use stem_ledger::{
 
 use super::{
     Batch, HEADER, HEADER_ID, HISTORY, STATE_NODE, STATE_RECORD, Store, TIP, index_key, put_nodes,
-    put_tip, state_key, sync,
+    put_tip, state_key, sync_with_consensus,
 };
 
 #[derive(Clone, Debug)]
@@ -99,6 +99,15 @@ impl Store {
     /// The caller authenticates the AppHash against a CometBFT H+1 commit or
     /// an already verified L1 checkpoint. Installation is for a fresh replica.
     pub fn install_state(&mut self, image: StateSnapshot, trusted_app_hash: &Byte32) -> Result<()> {
+        self.install_certified_state(image, trusted_app_hash, &[])
+    }
+
+    pub(crate) fn install_certified_state(
+        &mut self,
+        image: StateSnapshot,
+        trusted_app_hash: &Byte32,
+        consensus: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<()> {
         ensure!(
             self.branch.is_empty()
                 && self.tip.context.height == 0
@@ -216,7 +225,7 @@ impl Store {
             );
         }
         put_tip(&mut batch, &self.network, &image.header, &frontier);
-        sync(&self.db, &batch)?;
+        sync_with_consensus(&self.db, &batch, consensus)?;
         self.tip = image.header;
         self.live_cache.get_mut().expect("Live Cell cache").clear();
         self.history = frontier;

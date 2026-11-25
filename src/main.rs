@@ -19,7 +19,7 @@ mod stake_cli;
 use std::{
     fs::{self, DirBuilder},
     os::unix::fs::{DirBuilderExt, PermissionsExt},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[cfg(unix)]
@@ -98,6 +98,11 @@ enum Command {
         #[arg(long)]
         terminal: bool,
     },
+    /// Export or restore a finalized Jolteon state snapshot.
+    JolteonSnapshot {
+        #[command(subcommand)]
+        command: SnapshotCommand,
+    },
     Run {
         #[arg(long)]
         home: PathBuf,
@@ -124,6 +129,110 @@ enum Command {
         #[arg(long, default_value_t = 512 * 1024 * 1024)]
         snapshot_bytes: u64,
     },
+}
+
+#[cfg(unix)]
+#[derive(Subcommand)]
+enum SnapshotCommand {
+    /// Export the finalized state and committee evidence from a stopped replica.
+    Export {
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        certificate: PathBuf,
+    },
+    /// Restore a fresh observer using an independently pinned finalized Header ID.
+    Restore {
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        certificate: PathBuf,
+        #[arg(long)]
+        key_file: PathBuf,
+        #[arg(long)]
+        trusted_header: String,
+        #[arg(long, default_value_t = 512 * 1024 * 1024)]
+        max_bytes: u64,
+    },
+}
+
+#[cfg(unix)]
+impl SnapshotCommand {
+    fn run(self) -> Result<()> {
+        use ckb_types::prelude::Entity;
+        use stem::{
+            jolteon::snapshot,
+            native_store::{Retention, StateSnapshot, Store},
+        };
+        match self {
+            Self::Export {
+                home,
+                genesis,
+                snapshot,
+                certificate,
+            } => {
+                let spec = native_spec::load(&genesis)?;
+                let store = Store::open(&home.join("db"), &spec, Retention::Archive)?;
+                let (image, evidence) = snapshot::export(&store)?;
+                image.encode(fs::File::create_new(snapshot)?)?;
+                serde_json::to_writer(fs::File::create_new(certificate)?, &evidence)?;
+                bridge_cli::print_json(&serde_json::json!({
+                    "height": image.header.context.height,
+                    "header_id": hex::encode(image.header.id(store.network()).as_slice()),
+                }))
+            }
+            Self::Restore {
+                home,
+                genesis,
+                snapshot,
+                certificate,
+                key_file,
+                trusted_header,
+                max_bytes,
+            } => {
+                let target =
+                    hex::decode(trusted_header.strip_prefix("0x").unwrap_or(&trusted_header))?;
+                let target = target
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("trusted Header ID must have 32 bytes"))?;
+                let observer = bridge_cli::read_key(&key_file)?.verifying_key().to_bytes();
+                let data = fs::File::open(snapshot)?;
+                let length = data.metadata()?.len();
+                ensure!(
+                    length <= max_bytes,
+                    "snapshot exceeds configured size limit"
+                );
+                let image = StateSnapshot::decode(data, length)?;
+                let evidence = bridge_cli::read_json_limited(&certificate, 8 * 1024 * 1024)?;
+                let spec = native_spec::load(&genesis)?;
+                let parent = home
+                    .parent()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                let staged = tempfile::TempDir::new_in(parent)?;
+                let db = staged.path().join("db");
+                let header = {
+                    let mut store = Store::open(&db, &spec, Retention::Archive)?;
+                    snapshot::install(&mut store, image, evidence, target, observer)?
+                };
+                DirBuilder::new().mode(0o700).create(&home)?;
+                fs::rename(db, home.join("db"))?;
+                bridge_cli::print_json(&serde_json::json!({
+                    "height": header.context.height,
+                    "header_id": hex::encode(target),
+                    "observer_only": true,
+                }))
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -205,6 +314,7 @@ fn main() -> Result<()> {
                 "app_hash": hex::encode(header.app_hash(store.network()).as_slice()),
             }))
         }
+        Command::JolteonSnapshot { command } => command.run(),
         Command::Run {
             home,
             genesis,

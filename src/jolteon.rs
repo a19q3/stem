@@ -25,6 +25,7 @@ use stem_stake::{
 use crate::native_store::{Prepared, Store};
 
 mod recovery;
+pub mod snapshot;
 mod transport;
 mod wire;
 
@@ -206,11 +207,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         "invalid replica timing or VM worker configuration"
     );
 
-    let identity = genesis_committee.proposal_digest(Point {
-        view: 0,
-        parent_view: 0,
-        header: public,
-    });
+    let identity = journal_identity(&genesis_committee, public);
     let journal = match store.consensus_record(STATE)? {
         Some(raw) => {
             ensure!(!initialize, "validator journal already initialized");
@@ -243,19 +240,20 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
     } else {
         let change = CommitteeChange::decode(&journal.committee)?;
         ensure!(change.epoch > 0, "unexpected persisted genesis committee");
-        let boundary = store
-            .header(change.activation_height - 1)?
-            .context("missing epoch boundary")?;
-        let anchor = boundary.id(store.network());
-        ensure!(
-            anchor.as_slice() == journal.anchor,
-            "persisted epoch anchor disagrees with execution"
-        );
+        let anchor = journal.anchor.as_slice().try_into()?;
+        if let Some(boundary) = store.header(change.activation_height - 1)? {
+            ensure!(
+                boundary.id(store.network()).as_slice() == anchor,
+                "persisted epoch anchor disagrees with execution"
+            );
+        } else {
+            ensure!(journal.observer_only, "missing epoch boundary");
+        }
         let committee = Committee::at_anchor(
             store.network().unpack(),
             store.genesis_id().unpack(),
             change.epoch,
-            anchor.unpack(),
+            anchor,
             &change.members,
         )?;
         (committee, change.members)
@@ -265,7 +263,9 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         .map(|raw| committee.verify_handoff(&raw).map(|(_, _, seal)| seal))
         .transpose()?;
     let routes = directory.routes(&active);
-    let member = directory.member(&active);
+    let member = (!journal.observer_only)
+        .then(|| directory.member(&active))
+        .flatten();
     let pending = store
         .announced_committee()?
         .filter(|change| change.epoch > committee.epoch());
@@ -784,6 +784,7 @@ impl Replica {
                     committed_transactions: self.journal.committed_transactions,
                     committee: change.encode(),
                     anchor: anchor.point.header.to_vec(),
+                    observer_only: self.journal.observer_only,
                     ..Default::default()
                 };
                 records.push((handoff_key(old_epoch), proof.clone()));
@@ -807,7 +808,9 @@ impl Replica {
         if let Some((change, committee)) = successor {
             self.net.broadcast_at(old_epoch, wire::HANDOFF, proof);
             self.routes = self.directory.routes(&change.members);
-            self.member = self.directory.member(&change.members);
+            self.member = (!self.journal.observer_only)
+                .then(|| self.directory.member(&change.members))
+                .flatten();
             self.net.epoch = change.epoch;
             self.high = committee.genesis_quorum();
             self.finalized = self.high.point;
@@ -1326,6 +1329,7 @@ impl Replica {
                 "last_untimely_view": self.last_untimely_view,
                 "catching_up": self.recovery.active,
                 "replayed_blocks": self.recovery.blocks,
+                "observer_only": self.journal.observer_only,
                 "sent_bytes": self.net.traffic.sent.load(Ordering::Relaxed),
                 "received_bytes": self.net.traffic.received.load(Ordering::Relaxed),
                 "transport_drops": self.net.traffic.dropped.load(Ordering::Relaxed),
@@ -1398,6 +1402,14 @@ fn members(store: &Store) -> Result<Vec<Member>> {
             })
         })
         .collect()
+}
+
+fn journal_identity(genesis: &Committee, public: Hash32) -> Hash32 {
+    genesis.proposal_digest(Point {
+        view: 0,
+        parent_view: 0,
+        header: public,
+    })
 }
 
 pub fn verify_finality(

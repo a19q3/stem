@@ -83,6 +83,8 @@ pub struct Journal {
     pub committee: Vec<u8>,
     #[prost(bytes, tag = "10")]
     pub anchor: Vec<u8>,
+    #[prost(bool, tag = "11")]
+    pub observer_only: bool,
 }
 
 #[derive(Clone, Message)]

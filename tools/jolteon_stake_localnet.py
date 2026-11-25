@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import struct
 import subprocess
+import time
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -181,12 +182,12 @@ def run_epochs(args, l1, scenario, fixture):
                  for i, key in enumerate(keys)}
     processes = {}
 
-    def launch(key, initialize):
+    def launch(key, initialize, home=None):
         pub = public(key)
-        home = args.output / f"node-{ports[pub]}"
-        command = [args.binary, "jolteon", "--home", home, "--genesis", spec,
+        data_dir = home or args.output / f"node-{ports[pub]}"
+        command = [args.binary, "jolteon", "--home", data_dir, "--genesis", spec,
                    "--configuration", configuration, "--key-file", key_files[pub]]
-        phase = "initial" if initialize else "restart"
+        phase = "initial" if initialize else "snapshot-restart" if home else "restart"
         if initialize:
             command.append("--initialize")
         processes[pub] = start(args, command, f"stem-{ports[pub]}-{phase}.log")
@@ -296,6 +297,8 @@ def run_epochs(args, l1, scenario, fixture):
         common_height = min(status["height"] for status in caught_up)
         agreed = header(incoming, common_height)
         assert all(header(key, common_height) == agreed for key in keys)
+        write_json(args.output / "catchup-verified.json", {"replicas": caught_up, "header": agreed,
+                                                          "restart_to_visibility_seconds": recovery_seconds})
 
         handoffs = []
         for outgoing in (0, 1):
@@ -323,6 +326,50 @@ def run_epochs(args, l1, scenario, fixture):
             exit_case = (old, old_meta, low, 11 if args.replace else 21, early) if args.retire else None
             checkpoints, exit_report = publish_checkpoints(args, l1, scenario, relay, spec,
                 stake_client, verified["height"], exit_case, active_freeze)
+        restored = None
+        if args.snapshot_restore:
+            proc = processes[public(observer)]
+            proc.terminate()
+            proc.wait(timeout=8)
+            snapshot = args.output / "observer.snapshot"
+            certificate = args.output / "observer-certificate.json"
+            export = json.loads(run(args.binary, "jolteon-snapshot", "export",
+                "--home", args.output / f"node-{ports[public(observer)]}", "--genesis", spec,
+                "--snapshot", snapshot, "--certificate", certificate))
+            height = export["height"]
+            relay.advance(height, scenario.secp)
+            l1.mine(4)
+            live = l1.call("get_live_cell", relay.point, True)
+            assert live["status"] == "live" and live["cell"]["output"]["type"] == relay.type, live
+            raw = binary(live["cell"]["data"]["content"])[64:]
+            trusted = hex_bytes(ckb_hash(b"Stem Header\0" + scenario.network + raw))
+            assert export["header_id"] == trusted[2:], export
+            home = args.output / "restored-observer"
+            restore = [args.binary, "jolteon-snapshot", "restore", "--home", home, "--genesis", spec,
+                       "--snapshot", snapshot, "--certificate", certificate, "--key-file", key_files[public(observer)]]
+            wrong = subprocess.run([*restore, "--trusted-header", "11" * 32], capture_output=True, text=True)
+            assert wrong.returncode != 0 and "pinned finalized Header" in wrong.stderr and not home.exists(), wrong
+            damaged = bytearray(snapshot.read_bytes())
+            damaged[-1] ^= 1
+            altered = args.output / "altered-observer.snapshot"
+            altered.write_bytes(damaged)
+            broken = restore.copy()
+            broken[broken.index(snapshot)] = altered
+            rejected = subprocess.run([*broken, "--trusted-header", trusted], capture_output=True, text=True)
+            assert rejected.returncode != 0 and not home.exists(), rejected
+            result = json.loads(run(*restore, "--trusted-header", trusted))
+            assert result["observer_only"] and result["height"] == height, result
+            launch(observer, False, home)
+            after = progress(observer, height + 2, 2)
+            assert after["observer_only"] and after["member"] is None, after
+            progress(incoming, height + 2, 2)
+            hashes = [header(key, height + 2) for key in (observer, incoming)]
+            write_json(args.output / "snapshot-headers.json", hashes)
+            assert "header" in hashes[0] and hashes[0] == hashes[1], hashes
+            restored = {"export": export, "ckb_live": live, "ckb_out_point": relay.point,
+                        "ckb_inclusion": l1.prove_committed(relay.point["tx_hash"]),
+                        "restored": result, "after": after, "rejected_pin": wrong.stderr,
+                        "rejected_state": rejected.stderr, "snapshot_bytes": snapshot.stat().st_size}
         return {
             "replace": args.replace, "l1_transactions": {"registered_old": registered_old, "activated_old": activated_old,
                                 "registered_incoming": registered_new, "activated_incoming": activated_new,
@@ -332,7 +379,7 @@ def run_epochs(args, l1, scenario, fixture):
             "restart_to_visibility_seconds": recovery_seconds,
             "handoffs": handoffs, "post_handoff_header": verified, "missing_handoff_rejected": wrong_epoch.stderr,
             "altered_handoff_rejected": bad_handoff.stderr,
-            "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report,
+            "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report, "snapshot_restore": restored,
         }
     finally:
         for child in processes.values():
@@ -353,6 +400,7 @@ def main():
     parser.add_argument("--port", type=int, default=22100)
     parser.add_argument("--l1-port", type=int, default=22110)
     parser.add_argument("--observer-extra-lag", type=int, default=0, help="additional blocks before restarting both offline replicas")
+    parser.add_argument("--snapshot-restore", action="store_true", help="rebuild a fresh observer from a confirmed CKB checkpoint")
     parser.add_argument("--replace", action="store_true", help="replace the entire first committee, then increase power")
     parser.add_argument("--publish-checkpoint", action="store_true", help="publish native Jolteon checkpoints on the CKB devnet")
     parser.add_argument("--retire", action="store_true", help="retire and unbond the outgoing stake using the native checkpoint")
@@ -365,6 +413,8 @@ def main():
         parser.error("--active-slash exercises the join fixture with --slash")
     if args.retire and not args.publish_checkpoint:
         parser.error("--retire requires --publish-checkpoint")
+    if args.snapshot_restore and not args.publish_checkpoint:
+        parser.error("--snapshot-restore requires --publish-checkpoint")
     if args.slash and not args.retire:
         parser.error("--slash requires --retire")
     args.output.mkdir(mode=0o700, parents=True)
