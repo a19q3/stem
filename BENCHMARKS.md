@@ -996,3 +996,62 @@ in the separate replica matrix above. The release workspace tests recorded
 
 See the [reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
 and [12 archived runs with binary fingerprints and raw evidence](benchmarks/2026-11-25-stem-jolteon-l1-consumers.json.xz).
+
+## Jolteon clock and long-gap recovery
+
+The loopback clock fixtures ran four real replicas. Only the scheduled
+leader's realtime clock was shifted by 120 seconds in either direction.
+The other replicas produced a timeout certificate for its first view,
+rejected the untimely proposal and certified strictly increasing execution
+timestamps. Both runs restarted the affected replica with its original
+database and finalized the same signed payment at height 6. One early test
+assertion expected the first rejection to remain the latest one. The raw
+report shows the second failed slot as well.
+
+A matched four-replica run kept one voter offline for more than 220 blocks
+while the surviving quorum finalized 32 payments. The previous replay code
+exited after passing its 192-candidate branch limit. The new code replayed
+225 blocks on the returning replica and reached a common Header at height
+230 in 4.06 seconds from restart. The 16-replica regression kept two
+consecutive leaders offline, finalized 32 payments and recovered to a common
+Header at height 17.
+
+The CKB-backed restart fixture stopped an observer at Stem height 6 and
+restarted it after height 244, across two authentic stake-derived handoffs.
+That observer replayed 229 blocks, while a retired node replayed 205.
+All three agreed at height 249 about 5.08 seconds after restart. A new
+observer then rebuilt its RocksDB state from a 15,575-byte snapshot pinned
+to a live CKB checkpoint for Stem height 252. It followed the current
+committee and matched the active replica's exact Header at height 254.
+The importer rejected a different checkpoint pin and an altered state
+record. The release workspace suite passed 439 tests, with 10 ignored.
+
+## 128-member checkpoint through CKB P2P
+
+The 128-replica Stem fixture finalized 32 signed payments and all replicas
+agreed at Stem height 12. Its real two-chain proof was passed to the full
+RISC-V checkpoint contract on two CKB 0.210.0 devnet nodes. Both kept
+`max_tx_verify_cycles = 70_000_000` and `min_fee_rate = 1_000`.
+The checkpoint transaction was submitted to one node. The second node
+received it over CKB P2P, verified it into its pending pool and included
+it in a generated block. Both nodes returned the same inclusion proof.
+
+| Metric | Measured result |
+| --- | ---: |
+| Full CKB checkpoint transaction estimate | 359,104,558 cycles |
+| Contract witness payload | 16,994 B |
+| Origin submission to the second node's pending pool | 0.702 s |
+| Stake members in the signed Stem proof | 128 |
+
+CKB 0.210.0 uses the 70 million threshold to classify transactions for its
+verification queues. The verified relay path uses the peer's declared
+cycles, while local validation uses the block budget. This test covers one
+ordinary checkpoint on an idle, same-host devnet. Full-size committee
+handoffs, queue contention and other CKB releases remain unmeasured.
+The archive also retains the failed setup attempts while the peer was in
+initial block download and when the block-view JSON contained derived fields.
+[CKB default policy](https://github.com/nervosnetwork/ckb/blob/119598b0a1146a569068ac80bdba7eb5f6292fd3/resource/ckb.toml#L204-L211)
+[CKB verification queue](https://github.com/nervosnetwork/ckb/blob/119598b0a1146a569068ac80bdba7eb5f6292fd3/tx-pool/src/component/verify_queue.rs#L59-L72)
+[CKB transaction verification](https://github.com/nervosnetwork/ckb/blob/119598b0a1146a569068ac80bdba7eb5f6292fd3/tx-pool/src/process.rs#L715-L744)
+[Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
+[18 successful and failed rounds](benchmarks/2026-11-25-stem-clock-recovery-ckb-relay.json.xz).
