@@ -18,7 +18,7 @@ from jolteon_localnet import FINALITY, HANDOFF, HEADER, STATUS, SUBMIT, rpc, wri
 from jolteon_slash_localnet import evidence as slash_evidence
 from localnet import run, write_json
 from native_bridge_localnet import bridge_configuration, deploy, deposit_and_mint, redeem_withdrawal, start, wait_for
-from stake_localnet import CHAIN, DELAY, EMPTY, Scenario, mk_record, proof, signable
+from stake_localnet import CHAIN, DELAY, Scenario, mk_record
 
 
 def public(key):
@@ -514,23 +514,8 @@ def run_epochs(args, l1, scenario, fixture):
     old, incoming, observer = [Ed25519PrivateKey.from_private_bytes(bytes([seed]) * 32)
                                for seed in (31, 32, 33)]
     low, high = 250 * CKB, 400 * CKB
-    owner = script_hash(fixture.standard)
-
-    def activate(key, amount, epoch):
-        pub = public(key)
-
-        def message(domain, previous, next_):
-            return signable(domain, scenario.network, scenario.genesis, scenario.registry_id, previous, next_)
-
-        registered = scenario.change(f"register-{epoch}", 0, pub,
-            mk_record(pub, amount, epoch, None, owner + bytes(48), commission=1250 if args.delegation else 0),
-            lambda before, after: key.sign(message(b"Stem CKB Stake registration\0", before, after)))
-        meta = owner + le(1 + epoch * 10, 8) + le(0, 8) + EMPTY
-        activated = scenario.change(f"activate-{epoch}", 3, pub, mk_record(pub, amount, epoch, None, meta),
-            lambda before, after: proof(scenario.authority, message(b"Stem CKB Stake activation\0", before, after)))
-        return registered, activated, meta
-
-    registered_old, activated_old, old_meta = activate(old, low, 0)
+    commission = 1250 if args.delegation else 0
+    registered_old, activated_old, old_meta = scenario.activate_validator(0, old, low, 0, commission=commission)
     delegation = None
     genesis_positions = []
     if args.delegation:
@@ -557,7 +542,7 @@ def run_epochs(args, l1, scenario, fixture):
     verified, _ = scenario.verify_genesis_snapshot(genesis)
     genesis_committee = verified["validators"]
     assert genesis_committee == [{"ed25519": hex_bytes(public(old)), "power": 350 if delegation else 250}]
-    registered_new, activated_new, new_meta = activate(incoming, high, 1)
+    registered_new, activated_new, new_meta = scenario.activate_validator(1, incoming, high, 1, commission=commission)
     if delegation:
         delegation["top_up"] = scenario.delegation("top-up-delegation", 9, public(old), 75 * CKB, label="top-up")
         delegation["separate_position"] = scenario.delegation("second-delegation", 9, public(old), 70 * CKB,

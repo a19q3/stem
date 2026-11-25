@@ -60,7 +60,8 @@ def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen
 
 
 class Scenario:
-    def __init__(self, args, l1, fixture):
+    def __init__(self, args, l1, fixture, *, registry_capacity=1000 * CKB,
+                 registry_funding=12_000 * CKB, blocks_per_epoch=10):
         self.args = args
         self.l1 = l1
         self.fixture = fixture
@@ -71,6 +72,9 @@ class Scenario:
         self.retired_root = EMPTY
         self.measurements = {}
         self.delegations = {}
+        self.registry_capacity = registry_capacity
+        self.registry_funding = registry_funding
+        self.blocks_per_epoch = blocks_per_epoch
         self.deploy()
 
     def deploy(self):
@@ -83,7 +87,7 @@ class Scenario:
         self.secp = dependency(point(groups["hash"], 0), "dep_group")
         binary_code = self.args.stake_registry.read_bytes()
         capacity = (len(binary_code) + 200) * CKB
-        funding = 12_000 * CKB
+        funding = self.registry_funding
         checkpoint_code = self.args.direct_checkpoint.read_bytes()
         checkpoint_capacity = (len(checkpoint_code) + 200) * CKB
         relay_funding = 8_000 * CKB
@@ -122,12 +126,11 @@ class Scenario:
         if delegated:
             self.delegate_fee_point = point(code_tx, 7)
         type_id = ckb_hash(le(0, 8) + binary(code_tx) + le(1, 4) + le(0, 8))
-        args = (type_id + self.network + self.genesis + le(100 * CKB, 8) + le(10, 8) + le(DELAY, 8)
+        args = (type_id + self.network + self.genesis + le(100 * CKB, 8) + le(self.blocks_per_epoch, 8) + le(DELAY, 8)
                 + binary(self.checkpoint["hash"]) + self.checkpoint["id"] + CHAIN)
         self.registry_type = script(self.code_hash, hex_bytes(args), "data2")
         self.registry_id = script_hash(self.registry_type)
         self.lock = script(self.code_hash, hex_bytes(self.registry_id + bytes(1)), "data2")
-        self.registry_capacity = 1000 * CKB
         self.fee_capacity = funding - self.registry_capacity - FEE
         self.state = self.encode(0)
         tx = transaction(
@@ -250,6 +253,21 @@ class Scenario:
         elif key is not None:
             self.stake_points.pop(key)
         return self.registry_tx
+
+    def activate_validator(self, label, key, amount, epoch, *, commission=0):
+        pub = key.public_key().public_bytes_raw()
+        owner = script_hash(self.fixture.standard)
+
+        def message(domain, previous, next_):
+            return signable(domain, self.network, self.genesis, self.registry_id, previous, next_)
+
+        registered = self.change(f"register-{label}", 0, pub,
+            mk_record(pub, amount, epoch, None, owner + bytes(48), commission=commission),
+            lambda before, after: key.sign(message(b"Stem CKB Stake registration\0", before, after)))
+        meta = owner + le(1 + epoch * self.blocks_per_epoch, 8) + le(0, 8) + EMPTY
+        activated = self.change(f"activate-{label}", 3, pub, mk_record(pub, amount, epoch, None, meta),
+            lambda before, after: proof(self.authority, message(b"Stem CKB Stake activation\0", before, after)))
+        return registered, activated, meta
 
     def delegation_proof(self, name, identity, after=None):
         positions = [{"identity": position["identity"], "principal": data[0]}
@@ -486,12 +504,14 @@ class Scenario:
             votes.append(result)
         return votes
 
-    def verify_genesis_snapshot(self, votes):
+    def verify_genesis_snapshot(self, votes, *, max_validators=4, max_total_power=None):
+        if max_total_power is None:
+            max_total_power = 800 if getattr(self.args, "delegation_power_cap", False) else 1000
         trust = self.args.output / "snapshot-trust.json"
         write_json(trust, {
             "registry_type": self.registry_type, "target_epoch": 0, "previous": None,
             "shannons_per_power": CKB,
-            "max_validators": 4, "max_total_power": 800 if getattr(self.args, "delegation_power_cap", False) else 1000,
+            "max_validators": max_validators, "max_total_power": max_total_power,
             "guardians": [
                 {"ed25519": hex_bytes(key.public_key().public_bytes_raw()), "power": 1}
                 for key in self.authority

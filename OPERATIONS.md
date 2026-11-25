@@ -186,6 +186,30 @@ handoff files in chronological order. Use `--terminal` for a boundary
 proof. `stem checkpoint jolteon-bundle` reads an archive and constructs a
 CKB witness with the previous frontier, history suffix and finality proof.
 
+### Exercise a full funded committee handoff
+
+Build `stake-registry` and `jolteon-checkpoint` as above. The
+wide fixture funds every validator's Stake Cell on CKB, verifies
+guardian observations for genesis and epoch 1, and starts one
+extra process for the incoming key. It pauses a continuing voter
+before the snapshot, restarts it after the committee changes,
+and publishes the old, boundary and successor Headers on CKB.
+
+```sh
+python3 tools/jolteon_wide_epoch_localnet.py \
+  --binary /path/to/stem --l1 /path/to/ckb \
+  --stake-registry "$contracts_dir/stake-registry" --direct-checkpoint "$contracts_dir/jolteon-checkpoint" \
+  --validators 128 --port 29630 --l1-port 29780 --output /tmp/stem-wide-handoff \
+  --blocks-per-epoch 40 --signing-window 30 --ckb-block-cycles 3500000000
+```
+
+Use a fresh output directory and 129 available consecutive
+Stem ports. The CKB RPC and P2P ports must fall outside that range.
+The registration phase confirms each Registry update in order,
+and reports the transaction hashes as it progresses. Use
+`--validators 4` for a smaller devnet run with the same proof checks.
+The fixture uses temporary test keys.
+
 ### Run a sparse CKB checkpoint publisher
 
 Run one poll with `stem checkpoint publish --config publisher.json`. Schedule that
