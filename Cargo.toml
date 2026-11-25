@@ -33,6 +33,10 @@ sha2.workspace = true
 tendermint-proto = "=0.40.4"
 tempfile.workspace = true
 
+[dev-dependencies]
+blst = { version = "=0.3.17", features = ["no-threads"] }
+ckb-vm = { workspace = true, features = ["asm"] }
+
 [workspace]
 members = ["bridge-wire", "ledger", "stake", "vm", "vendor/ckb-script"]
 default-members = ["."]

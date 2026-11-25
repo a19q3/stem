@@ -8,6 +8,9 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use stem_ledger::block::{Header, HeaderContext, StateCommitment};
 use stem_stake::{Attestation, Authority, Member};
 
+#[path = "weighted_finality/journal.rs"]
+mod journal;
+
 struct Committee {
     network: Byte32,
     epoch: u64,

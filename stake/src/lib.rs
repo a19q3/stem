@@ -10,6 +10,7 @@ use ckb_hash::new_blake2b;
 use ed25519_dalek::{Signature, VerifyingKey};
 
 pub mod checkpoint;
+pub mod compact;
 mod evidence;
 pub mod history;
 pub mod l1;
@@ -444,6 +445,10 @@ impl Authority {
             signed = signed.checked_add(*power).ok_or(Error::Overflow)?;
             last = Some(vote.guardian);
         }
+        self.require_quorum(signed)
+    }
+
+    fn require_quorum(&self, signed: u64) -> Result<()> {
         if 3 * u128::from(signed) <= 2 * u128::from(self.total) {
             return Err(Error::Quorum);
         }
