@@ -1,0 +1,703 @@
+{
+  "protocol": "Telegraph",
+  "integer_order": "little",
+  "types": [
+    {
+      "name": "Uint32",
+      "kind": "fixed",
+      "size": 4
+    },
+    {
+      "name": "Uint64",
+      "kind": "fixed",
+      "size": 8
+    },
+    {
+      "name": "Uint128",
+      "kind": "fixed",
+      "size": 16
+    },
+    {
+      "name": "Uint64Opt",
+      "kind": "optional",
+      "item": "Uint64"
+    },
+    {
+      "name": "Byte32",
+      "kind": "fixed",
+      "size": 32
+    },
+    {
+      "name": "Uint16",
+      "kind": "fixed",
+      "size": 2
+    },
+    {
+      "name": "Byte64",
+      "kind": "fixed",
+      "size": 64
+    },
+    {
+      "name": "Bytes",
+      "kind": "bytes"
+    },
+    {
+      "name": "Byte32Vec",
+      "kind": "dense_vector",
+      "item": "Byte32"
+    },
+    {
+      "name": "Script",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "code_hash",
+          "type": "Byte32"
+        },
+        {
+          "name": "hash_type",
+          "type": "ScriptAddress"
+        },
+        {
+          "name": "args",
+          "type": "Bytes"
+        }
+      ]
+    },
+    {
+      "name": "OutPoint",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "tx_hash",
+          "type": "Byte32"
+        },
+        {
+          "name": "index",
+          "type": "Uint32"
+        }
+      ]
+    },
+    {
+      "name": "Since",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "byte"
+        },
+        {
+          "name": "value",
+          "type": "Uint64"
+        }
+      ]
+    },
+    {
+      "name": "CellInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "since",
+          "type": "Since"
+        },
+        {
+          "name": "previous_output",
+          "type": "OutPoint"
+        }
+      ]
+    },
+    {
+      "name": "CellDep",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "out_point",
+          "type": "OutPoint"
+        },
+        {
+          "name": "dep_type",
+          "type": "byte"
+        }
+      ]
+    },
+    {
+      "name": "ScriptVec",
+      "kind": "dense_vector",
+      "item": "Script"
+    },
+    {
+      "name": "CellDepVec",
+      "kind": "dense_vector",
+      "item": "CellDep"
+    },
+    {
+      "name": "CellInputVec",
+      "kind": "dense_vector",
+      "item": "CellInput"
+    },
+    {
+      "name": "CellVec",
+      "kind": "dense_vector",
+      "item": "Cell"
+    },
+    {
+      "name": "Cell",
+      "kind": "flagged",
+      "fields": [
+        {
+          "name": "capacity",
+          "type": "Uint64"
+        },
+        {
+          "name": "lock",
+          "type": "Script"
+        },
+        {
+          "name": "type_scripts",
+          "type": "ScriptVec",
+          "bit": 0
+        },
+        {
+          "name": "data",
+          "type": "Bytes"
+        }
+      ],
+      "flag_bytes": 1
+    },
+    {
+      "name": "L1Anchor",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "height",
+          "type": "Uint64"
+        },
+        {
+          "name": "hash",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "OutPointVec",
+      "kind": "dense_vector",
+      "item": "OutPoint"
+    },
+    {
+      "name": "BridgeMint",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "l1_genesis",
+          "type": "Byte32"
+        },
+        {
+          "name": "deposits",
+          "type": "OutPointVec"
+        }
+      ]
+    },
+    {
+      "name": "MintObservation",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "authority",
+          "type": "Byte32"
+        },
+        {
+          "name": "previous_anchor",
+          "type": "L1Anchor"
+        },
+        {
+          "name": "anchor",
+          "type": "L1Anchor"
+        },
+        {
+          "name": "vault",
+          "type": "VaultUpdate"
+        },
+        {
+          "name": "capacity",
+          "type": "Uint64"
+        },
+        {
+          "name": "units",
+          "type": "Uint128"
+        }
+      ]
+    },
+    {
+      "name": "StakeSnapshot",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "epoch",
+          "type": "Uint64"
+        },
+        {
+          "name": "signing_anchor",
+          "type": "Byte32"
+        },
+        {
+          "name": "commitment",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "VaultUpdate",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "lane",
+          "type": "Byte32"
+        },
+        {
+          "name": "input",
+          "type": "OutPoint"
+        },
+        {
+          "name": "output",
+          "type": "OutPoint"
+        }
+      ]
+    },
+    {
+      "name": "WithdrawalPaid",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "vault",
+          "type": "VaultUpdate"
+        },
+        {
+          "name": "nonce",
+          "type": "Uint64"
+        },
+        {
+          "name": "receipt",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "ReserveMoved",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "source",
+          "type": "VaultUpdate"
+        },
+        {
+          "name": "destination",
+          "type": "VaultUpdate"
+        },
+        {
+          "name": "capacity",
+          "type": "Uint64"
+        }
+      ]
+    },
+    {
+      "name": "BridgeSettlement",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "l1_genesis",
+          "type": "Byte32"
+        },
+        {
+          "name": "authority",
+          "type": "Byte32"
+        },
+        {
+          "name": "previous_anchor",
+          "type": "L1Anchor"
+        },
+        {
+          "name": "anchor",
+          "type": "L1Anchor"
+        },
+        {
+          "name": "action",
+          "type": "Bytes"
+        }
+      ]
+    },
+    {
+      "name": "ProtocolOperation",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "byte"
+        },
+        {
+          "name": "payload",
+          "type": "Bytes"
+        }
+      ]
+    },
+    {
+      "name": "ProtocolOperationOpt",
+      "kind": "optional",
+      "item": "ProtocolOperation"
+    },
+    {
+      "name": "Attestation",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "signer",
+          "type": "Uint16"
+        },
+        {
+          "name": "signature",
+          "type": "Byte64"
+        }
+      ]
+    },
+    {
+      "name": "AttestationVec",
+      "kind": "dense_vector",
+      "item": "Attestation"
+    },
+    {
+      "name": "Certificate",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "body",
+          "type": "Bytes"
+        },
+        {
+          "name": "attestations",
+          "type": "AttestationVec"
+        }
+      ]
+    },
+    {
+      "name": "CertificateOpt",
+      "kind": "optional",
+      "item": "Certificate"
+    },
+    {
+      "name": "RawTransaction",
+      "kind": "flagged",
+      "fields": [
+        {
+          "name": "cell_deps",
+          "type": "CellDepVec"
+        },
+        {
+          "name": "header_deps",
+          "type": "Byte32Vec",
+          "bit": 0
+        },
+        {
+          "name": "inputs",
+          "type": "CellInputVec"
+        },
+        {
+          "name": "outputs",
+          "type": "CellVec"
+        },
+        {
+          "name": "protocol",
+          "type": "ProtocolOperationOpt",
+          "bit": 1
+        },
+        {
+          "name": "valid_before_height",
+          "type": "Uint64Opt",
+          "bit": 2
+        },
+        {
+          "name": "messages",
+          "type": "GroupMessageVec",
+          "bit": 3
+        }
+      ],
+      "flag_bytes": 1
+    },
+    {
+      "name": "GroupWitness",
+      "kind": "flagged",
+      "fields": [
+        {
+          "name": "group_index",
+          "type": "Uint16"
+        },
+        {
+          "name": "proof_data",
+          "type": "Bytes",
+          "bit": 0
+        },
+        {
+          "name": "seal",
+          "type": "Bytes",
+          "bit": 1
+        }
+      ],
+      "flag_bytes": 1
+    },
+    {
+      "name": "GroupWitnessVec",
+      "kind": "dense_vector",
+      "item": "GroupWitness"
+    },
+    {
+      "name": "Transaction",
+      "kind": "flagged",
+      "fields": [
+        {
+          "name": "raw",
+          "type": "RawTransaction"
+        },
+        {
+          "name": "witnesses",
+          "type": "GroupWitnessVec"
+        },
+        {
+          "name": "certificate",
+          "type": "CertificateOpt",
+          "bit": 0
+        }
+      ],
+      "flag_bytes": 1
+    },
+    {
+      "name": "HeaderContext",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "height",
+          "type": "Uint64"
+        },
+        {
+          "name": "timestamp_ms",
+          "type": "Uint64"
+        },
+        {
+          "name": "parent",
+          "type": "Byte32"
+        },
+        {
+          "name": "transaction_root",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "StateCommitment",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "cell_root",
+          "type": "Byte32"
+        },
+        {
+          "name": "system_root",
+          "type": "Byte32"
+        },
+        {
+          "name": "history_root",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "Header",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "context",
+          "type": "HeaderContext"
+        },
+        {
+          "name": "state",
+          "type": "StateCommitment"
+        },
+        {
+          "name": "receipt_root",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "Receipt",
+      "kind": "flagged",
+      "fields": [
+        {
+          "name": "fee",
+          "type": "CompactUint64"
+        },
+        {
+          "name": "cycles",
+          "type": "CompactUint64"
+        },
+        {
+          "name": "protocol_result",
+          "type": "Bytes",
+          "bit": 0
+        }
+      ],
+      "flag_bytes": 1
+    },
+    {
+      "name": "ScriptAddress",
+      "kind": "fixed",
+      "size": 1,
+      "allowed_values": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "ScriptIndex",
+      "kind": "uleb",
+      "bits": 16
+    },
+    {
+      "name": "ScriptIndexVec",
+      "kind": "dense_vector",
+      "item": "ScriptIndex"
+    },
+    {
+      "name": "IndexedOutput",
+      "kind": "flagged",
+      "flag_bytes": 1,
+      "fields": [
+        {
+          "name": "capacity",
+          "type": "Uint64"
+        },
+        {
+          "name": "lock",
+          "type": "ScriptIndex"
+        },
+        {
+          "name": "type_scripts",
+          "type": "ScriptIndexVec",
+          "bit": 0
+        },
+        {
+          "name": "data",
+          "type": "Bytes"
+        }
+      ]
+    },
+    {
+      "name": "IndexedOutputVec",
+      "kind": "dense_vector",
+      "item": "IndexedOutput"
+    },
+    {
+      "name": "IndexedRawTransaction",
+      "kind": "flagged",
+      "fields": [
+        {
+          "name": "cell_deps",
+          "type": "CellDepVec"
+        },
+        {
+          "name": "header_deps",
+          "type": "Byte32Vec",
+          "bit": 0
+        },
+        {
+          "name": "inputs",
+          "type": "CellInputVec"
+        },
+        {
+          "name": "scripts",
+          "type": "ScriptVec"
+        },
+        {
+          "name": "outputs",
+          "type": "IndexedOutputVec"
+        },
+        {
+          "name": "protocol",
+          "type": "ProtocolOperationOpt",
+          "bit": 1
+        },
+        {
+          "name": "valid_before_height",
+          "type": "Uint64Opt",
+          "bit": 2
+        },
+        {
+          "name": "messages",
+          "type": "GroupMessageVec",
+          "bit": 3
+        }
+      ],
+      "flag_bytes": 1
+    },
+    {
+      "name": "IndexedTransaction",
+      "kind": "flagged",
+      "fields": [
+        {
+          "name": "raw",
+          "type": "IndexedRawTransaction"
+        },
+        {
+          "name": "witnesses",
+          "type": "GroupWitnessVec"
+        },
+        {
+          "name": "certificate",
+          "type": "CertificateOpt",
+          "bit": 0
+        }
+      ],
+      "flag_bytes": 1
+    },
+    {
+      "name": "CompactUint64",
+      "kind": "uleb",
+      "bits": 64
+    },
+    {
+      "name": "GroupAction",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "Uint16"
+        },
+        {
+          "name": "data",
+          "type": "Bytes"
+        }
+      ]
+    },
+    {
+      "name": "GroupActionVec",
+      "kind": "dense_vector",
+      "item": "GroupAction"
+    },
+    {
+      "name": "GroupMessage",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "group_index",
+          "type": "Uint16"
+        },
+        {
+          "name": "actions",
+          "type": "GroupActionVec"
+        }
+      ]
+    },
+    {
+      "name": "GroupMessageVec",
+      "kind": "dense_vector",
+      "item": "GroupMessage"
+    }
+  ]
+}

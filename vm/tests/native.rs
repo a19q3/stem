@@ -5,13 +5,13 @@ use ckb_crypto::secp::Privkey;
 use ckb_hash::blake2b_256;
 use ckb_types::{
     bytes::Bytes,
-    core::ScriptHashType,
+    core::{DepType, ScriptHashType},
     packed::{Byte32, CellDep, OutPoint, Script},
     prelude::*,
 };
 use stem_ledger::{
-    BlockContext, Cell, CellInput, GroupWitness, LiveCell, Origin, ResolvedTransaction,
-    ScriptGroupKind, Transaction,
+    BlockContext, Cell, CellInput, GroupAction, GroupMessage, GroupWitness, LiveCell, Origin,
+    ResolvedTransaction, ScriptGroupKind, Transaction,
     block::{Header, HeaderContext, StateCommitment},
 };
 use stem_vm::{VerificationCache, verify};
@@ -75,13 +75,32 @@ impl Network {
 
     fn signed(&self, inputs: Vec<CellInput>, outputs: Vec<Cell>) -> Result<Transaction> {
         let tx = Transaction::new(self.deps.clone(), vec![], inputs, outputs, vec![])?;
-        let digest = tx.lock_digest(&self.id, &self.lock);
+        self.seal(tx)
+    }
+
+    fn seal(&self, tx: Transaction) -> Result<Transaction> {
+        let digest = self.signing_digest(&tx)?;
         let sig = self.key.sign_recoverable(&digest.unpack())?;
         tx.with_witnesses(vec![GroupWitness {
             group_index: 0,
             proof_data: Bytes::new(),
             seal: Bytes::from(sig.serialize()),
         }])
+    }
+
+    fn signing_digest(&self, tx: &Transaction) -> Result<Byte32> {
+        tx.signing_digest(
+            &self.id,
+            0,
+            &self.lock,
+            |point| {
+                self.cells
+                    .get(point)
+                    .cloned()
+                    .context("missing signing Cell")
+            },
+            |_| anyhow::bail!("unexpected Header Dep"),
+        )
     }
 
     fn resolve(&self, id: &Byte32, tx: Transaction) -> Result<Arc<ResolvedTransaction>> {
@@ -148,7 +167,7 @@ fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/examples/type_rules.c");
     let compiler = std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into());
     let mut programs = Vec::new();
-    for rule in 1..=11 {
+    for rule in 1..=12 {
         let path = tmp.path().join(format!("rule-{rule}"));
         let output = Command::new(&compiler)
             .args([
@@ -197,6 +216,128 @@ fn block_context_uses_committed_parent_time_and_partitions_cache() -> Result<()>
     let expected = verify(accepted.clone(), CYCLE_LIMIT, false)?;
     assert_eq!(cache.verify(accepted, CYCLE_LIMIT, true)?, expected);
     assert!(cache.verify(rejected, CYCLE_LIMIT, true).is_err());
+    Ok(())
+}
+
+#[test]
+fn native_group_message_is_signed_and_owned_by_a_derived_group() -> Result<()> {
+    let mut network = Network::new()?;
+    let programs = build_contracts(&mut network)?;
+    let rule = script(&programs[11], b"");
+    let cell = network.output(vec![rule], Bytes::new())?;
+    let input = network.add_input(cell.clone());
+    let draft = Transaction::new(
+        network.deps.clone(),
+        vec![],
+        vec![input],
+        vec![cell],
+        vec![],
+    )?;
+    let message = GroupMessage {
+        group_index: 1,
+        actions: vec![GroupAction {
+            kind: 7,
+            data: Bytes::from_static(b"open"),
+        }],
+    };
+    assert!(
+        draft
+            .with_messages(vec![message.clone(), message.clone()])
+            .is_err()
+    );
+    let wrong = draft.with_messages(vec![GroupMessage {
+        group_index: 2,
+        ..message.clone()
+    }])?;
+    assert!(network.resolve(&network.id, wrong).is_err());
+    let tx = draft.with_messages(vec![message])?;
+    assert_ne!(tx.id(&network.id), draft.id(&network.id));
+    let signed = network.seal(tx)?;
+    verify(
+        network.resolve(&network.id, signed.clone())?,
+        CYCLE_LIMIT,
+        true,
+    )?;
+    let unsigned_message = draft.with_witnesses(signed.witnesses().collect())?;
+    let error = verify(
+        network.resolve(&network.id, unsigned_message)?,
+        CYCLE_LIMIT,
+        false,
+    )
+    .unwrap_err();
+    assert!(error.to_string().starts_with("Lock Script Group"));
+    let no_message = network.seal(draft)?;
+    let error = verify(
+        network.resolve(&network.id, no_message)?,
+        CYCLE_LIMIT,
+        false,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("exited with 35"));
+    Ok(())
+}
+
+#[test]
+fn complete_authorization_binds_input_data_and_dep_group_members() -> Result<()> {
+    let mut network = Network::new()?;
+    let code_point = network.deps[0].out_point();
+    let group_point = OutPoint::new([81; 32].pack(), 0);
+    let members: ckb_types::packed::OutPointVec = vec![code_point.clone()].pack();
+    let group = network.output(vec![], members.as_bytes())?;
+    network.cells.insert(group_point.clone(), group);
+    network.deps = vec![
+        CellDep::new_builder()
+            .out_point(group_point.clone())
+            .dep_type(DepType::DepGroup)
+            .build(),
+    ];
+    let cell = network.output(vec![], Bytes::new())?;
+    let input = network.add_input(cell.clone());
+    let point = input.previous_output.clone();
+    let signed = network.signed(vec![input], vec![cell])?;
+    let valid = network.resolve(&network.id, signed.clone())?;
+    let cache = VerificationCache::new(4);
+    cache.verify(valid, CYCLE_LIMIT, false)?;
+
+    let bad_input = network.output(vec![], Bytes::from_static(b"changed input data"))?;
+    let original_input = network.cells.insert(point.clone(), bad_input).unwrap();
+    let changed = network.resolve(&network.id, signed.clone())?;
+    assert!(cache.verify(changed, CYCLE_LIMIT, true).is_err());
+    network.cells.insert(point, original_input);
+
+    // Keep the same ELF and program hash. The lock must reject different
+    // resolved Cell contents even when the program selected by the host stays the same.
+    let original_code = network.cells[&code_point].clone();
+    let changed = Cell::new(
+        original_code.capacity() + 1,
+        original_code.lock(),
+        vec![],
+        original_code.data(),
+    )?;
+    network.cells.insert(code_point.clone(), changed);
+    assert!(
+        verify(
+            network.resolve(&network.id, signed.clone())?,
+            CYCLE_LIMIT,
+            false
+        )
+        .is_err()
+    );
+    network.cells.insert(code_point, original_code);
+
+    let dep_group = &network.cells[&group_point];
+    let changed = Cell::new(
+        dep_group.capacity() + 1,
+        dep_group.lock(),
+        vec![],
+        dep_group.data(),
+    )?;
+    network.cells.insert(group_point, changed);
+    assert!(
+        cache
+            .verify(network.resolve(&network.id, signed)?, CYCLE_LIMIT, true)
+            .is_err()
+    );
     Ok(())
 }
 
@@ -374,7 +515,7 @@ fn native_witness_proofs_and_seals_are_bound_to_the_resolved_groups() -> Result<
         vec![cell],
         vec![proof.clone()],
     )?;
-    let digest = tx.lock_digest(&network.id, &network.lock);
+    let digest = network.signing_digest(&tx)?;
     let seal = GroupWitness {
         group_index: 0,
         proof_data: Bytes::new(),

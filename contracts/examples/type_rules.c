@@ -21,6 +21,7 @@ typedef unsigned char byte;
 #define LOAD_GROUP_INDEX 2115
 #define LOAD_GROUP_PROOF 2117
 #define LOAD_BLOCK_CONTEXT 2122
+#define LOAD_GROUP_MESSAGE 2123
 #define LOAD_SCRIPT 2052
 #define LOAD_SCRIPT_HASH 2062
 
@@ -122,6 +123,14 @@ static int verify(void) {
         return 34;
     return le64(context) != le64(height) + 1 ||
            le64(context + 8) != le64(time) || le64(time) < 42;
+#elif RULE == 12
+    byte message[16];
+    len = sizeof(message);
+    if (load(LOAD_GROUP_MESSAGE, message, &len, 0, 0, 0))
+        return 35;
+    return len != sizeof(message) || le32(message + 2) != 1 ||
+           message[6] != 7 || message[7] != 0 || le32(message + 8) != 4 ||
+           !eq(message + 12, (const byte *)"open", 4);
 #elif RULE == 4
     /* Identity args are a specific 36-byte creating OutPoint. The input is
        consumed once, so it cannot create a second instance of this identity. */
@@ -174,7 +183,8 @@ static int verify(void) {
             byte size_bytes[4];
             len = sizeof(size_bytes);
             if (load(LOAD_TYPES, size_bytes, &len, index, full_source, 0) ||
-                len != le32(size_bytes))
+                len <= sizeof(size_bytes) || le32(size_bytes) == 0 ||
+                le32(size_bytes) > 32)
                 return 19;
             byte member[128];
             len = sizeof(member);

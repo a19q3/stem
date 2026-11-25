@@ -4,7 +4,7 @@ The default `stem run` executable runs the native state machine. It commits curr
 
 ## Native ledger
 
-[Stem's Molecule schema](ledger/schemas/ledger.mol) encodes a Cell as a table containing Capacity, a CKB Lock Script, a vector of CKB Type Scripts, and Cell Data. The raw Transaction contains Cell Deps, header deps, inputs with Since, and Cells. The witnessed Transaction adds a vector of group-addressed proofs and seals and an optional operation certificate. The native decoder rejects the original CKB transaction format.
+[Stem's Telegraph schema](ledger/schemas/telegraph.json) encodes the Cell with inline scripts, an optional dense Type Script vector and application Data. The raw transaction contains inputs, dependencies, Cells, Group Messages and optional protocol or expiry fields. The outer transaction contains proof data, seals and any certificate. Script identity keeps the complete CKB Script hash. CKB L1 wire types still use Molecule. The indexed and historical Molecule layouts are measured by the encoding suite.
 
 The Type Script set is sorted by the bytes of the full canonical Script, including code hash, hash type, and args. Constructors sort the set. Decoders require strict ascending order. The limits are 32 Type Scripts, 16 KiB per Script, and 64 KiB of Type Script bytes per Cell. Ordinary transactions are limited to 512 KiB. A standalone Cell can be up to 2 MiB so genesis can hold the 1 MiB secp256k1 data Cell. Resolution bounds both the number and total bytes of references, including members of a Dep Group.
 
@@ -40,6 +40,7 @@ Calls retain the CKB buffer convention. `a0` is the buffer pointer, `a1` points 
 | 2074, 2117, 2118 | Full group witness, proof bytes, seal bytes. Source 0 and index 0 select the current group. Source 1 selects the absolute group at index `a3` |
 | 2119 | Standard authorization digest for the current Lock Group |
 | 2121 | Recover a 33-byte compressed secp256k1 key from a 65-byte compact seal at `a0` and a 32-byte digest at `a1`. Writes the key at `a2`. Returns 4 for an invalid or high-S seal. Each call charges 1,900,000 cycles, including invalid seals. |
+| 2123 | The encoded Group Message. Source 0 and index 0 select the current group. Source 1 selects the absolute group index. |
 | 2122 | Candidate height and committed parent time as two little-endian u64 values, followed by the 32-byte parent Header ID. Source and index must be zero. |
 | 2072, 2082 | Native Header, or fields height 0, time 1, parent ID 2, transaction root 3, Cell root 4, system root 5, history root 6, receipt root 7 |
 

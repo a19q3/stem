@@ -1,4 +1,4 @@
-//! CKB-VM host for Stem's native Molecule ledger.
+//! CKB-VM host for Stem's native Telegraph ledger.
 
 mod crypto;
 
@@ -49,6 +49,7 @@ pub const LOAD_GROUP_SEAL: u64 = 2118;
 pub const LOAD_GROUP_SIGNING_DIGEST: u64 = 2119;
 pub const LOAD_GROUP_MINTED_UNITS: u64 = 2120;
 pub const LOAD_BLOCK_CONTEXT: u64 = 2122;
+pub const LOAD_GROUP_MESSAGE: u64 = 2123;
 
 #[derive(Clone)]
 struct GroupContext {
@@ -428,6 +429,17 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 }
                 store_data(machine, &context.tx.minted_units(group).to_le_bytes())
             }
+            LOAD_GROUP_MESSAGE => {
+                let selected = match source {
+                    0 if index == 0 => context.group,
+                    1 if index < context.tx.groups().len() => index,
+                    _ => return Ok(status(machine, INDEX_OUT_OF_BOUND)),
+                };
+                let Some(message) = context.tx.group_message(selected as u16) else {
+                    return Ok(status(machine, ITEM_MISSING));
+                };
+                store_data(machine, message)
+            }
             LOAD_GROUP_SIGNING_DIGEST => {
                 if source != 0 || index != 0 || group.kind != ScriptGroupKind::Lock {
                     return Ok(status(machine, ITEM_MISSING));
@@ -435,7 +447,7 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 // The digest reads the transaction body and its proof data.
                 machine
                     .add_cycles_no_checking(transferred_byte_cycles(tx.as_slice().len() as u64))?;
-                let digest = tx.lock_digest(context.tx.network_id(), &group.script);
+                let digest = context.tx.lock_digest(group);
                 store_data(machine, digest.as_slice())
             }
             LOAD_INPUT_SYSCALL_NUMBER | LOAD_INPUT_BY_FIELD_SYSCALL_NUMBER => {

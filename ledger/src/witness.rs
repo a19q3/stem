@@ -1,3 +1,4 @@
+use crate::telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity};
 use anyhow::{Result, ensure};
 use ckb_types::{bytes::Bytes, prelude::*};
 

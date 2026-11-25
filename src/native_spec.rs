@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use ckb_jsonrpc_types::{JsonBytes, OutPoint as JsonOutPoint, Script as JsonScript};
 use ckb_types::{H256, core::ScriptHashType, packed::Script, prelude::*};
 use serde::Deserialize;
-use stem::native_store::{BridgeGenesis, LaneGenesis, Limits, RecipientLock, Spec};
+use stem::native_store::{BridgeGenesis, LaneGenesis, Limits, RecipientLock, ResourceFees, Spec};
 use stem_ledger::{
     CapacityPolicy, Cell,
     protocol::{L1Anchor, Limits as ProtocolLimits},
@@ -21,6 +21,8 @@ struct Network {
     genesis_time_ms: u64,
     capacity: StorageBond,
     limits: Limits,
+    #[serde(default)]
+    fees: ResourceFees,
     #[serde(default)]
     development_cells: Vec<Allocation>,
     #[serde(default)]
@@ -155,6 +157,7 @@ pub fn load(path: &Path) -> Result<Spec> {
             state_overhead: config.capacity.state_overhead,
         },
         limits: config.limits,
+        fees: config.fees,
         development_cells,
         development_validators,
         stake,

@@ -1,5 +1,6 @@
 //! Native commitments in their construction order.
 
+use crate::telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity};
 use anyhow::{Context, Result, ensure};
 use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
 
@@ -181,8 +182,16 @@ pub struct Receipt {
 impl Receipt {
     pub fn encode(&self) -> Bytes {
         wire::Receipt::new_builder()
-            .fee(uint64(self.fee))
-            .cycles(uint64(self.cycles))
+            .fee(
+                wire::CompactUint64::new_builder()
+                    .set(self.fee.into())
+                    .build(),
+            )
+            .cycles(
+                wire::CompactUint64::new_builder()
+                    .set(self.cycles.into())
+                    .build(),
+            )
             .protocol_result(wire::Bytes::new_unchecked(
                 self.protocol_result.pack().as_bytes(),
             ))
@@ -193,8 +202,8 @@ impl Receipt {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let receipt = wire::Receipt::from_slice(bytes)?;
         Ok(Self {
-            fee: number(receipt.fee()),
-            cycles: number(receipt.cycles()),
+            fee: receipt.fee().as_reader().value().try_into()?,
+            cycles: receipt.cycles().as_reader().value().try_into()?,
             protocol_result: receipt.protocol_result().raw_data(),
         })
     }

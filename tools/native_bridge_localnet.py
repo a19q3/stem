@@ -17,24 +17,33 @@ from bridge_localnet import (
 from localnet import Rpc, run, write_json
 
 
-def table(*fields):
-    cursor = 4 * (1 + len(fields))
-    offsets = []
-    for field in fields:
-        offsets.append(le(cursor, 4))
-        cursor += len(field)
-    return le(cursor, 4) + b"".join(offsets) + b"".join(fields)
+def native_script(lock):
+    args = binary(lock["args"])
+    address = {"data": 0, "type": 1}[lock["hash_type"]]
+    return binary(lock["code_hash"]) + bytes([address]) + le(len(args), 4) + args
 
 
 def cell(capacity, lock, data=b"", types=()):
-    scripts = sorted(map(packed_script, types))
-    return hex_bytes(table(le(capacity, 8), packed_script(lock), table(*scripts), le(len(data), 4) + data))
+    scripts = sorted(map(native_script, types))
+    items = le(len(scripts), 4) + b"".join(scripts) if scripts else b""
+    return hex_bytes(bytes([bool(scripts)]) + le(capacity, 8) + native_script(lock)
+                     + items + le(len(data), 4) + data)
 
 
-def stem_id(network, tx):
-    raw = binary(tx)
-    a, b = (int.from_bytes(raw[offset:offset + 4], "little") for offset in (4, 8))
-    return hex_bytes(ckb_hash(b"Stem transaction ID\0" + binary(network) + raw[a:b]))
+def stem_id(args, network, tx):
+    command = [str(args.binary), "wallet", "id", "--network", network]
+    return json.loads(subprocess.check_output(command, input=json.dumps(tx).encode()))
+
+
+def signing_cell(rpc, out_point):
+    packed = binary(out_point["tx_hash"]) + le(int(out_point["index"], 16), 4)
+    response = rpc.call("abci_query", path=json.dumps("/stem/cell"), data=hex_bytes(packed))["response"]
+    if response["code"] != 0:
+        raise RuntimeError(f"read signing Cell: {response}")
+    record = bytes.fromhex(json.loads(base64.b64decode(response["value"]))["cell"])
+    if record[:36] != packed or len(record) <= 84:
+        raise RuntimeError("invalid signing Cell record")
+    return {"out_point": out_point, "cell": hex_bytes(record[84:])}
 
 
 def start(args, command, file):
@@ -185,7 +194,7 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
         spec["bridge"]["anchor_height"], spec["bridge"]["anchor_hash"], [],
     )
     # The confirmed L1 funds back both minted Cells, including the native Lock Code Cell.
-    mint_id = stem_id(spec["network_id"], encoded)
+    mint_id = stem_id(args, spec["network_id"], encoded)
     query = comet_rpc.call("abci_query", path=json.dumps("/stem/cell"),
                            data=hex_bytes(binary(mint_id) + le(1, 4)), prove="true")["response"]
     if query["code"] != 0:
@@ -245,8 +254,11 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", build)))
     lock_path = args.output / "native-owner-lock.json"
     write_json(lock_path, source)
+    context = args.output / f"{name}-burn-signing-context.json"
+    write_json(context, {"cells": [signing_cell(comet_rpc, point)
+                                   for point in [mint["payment"], *(dep["out_point"] for dep in deps)]]})
     signed = json.loads(run(args.binary, "wallet", "sign", "--genesis", spec_path,
-                            "--transaction", draft, "--group-index", "0", "--lock", lock_path,
+                            "--transaction", draft, "--context", context, "--group-index", "0", "--lock", lock_path,
                             "--key-file", fixture.owner))
     burned = comet_rpc.call("broadcast_tx_commit", tx=signed)
     height = int(burned["height"])
@@ -383,7 +395,7 @@ def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, 
     encoded, minted, votes, rejected = attain_mint(args, l1, fixture, vault, spec_path, lane, consolidated, comet_rpc,
                                                    "xudt", prior["confirmed_height"], prior["confirmed_hash"],
                                                    [dependency(stem_dep)])
-    tx_id = stem_id(spec["network_id"], encoded)
+    tx_id = stem_id(args, spec["network_id"], encoded)
     mint = {"l1_consolidation": consolidated, "l1_proof": l1.prove_committed(consolidated), "mint": minted,
             "mint_id": tx_id, "capacity": capacity, "payment_capacity": capacity,
             "payment": point(tx_id, 0), "lock_dep": baseline["lock_dep"], "minority_rejected": rejected,

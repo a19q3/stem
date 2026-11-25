@@ -3675,6 +3675,7 @@ dependencies = [
  "molecule",
  "molecule-codegen",
  "stem-stake",
+ "tempfile",
 ]
 
 [[package]]

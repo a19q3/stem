@@ -33,7 +33,7 @@ struct Script {
 }
 ```
 
-使用 Molecule 实现。Type Script 集合按完整规范编码做字节序排序。解码拒绝乱序、重复及超限编码，排序位置仅用于读取。代码标识、寻址方式、参数、所有 Type Script 和 Cell Data 都在输出原始字节中，资产身份因此独立于同一个 Cell 的抵押、监管或结算脚本。Cell 是消费和创建的原子单位。
+Stem 采用 Telegraph 序列、密集向量和可选字段位。Type Script 集合按完整 Telegraph Script 字节序排序。Script 身份仍使用完整 CKB Script 的哈希。CKB L1 合约边界保留 Molecule。解码拒绝乱序、重复及超限编码，排序位置仅用于读取。代码标识、寻址方式、参数、所有 Type Script 和 Cell Data 都在输出原始字节中，资产身份因此独立于同一个 Cell 的抵押、监管或结算脚本。Cell 是消费和创建的原子单位。
 
 交易使用一张 schema。原始部分含 Cell Inputs（OutPoint 与可选 Stem Since）、完整输出 Cells、Cell Deps、Header Deps、可选的截止高度、按 Script Group 寻址的应用消息，以及可选的协议操作。Witness 区域承载按组寻址的验证材料与签名，并为协议操作保留证书字段。普通交易至少消费一个可用 Cell。Bridge Mint、Stake Snapshot 和 Bridge Settlement 使用同一套编码、哈希和提案路径。原始交易中只允许一个操作，证书位于独立的 Witness 字段。Bridge Mint 的所有实际输入与输出仍由常规脚本规则验证。Stake Snapshot 和 Bridge Settlement 是控制交易，Cell 输入输出、Cell Deps、Header Deps 与普通 Witness 均为空。Bridge Settlement 的两种声明分别为已兑付提款核销和同一 L1 交易中的双金库储备调拨。
 
@@ -43,18 +43,19 @@ tx_commit  = H("Stem transaction commitment", network_id, canonical_full_tx)
 cell_leaf  = PatriciaLeaf(network_id, cell_key, live_cell_record)
 ```
 
-各域标识采用固定字节串并以零字节结尾。变长字段经 Molecule 或显式长度前缀编码。普通 OutPoint 是 `(tx_id, output_index)`。Genesis 分配使用单独的创世承诺和确定性编号，主网资金来自认证存款，测试 genesis 可显式配置测试配额，测试配额只能存在于关闭真实 L1 兑付的独立网络。
+各域标识采用固定字节串并以零字节结尾。变长字段由 Telegraph 或显式长度前缀编码。普通 OutPoint 是 `(tx_id, output_index)`。Genesis 分配使用单独的创世承诺和确定性编号，主网资金来自认证存款，测试 genesis 可显式配置测试配额，测试配额只能存在于关闭真实 L1 兑付的独立网络。
 
 ### Witness、CoBuild 与 OTX
 
 ```text
 ScriptGroupId  = (role, script_hash)
+GroupMessage   = (group_index: u16, actions: [{ kind: u16, data: Bytes }])
 GroupWitness   = (group_index: u16, proof_data, seal)
 ```
 
-组编号按角色和完整规范 Script 字节排序，从零开始。每组最多一个 Witness，条目严格递增。解析器拒绝重复、乱序、空条目以及指向未推导组的编号。无 Witness 需求的组省略条目，内核继续执行该组。应用操作消息与多方签署使用独立的 CoBuild 标准，普通支付无 Action 负载。
+组编号按角色和完整规范 Script 字节排序，从零开始。每组最多一个 Witness，条目严格递增。解析器拒绝重复、乱序、空条目以及指向未推导组的编号。无 Witness 需求的组省略条目，内核继续执行该组。Group Messages 属于交易主体，按组编号严格递增。每条消息包含 1–64 个有序 Action，合约解释 Action 的类型及数据。签名者在收集 seal 前确定消息。内核拒绝不存在的组编号，所有实际推导出的组始终执行。普通支付可省略消息。
 
-标准锁的签名摘要绑定网络、Lock 角色、完整 Script 哈希、原始交易 ID 和所有非空 `proof_data` 的有序承诺。签名材料由完整交易承诺覆盖，独立签名人可分别填入各组的 seal。输入和依赖由原始交易中的 OutPoint 绑定。其他 Lock 可以定义自己的验签逻辑。
+标准锁的签名摘要绑定网络、Lock 角色、完整 Script 哈希及原始交易 ID。它还承诺按顺序解析的输入 Cell 内容、每个 Cell Dep、Dep Group 容器及其实际展开成员、已声明 Header Dep 的完整编码，以及所有非空 `proof_data`。交易 ID 已覆盖输出、输入引用、依赖引用、排他有效高度及 Group Messages。独立签名人可分别填入各组的 seal，完整交易承诺覆盖全部 seal。其他 Lock 可以定义自己的验签逻辑。
 
 CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。OTX 留作独立 Lock 与 SDK 签名标准，双方最终构造同一种 Stem 交易。OTX 的签名范围必须锁定可用输入、受保护输出、Action、依赖、费用限额和有效高度。结算脚本必须为每个承诺分配唯一的交付权益，避免同一输出重复满足多个订单。首轮共识接入使用完整交易签名，OTX 激活取决于独立签名与结算规范。 [CKB Transaction Co-Build 参考实现](https://github.com/cryptape/ckb-transaction-cobuild-poc)
 
@@ -94,7 +95,7 @@ enum Since {
 }
 ```
 
-以上四种值使用同一 9 字节 Molecule 结构（1 字节标记和 8 字节小端数值），时间值均为 Unix 毫秒或以毫秒表示的时长。每个输入可省略 Since。相对零块或零毫秒用省略表示，显式的相对零编码拒绝。Stem 不编码 epoch 分数锁。SDK 用固定的 `1 + epoch * blocks_per_epoch` 把 epoch 边界换算成高度，乘法和加法检查溢出。CKB L1 相对 `since` 仍按 L1 自有语义验证。 [CKB RFC 0017](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0017-tx-valid-since/0017-tx-valid-since.md)
+以上四种值使用同一 9 字节固定结构（1 字节标记和 8 字节小端数值），时间值均为 Unix 毫秒或以毫秒表示的时长。每个输入可省略 Since。相对零块或零毫秒用省略表示，显式的相对零编码拒绝。Stem 不编码 epoch 分数锁。SDK 用固定的 `1 + epoch * blocks_per_epoch` 把 epoch 边界换算成高度，乘法和加法检查溢出。CKB L1 相对 `since` 仍按 L1 自有语义验证。 [CKB RFC 0017](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0017-tx-valid-since/0017-tx-valid-since.md)
 
 令 `H` 为候选块高度，`T` 为前一已提交 Header 的共识时间。首个候选块使用 `T = genesis_time_ms`。创世 Cell 的创建高度为 0、创建时间为 genesis 时间，并随其创建上下文 ID 一起认证。
 
@@ -112,26 +113,28 @@ enum Since {
 ### Capacity、存储抵押与资源费
 
 ```text
-cell_bytes     = 36 + len(lock) + sum(4 + len(type_script)) + len(data)
-occupied_bytes = cell_bytes + state_overhead_bytes
-storage_bond   = occupied_bytes × bond_per_byte
+cell_bytes = 13 + len(lock) + len(data)
+             + (type_scripts.is_empty() ? 0 : 4 + sum(len(type_script)))
+storage_bond = (cell_bytes + state_overhead_bytes) × bond_per_byte
 
-fee_paid       = Σ input_capacity + authenticated_mint_credit − Σ output_capacity
-fee_required   = p_b × B + p_c × C + p_r × R + p_w × W
+fee_paid = Σ input_capacity − Σ output_capacity
+fee_required = p_b × B + p_c × C + p_r × R + p_d × D + p_w × W + p_x × X
 ```
 
-36 字节覆盖 Cell 表头、Capacity 字段、Type Script 向量头与 Cell Data 长度前缀。Script 长度采用完整规范编码。`state_overhead_bytes` 按网络固定规则计量标准 Live Cell 创建元数据和索引预算，排除已计入的 Cell 字节。`bond_per_byte` 用整数 shannons 表示，由 genesis 固定。每个输出至少提供规定的 Capacity。消费 Cell 时，抵押随输入 Capacity 重新可用。抵押给长期存储带来资金占用成本，节点持续收入来自实际手续费。L1 质押与收款输出继续采用 CKB 自身最低容量。 [CKB Capacity 经济规则](https://docs.nervos.org/docs/basics/concepts/economics/)
+13 字节覆盖 Cell 存在位、固定宽度 Capacity 和 Data 长度。Script 长度为 `37 + len(args)`。非空 Type Script 集合额外计入 4 字节数量字段。`state_overhead_bytes` 由网络固定。消费 Cell 时，抵押随输入 Capacity 重新可用。L1 质押与收款输出继续采用 CKB 的容量规则。
 
-20 字节参数的普通 Lock 编码为 73 字节，空 Data、无 Type Script 的 Cell 共 109 字节。示例价格每字节 0.01 CKB 时，抵押为 `1.09 CKB + state_overhead_bytes × 0.01 CKB`。开发与生产参数分别由状态增长和读写测量确定。
+20 字节参数的普通 Lock 编码为 57 字节。空 Data、无 Type Script 的 Cell 占 70 字节。每字节 0.01 CKB 时，抵押为 `0.70 CKB + state_overhead_bytes × 0.01 CKB`。价格由网络配置指定。
 
 | 费用量 | 共识计量 |
 | --- | --- |
-| `B` | 完整规范交易及 Witness 的字节数 |
-| `C` | 所有 Lock 与 Type Groups 的已验证 cycles，缓存命中按原周期计费 |
-| `R` | 按标准记录编码计量的逻辑读取字节，解析时按交易内唯一的输入、依赖、Header 及协议记录去重 |
-| `W` | 规范状态差分字节，包含键及新记录或删除标记，涵盖相应的协议状态变化 |
+| `B` | 完整交易及 Witness 的字节数 |
+| `C` | 全部 Script Group 的验证 cycles。缓存命中仍按实际 cycles 计费 |
+| `R` | 为交易解析读取的 Cell 数，含 Dep Group 容器及其实际成员 |
+| `D` | 这些 Cell 的规范编码字节量 |
+| `W` | 新 Live Cell 记录的编码字节与每项消费的 36 字节 OutPoint |
+| `X` | 消费的输入 Cell 数 |
 
-逻辑读写量按交易解析后的规范记录与状态差分计量。VM 重复读取已解析的记录时，相应执行开销计入 cycles。本地 RocksDB、树节点压缩与磁盘写入作为观测指标。费率和各独立资源限额由网络配置固定，所有计算使用 checked 整数。接受交易需满足 `fee_paid >= fee_required`，并同时通过所有独立预算。完整交易签名覆盖输入、输出及 Witness 材料，固定实际付费差额。代付方用同一交易的 Capacity 输入承担费用，并在签名前校验差额和自己的授权上限。
+费率以整数 shannons 计，由 genesis 的 `fees` 配置承诺。普通交易必须先覆盖固定维度成本，其余额在规定的 block 和 transaction 限额内决定可用 cycles。省略费率配置的研究网使用全零价格。物理 RocksDB 读写只作观测。费用差额全部冲销流通负债，产生等额的 L1 储备盈余。
 
 **控制交易费用。** 合法的 Stake Snapshot 和 Bridge Settlement 支付零 Capacity，豁免普通费用公式。控制交易必须使用固定操作形状和超过三分之二的已固定签名人权重。每类操作独立限制每块操作数、规范交易字节、签名数及相应的状态读取与写入规模。协议先检查并占用自己的预算，再做签名验证。读取的 Registry 另有记录数量上限。两类控制交易的预算不互相借用，其字节亦计入整个区块的字节上限。普通交易无法使用豁免。Bridge Mint 继续按输入与认证入账增量核算容量。候选区块重复验证使用各自重新计算的预算。
 
@@ -147,7 +150,7 @@ stake assets ∩ bridge reserve = ∅
 
 在可兑付网络，认证的真实存款才能增加净 CKB 兑付能力，每一笔 L1 入账只可使用一次。储备盈余不得直接用于生成新的 Stem CKB。普通交易容量守恒，手续费和抵押都通过已存在的 Capacity 核算。质押、冻结罚没款、金库底仓以及不可及时支出的资产均排除在可兑付储备之外。首轮金库使用能按提款流程及时支出的 L1 Cells，储备不投入 Nervos DAO。Stem 不提供增发、固定质押收益或 DAO 补偿。
 
-研究网手续费扣减流通负债，尚未分配的真实 L1 盈余留在桥储备。生产分配候选是把可用净手续费盈余分给验证者、DevFund 和 Treasury。比例、支付权限和安全留存由生产规则确定，80/15/5 只是一组示例。归属一旦确认，未付款项从盈余重分类为 `payable_fees`，若费用落在可兑付的 Stem 资金池 Cell 中，其余额已经属于流通负债。转为应付手续费时须等额移出流通负债。支付时同时减记 L1 储备和相应负债。分配不得超过已确认且未分配的费收盈余。确认应付款和执行 L1 出账时都要检查覆盖，出账预算包含 L1 交易费。首轮没有自动分配的支出路径。
+研究网手续费扣减流通负债，尚未分配的真实 L1 盈余留在桥储备。生产分配候选是把可用净手续费盈余分给验证者、DevFund 和 Treasury。比例、支付权限和安全留存由生产规则确定，75% 验证者和委托人、15% DevFund、10% Ecosystem Fund 是实验情景。归属一旦确认，未付款项从盈余重分类为 `payable_fees`，若费用落在可兑付的 Stem 资金池 Cell 中，其余额已经属于流通负债。转为应付手续费时须等额移出流通负债。支付时同时减记 L1 储备和相应负债。分配不得超过已确认且未分配的费收盈余。确认应付款和执行 L1 出账时都要检查覆盖，出账预算包含 L1 交易费。首轮没有自动分配的支出路径。
 
 ## 4. 资产与组合标准
 

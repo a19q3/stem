@@ -1,4 +1,5 @@
-use crate::{Cell, CellInput, GroupWitness, Transaction, wire};
+mod telegraph;
+use crate::{Cell, CellInput, GroupWitness, Transaction, baseline as wire};
 use anyhow::Result;
 use ckb_types::{
     bytes::Bytes,
@@ -75,7 +76,8 @@ fn measure_canonical_payment_and_combined_output_bytes() -> Result<()> {
         vec![cell],
         vec![],
     )?;
-    let serialized = wire::Transaction::from_slice(with_combined_output.as_slice())?;
+    let serialized = crate::wire::Transaction::from_slice(with_combined_output.as_slice())?;
+    use crate::telegraph::prelude::Entity as TelegraphEntity;
     let combined = serialized.raw().outputs().as_slice().len();
     let l1_len = l1.data().as_slice().len();
     let native_len = native.as_slice().len();
@@ -83,9 +85,9 @@ fn measure_canonical_payment_and_combined_output_bytes() -> Result<()> {
     println!("payment ckb={l1_len} stem={native_len} bytes");
     println!("output vectors ckb={separated_len} stem={combined} bytes");
     assert_eq!(l1_len, 460);
-    assert_eq!(native_len, 467);
+    assert_eq!(native_len, 312);
     assert_eq!(separated_len, 590);
-    assert_eq!(combined, 384);
+    assert_eq!(combined, 285);
     Ok(())
 }
 
@@ -93,7 +95,82 @@ mod dictionary {
     #![allow(dead_code, clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/dictionary.rs"));
 }
-use crate::wire as ledger;
+use crate::baseline as ledger;
+
+fn molecule_fixture(tx: &Transaction) -> wire::Transaction {
+    let outputs = tx
+        .outputs()
+        .map(|cell| {
+            let mut type_scripts: Vec<_> = cell.type_scripts().collect();
+            type_scripts.sort_unstable_by(|a, b| a.as_slice().cmp(b.as_slice()));
+            wire::Cell::new_builder()
+                .capacity(wire::Uint64::new_unchecked(
+                    cell.capacity().to_le_bytes().to_vec().into(),
+                ))
+                .lock(wire::Script::new_unchecked(cell.lock().as_bytes()))
+                .type_scripts(
+                    wire::ScriptVec::new_builder()
+                        .set(
+                            type_scripts
+                                .into_iter()
+                                .map(|script| wire::Script::new_unchecked(script.as_bytes()))
+                                .collect(),
+                        )
+                        .build(),
+                )
+                .data(wire::Bytes::new_unchecked(cell.data().pack().as_bytes()))
+                .build()
+        })
+        .collect();
+    let raw = wire::RawTransaction::new_builder()
+        .cell_deps(
+            wire::CellDepVec::new_builder()
+                .set(
+                    tx.cell_deps()
+                        .map(|dep| wire::CellDep::new_unchecked(dep.as_bytes()))
+                        .collect(),
+                )
+                .build(),
+        )
+        .header_deps(
+            wire::Byte32Vec::new_builder()
+                .set(
+                    tx.header_deps()
+                        .map(|header| wire::Byte32::new_unchecked(header.as_bytes()))
+                        .collect(),
+                )
+                .build(),
+        )
+        .inputs(
+            wire::CellInputVec::new_builder()
+                .set(
+                    tx.inputs()
+                        .map(|input| wire::CellInput::new_unchecked(input.encode_bytes()))
+                        .collect(),
+                )
+                .build(),
+        )
+        .outputs(wire::CellVec::new_builder().set(outputs).build())
+        .build();
+    let witnesses = tx
+        .witnesses()
+        .map(|witness| {
+            wire::GroupWitness::new_builder()
+                .group_index(wire::Uint16::new_unchecked(
+                    witness.group_index.to_le_bytes().to_vec().into(),
+                ))
+                .proof_data(wire::Bytes::new_unchecked(
+                    witness.proof_data.pack().as_bytes(),
+                ))
+                .seal(wire::Bytes::new_unchecked(witness.seal.pack().as_bytes()))
+                .build()
+        })
+        .collect();
+    wire::Transaction::new_builder()
+        .raw(raw)
+        .witnesses(wire::GroupWitnessVec::new_builder().set(witnesses).build())
+        .build()
+}
 
 fn dictionary_transaction(
     original: &wire::Transaction,
@@ -223,8 +300,13 @@ fn measure_transaction_script_dictionary() -> Result<()> {
         ),
     ] {
         let original = make(&locks, asset)?;
-        let original = wire::Transaction::from_slice(original.as_slice())?;
+        let original = molecule_fixture(&original);
         let dictionary = dictionary_transaction(&original)?;
+        telegraph::compare(
+            case,
+            &original,
+            std::env::var_os("STEM_ENCODING_TIMINGS").is_some(),
+        )?;
         let dictionary = dictionary::DictionaryTransaction::from_slice(dictionary.as_slice())?;
         assert_eq!(
             dictionary.as_slice().len().cmp(&original.as_slice().len()),

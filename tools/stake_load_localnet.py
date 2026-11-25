@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bridge_localnet import CKB, FEE, ckb_hash, dependency, hex_bytes, point, script
 from localnet import Rpc, process_resources, run, write_json
-from native_bridge_localnet import cell, deposit_and_mint, stem_id
+from native_bridge_localnet import cell, deposit_and_mint, signing_cell, stem_id
 
 COUNT = 384
 RATE = 8
@@ -31,24 +31,31 @@ def prepare(args, l1, fixture, vault, spec, spec_path, lane, client):
         lock_path = temporary / "lock.json"
         write_json(lock_path, lock)
         deps = [dependency(mint["lock_dep"])]
+        code = signing_cell(client, mint["lock_dep"])
 
-        def sign(index, input_point, outputs):
+        def sign(index, input_cell, outputs):
             request = temporary / f"{index}.json"
             draft = temporary / f"{index}-draft.json"
-            write_json(request, {"inputs": [{"out_point": input_point}], "outputs": outputs, "cell_deps": deps})
+            context = temporary / f"{index}-context.json"
+            write_json(request, {"inputs": [{"out_point": input_cell["out_point"]}],
+                                 "outputs": outputs, "cell_deps": deps})
+            write_json(context, {"cells": [input_cell, code]})
             write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", request)))
             return json.loads(run(args.binary, "wallet", "sign", "--genesis", spec_path,
-                                  "--transaction", draft, "--group-index", "0", "--lock", lock_path,
+                                  "--transaction", draft, "--context", context,
+                                  "--group-index", "0", "--lock", lock_path,
                                   "--key-file", fixture.owner))
 
-        split = sign("split", mint["payment"], [cell(output, lock)] * COUNT + [cell(change, lock)])
+        split = sign("split", signing_cell(client, mint["payment"]),
+                     [cell(output, lock)] * COUNT + [cell(change, lock)])
         accepted = client.call("broadcast_tx_commit", tx=split)
         if accepted["check_tx"]["code"] != 0 or accepted.get("tx_result", {}).get("code") != 0:
             raise AssertionError(accepted)
-        parent = stem_id(spec["network_id"], split)
+        parent = stem_id(args, spec["network_id"], split)
 
         def payment(index):
-            return sign(index, point(parent, index), [cell(output - FEE, lock)])
+            return sign(index, {"out_point": point(parent, index), "cell": cell(output, lock)},
+                        [cell(output - FEE, lock)])
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             transactions = list(pool.map(payment, range(COUNT)))

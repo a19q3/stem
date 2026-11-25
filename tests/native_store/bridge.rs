@@ -227,7 +227,12 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
             )?],
             vec![],
         )?;
-        fixture.seal(tx)
+        fixture.seal_with(tx, |point| {
+            Ok(store
+                .live_cell(point)?
+                .context("missing Cell for bridge signature")?
+                .cell)
+        })
     };
     let burn = |recipient: &Script| {
         let mut args = asset_lane.as_slice().to_vec();

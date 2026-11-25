@@ -1,5 +1,6 @@
 //! Height and millisecond locks use the committed parent time.
 
+use crate::telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity};
 use anyhow::{Context, Result, bail, ensure};
 use ckb_types::{
     packed::{Byte32, OutPoint},

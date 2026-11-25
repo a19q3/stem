@@ -212,6 +212,7 @@ impl Store {
         put_tip(&mut batch, &self.network, &image.header, &frontier);
         sync(&self.db, &batch)?;
         self.tip = image.header;
+        self.live_cache.get_mut().expect("Live Cell cache").clear();
         self.history = frontier;
         Ok(())
     }

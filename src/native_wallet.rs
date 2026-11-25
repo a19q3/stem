@@ -4,10 +4,15 @@ use anyhow::{Context, Result, ensure};
 use ckb_crypto::secp::Privkey;
 use ckb_hash::blake2b_256;
 use ckb_jsonrpc_types::{CellDep, JsonBytes, OutPoint, Script};
-use ckb_types::{H256, bytes::Bytes, packed::Script as PackedScript, prelude::*};
+use ckb_types::{
+    H256,
+    bytes::Bytes,
+    packed::{self, Script as PackedScript},
+    prelude::*,
+};
 use clap::Subcommand;
 use serde::Deserialize;
-use stem_ledger::{Cell, CellInput, GroupWitness, Since, Transaction};
+use stem_ledger::{Cell, CellInput, GroupAction, GroupMessage, GroupWitness, Since, Transaction};
 
 use crate::{
     bridge_cli::{print_json, read_json_limited},
@@ -20,6 +25,11 @@ pub enum Wallet {
     Build {
         #[arg(long)]
         request: PathBuf,
+    },
+    /// Read a canonical transaction from stdin and print its network-bound ID.
+    Id {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        network: H256,
     },
     /// Discover Live Cells by complete Lock or Type Script hash.
     Find {
@@ -42,6 +52,9 @@ pub enum Wallet {
         genesis: PathBuf,
         #[arg(long)]
         transaction: PathBuf,
+        /// Resolved Cell and Header contents obtained from trusted proofs or a trusted node.
+        #[arg(long)]
+        context: PathBuf,
         #[arg(long)]
         group_index: u16,
         #[arg(long)]
@@ -63,6 +76,37 @@ struct Draft {
     valid_before_height: Option<u64>,
     #[serde(default)]
     proofs: Vec<Proof>,
+    #[serde(default)]
+    messages: Vec<Message>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Message {
+    group_index: u16,
+    actions: Vec<Action>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Action {
+    kind: u16,
+    data: JsonBytes,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SigningContext {
+    cells: Vec<SigningCell>,
+    #[serde(default)]
+    headers: Vec<JsonBytes>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SigningCell {
+    out_point: OutPoint,
+    cell: JsonBytes,
 }
 
 #[derive(Deserialize)]
@@ -102,6 +146,16 @@ struct Proof {
 impl Wallet {
     pub fn run(self) -> Result<()> {
         let tx = match self {
+            Self::Id { network } => {
+                use std::io::Read;
+                let mut json = Vec::new();
+                std::io::stdin()
+                    .take(2 * stem_ledger::MAX_TRANSACTION_BYTES as u64 + 1024)
+                    .read_to_end(&mut json)?;
+                let encoded: JsonBytes = serde_json::from_slice(&json)?;
+                let tx = Transaction::from_slice(encoded.as_bytes())?;
+                return print_json(&H256::from(tx.id(&network.pack())));
+            }
             Self::Find {
                 database,
                 lock_hash,
@@ -166,6 +220,23 @@ impl Wallet {
                 if let Some(height) = request.valid_before_height {
                     tx = tx.with_valid_before_height(height)?;
                 }
+                tx = tx.with_messages(
+                    request
+                        .messages
+                        .into_iter()
+                        .map(|message| GroupMessage {
+                            group_index: message.group_index,
+                            actions: message
+                                .actions
+                                .into_iter()
+                                .map(|action| GroupAction {
+                                    kind: action.kind,
+                                    data: Bytes::copy_from_slice(action.data.as_bytes()),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                )?;
                 tx.with_witnesses(
                     request
                         .proofs
@@ -181,6 +252,7 @@ impl Wallet {
             Self::Sign {
                 genesis,
                 transaction,
+                context,
                 group_index,
                 lock,
                 key_file,
@@ -200,7 +272,46 @@ impl Wallet {
                         == &blake2b_256(key.pubkey()?.serialize())[..20],
                     "private key does not own the specified Lock Script"
                 );
-                let digest = tx.lock_digest(&network, &lock);
+                let context: SigningContext = read_json_limited(
+                    &context,
+                    stem_ledger::MAX_RESOLVED_CELL_BYTES * 2 + 2 * 1024 * 1024,
+                )?;
+                let mut cells = BTreeMap::new();
+                for record in context.cells {
+                    ensure!(
+                        cells
+                            .insert(packed::OutPoint::from(record.out_point), record.cell)
+                            .is_none(),
+                        "duplicate Cell in signing context"
+                    );
+                }
+                let mut headers = BTreeMap::new();
+                for header in context.headers {
+                    let header = stem_ledger::block::Header::decode(header.as_bytes())?;
+                    ensure!(
+                        headers.insert(header.id(&network), header).is_none(),
+                        "duplicate Header in signing context"
+                    );
+                }
+                let digest = tx.signing_digest(
+                    &network,
+                    group_index,
+                    &lock,
+                    |point| {
+                        Cell::from_slice(
+                            cells
+                                .get(point)
+                                .context("signing context is missing a Cell")?
+                                .as_bytes(),
+                        )
+                    },
+                    |id| {
+                        headers
+                            .get(id)
+                            .cloned()
+                            .context("signing context is missing a Header")
+                    },
+                )?;
                 let signature = key.sign_recoverable(&digest.unpack())?;
                 let mut witnesses = tx
                     .witnesses()

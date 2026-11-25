@@ -1,5 +1,6 @@
 //! Protocol operations share the native Transaction encoding and have separate block budgets.
 
+use crate::telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity};
 use anyhow::{Context, Result, bail, ensure};
 use ckb_types::{
     bytes::Bytes,
@@ -146,7 +147,7 @@ impl Operation {
             }
         };
         wire::ProtocolOperation::new_builder()
-            .kind(kind)
+            .kind(kind.into())
             .payload(bytes(payload))
             .build()
     }

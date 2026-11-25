@@ -1,7 +1,11 @@
 //! Atomic persistence for the native ledger. Both state trees share the same
 //! column family and commit batch as the header, execution data, and MMR peaks.
 
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{DB, Options, WriteBatch, WriteOptions, prelude::*};
@@ -77,6 +81,60 @@ impl Limits {
     }
 }
 
+/// Shannons per deterministic unit of transaction work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceFees {
+    pub encoded_byte: u64,
+    pub cycle: u64,
+    pub cell_read: u64,
+    pub cell_read_byte: u64,
+    pub cell_write_byte: u64,
+    pub cell_delete: u64,
+}
+
+impl ResourceFees {
+    fn encode(self) -> [u8; 48] {
+        let mut bytes = [0; 48];
+        for (out, price) in bytes.chunks_exact_mut(8).zip([
+            self.encoded_byte,
+            self.cycle,
+            self.cell_read,
+            self.cell_read_byte,
+            self.cell_write_byte,
+            self.cell_delete,
+        ]) {
+            out.copy_from_slice(&price.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn cycle_budget(self, resolved: &ResolvedTransaction, write_bytes: u64) -> Result<u64> {
+        let fixed = [
+            (
+                self.encoded_byte,
+                resolved.transaction().as_slice().len() as u64,
+            ),
+            (self.cell_read, resolved.cell_reads() as u64),
+            (self.cell_read_byte, resolved.resolved_cell_bytes() as u64),
+            (self.cell_write_byte, write_bytes),
+            (self.cell_delete, resolved.inputs().len() as u64),
+        ]
+        .into_iter()
+        .try_fold(0u64, |sum, (price, units)| {
+            price
+                .checked_mul(units)
+                .and_then(|cost| sum.checked_add(cost))
+                .context("resource fee overflow")
+        })?;
+        let cycle_balance = resolved
+            .fee()
+            .checked_sub(fixed)
+            .context("insufficient fee for transaction resources")?;
+        Ok(cycle_balance.checked_div(self.cycle).unwrap_or(u64::MAX))
+    }
+}
+
 pub struct Spec {
     pub chain_id: String,
     pub development_validators: Vec<([u8; 32], i64)>,
@@ -86,6 +144,7 @@ pub struct Spec {
     pub genesis_time_ms: u64,
     pub capacity: CapacityPolicy,
     pub limits: Limits,
+    pub fees: ResourceFees,
     /// Explicit research-network fixture allocations and reference programs.
     pub development_cells: Vec<(OutPoint, Cell)>,
 }
@@ -111,7 +170,36 @@ pub struct Store {
     retention: Retention,
     capacity: CapacityPolicy,
     limits: Limits,
+    fees: ResourceFees,
     cache: VerificationCache,
+    live_cache: Mutex<LiveCache>,
+}
+
+#[derive(Default)]
+struct LiveCache {
+    records: HashMap<OutPoint, LiveCell>,
+    bytes: usize,
+}
+
+impl LiveCache {
+    fn insert(&mut self, point: OutPoint, cell: LiveCell) {
+        const MAX_BYTES: usize = 16 * 1024 * 1024;
+        const MAX_ITEMS: usize = 4096;
+        if self.records.contains_key(&point) {
+            return;
+        }
+        let bytes = cell.cell.as_slice().len() + Origin::LEN + OutPoint::TOTAL_SIZE;
+        if self.bytes + bytes > MAX_BYTES || self.records.len() == MAX_ITEMS {
+            self.clear();
+        }
+        self.bytes += bytes;
+        self.records.insert(point, cell);
+    }
+
+    fn clear(&mut self) {
+        self.records.clear();
+        self.bytes = 0;
+    }
 }
 
 pub struct Prepared {
@@ -238,6 +326,7 @@ impl Store {
             })?;
         let mut system_edit = system.edit(system.empty_root(), |_| Ok(None));
         let mut params = spec.limits.encode();
+        params.extend_from_slice(&spec.fees.encode());
         params.extend_from_slice(&spec.capacity.bond_per_byte.to_le_bytes());
         params.extend_from_slice(&spec.capacity.state_overhead.to_le_bytes());
         params.push(spec.chain_id.len() as u8);
@@ -344,6 +433,8 @@ impl Store {
             retention,
             capacity: spec.capacity,
             limits: spec.limits,
+            fees: spec.fees,
+            live_cache: Mutex::default(),
             cache: VerificationCache::new(4096),
         })
     }
@@ -480,8 +571,19 @@ impl Store {
     }
 
     pub fn live_cell(&self, point: &OutPoint) -> Result<Option<LiveCell>> {
+        if let Some(cell) = self
+            .live_cache
+            .lock()
+            .expect("Live Cell cache")
+            .records
+            .get(point)
+            .cloned()
+        {
+            return Ok(Some(cell));
+        }
         let id = record::cell_key(&self.cells, point);
-        self.db
+        let found = self
+            .db
             .get(state_key(STATE_RECORD, Namespace::Cells, &id))?
             .map(|bytes| {
                 let (stored_point, record) = record::decode_cell(&bytes)?;
@@ -491,7 +593,14 @@ impl Store {
                 );
                 Ok(record)
             })
-            .transpose()
+            .transpose()?;
+        if let Some(cell) = &found {
+            self.live_cache
+                .lock()
+                .expect("Live Cell cache")
+                .insert(point.clone(), cell.clone());
+        }
+        Ok(found)
     }
 
     pub fn prove_cell(&self, point: &OutPoint) -> Result<(Option<LiveCell>, Proof)> {
@@ -924,7 +1033,21 @@ impl Store {
             })
             .collect::<Result<Vec<_>>>()?;
         let fee = resolved.fee();
+        let deletion_bytes = resolved.inputs().len() as u64 * OutPoint::TOTAL_SIZE as u64;
+        charge(
+            &mut next.write_bytes,
+            deletion_bytes,
+            "block Cell deletion bytes",
+        )?;
         let cycle_limit = self.limits.transaction_cycles.min(next.cycles);
+        let cycle_limit = if tx.operation().is_none() {
+            cycle_limit.min(
+                self.fees
+                    .cycle_budget(&resolved, budget.write_bytes - next.write_bytes)?,
+            )
+        } else {
+            cycle_limit
+        };
         let cycles = verify(Arc::new(resolved), cycle_limit)?;
         charge(&mut next.cycles, cycles, "block VM cycles")?;
 
@@ -950,6 +1073,7 @@ impl Store {
         sync(&self.db, &prepared.batch)?;
         self.history = prepared.history;
         self.tip = prepared.next;
+        self.live_cache.get_mut().expect("Live Cell cache").clear();
         Ok(())
     }
 }

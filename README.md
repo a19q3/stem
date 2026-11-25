@@ -6,11 +6,11 @@ From the community, by the community, for the community.
 
 May the Cells grow.
 
-Stem is a standalone Rust network for composable Cells. A Cell has one Lock Script and any number of Type Scripts within protocol limits. Stem derives the required Script Groups from the consumed and created Cells, and runs them in Stem VM on its vendored CKB-VM backend. CometBFT orders transactions and certifies the application state.
+Stem is a standalone Rust network for composable Cells. A Cell has one Lock Script and any number of Type Scripts within protocol limits. Stem derives the required Script Groups from the consumed and created Cells, and runs them in StemVM on its vendored CKB-VM backend. CometBFT orders transactions and certifies the application state.
 
 Stem uses CKB capacity. A threshold-certified bridge backs spendable Capacity and wrapped xUDT with reserves on CKB L1. Validator power can come from a separate CKB Stake Registry. New networks commit to their own identity and genesis.
 
-The `stem run` executable uses the native ledger, group-indexed Witnesses, authenticated RocksDB state and state sync. Devnet runs cover four-validator finality and restart, remote state sync, bidirectional CKB and xUDT, L1-derived validator addition and removal, and Checkpoint Type ID publications on CKB. The deployment assumes that the bridge guardians audit the confirmed CKB chain and that custodians release funds against verified Stem receipts. Stake and custody have independent authorization.
+The `stem run` executable uses the Telegraph ledger, group-indexed messages and Witnesses, authenticated RocksDB state and state sync. Devnet runs cover four-validator finality and restart, remote state sync, bidirectional CKB and xUDT, L1-derived validator addition and removal, and Checkpoint Type ID publications on CKB. The deployment assumes that the bridge guardians audit the confirmed CKB chain and that custodians release funds against verified Stem receipts. Stake and custody have independent authorization.
 
 - [Protocol](STEM-PROTOCOL.md)
 - [Implementation and VM ABI](ARCHITECTURE.md)

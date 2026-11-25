@@ -16,9 +16,14 @@ use ckb_types::{
 
 #[cfg(test)]
 mod encoding_tests;
+#[allow(dead_code)]
+mod telegraph;
+use telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity};
 
+mod authorization;
 pub mod block;
 pub mod history;
+mod message;
 pub mod patricia;
 pub mod proof;
 pub mod protocol;
@@ -27,12 +32,19 @@ pub mod replay;
 pub mod time;
 mod witness;
 
+pub use message::{GroupAction, GroupMessage};
 pub use witness::GroupWitness;
 
 use block::Header;
 pub use time::{BlockContext, CellInput, Origin, Since};
 
 mod wire {
+    #![allow(dead_code, unused_parens)]
+    include!(concat!(env!("OUT_DIR"), "/telegraph_wire.rs"));
+}
+
+#[cfg(test)]
+mod baseline {
     #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/ledger.rs"));
 }
@@ -98,7 +110,7 @@ impl Cell {
     pub fn new(
         capacity: u64,
         lock: Script,
-        mut type_scripts: Vec<Script>,
+        type_scripts: Vec<Script>,
         data: Bytes,
     ) -> Result<Self> {
         ensure!(
@@ -116,23 +128,15 @@ impl Cell {
             "Type Script set exceeds byte limit"
         );
         ensure!(data.len() <= MAX_CELL_BYTES, "Cell Data exceeds byte limit");
-        type_scripts.sort_unstable_by(|left, right| left.as_slice().cmp(right.as_slice()));
+        let mut types: Vec<_> = type_scripts.into_iter().map(encode_script).collect();
+        types.sort_unstable_by(|left, right| left.as_slice().cmp(right.as_slice()));
 
         let encoded = wire::Cell::new_builder()
             .capacity(wire::Uint64::new_unchecked(Bytes::copy_from_slice(
                 &capacity.to_le_bytes(),
             )))
-            .lock(wire::Script::new_unchecked(lock.as_bytes()))
-            .type_scripts(
-                wire::ScriptVec::new_builder()
-                    .set(
-                        type_scripts
-                            .into_iter()
-                            .map(|script| wire::Script::new_unchecked(script.as_bytes()))
-                            .collect(),
-                    )
-                    .build(),
-            )
+            .lock(encode_script(lock))
+            .type_scripts(wire::ScriptVec::new_builder().set(types).build())
             .data(wire::Bytes::new_unchecked(data.pack().as_bytes()))
             .build();
         Self::from_entity(encoded)
@@ -162,7 +166,7 @@ impl Cell {
         let mut previous: Option<wire::Script> = None;
         let mut script_bytes = 0;
         for current in types {
-            validate_script(&Script::new_unchecked(current.as_bytes()))?;
+            validate_script(&decode_script(&current))?;
             script_bytes += current.as_slice().len();
             ensure!(
                 previous
@@ -194,21 +198,21 @@ impl Cell {
     }
 
     pub fn lock(&self) -> Script {
-        Script::new_unchecked(self.encoded.lock().as_bytes())
+        decode_script(&self.encoded.lock())
     }
 
     pub fn type_scripts(&self) -> impl ExactSizeIterator<Item = Script> {
         self.encoded
             .type_scripts()
             .into_iter()
-            .map(|item| Script::new_unchecked(item.as_bytes()))
+            .map(|item| decode_script(&item))
     }
 
     pub fn type_script(&self, index: usize) -> Option<Script> {
         self.encoded
             .type_scripts()
             .get(index)
-            .map(|script| Script::new_unchecked(script.as_bytes()))
+            .map(|script| decode_script(&script))
     }
 
     pub fn type_scripts_bytes(&self) -> Bytes {
@@ -239,24 +243,37 @@ impl Cell {
         type_scripts: &[Script],
         data_len: usize,
     ) -> Result<u64> {
-        // Four field offsets, one table size, and the fixed-width Capacity.
-        let mut bytes = 5 * 4 + 8;
-        bytes += lock.as_slice().len();
-        // One vector size for the scripts, plus each item offset and encoded script.
-        bytes += 4;
+        // A presence byte, eight-byte capacity, lock and length-prefixed Data.
+        let mut bytes = 1 + 8 + (37 + lock.args().raw_data().len()) + 4;
+        if !type_scripts.is_empty() {
+            bytes += 4;
+        }
         for script in type_scripts {
             bytes = bytes
-                .checked_add(4 + script.as_slice().len())
+                .checked_add(37 + script.args().raw_data().len())
                 .context("Cell size overflow")?;
         }
         // The Bytes vector has a length prefix followed by the raw data.
-        CapacityPolicy::default().bond(
-            bytes
-                .checked_add(4)
-                .and_then(|size| size.checked_add(data_len))
-                .context("Cell size overflow")?,
-        )
+        CapacityPolicy::default().bond(bytes.checked_add(data_len).context("Cell size overflow")?)
     }
+}
+
+fn encode_script(script: Script) -> wire::Script {
+    wire::Script::new_builder()
+        .code_hash(wire::Byte32::new_unchecked(script.code_hash().as_bytes()))
+        .hash_type(wire::ScriptAddress::from(script.hash_type().as_slice()[0]))
+        .args(wire::Bytes::new_unchecked(script.args().as_bytes()))
+        .build()
+}
+
+fn decode_script(script: &wire::Script) -> Script {
+    Script::new_builder()
+        .code_hash(Byte32::new_unchecked(script.code_hash().as_bytes()))
+        .hash_type(script.hash_type().as_slice()[0])
+        .args(ckb_types::packed::Bytes::new_unchecked(
+            script.args().as_bytes(),
+        ))
+        .build()
 }
 
 fn validate_script(script: &Script) -> Result<()> {
@@ -404,6 +421,7 @@ impl Transaction {
             encoded.witnesses().len(),
         )?;
         let tx = Self { encoded };
+        GroupMessage::validate_all(&tx.messages().collect::<Vec<_>>())?;
         ensure!(
             tx.valid_before_height() != Some(0),
             "expiry height must be positive"
@@ -415,8 +433,8 @@ impl Transaction {
             ),
             (Some(operation), Some(certificate)) => {
                 ensure!(
-                    tx.valid_before_height().is_none(),
-                    "protocol transaction cannot include an expiry"
+                    tx.valid_before_height().is_none() && tx.messages().len() == 0,
+                    "protocol transaction cannot include an expiry or Group Messages"
                 );
                 let operation = Operation::decode(operation)?;
                 let certificate = Certificate::decode(certificate)?;
@@ -595,6 +613,31 @@ impl Transaction {
             .map(GroupWitness::decode)
     }
 
+    pub fn messages(&self) -> impl ExactSizeIterator<Item = GroupMessage> {
+        self.encoded
+            .raw()
+            .messages()
+            .into_iter()
+            .map(GroupMessage::decode)
+    }
+
+    pub fn with_messages(&self, messages: Vec<GroupMessage>) -> Result<Self> {
+        ensure!(
+            self.operation().is_none(),
+            "protocol transaction cannot carry Messages"
+        );
+        ensure!(
+            self.witnesses().all(|witness| witness.seal.is_empty()),
+            "Group Messages must be set before collecting seals"
+        );
+        GroupMessage::validate_all(&messages)?;
+        let messages = wire::GroupMessageVec::new_builder()
+            .set(messages.iter().map(GroupMessage::encode).collect())
+            .build();
+        let raw = self.encoded.raw().as_builder().messages(messages).build();
+        Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
+    }
+
     pub fn witness(&self, group_index: u16) -> Option<GroupWitness> {
         let entries = self.encoded.witnesses();
         let mut lo = 0;
@@ -609,33 +652,6 @@ impl Transaction {
             }
         }
         None
-    }
-
-    /// Standard Lock Script authorization binds the full group identity and
-    /// all proof data. Seals can be collected independently by multiple signers.
-    pub fn lock_digest(&self, network_id: &Byte32, lock: &Script) -> Byte32 {
-        let mut proof = new_blake2b();
-        proof.update(b"Stem group proofs\0");
-        for witness in self
-            .witnesses()
-            .filter(|witness| !witness.proof_data.is_empty())
-        {
-            proof.update(&witness.group_index.to_le_bytes());
-            proof.update(&(witness.proof_data.len() as u32).to_le_bytes());
-            proof.update(&witness.proof_data);
-        }
-        let mut proof_root = [0; 32];
-        proof.finalize(&mut proof_root);
-        hash(
-            b"Stem group lock authorization\0",
-            network_id,
-            &[
-                self.id(network_id).as_slice(),
-                &[ScriptGroupKind::Lock as u8],
-                lock.calc_script_hash().as_slice(),
-                &proof_root,
-            ],
-        )
     }
 
     pub fn with_witnesses(&self, witnesses: Vec<GroupWitness>) -> Result<Self> {
@@ -770,6 +786,7 @@ pub struct ResolvedTransaction {
     height: u64,
     parent: Header,
     parent_id: Byte32,
+    authorization: authorization::LockAuthorization,
     inputs: Vec<LiveCell>,
     outputs: Vec<Cell>,
     cell_deps: Vec<LiveCell>,
@@ -777,6 +794,7 @@ pub struct ResolvedTransaction {
     headers_by_origin: HashMap<Byte32, usize>,
     cache_key: OnceLock<Byte32>,
     groups: Vec<ScriptGroup>,
+    messages: BTreeMap<u16, Bytes>,
     programs_by_data: HashMap<Byte32, usize>,
     programs_by_type: HashMap<Byte32, CodeMatch>,
     fee: u64,
@@ -841,7 +859,7 @@ impl ResolvedTransaction {
         transaction: Transaction,
         block: BlockContext<'_>,
         mint: Option<(u64, Option<(Script, u128)>)>,
-        mut live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
+        live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         mut committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
         ensure!(
@@ -872,48 +890,16 @@ impl ResolvedTransaction {
             headers_by_origin.insert(header.context.id(&network_id), headers.len());
             headers.push(header);
         }
-        let mut consumed = HashSet::new();
-        let mut inputs = Vec::new();
-        for input in transaction.inputs() {
-            let point = input.previous_output;
-            consumed.insert(point.clone());
-            let record = budget.load(&point, &mut live_cell)?;
+        let authorization::Cells {
+            inputs,
+            code: cell_deps,
+            commitment,
+        } = authorization::resolve_cells(&transaction, &mut budget, live_cell)?;
+        for (input, record) in transaction.inputs().zip(&inputs) {
             block.verify_since(input.since, &record.origin)?;
-            inputs.push(record);
         }
-        let mut loaded_deps = HashSet::new();
-        let mut cell_deps = Vec::new();
-        for dep in transaction.cell_deps() {
-            let point = dep.out_point();
-            ensure!(
-                !consumed.contains(&point),
-                "Cell Dep is consumed by this transaction"
-            );
-            let cell = budget.load(&point, &mut live_cell)?;
-            match DepType::try_from(dep.dep_type())? {
-                DepType::Code => {
-                    ensure!(loaded_deps.insert(point), "duplicate resolved Cell Dep");
-                    cell_deps.push(cell);
-                }
-                DepType::DepGroup => {
-                    let data = cell.cell.data();
-                    let members = ckb_types::packed::OutPointVecReader::from_slice(&data)?;
-                    ensure!(!members.is_empty(), "empty Dep Group");
-                    for member in members.iter() {
-                        let member = member.to_entity();
-                        ensure!(
-                            !consumed.contains(&member),
-                            "Dep Group member is consumed by this transaction"
-                        );
-                        ensure!(
-                            loaded_deps.insert(member.clone()),
-                            "duplicate resolved Cell Dep"
-                        );
-                        cell_deps.push(budget.load(&member, &mut live_cell)?);
-                    }
-                }
-            }
-        }
+        let authorization =
+            authorization::LockAuthorization::new(&network_id, &transaction, commitment, &headers);
         let outputs: Vec<_> = transaction.outputs().collect();
         for cell in &outputs {
             block.capacity.verify(cell)?;
@@ -950,6 +936,14 @@ impl ResolvedTransaction {
             }
         }
         ensure!(groups.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
+        let mut messages = BTreeMap::new();
+        for message in transaction.messages() {
+            ensure!(
+                usize::from(message.group_index) < groups.len(),
+                "Group Message refers to an absent Script Group"
+            );
+            messages.insert(message.group_index, message.encode_bytes());
+        }
         ensure!(
             transaction
                 .witnesses()
@@ -982,6 +976,7 @@ impl ResolvedTransaction {
             height: block.candidate.height,
             parent: block.parent.clone(),
             parent_id: block.candidate.parent.clone(),
+            authorization,
             inputs,
             outputs,
             cell_deps,
@@ -990,6 +985,7 @@ impl ResolvedTransaction {
             cache_key: OnceLock::new(),
             fee,
             groups: groups.into_values().collect(),
+            messages,
             programs_by_data,
             programs_by_type,
             capacity: block.capacity,
@@ -1030,6 +1026,10 @@ impl ResolvedTransaction {
         &self.parent
     }
 
+    pub fn lock_digest(&self, group: &ScriptGroup) -> Byte32 {
+        self.authorization.digest(&self.network_id, &group.script)
+    }
+
     pub fn parent_id(&self) -> &Byte32 {
         &self.parent_id
     }
@@ -1043,6 +1043,7 @@ impl ResolvedTransaction {
             hash.update(self.network_id.as_slice());
             hash.update(&self.height.to_le_bytes());
             hash.update(self.parent_id.as_slice());
+            hash.update(self.authorization.cells.as_slice());
             hash.update(&self.capacity.bond_per_byte.to_le_bytes());
             hash.update(&self.capacity.state_overhead.to_le_bytes());
             hash.update(&[u8::from(self.minted_asset.is_some())]);
@@ -1069,6 +1070,9 @@ impl ResolvedTransaction {
 
     pub fn groups(&self) -> &[ScriptGroup] {
         &self.groups
+    }
+    pub fn group_message(&self, group: u16) -> Option<&Bytes> {
+        self.messages.get(&group)
     }
     pub fn fee(&self) -> u64 {
         self.fee
@@ -1146,18 +1150,18 @@ struct ResolutionBudget {
 }
 
 impl ResolutionBudget {
-    fn load(
+    fn load<T: AsRef<Cell>>(
         &mut self,
         point: &OutPoint,
-        live_cell: &mut impl FnMut(&OutPoint) -> Result<LiveCell>,
-    ) -> Result<LiveCell> {
+        live_cell: &mut impl FnMut(&OutPoint) -> Result<T>,
+    ) -> Result<T> {
         self.references += 1;
         ensure!(
             self.references <= MAX_CELL_REFERENCES,
             "resolved reference count exceeds limit"
         );
         let cell = live_cell(point)?;
-        self.bytes += cell.cell.as_slice().len();
+        self.bytes += cell.as_ref().as_slice().len();
         ensure!(
             self.bytes <= MAX_RESOLVED_CELL_BYTES,
             "resolved Cell bytes exceed limit"
@@ -1206,8 +1210,10 @@ mod tests {
         assert!(Cell::new(capacity, lock.clone(), vec![script(1), script(1)], data).is_err());
 
         let switched = wire::ScriptVec::new_builder()
-            .push(cell.encoded.type_scripts().get(1).unwrap())
-            .push(cell.encoded.type_scripts().get(0).unwrap())
+            .set(vec![
+                cell.encoded.type_scripts().get(1).unwrap(),
+                cell.encoded.type_scripts().get(0).unwrap(),
+            ])
             .build();
         let invalid = cell
             .encoded

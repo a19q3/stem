@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ckb_crypto::secp::Privkey;
 use ckb_hash::blake2b_256;
 use ckb_types::{
@@ -28,6 +28,7 @@ struct Fixture {
     lock: Script,
     spend: OutPoint,
     deps: Vec<CellDep>,
+    outputs: std::cell::RefCell<std::collections::BTreeMap<OutPoint, Cell>>,
 }
 
 impl Fixture {
@@ -67,6 +68,7 @@ impl Fixture {
                 network: [5; 32].pack(),
                 genesis_time_ms: TIME,
                 capacity,
+                fees: Default::default(),
                 limits: Limits {
                     transaction_count: 8,
                     transaction_bytes: 1024 * 1024,
@@ -83,6 +85,7 @@ impl Fixture {
             lock,
             spend,
             deps,
+            outputs: Default::default(),
         })
     }
 
@@ -113,7 +116,33 @@ impl Fixture {
     }
 
     fn seal(&self, tx: Transaction) -> Result<Transaction> {
-        let digest = tx.lock_digest(&self.spec.network, &self.lock);
+        let signed = self.seal_with(tx, |point| {
+            self.spec
+                .development_cells
+                .iter()
+                .find(|(key, _)| key == point)
+                .map(|(_, cell)| cell.clone())
+                .or_else(|| self.outputs.borrow().get(point).cloned())
+                .context("missing fixture signing Cell")
+        })?;
+        let id = signed.id(&self.spec.network);
+        self.outputs.borrow_mut().extend(
+            signed
+                .outputs()
+                .enumerate()
+                .map(|(index, cell)| (OutPoint::new(id.clone(), index as u32), cell)),
+        );
+        Ok(signed)
+    }
+
+    fn seal_with(
+        &self,
+        tx: Transaction,
+        cells: impl FnMut(&OutPoint) -> Result<Cell>,
+    ) -> Result<Transaction> {
+        let digest = tx.signing_digest(&self.spec.network, 0, &self.lock, cells, |_| {
+            anyhow::bail!("unexpected Header Dep")
+        })?;
         let signature = self.key.sign_recoverable(&digest.unpack())?;
         tx.with_witnesses(vec![GroupWitness {
             group_index: 0,
@@ -163,6 +192,96 @@ fn wallet_finds_cells_by_complete_script_identity() -> Result<()> {
     let empty = store.prepare(&[], TIME + 1, false)?;
     store.commit(empty)?;
     assert!(find_cells(directory.path(), &by_lock, first.next, 1, Some(0)).is_err());
+    Ok(())
+}
+
+#[test]
+fn resource_fees_bound_cycles_in_parallel_and_cached_execution() -> Result<()> {
+    use stem::native_store::ResourceFees;
+
+    let mut fixture = Fixture::new()?;
+    fixture.spec.fees = ResourceFees {
+        encoded_byte: 1,
+        cycle: 1,
+        cell_read: 1,
+        cell_read_byte: 1,
+        cell_write_byte: 1,
+        cell_delete: 1,
+    };
+    let temp = tempfile::tempdir()?;
+    let mut store = Store::open(temp.path(), &fixture.spec, Retention::Archive)?;
+    let low = fixture.signed(fixture.spend.clone(), None, FUND - 1_000_000, None)?;
+    assert!(store.check(&low).is_err());
+    let thread_pool = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    assert!(
+        thread_pool
+            .install(|| store.prepare(&[low], TIME + 1, true))
+            .is_err()
+    );
+
+    let fee = 3_000_000;
+    let enough = fixture.signed(fixture.spend.clone(), None, FUND - fee, None)?;
+    let admitted = store.check(&enough)?;
+    let serial = store.prepare(std::slice::from_ref(&enough), TIME + 1, false)?;
+    let parallel = thread_pool.install(|| store.prepare(&[enough], TIME + 1, true))?;
+    assert_eq!(serial.header(), parallel.header());
+    assert_eq!(admitted.cycles, parallel.receipts()[0].cycles);
+    store.commit(parallel)?;
+    assert_eq!(store.fee_surplus()?, fee);
+    Ok(())
+}
+
+#[test]
+#[ignore = "local RocksDB commit performance comparison"]
+fn measure_commit_with_fixed_changes_and_varying_state_and_history() -> Result<()> {
+    use std::time::Instant;
+
+    for (live_count, first_height) in [(512u32, 0), (8192, 0), (8192, 512)] {
+        let mut fixture = Fixture::new()?;
+        let cell = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
+        for index in 0..live_count {
+            fixture
+                .spec
+                .development_cells
+                .push((OutPoint::new([82; 32].pack(), index), cell.clone()));
+        }
+        let temp = tempfile::tempdir()?;
+        let mut store = Store::open(temp.path(), &fixture.spec, Retention::Archive)?;
+        for height in 1..=first_height {
+            let prepared = store.prepare(&[], TIME + height, false)?;
+            store.commit(prepared)?;
+        }
+        let mut prepare_us = Vec::new();
+        let mut sync_us = Vec::new();
+        for sample in 0..25u32 {
+            let txs = (sample * 8..(sample + 1) * 8)
+                .map(|index| {
+                    fixture.signed(
+                        OutPoint::new([82; 32].pack(), index),
+                        None,
+                        FUND - FEE,
+                        None,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let time = TIME + store.tip().context.height + 1;
+            let before = Instant::now();
+            let prepared = store.prepare(&txs, time, false)?;
+            prepare_us.push(before.elapsed().as_micros());
+            let before = Instant::now();
+            store.commit(prepared)?;
+            sync_us.push(before.elapsed().as_micros());
+        }
+        prepare_us.sort_unstable();
+        sync_us.sort_unstable();
+        println!(
+            "state sample cells={} prior_height={first_height} changes_per_block=16 prepare_us_p50={} sync_us_p50={}",
+            fixture.spec.development_cells.len(),
+            prepare_us[12],
+            sync_us[12]
+        );
+        assert_eq!(store.fee_surplus()?, 25 * 8 * FEE);
+    }
     Ok(())
 }
 

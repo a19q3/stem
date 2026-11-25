@@ -64,7 +64,7 @@ The benchmark uses the same four-node harness. Set `STEM_TEST_LOADGEN`, `STEM_TE
 
 ## Wallet and proofs
 
-`stem wallet build --request request.json` builds a transaction from canonical Cell bytes, inputs, dependencies and any proof data. `stem wallet sign` stores a 65-byte secp256k1 seal at the indicated Lock Group number. The user supplies the intended complete Lock Script and the native genesis. `stem ckb-wallet` signs CKB L1 transactions for test deployment and custody workflows.
+`stem wallet build --request request.json` encodes inputs, outputs, dependencies and optional ordered `messages` and `proofs`. `stem wallet sign` needs the native genesis, complete requested Lock Script, group index and `--context` file. Its `cells` array contains `{"out_point": ..., "cell": "0x..."}` records for all inputs, explicit dependencies and expanded Dep Group members. Its optional `headers` array contains canonical encoded Header Deps. Obtain and authenticate these records against the expected chain state before signing. `stem wallet id --network HASH` reads the JSON hex transaction from stdin. `stem ckb-wallet` uses the CKB-native encoding for L1 signing.
 
 `stem wallet find` discovers by complete Lock or Type Script hash in a local, read-only application database. Repeat the returned height and cursor for a consistent page sequence. Query selected OutPoints through ABCI for corresponding authenticated proofs.
 
