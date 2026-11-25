@@ -167,6 +167,14 @@ The CKB endpoint pins the exact deployed Spore V2 code and one complete original
 
 Stem derives the canonical representation Type Script from the fixed endpoint Lock. Its Type Group permits ordinary ownership transfers with immutable Spore bytes. Creation and removal require the consuming endpoint Lock, which checks one actual mint or burn under the appropriate Intercell message. The fixed bond Cell enables later cycles without reassigning the mapping identity. The current route supports the basic immutable Molecule profile without a Cluster or MIME extensions.
 
+### Native compound object settlement
+
+A Stem-issued object has separate identity and transfer-approval Type Groups. The identity script derives the object's ID from the first spent OutPoint and the object's creation output index under the network domain. It commits both chains' approval Locks and checks that the immutable object carries the expected policy Type. The native policy executes independently and requires a consumed input under the Stem approval Lock.
+
+The CKB representation pins the full Mailbox Type Script, its authorized Lock, and a CKB approval Lock. CKB's single Type Script enforces the mapped approval policy on issuance, local transfers and burns. The scoped rule deliberately models a separately authorized transfer. The tracked content still passes the ordinary immutable object checks on both chains. The source CKB or Stem application checks its remote recipient against the reserved destination custody Lock before committing a cross-chain movement.
+
+Release restores the original Stem Cell data, both complete Type Scripts and the original capacity from escrow. Stem validators authenticate the CKB burn through the existing observation path. A later CKB reissue has to come from a newly authenticated export. The original CKB Spore V2 path retains its own canonical Type and lifecycle.
+
 ## Historical proofs and CKB checkpoints
 
 Archive replicas preserve committed Headers. The proof index follows those records in a separate RocksDB database and checks the predecessor ID and MMR root before advancing. It persists only derived history nodes and progress. Each index update is independent of the application's commit. An archive reader can generate inclusion and append-only proofs at earlier retained heights.

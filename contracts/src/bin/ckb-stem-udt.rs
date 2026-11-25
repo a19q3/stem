@@ -103,6 +103,7 @@ fn mailbox_lock(script: &Script, fields: &[[u8; 32]; CKB_ESCROW_FIELDS]) -> Resu
         let output = total(Source::Output, Some(&token), None).ok_or(104)?;
         if message.receiver != *stem_escrow
             || transfer.asset != *asset
+            || transfer.recipient == *stem_escrow
             || input.checked_sub(output) != Some(transfer.amount)
         {
             return Err(104);

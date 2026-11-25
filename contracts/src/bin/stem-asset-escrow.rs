@@ -37,7 +37,7 @@ fn mailbox(
     fields: &[[u8; 32]; STEM_ESCROW_FIELDS],
     stem: &Identity,
     escrow: &Identity,
-) -> Identity {
+) -> (Identity, Identity) {
     let [
         asset,
         ckb,
@@ -63,13 +63,13 @@ fn mailbox(
         checkpoint,
     ]
     .concat();
-    Script::new_builder()
+    let mailbox = Script::new_builder()
         .code_hash(mailbox_code.pack())
         .hash_type(ScriptHashType::Data2)
         .args(args.pack())
         .build()
-        .calc_script_hash()
-        .unpack()
+        .calc_script_hash();
+    (mailbox.unpack(), owner.unpack())
 }
 
 #[derive(Default)]
@@ -158,7 +158,7 @@ fn verify() -> Result<(), i8> {
         return Err(95);
     }
     let escrow = load_script_hash().map_err(|_| 95)?;
-    let remote = mailbox(fields, &stem, &escrow);
+    let (remote, remote_owner) = mailbox(fields, &stem, &escrow);
     // A single Group Action has a two-byte group index, a four-byte
     // action count, a two-byte kind and a four-byte data length.
     let mut wire = [0; 12 + MESSAGE_HEADER + AssetTransfer::SIZE];
@@ -181,7 +181,8 @@ fn verify() -> Result<(), i8> {
             if message.source == stem
                 && message.destination == *ckb
                 && message.sender == escrow
-                && message.receiver == remote =>
+                && message.receiver == remote
+                && transfer.recipient != remote_owner =>
         {
             true
         }

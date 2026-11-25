@@ -424,6 +424,23 @@ The CKB escrow Lock uses `ckb-spore-escrow` with Data2 addressing. Its args are 
 
 The first 64 bytes of the message payload hold the original Type Script hash and destination Lock hash. Append the canonical plain Molecule data. For the Stem return, hash `Stem Spore return nonce\0` followed by the canonical 36-byte bond OutPoint with CKB Blake2b. Interpret the first eight digest bytes as a little-endian integer. Retain the consumed-message IDs needed to reconstruct the mailbox replay path. Direct transfers to the escrow Lock require the matching Mailbox update to be recognized as deposits.
 
+### Exercise Stem native object settlement
+
+Build the contracts and use the [Intercell runner](#exercise-intercell-messaging) with
+`--stem-native-object`, `--object-policy`, and `--ckb-stem-object` set to the three contract executables.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --bin stem-native-object --bin stem-object-policy --bin ckb-stem-object
+```
+
+The first four 32-byte values in the Stem identity arguments are the object ID, Stem approval Lock hash, CKB approval Lock hash and Stem policy code hash. Derive the object ID with `stem_bridge_wire::object::creation_id` and use Data addressing for the identity and policy scripts. The policy arguments concatenate the complete identity Type Script hash and the Stem approval Lock hash. The object data uses the plain Molecule SporeData profile required by the [CKB Spore exercise](#exercise-ckb-spore-settlement).
+
+The Stem escrow arguments use the original complete identity Type hash, CKB genesis, Mailbox code hash, Mailbox Type ID, CKB object code hash, Checkpoint code hash, Checkpoint Type ID and CKB approval Lock hash. Calculate the escrow Lock before creating the CKB Mailbox. The CKB Mailbox uses the `ckb-stem-object` Data2 Lock with arguments Mailbox Type ID, Stem escrow Lock hash, object Type hash, Mailbox code hash and CKB approval Lock hash. The CKB representation uses the same program as its Type Script. Its arguments are the full Mailbox Type hash, the full Mailbox Lock hash and the CKB approval Lock hash.
+
+Approval and ownership have their own inputs and signatures. The fixture uses a single approval key under two network-specific Locks and distinct owner keys. It archives successful and rejected transactions through creation, export, CKB transfer, verified burn and restoration, including attempts to remove the independent policy or pay the remote escrow Lock.
+
 ### Redeem fee revenue on CKB
 
 An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.

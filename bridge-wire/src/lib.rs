@@ -1,6 +1,7 @@
 #![no_std]
 pub mod asset;
 pub mod intercell;
+pub mod object;
 pub mod spore;
 
 pub const HASH_SIZE: usize = 32;

@@ -171,7 +171,8 @@ fn endpoint_lock(script: &Script, fields: &[[u8; 32]; 7]) -> Result<(), i8> {
             if message.source == network
                 && message.destination == *ckb
                 && message.sender == endpoint
-                && message.receiver.as_slice() == mailbox.as_slice() =>
+                && message.receiver.as_slice() == mailbox.as_slice()
+                && transfer.recipient.as_slice() != owner.as_slice() =>
         {
             false
         }

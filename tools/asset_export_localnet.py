@@ -137,6 +137,9 @@ def asset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     arbitrary = packet("wrong-export-nonce", True, nonce ^ 1, ckb_recipient, 250)
     rejects["stem_unbound_export_nonce"] = stem_reject(
         stem_signed("unbound-nonce", issue_cell, outputs, held=escrow_cell, msg=arbitrary), "exited with 97")
+    sink = packet("export-to-escrow", True, nonce, script_hash(mailbox_lock), 250)
+    rejects["stem_export_to_mailbox_lock"] = stem_reject(
+        stem_signed("redirect-to-mailbox", issue_cell, outputs, held=escrow_cell, msg=sink), "exited with 97")
     rejects["stem_composite_export"] = stem_reject(
         stem_signed("composite-export", composite, [
             cell(composite_cap - FEE, owner, le(50, 16), [asset, secondary]),
@@ -203,6 +206,8 @@ def asset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
 
     rejects["ckb_return_without_burn"] = ckb_reject(return_ckb("missing-burn", 0, returned, False), 104)
     rejects["ckb_return_underburn"] = ckb_reject(return_ckb("underburn", retained_units + 1, returned), 104)
+    sink = packet("return-to-escrow", False, 0, escrow_id, returned_units)
+    rejects["ckb_return_to_escrow_lock"] = ckb_reject(return_ckb("return-to-escrow", retained_units, sink), 104)
     burned = submit_ckb(return_ckb("burn", retained_units, returned))
     l1.mine(spec["bridge"]["confirmations"])
 

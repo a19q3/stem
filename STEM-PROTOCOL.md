@@ -351,6 +351,18 @@ CKB → Stem 的发送方由 Mailbox 的原有 CKB Lock 授权。合约令发送
 
 [运行说明](OPERATIONS.md#exercise-ckb-spore-settlement)
 
+### Stem 原生复合对象在 CKB 结算
+
+原生对象使用两个独立 Type Script。身份组验证唯一性、规范的不可变内容，以及每次变更都携带绑定的批准组。对象 ID 按 Stem network ID、首个消费 OutPoint 和对象输出位置派生。批准组验证交易确实消费了指定批准 Lock 的输入。对象身份承诺 Stem 和 CKB 的完整批准 Lock 哈希及 Stem 批准程序哈希。实际持有人仍由对象的 Lock 授权。应用可为两条链绑定不同的 Lock，测试用同一批准密钥分别签署两条链的交易。
+
+Stem 导出交易将原对象按原容量转入固定 Escrow Lock，保留两个 Type Script 和全部数据。CKB Mailbox 通过原生 Jolteon 检查点验证导出，创建一个内容相同的映射 Cell。映射 Type Script 承诺 Mailbox、其 Lock 和 CKB 批准 Lock。CKB Cell 只有一个 Type Script，因此映射程序在同一个 Type Group 中核验唯一性、不变性和 CKB 批准输入。后续转移也需要持有人和独立批准方授权。
+
+返回交易在 CKB 消费并销毁映射，由 Mailbox 原子发布返回消息。Stem 验证 guardian 认证的 CKB 历史输出后，把仍在托管的原对象释放给指定 Lock。身份组和批准组再次执行，保持两个 Type Script、内容和原容量。每一方向均沿用 Intercell 的防重放约束。同一原对象的一次导出只能在 CKB 发行一次，销毁映射后也无法重播此前的发行证明。
+
+当前路由映射的是明确的批准规则及基础不可变内容。CKB 发行具有独立的映射身份。通用 Cluster、扩展合约和任意附加 Type Script 仍需要相应的跨链验证规则。资产发送合约拒绝把消息收款人设为对端保留的托管 Lock，以确保该消息可按接收合约的规则交割。
+
+[运行说明](OPERATIONS.md#exercise-stem-native-object-settlement)
+
 ## 7. 状态承诺、执行回执与锚定快照
 
 五项逻辑承诺由三种认证数据结构产生，所有共识数据经同一个 RocksDB 提交路径持久化。

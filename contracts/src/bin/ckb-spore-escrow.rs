@@ -90,7 +90,7 @@ fn verify() -> Result<(), i8> {
         if message.receiver != *endpoint {
             return Err(113);
         }
-        verify_transfer(message.payload, original, &input, None)?;
+        verify_transfer(message.payload, original, &input, None, endpoint)?;
     } else {
         if !next.outgoing.is_empty() {
             return Err(113);
@@ -102,7 +102,7 @@ fn verify() -> Result<(), i8> {
         if message.sender != *endpoint {
             return Err(113);
         }
-        verify_transfer(message.payload, original, &input, Some(&after))?;
+        verify_transfer(message.payload, original, &input, Some(&after), &owner)?;
     }
     Ok(())
 }
@@ -151,10 +151,12 @@ fn verify_transfer(
     original: &Identity,
     data: &[u8],
     recipient: Option<&Identity>,
+    custody: &Identity,
 ) -> Result<(), i8> {
     let transfer = SporeTransfer::decode(payload).ok_or(113)?;
     if transfer.original_type != *original
         || transfer.data != data
+        || &transfer.recipient == custody
         || recipient.is_some_and(|recipient| *recipient != transfer.recipient)
     {
         return Err(113);

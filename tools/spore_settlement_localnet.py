@@ -145,6 +145,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     clustered = table(molecule_bytes(b"text/plain"), molecule_bytes(b"unsupported"), molecule_bytes(bytes(32)))
     rejected["ckb_cluster_payload"] = ckb_reject(deposit("unsupported-cluster",
         policy=packet("unsupported-cluster", False, script_hash(owner), 0, clustered)), 113)
+    rejected["ckb_deposit_to_stem_endpoint"] = ckb_reject(deposit("deposit-to-stem-endpoint",
+        policy=packet("deposit-to-stem-endpoint", False, endpoint_id, 0)), 113)
     held = submit_ckb(deposit("deposit"))
     mailbox_point, object_point, l1_fee_point = [point(held["hash"], i) for i in range(3)]
     fee_capacity -= FEE
@@ -258,6 +260,9 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     rejected["stem_return_without_object"] = stem_reject(stem_signed("return-without-object", funding,
         [cell(bond, endpoint), cell(source_cap - mapped_cap - 2 * FEE, owner)],
         bond=bond_at, message=returning), "exited with 109")
+    rejected["stem_return_to_ckb_escrow"] = stem_reject(stem_signed("return-to-ckb-escrow", mapped_at,
+        returned_outputs, actor=buyer, key=fixture.friend, bond=bond_at,
+        message=packet("return-to-ckb-escrow", True, script_hash(ckb_escrow), nonce)), "exited with 108")
     burned = commit(stem_signed("return", mapped_at, returned_outputs,
         actor=buyer, key=fixture.friend, bond=bond_at, message=returning))
 
