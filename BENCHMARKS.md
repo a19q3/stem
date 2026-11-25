@@ -1526,3 +1526,67 @@ guardian-observed chain.
 
 [Reproduction](OPERATIONS.md#read-a-ckb-cell-from-stemvm) ·
 [Raw runs and regression evidence](benchmarks/2026-11-26-stem-l1-references.json.xz).
+
+## Independent CKB anchor refresh
+
+Revision `0ac5a10` added a 373-byte control transaction with three
+guardian signatures. Four Jolteon replicas finalized it at Stem
+height 77, moving the accepted CKB anchor from block 22 to 23.
+The proved vault lane, including its OutPoint and nonces, the backing
+record and cumulative fees were identical before and after. The
+control receipt charged zero user fee and zero VM cycles. Its bytes
+and signatures consumed the separate anchor allowance.
+
+The old live reference was expired before refresh, while a historical
+reference still executed at height 75. A fresh live reference executed
+at height 79 and charged 13,959,940 cycles in a 1,208-byte transaction.
+All replicas agreed at height 80. Admission rejected a minority
+certificate, a signature from the reference domain, a replayed
+refresh and a reference to the superseded anchor. Guardians refused
+the unconfirmed refresh and halted both signing flows after the CKB
+fork replacement. A separate four-replica CKB and xUDT run completed
+withdrawal, reserve movement and vault rotation at agreed height 44.
+
+[Reproduction](OPERATIONS.md#read-a-ckb-cell-from-stemvm) ·
+[Both refresh runs and bridge regression](benchmarks/2026-11-26-stem-anchor-refresh.json.xz).
+
+## Delegation occupancy and both vote heights
+
+Revision `1d24c13` reduced the CKB Delegation Cell data to 40 bytes.
+The occupied Capacity measured on CKB 0.210.0 was 146 CKB per Cell,
+down from 154 CKB in the previous compact layout and 243 CKB in the
+original retirement-only layout. Applying the new layout to the earlier
+175 and 70 CKB positions requires 537 CKB total lockup, with 45.6%
+principal. The latest run used three positions of 100, 75 and 70 CKB.
+They locked 683 CKB total, with 35.9% principal. The Registry holds
+eight additional bytes per validator record for the earlier vote height.
+
+The devnet accepted an actual QC vote from Stem height 3 and a signed
+conflicting vote at height 4 for the same view. It rejected a freeze
+record that substituted height 4 for the earlier height. The global
+freeze blocked withdrawal of the 65 CKB pending reduction from the
+genesis position, and the settlement forfeited that principal in a CKB
+transaction. The position activated at height 11 rejected the evidence
+and recovered its 70 CKB plus 146 CKB occupied Capacity. Evidence after
+the cutoff at height 21 was also rejected. A separate run withdrew both
+reductions normally and redelegated 8 CKB. The new position was
+confirmed at Stem height 31. Another run rejected both the orphaned
+anchor and its CKB replacement.
+
+| Operation in the mixed-height run | Transaction bytes | CKB estimate_cycles |
+| --- | ---: | ---: |
+| Activate the 75 CKB position | 2,328 | 2,214,624 |
+| Confirm the 65 CKB reduction | 2,328 | 2,184,864 |
+| Freeze the validator using votes at heights 3 and 4 | 3,257 | 6,412,406 |
+| Settle the 65 CKB penalty | 3,226 | 6,459,289 |
+| Close the 70 CKB position | 1,577 | 2,053,372 |
+
+The reward regression exercised validator retirement, closed-epoch
+principal and commission proofs, accrual across a restart and confirmed
+CKB payouts of 389.99999999 CKB to the validator and 130 CKB to the
+delegation beneficiary. The release workspace passed 443 tests with 12
+ignored. The Go proof suite and the CometBFT feature build passed. Both
+native and comparison Stake Registry contracts cross-compiled for CKB-VM.
+
+[Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
+[Signed transactions, rejections and raw runs](benchmarks/2026-11-26-stem-delegation-liability.json.xz).
