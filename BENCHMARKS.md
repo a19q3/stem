@@ -3259,3 +3259,66 @@ corrected run and the signed workloads.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Raw timing, signed workloads, proof and failed invocation](benchmarks/2026-11-26-stem-load-dispatch.json.xz).
+
+## Reuse of staged proposal execution
+
+Revision `eff6aad` measures Leader construction, uncached candidate
+execution and certified commit. Revision `33721dd` retains the staged
+overlay and receipts for eligible proposals. It binds the final
+transaction root to the new Live Cell origins before constructing
+the authenticated batch. The fixed test compares both paths against
+serial verification with the same parent, timestamp and transactions.
+It selects 24 signed Lineage commands from 4,096 under the same
+1,104-read budget. With two VM workers and 11 alternating trials,
+the median fell from 10.436 ms to 6.592 ms. Transaction selection,
+the complete Header and receipts agreed in every trial.
+
+All measurements below use one host, two VM workers per replica,
+a 250 ms proposal interval and a two-billion-cycle block cap. The
+signed workload and genesis are identical within each comparison.
+The high hotspot runs use 16 replicas, 64 submitters and 30 seconds
+of traffic. Payments use four replicas, 64 submitters and 20 seconds.
+Each run observes another 12 seconds after the offer window.
+
+| Workload and Leader path | Written / admitted / common visible TPS in offer window | Visible by end | p99 among visible | Mean proposal construction |
+| --- | ---: | ---: | ---: | ---: |
+| Hotspot, planned 240, replay | 180.47 / 176.90 / 98.47 | 5,196 | 32.408 s | 479.21 ms |
+| Hotspot, planned 240, reuse | 158.93 / 155.13 / 81.33 | 4,768 | 26.191 s | 178.33 ms |
+| Hotspot, planned 240, reuse repeat | 164.03 / 161.43 / 104.83 | 4,921 | 21.999 s | 149.11 ms |
+| Payments, planned 2,000, replay | 1,323.50 / 1,320.30 / 1,217.10 | 26,470 | 2.104 s | 99.57 ms |
+| Payments, planned 2,000, reuse | 1,350.50 / 1,349.20 / 1,223.75 | 27,010 | 2.249 s | 95.87 ms |
+| Hotspot, matched 120, replay | 120.00 / 119.73 / 110.97 | 3,600 | 2.723 s | 76.24 ms |
+| Hotspot, matched 120, reuse | 120.00 / 120.00 / 114.13 | 3,600 | 2.263 s | 43.68 ms |
+
+The high hotspot runs reached different written rates and proposed
+25, 37 and 44 blocks, respectively. Their means include empty blocks.
+They show shorter construction and lower observed p99 in the reuse
+runs with mixed common-visibility throughput. In the replay run,
+uncached candidate execution averaged 814.54 ms over 375 observations
+and certified commit averaged 6.80 ms over 400 observations. In the
+payment pair both versions finalized every written transaction.
+Measured process writes for the four replicas totaled 406.87 MB and
+415.38 MB, about 3.84 kB per finalized payment per replica in each
+run. These are local process-write counters.
+Cell Patricia nodes accounted for 77.33% and 77.30% of the serialized
+finality batches in the payment pair.
+
+The matched 120 TPS pair uses 24 submitters and all 3,600 writes
+in both runs. Aggregate replica CPU time was 185.38 and 206.01
+seconds. Every observed finalized AMM command in the controls and
+reuse runs passed the separate serial replay audit. A same-block
+payment test verifies the final origin against the Header and
+reopens its authenticated proof. The Keeper test checks that
+reserved and expired work produces identical Headers and receipts
+through proposal building and full preparation.
+
+The 16-replica fault run confirmed 96 payments with two Leaders
+stopped and verified the common Header after restart. Its first
+attempt hit an occupied port. Both attempts are archived. A real
+CKB devnet run completed a funded four-voter handoff at Stem height
+40 and delivered a historical Intercell Outbox proof on CKB.
+The locked release workspace passed 465 tests with 18 ignored.
+The Go proof suite and frozen CometBFT comparison build passed.
+
+[Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
+[Raw samples, signed workloads and regression logs](benchmarks/2026-11-26-stem-proposal-reuse.json.xz).
