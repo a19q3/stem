@@ -2674,3 +2674,81 @@ CometBFT feature check passed.
 
 [Build and reproduce](OPERATIONS.md#exercise-the-browser-sdk) ·
 [Proof inputs, browser output, commands and failures](benchmarks/2026-11-26-stem-wasm-sdk.json.xz).
+
+## Sustained native payments and durable write attribution
+
+Revision `53ba682` exposes exact serialized WriteBatch bytes by
+key family and by synchronous operation. Revision `40f3451` reuses
+a previously synchronized proposal body when the full encoded bytes
+match. Each run used four local Jolteon replicas on an i9-13900H,
+with two VM workers per node, a 250 ms proposal interval, a
+2-billion-cycle cap, three 64-block retention nodes and one archive.
+Payments used independently funded inputs and real RISC-V Lock
+validation. The restored Store verified the authenticated roots with
+restore writes accounted separately.
+
+| Planned TPS, offer duration, mode | Actual offered TPS | Admission TPS in window | All-replica visible TPS in window | Visible after drain | Client drops | Visibility p50 / p95 / p99 (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 400, 45 s, metrics off | 400.00 | 399.87 | 393.47 | 18,000 | 0 | 0.583 / 0.731 / 0.761 |
+| 400, 45 s, measured baseline | 400.00 | 400.00 | 395.78 | 18,000 | 0 | 0.584 / 0.733 / 0.761 |
+| 400, 45 s, reused bodies | 400.00 | 400.00 | 396.18 | 18,000 | 0 | 0.579 / 0.725 / 0.751 |
+| 1,200, 35 s, measured baseline | 1,155.26 | 1,155.09 | 1,095.37 | 40,434 | 1,566 | 1.693 / 2.363 / 2.519 |
+| 1,200, 35 s, reused bodies | 1,167.51 | 1,166.83 | 1,102.51 | 40,863 | 1,137 | 1.636 / 2.237 / 2.358 |
+| 2,200, 30 s, reused bodies | 1,736.47 | 1,735.67 | 1,073.53 | 52,094 | 13,906 | 2.513 / 33.820 / 39.226 |
+
+The two 400 TPS measurement controls and the optimization used identical
+pre-funded genesis inputs and signed transactions. The 1,200 TPS pair
+also used identical inputs. These are single runs at each setting.
+The near-400 TPS pair ended with 190 and 172 admitted transactions
+waiting for visibility at the offer cutoff. The high-pressure run ended
+the offer window with 19,864 still waiting. It reached 1,195.61
+visible TPS when the denominator includes drain through the final
+observed payment. Client pacing and node processing both constrain the
+2,200-target run. Common height was sampled at approximately 50 ms
+intervals and the archive's original transaction IDs were matched
+against each timed submission. All replicas agreed on the final Header
+and its Jolteon proof verified independently.
+
+| 400 TPS with measurement, summed across replicas | Baseline | Reused bodies |
+| --- | ---: | ---: |
+| Proposal body WriteBatch bytes | 54.12 MB | 18.05 MB |
+| Proposal bodies within finality writes | 36.10 MB | 0.017 MB |
+| Live Cell Patricia nodes | 160.31 MB | 160.05 MB |
+| Execution records | 18.45 MB | 18.45 MB |
+| Live Cell records | 16.42 MB | 16.42 MB |
+| Headers and history | 0.290 MB | 0.286 MB |
+| RocksDB WAL bytes | 251.42 MB | 215.07 MB |
+| Linux process write bytes | 489.78 MB | 441.06 MB |
+| Replica CPU seconds | 53.00 | 53.21 |
+| Peak sampled RSS | 567.45 MB | 566.82 MB |
+| P2P application-frame bytes sent / received | 30.57 / 35.24 MB | 30.79 / 35.46 MB |
+
+WAL bytes dropped 14.5% and process writes dropped 9.9% in this
+400 TPS pair. These are submit-and-drain deltas. The 2,200-target
+run used 159.90 CPU seconds, 918.21 MB sampled peak RSS, 923.03 MB
+process writes and 121.98 / 135.38 MB of application-frame network
+traffic. Its finality synchronous-write p99 fell in the
+16,384–32,767 microsecond bucket.
+
+RocksDB's flush ticker returned zero with this build while its
+table-file creation events identified 65.28 MB and 70.41 MB of
+flush outputs in the two measured 400 TPS runs, including process
+startup. The 2,200-target run created 320.68 MB of flush outputs
+over its process lifetime. No compaction output was observed in
+these sampled lifetimes. WAL and SSTs use the shared atomic database.
+The isolated history-index process wrote 944 filesystem output units
+for the optimized 400 TPS run and retained 61,440 bytes of allocated
+files. The raw archive retains per-node counters and SST creation
+events separately from Linux process totals.
+
+The release workspace passed 460 tests with 15 ignored. The Go proof
+suite and frozen CometBFT feature check passed. Four replicas recovered
+after one was offline for 200 blocks, with a 64-block retention
+window. The bidirectional Intercell and CKB-backed stake and reward
+fixtures passed. The first regression attempts encountered local
+address conflicts and passed on different ports. Those attempts,
+the initial compilation failures and the successful smoke run are
+included in the archive.
+
+[Run the fixture and inspect the storage query](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw timing samples, signed workloads and regression logs](benchmarks/2026-11-26-stem-storage-load.json.xz).
