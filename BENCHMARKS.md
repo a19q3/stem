@@ -1307,3 +1307,55 @@ The later runs used 65 CKB.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
 [Raw evidence, fingerprints and failure](benchmarks/2026-11-25-stem-delegation-window.json.xz).
+
+## Closed-epoch stake rewards and commission
+
+Revision `eaece03`, compared with the compact delegation baseline
+`47350a5`. The experiment used three local Stem replicas with changing
+weighted membership and CKB 0.210.0 devnet. A confirmed CKB deposit
+funded an ordinary signed payment with an 800 CKB fee at Stem height 7.
+The fixture assigned 65% to validators and delegators. Epoch 0 closed
+after height 10 with a 520 CKB budget. A finality proof and the epoch
+handoff authenticated the Header at height 11 used for the reward path.
+The next closed epoch was queried under the authenticated Header at
+height 21 and had zero additional budget.
+
+| Verified quote | CKB |
+| --- | ---: |
+| Validator, including commission | 389.99999999 |
+| Commission included above, 1,250 basis points | 18.57142857 |
+| Delegator, after commission | 130.00000001 |
+| Total | 520.00000000 |
+
+The historical Registry held 250 CKB of self-bond and a 100 CKB
+delegation. The proof fixed both recipients' CKB Lock hashes. The CLI
+rejected an altered principal for the historical position. CKB rejected
+an invalid active-principal update path. Regression runs retained the
+154 CKB occupied Capacity, forfeited 65 CKB from the older position, and
+returned 70 CKB of principal and occupied Capacity to the later
+position. A separate four-replica run reconciled all four existing
+aggregate fund payouts on CKB at agreed Stem height 44. Individual
+shares in this round are verified quotes.
+
+| Operation on CKB devnet | Signed transaction bytes | Estimated CKB cycles |
+| --- | ---: | ---: |
+| Create the first delegation with a principal proof | 1,491 | 5,318,083 |
+| Activate the 75 CKB position | 2,320 | 2,199,316 |
+| Request the 65 CKB partial reduction | 1,738 | 7,853,834 |
+| Confirm that reduction | 2,320 | 2,197,451 |
+| Forfeit the pending principal with historical evidence | 3,116 | 6,399,762 |
+
+The values come from `estimate_cycles` on the signed transactions
+subsequently committed on devnet. Creation and in-term reduction add a
+sparse update to authenticate the prior and successor principals.
+Activation and the pending penalty keep the active principal root. The
+prior round used a different Registry and checkpoint proof, so these
+figures describe the tested fixtures.
+
+The Rust release workspace passed 440 tests with 12 ignored. The Go
+proof suite and the RISC-V comparison contract check passed. The
+archive retains both initial failed compilations, due to a visibility
+error in the shared sparse proof module, and all completed devnet runs.
+
+[Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
+[Run evidence and build logs](benchmarks/2026-11-25-stem-stake-rewards.json.xz).

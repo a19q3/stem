@@ -36,5 +36,6 @@ available. Published network evidence contains public genesis and proof data.
 | CKB delegation, retirement, slashing and capped Jolteon handoffs | [Report](../BENCHMARKS.md#ckb-delegation-and-weighted-handoffs), [all devnet runs and failure evidence](2026-11-25-stem-ckb-delegation.json.xz) |
 | In-term CKB delegation reductions, historical penalties and L1 reorg | [Report](../BENCHMARKS.md#in-term-ckb-delegation-reductions), [raw runs and failed attempt](2026-11-25-stem-delegation-reduction.json.xz) |
 | Compact delegation, individual liability and validator switching | [Report](../BENCHMARKS.md#compact-delegation-and-position-specific-liability), [raw runs and failed attempt](2026-11-25-stem-delegation-window.json.xz) |
+| Historical stake principal, commission and closed-epoch fees | [Report](../BENCHMARKS.md#closed-epoch-stake-rewards-and-commission), [successful runs and build failures](2026-11-25-stem-stake-rewards.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
