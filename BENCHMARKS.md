@@ -3019,3 +3019,64 @@ checkpoint. The locked Rust release workspace passed 463 tests with
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Signed workloads, pacemaker samples, overload and recovery evidence](benchmarks/2026-11-26-stem-transport-priority.json.xz).
+
+## Bounded parallel admission experiment
+
+Revision `d46c8d5` grouped waiting admission requests for the same
+finalized tip. With two VM workers it took up to four requests at a
+time and stopped extending a group when a query or control message
+was waiting. It verified distinct witnessed transactions in parallel
+and applied admission decisions in request order. A concurrent RPC
+test submitted valid duplicates and an unsigned variant of the same
+transaction body. The unsigned variant was rejected and four
+replicas confirmed the valid transaction once.
+
+The fixed-tip probe compared 512 signed AMM commands, each involving
+two Heads and both asset Type Groups. Two stores used the same
+finalized Header. Over 11 alternating repetitions, the median for
+512 single-request checks was 54.622 ms. Grouping the same checks in
+fours took 28.713 ms. Every receipt matched. This timing covers
+Store checks and thread-pool dispatch.
+
+All network samples used 16 local replicas, two VM workers per node,
+the same signed workload and genesis at each offered rate, a 250 ms
+proposal interval, a 2-billion-cycle block cap, 30 seconds of offer
+and another 12 seconds of observation. Baseline refers to `53bb000`.
+The traced high-load runs used the same driver with pinned node
+binaries. Candidate and final execution used the existing checks.
+
+| Run | Actual offered / admitted / common visible TPS in window | Visible by end of observation | p99 among observed transactions | Replica CPU seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline, 240 TPS | 142.07 / 140.67 / 67.50 | 4,262 | 35.943 s | 519.72 |
+| Baseline repeat, 240 TPS | 130.53 / 128.17 / 5.53 | 2,407 | 37.881 s | 567.80 |
+| Batched admission, 240 TPS | 143.87 / 142.00 / 35.40 | 2,767 | 30.985 s | 605.31 |
+| Batched admission repeat, 240 TPS | 126.90 / 124.33 / 1.40 | 2,542 | 38.784 s | 629.13 |
+| Baseline, 80 TPS | 79.90 / 79.63 / 71.50 | 2,397 | 3.152 s | 308.45 |
+| Batched admission, 80 TPS | 80.00 / 80.00 / 75.03 | 2,400 | 2.609 s | 311.69 |
+
+In the first batched high-load run, 4,316 offered transactions
+produced 69,056 checks across the 16 replicas. Of 32,710 request
+groups, 14,915 contained more than one check. View and RPC
+observation timing varied at high load. The fixed-tip speedup
+did not translate to a consistent improvement for the full network.
+Both high-load batched runs used more aggregate CPU. Their finalized
+commands passed the serial replay audit with identical settlement
+receipts and conserved AMM supplies.
+
+Revision `a01cc3a` keeps single-request admission, reuses the witnessed
+transaction digest for the reply, and exposes per-source counters.
+Its 16-replica 80 TPS run confirmed all 2,400 transactions with p99
+of 3.352 seconds and zero observation errors. It recorded 2,400
+client submissions, 36,000 peer relays and 38,400 Store checks.
+That is one full admission check on each replica per offered
+transaction in this workload.
+
+The batch experiment passed the two-offline-Leader regression and
+a real CKB-funded handoff with an older Intercell Outbox proof.
+The production concurrent admission regression passed again.
+The locked release workspace passed 464 tests with 18 ignored
+on the production path. Go proof tests and the frozen CometBFT
+comparison build passed.
+
+[Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
+[Signed workloads, individual timing samples and default-path validation](benchmarks/2026-11-26-stem-admission-batching.json.xz).

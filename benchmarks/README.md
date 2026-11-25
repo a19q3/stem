@@ -83,5 +83,6 @@ available. Published network evidence contains public genesis and proof data.
 | Sustained replicated Lineage and AMM contention | [Report](../BENCHMARKS.md#sustained-replicated-lineage-and-amm-contention), [signed workloads, timing, stress controls and failure logs](2026-11-26-stem-lineage-load.json.xz) |
 | Lineage proposal selection at the read limit | [Report](../BENCHMARKS.md#proposal-selection-after-the-lineage-read-limit), [matched probes, network controls and build evidence](2026-11-26-stem-proposal-selection.json.xz) |
 | Jolteon control transport under Lineage load | [Report](../BENCHMARKS.md#jolteon-control-transport-under-lineage-load), [pinned controls, pacemaker samples and recovery regressions](2026-11-26-stem-transport-priority.json.xz) |
+| Bounded parallel Jolteon admission experiment | [Report](../BENCHMARKS.md#bounded-parallel-admission-experiment), [raw network runs, fixed-tip timings and production validation](2026-11-26-stem-admission-batching.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
