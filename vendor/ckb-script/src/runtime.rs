@@ -21,7 +21,7 @@ pub use crate::{
 };
 
 use crate::{Scheduler, types::SyscallGenerator};
-use ckb_vm::{DefaultMachineBuilder, DefaultMachineRunner, Syscalls, cost_model::estimate_cycles};
+use ckb_vm::DefaultMachineRunner;
 
 pub fn scheduler<C: ScriptContext, V: Clone>(
     group: C,
@@ -36,23 +36,4 @@ pub fn scheduler<C: ScriptContext, V: Clone>(
         scheduler
     };
     scheduler
-}
-
-/// Construct an isolated VM with the same backend and cycle table as the scheduler.
-pub fn machine(
-    version: ScriptVersion,
-    max_cycles: u64,
-    syscall: impl Syscalls<<Machine as DefaultMachineRunner>::Inner> + 'static,
-) -> Machine {
-    #[cfg(all(has_asm, feature = "vm-reuse"))]
-    let core =
-        crate::reusable_asm::allocate_core(version.vm_isa(), version.vm_version(), max_cycles);
-    #[cfg(not(all(has_asm, feature = "vm-reuse")))]
-    let core = version.init_core_machine(max_cycles);
-    Machine::new(
-        DefaultMachineBuilder::new(core)
-            .instruction_cycle_func(Box::new(estimate_cycles))
-            .syscall(Box::new(syscall))
-            .build(),
-    )
 }
