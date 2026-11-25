@@ -2630,3 +2630,47 @@ unmeasured.
 
 [Verification workflow](OPERATIONS.md#verify-per-vault-revenue) ·
 [Raw rounds, finality proofs, failures and build fingerprints](benchmarks/2026-11-26-stem-vault-revenue.json.xz).
+
+## Browser WASM transaction and proof SDK
+
+Revision `c0ec9ac` built the native ledger and portable Jolteon verifier
+for `wasm32-unknown-unknown`. Headless Chrome 157 and Node.js 22.23.1 ran
+the same fixture against public proofs captured from four native
+Jolteon replicas, a real CKB Intercell mailbox, and a separate
+CKB-backed stake run. The stake evidence covers two committee handoffs
+and a successor proof at height 25.
+
+The test independently rebuilt a 413-byte transaction with a real
+Intercell Group Action. The browser and native wallet produced equal
+unsigned bytes and complete Lock digest. Inserting the actual
+signature reproduced the finalized signed transaction byte for byte.
+The verified receipt measured 1,920,520 VM cycles and a
+1,000,000-shannon fee. The SDK also verified the original Live Cell
+records, spent-Cell absence, the Outbox payload and 3,000,000 shannons
+of proved vault revenue. Each JavaScript runtime rejected twelve
+negative cases covering proof substitution, signed data, trust anchors
+and replayed or missing handoffs.
+
+| Observable | Final result |
+| --- | ---: |
+| Generated WASM binary | 636,453 bytes |
+| Local npm package | 219,992 bytes compressed |
+| Node.js initialization, one run | 3.44 ms |
+| Node.js checks, one run | 25.37 ms |
+| Node.js checks from unpacked npm package | 25.08 ms |
+
+These are local process observations on an i9-13900H. The checks include
+codec, state and finality verification plus negative cases. The Chrome
+run was a functional test with virtual time and yields no timing
+comparison. TypeScript 5.9.3 checked the generated declarations in
+strict mode, including the disposable symbol library.
+
+The first JavaScript fixture reused the same JSON key for finality
+and a state path. The first type check omitted the compiler library
+required by the generated disposal declarations. Both failed attempts
+are archived with the corrected run. The locked Rust release workspace
+passed 458 tests with 14 ignored. The Go proof suite and frozen
+CometBFT feature check passed.
+
+[Build and reproduce](OPERATIONS.md#exercise-the-browser-sdk) ·
+[Proof inputs, browser output, commands and failures](benchmarks/2026-11-26-stem-wasm-sdk.json.xz).

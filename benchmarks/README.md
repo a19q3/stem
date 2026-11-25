@@ -76,5 +76,6 @@ available. Published network evidence contains public genesis and proof data.
 | Historical Intercell delivery after CKB checkpoint advancement | [Report](../BENCHMARKS.md#intercell-delivery-after-checkpoint-advancement), [paired costs, raw proofs, rejections and regressions](2026-11-26-stem-intercell-history.json.xz) |
 | Portable CKB security-domain accounting | [Report](../BENCHMARKS.md#portable-ckb-security-domain-accounting), [raw evidence, rejected audits and regressions](2026-11-26-stem-security-domain-audit.json.xz) |
 | Authenticated per-vault fee attribution | [Report](../BENCHMARKS.md#authenticated-per-vault-fee-attribution), [dual-vault and fee-fund proofs, regressions and failures](2026-11-26-stem-vault-revenue.json.xz) |
+| Browser WASM transaction and proof SDK | [Report](../BENCHMARKS.md#browser-wasm-transaction-and-proof-sdk), [browser, npm and CKB-backed proof runs](2026-11-26-stem-wasm-sdk.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
