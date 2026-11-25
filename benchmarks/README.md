@@ -86,5 +86,6 @@ available. Published network evidence contains public genesis and proof data.
 | Bounded parallel Jolteon admission experiment | [Report](../BENCHMARKS.md#bounded-parallel-admission-experiment), [raw network runs, fixed-tip timings and production validation](2026-11-26-stem-admission-batching.json.xz) |
 | Intercell sparse replay proofs and authenticated recovery | [Report](../BENCHMARKS.md#intercell-sparse-replay-proofs-and-authenticated-recovery), [successful devnets, failed control, proofs and commands](2026-11-26-stem-intercell-revalidation.json.xz) |
 | Jolteon leader-directed transaction relay | [Report](../BENCHMARKS.md#jolteon-leader-directed-transaction-relay), [matched workloads, overload controls and fault evidence](2026-11-26-stem-jolteon-leader-relay.json.xz) |
+| Sustained submission and admission latency | [Report](../BENCHMARKS.md#sustained-submission-and-admission-latency), [matched AMM controls, payments and per-stage timing](2026-11-26-stem-load-dispatch.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

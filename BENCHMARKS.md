@@ -3186,3 +3186,76 @@ payments and agreed on the execution Header and two-chain proof.
 [Load reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Fault reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
 [Signed workloads, raw samples and recovery logs](benchmarks/2026-11-26-stem-jolteon-leader-relay.json.xz).
+
+## Sustained submission and admission latency
+
+Revision `aa0f422` replaces the load driver's fixed sender assignments
+with a single paced, bounded queue. It records planned time, worker
+start, full frame write, complete reply and positive admission
+separately. The first five runs use the same pinned `4907a2c` node
+binary, signed workload and genesis. Each runs 16 replicas on one
+host with two VM workers per replica, 30 seconds of single-hotspot
+AMM commands at a planned 240 TPS and 12 seconds of drain. The
+250 ms proposal interval and two-billion-cycle block cap are fixed.
+
+| Driver and workers | Attempted or written TPS | Positive admission TPS | All-replica visible TPS | Visible by end | p99 among visible |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Fixed assignments, 24 | 159.80 attempted | 159.63 | 124.70 | 4,794 | 10.118 s |
+| Fixed assignments, 64 | 158.77 attempted | 156.93 | 87.17 | 4,763 | 25.630 s |
+| Shared queue, 24 | 161.87 written | 161.07 | 123.20 | 4,856 | 9.219 s |
+| Shared queue, 64 | 178.80 written | 177.37 | 98.07 | 5,237 | 30.643 s |
+| Shared queue, 64 repeat | 173.67 written | 171.27 | 96.17 | 5,063 | 31.511 s |
+
+The three rates use the offer window. The earlier driver counted an
+attempt at worker start. The shared queue verified 5,364 and 5,210
+complete frame writes in the two 64-worker runs. It attempted no
+send after the queue deadline and recorded 1,836 and 1,990
+unattempted submissions, respectively. Increasing available senders
+raised offered traffic in these runs while p99 increased. All
+observed finalized AMM transactions passed the independent serial
+Header, receipt, Head version and asset-supply audit.
+
+An instrumented node run with the same AMM fixture wrote 175.17 TPS
+and observed 85.47 TPS on every replica during the offer window.
+The p95 from worker start to a full frame write was 307 μs. The
+p95 from that write to a complete reply was 1.350 s. Of 5,255
+decoded submissions, 2,018 waited over 100 ms to enter the replica
+handler and 967 waited over 500 ms. All 16 replicas recorded such
+long waits. Mean handler queue time was 263.85 ms. Once handling
+started, 5,249 replies were encoded within 10 ms and all finished
+within 100 ms. Mean handler service time was 2.78 ms. The client
+and server measurements identify admission queueing as the main
+source of the measured response tail for this workload.
+
+The separate four-replica payment fixture uses 64 workers, 20 seconds
+of offer and 12 seconds of drain, the same 250 ms interval and
+two-billion-cycle block budget. It signs an independent ordinary
+payment for each funded input. At the 1,000 TPS setting the driver
+wrote all 20,000 frames in the offer window with zero client or
+transport write drops. Positive admission reached 999.55 TPS.
+All four replicas saw 940.15 TPS in the offer window and 968.94 TPS
+including drain. All 20,000 payments finalized with p99 of 1.190 s.
+The 2,000 TPS setting on the same four-replica configuration wrote
+27,850 of 40,000 planned frames and finalized every written payment.
+All-replica visibility was 1,280.55 TPS during offer and 1,338.10 TPS
+including drain. The 12,150 losses were client queue drops or
+expired jobs before attempting the write.
+
+| Planned payments/s | Written TPS | Positive admission TPS | p50 / p95 / p99 | Aggregate CPU s | Process writes / network sends | Sampled peak RSS |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 1,000.00 | 999.55 | 0.911 / 1.134 / 1.190 s | 41.55 | 342.3 / 34.6 MB | 540 MiB |
+| 2,000 | 1,392.50 | 1,389.30 | 1.404 / 1.878 / 1.945 s | 57.31 | 418.5 / 51.9 MB | 734 MiB |
+
+Replica resource counters cover offer and drain. Latency starts at
+the complete client frame write and ends at sampled common
+visibility. Both payment runs verified the common Header and the
+two-chain finality certificate. The locked release workspace passed
+465 tests with 18 ignored. The Go proof suite and frozen CometBFT
+feature check passed.
+
+The first payment-test invocation used an unmatched filter and ran
+zero tests. The archive retains that invocation alongside the
+corrected run and the signed workloads.
+
+[Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
+[Raw timing, signed workloads, proof and failed invocation](benchmarks/2026-11-26-stem-load-dispatch.json.xz).
