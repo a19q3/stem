@@ -2844,6 +2844,52 @@ tests with 15 ignored, and the Go proof suite passed.
 [Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
 [Raw CKB spends, witnesses, P2P traces, rejected attempts and commands](benchmarks/2026-11-26-stem-intercell-epoch.json.xz).
 
+## Intercell sparse replay proofs and authenticated recovery
+
+Revision `6678971` revalidated bidirectional delivery on CKB 0.210.0
+and four local Jolteon replicas. Both the direct and sparse-publisher
+rounds delivered a 4,096-byte message in each direction and passed 39
+expected rejection checks. Each round orphaned a CKB consumption,
+restarted the CKB node using the same data directory, and restored
+the previous live Mailbox root. The recovered ID list and a 64-byte
+sparse path produced identical delivery witnesses. CKB accepted the
+redelivery with the sparse-path witness. The builder rejected a
+truncated path, a stale root and a request supplying both inputs.
+
+| Checkpoint publication | Outbox → checkpoint height | 4 KiB CKB delivery signed B / estimated cycles | Stem receive signed B / receipt cycles | Agreed height |
+| --- | ---: | ---: | ---: | ---: |
+| Direct | 20 → 26 | 6,157 / 6,162,676 | 19,337 / 37,925,251 | 50 |
+| Sparse publisher | 21 → 28 | 5,953 / 6,123,764 | 19,337 / 37,925,251 | 52 |
+
+These are per-operation samples with different Header history paths.
+After a Stem replica restarted, the fixture advanced the accepted CKB
+anchor and certified the same historical send at the new anchor.
+Stem rejected the stale certificate and then rejected the fresh
+certificate as a replay. A later CKB fork orphaned a send at an
+unaccepted anchor. The guardian journal stopped signing and the
+committed Inbox proof remained available.
+
+The recovery control changed one byte of a committed CKB Lock
+signature in the RPC response while forwarding the real Header,
+transaction proof and witness proof. The previous `be502b0` CLI
+returned the expected replay root with those mismatched bytes.
+The new recovery command rejected them before reading the delivery
+witness. The archive includes the failed control and both signed byte
+sequences. The original unmodified baseline also passed its existing
+bidirectional fixture.
+
+Separate devnets revalidated CKB and xUDT redemption, vault rotation,
+all four fee fund payouts, historical and live-at-anchor CKB
+references, funded committee handoff with an older Outbox proof
+delivered after the epoch boundary, and staking with delegation,
+retirement, slashing and reward accounting. The direct fixture also
+passed all 39 rejection checks on a clean rebuild of the committed
+revision. The locked Rust release workspace passed 464 tests with 18
+ignored. The Go proof suite and frozen CometBFT feature check passed.
+
+[Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
+[Raw devnet outputs, proofs, signed transactions, commands and build fingerprints](benchmarks/2026-11-26-stem-intercell-revalidation.json.xz).
+
 ## Sustained replicated Lineage and AMM contention
 
 Revision `3d861a0` reuses the timed submission, storage and network
