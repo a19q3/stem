@@ -58,4 +58,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Atomic Lineage batch settlement with independent sponsors | [Report](../BENCHMARKS.md#atomic-lineage-batch-settlement), [three replica rounds, failures and raw proofs](2026-11-26-stem-lineage-batch.json.xz) |
 
+| Keeper height and time scheduling for atomic Lineage batches | [Report](../BENCHMARKS.md#keeper-scheduling-for-atomic-lineage-batches), [both replica rounds, rollback cases and raw proofs](2026-11-26-stem-keeper-batch.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

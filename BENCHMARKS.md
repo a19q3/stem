@@ -2084,3 +2084,46 @@ passed the real CKB devnet regression.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
 [Original evidence and reproduction commands](benchmarks/2026-11-26-stem-lineage-batch.json.xz).
+
+## Keeper scheduling for atomic Lineage batches
+
+Revision `cf44f9f` exercised two independent sponsors and four reserve
+Heads in each batch. Two rounds used four native Jolteon replicas on
+one i9-13900H host. Both rounds ran a single command and a batch in the
+same height bucket, then a single command and a batch with the same
+time trigger. The test used a disposable 512-read block limit to
+admit a two-command batch alongside the other reserved work.
+
+| Trigger | Finalized wake heights across the two runs | Signed bytes | Fee | Charged VM cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Height | 44, 44 | 1,651 | 4,000 shannons | 15,471,432 |
+| Committed parent time | 80, 81 | 1,651 | 4,000 shannons | 15,471,432 |
+
+Each sponsor's authenticated reservation record was 77 bytes.
+Finalized proofs showed those records before execution and their
+absence afterward. The parent Headers of the timed wakeups were
+59 ms and 143 ms after the target timestamp. The fixture restarted
+one replica during the waiting period and verified the same wake
+receipt and version-3 Heads on all four nodes. These are deterministic
+receipt charges and two trigger observations, with no throughput
+measurement.
+
+Local serial and parallel execution matched after snapshot restore.
+A failing second Executor made the timed batch skip with zero
+execution fee and kept both sponsor Cells live. It charged the
+42,857,142-cycle reservation share under the test genesis. A lower
+share rejected the aggregate authorization and VM budgets at
+registration. The secondary sponsor canceled a batch, both sponsor
+links were cleared, and an old cancellation was rejected after the
+primary fee Cell was attached to a replacement reservation. The tests
+also rejected a split command, a mismatching trigger, a forged
+second-sponsor seal and reuse of a secondary fee in a separate queue
+entry.
+
+The Rust release workspace passed 455 tests with 13 ignored. The
+explicit four-replica test, Go proof suite and CometBFT comparison
+feature check passed. Bidirectional Intercell Messaging passed a real
+CKB devnet regression.
+
+[Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
+[Both replica rounds, failures and reproduction commands](benchmarks/2026-11-26-stem-keeper-batch.json.xz).
