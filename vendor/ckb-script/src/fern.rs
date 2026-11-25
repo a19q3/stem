@@ -51,6 +51,7 @@ pub const LOAD_NETWORK_ID: u64 = 2116;
 pub const LOAD_GROUP_PROOF: u64 = 2117;
 pub const LOAD_GROUP_SEAL: u64 = 2118;
 pub const LOAD_GROUP_SIGNING_DIGEST: u64 = 2119;
+pub const LOAD_GROUP_MINTED_UNITS: u64 = 2120;
 
 #[derive(Clone)]
 struct GroupContext {
@@ -348,6 +349,12 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                     _ => witness.encode_bytes(),
                 };
                 store_data(machine, &data)
+            }
+            LOAD_GROUP_MINTED_UNITS => {
+                if source != 0 || index != 0 || group.kind != ScriptGroupKind::Type {
+                    return Ok(status(machine, ITEM_MISSING));
+                }
+                store_data(machine, &context.tx.minted_units(group).to_le_bytes())
             }
             LOAD_GROUP_SIGNING_DIGEST => {
                 if source != 0 || index != 0 || group.kind != ScriptGroupKind::Lock {

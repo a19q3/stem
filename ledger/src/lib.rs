@@ -286,24 +286,27 @@ impl Transaction {
         Self::build(cell_deps, header_deps, inputs, outputs, witnesses, None)
     }
 
-    /// Attach the mint statement before signing any Cell inputs.
-    pub fn with_bridge_mint(
-        &self,
-        mint: protocol::BridgeMint,
-        certificate: Certificate,
-    ) -> Result<Self> {
-        ensure!(
-            self.operation().is_none() && self.witnesses().len() == 0,
-            "mint requires an unsigned ordinary transaction"
+    pub fn bridge_mint_signing_digest(
+        network: &Byte32,
+        mint: &protocol::BridgeMint,
+        observation: &protocol::MintObservation,
+        cell_deps: Vec<CellDep>,
+        outputs: Vec<Cell>,
+    ) -> Result<Byte32> {
+        check_count(cell_deps.len(), 0, 0, outputs.len(), 0)?;
+        let raw = raw_transaction(
+            cell_deps,
+            vec![],
+            vec![],
+            outputs,
+            Some(Operation::BridgeMint(mint.clone()).encode()),
         );
-        Self::build(
-            self.cell_deps().collect(),
-            self.header_deps().collect(),
-            self.inputs().collect(),
-            self.outputs().collect(),
-            self.witnesses().collect(),
-            Some((Operation::BridgeMint(mint), certificate)),
-        )
+        ensure!(
+            raw.as_slice().len() <= MAX_TRANSACTION_BYTES,
+            "mint exceeds transaction size limit"
+        );
+        let id = hash(b"Fern transaction ID\0", network, &[raw.as_slice()]);
+        Ok(protocol::mint_digest(network, &id, observation))
     }
 
     pub fn bridge_mint(
@@ -366,43 +369,7 @@ impl Transaction {
             }
             None => (None, None),
         };
-        let raw = wire::RawTransaction::new_builder()
-            .cell_deps(
-                wire::CellDepVec::new_builder()
-                    .set(
-                        cell_deps
-                            .into_iter()
-                            .map(|dep| wire::CellDep::new_unchecked(dep.as_bytes()))
-                            .collect(),
-                    )
-                    .build(),
-            )
-            .header_deps(
-                wire::Byte32Vec::new_builder()
-                    .set(
-                        header_deps
-                            .into_iter()
-                            .map(|header| wire::Byte32::new_unchecked(header.as_bytes()))
-                            .collect(),
-                    )
-                    .build(),
-            )
-            .inputs(
-                wire::CellInputVec::new_builder()
-                    .set(inputs.into_iter().map(|input| input.encode()).collect())
-                    .build(),
-            )
-            .protocol(
-                wire::ProtocolOperationOpt::new_builder()
-                    .set(operation)
-                    .build(),
-            )
-            .outputs(
-                wire::CellVec::new_builder()
-                    .set(outputs.into_iter().map(|cell| cell.encoded).collect())
-                    .build(),
-            )
-            .build();
+        let raw = raw_transaction(cell_deps, header_deps, inputs, outputs, operation);
         let witnesses = wire::GroupWitnessVec::new_builder()
             .set(witnesses.iter().map(GroupWitness::encode).collect())
             .build();
@@ -455,7 +422,12 @@ impl Transaction {
                 let certificate = Certificate::decode(certificate)?;
                 operation.validate(&certificate)?;
                 if matches!(operation, Operation::BridgeMint(_)) {
-                    ensure!(!raw.outputs().is_empty(), "Bridge Mint requires outputs");
+                    ensure!(
+                        !raw.outputs().is_empty()
+                            && raw.inputs().is_empty()
+                            && raw.header_deps().is_empty(),
+                        "Bridge Mint requires outputs and no Cell inputs or Header Deps"
+                    );
                 } else {
                     ensure!(
                         raw.inputs().is_empty()
@@ -681,6 +653,52 @@ impl Transaction {
     }
 }
 
+fn raw_transaction(
+    cell_deps: Vec<CellDep>,
+    header_deps: Vec<Byte32>,
+    inputs: Vec<CellInput>,
+    outputs: Vec<Cell>,
+    operation: Option<wire::ProtocolOperation>,
+) -> wire::RawTransaction {
+    wire::RawTransaction::new_builder()
+        .cell_deps(
+            wire::CellDepVec::new_builder()
+                .set(
+                    cell_deps
+                        .into_iter()
+                        .map(|dep| wire::CellDep::new_unchecked(dep.as_bytes()))
+                        .collect(),
+                )
+                .build(),
+        )
+        .header_deps(
+            wire::Byte32Vec::new_builder()
+                .set(
+                    header_deps
+                        .into_iter()
+                        .map(|header| wire::Byte32::new_unchecked(header.as_bytes()))
+                        .collect(),
+                )
+                .build(),
+        )
+        .inputs(
+            wire::CellInputVec::new_builder()
+                .set(inputs.into_iter().map(|input| input.encode()).collect())
+                .build(),
+        )
+        .protocol(
+            wire::ProtocolOperationOpt::new_builder()
+                .set(operation)
+                .build(),
+        )
+        .outputs(
+            wire::CellVec::new_builder()
+                .set(outputs.into_iter().map(|cell| cell.encoded).collect())
+                .build(),
+        )
+        .build()
+}
+
 fn check_witness_bytes(witnesses: &[GroupWitness], base: usize) -> Result<()> {
     ensure!(
         witnesses.len() <= MAX_SCRIPT_GROUPS,
@@ -760,6 +778,7 @@ pub struct ResolvedTransaction {
     programs_by_type: HashMap<Byte32, CodeMatch>,
     fee: u64,
     capacity: CapacityPolicy,
+    minted_asset: Option<(Script, u128)>,
     resolved_cell_bytes: usize,
     cell_reads: usize,
 }
@@ -771,16 +790,60 @@ impl ResolvedTransaction {
         network_id: Byte32,
         transaction: Transaction,
         block: BlockContext<'_>,
+        live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
+        committed_header: impl FnMut(&Byte32) -> Result<Header>,
+    ) -> Result<Self> {
+        ensure!(
+            transaction.operation().is_none(),
+            "protocol transaction requires its authenticated execution path"
+        );
+        Self::resolve_with_capacity(
+            network_id,
+            transaction,
+            block,
+            None,
+            live_cell,
+            committed_header,
+        )
+    }
+
+    pub fn resolve_mint(
+        network_id: Byte32,
+        transaction: Transaction,
+        block: BlockContext<'_>,
+        grant: &protocol::VerifiedMint,
+        asset: Option<Script>,
+        live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
+        committed_header: impl FnMut(&Byte32) -> Result<Header>,
+    ) -> Result<Self> {
+        let capacity = grant.capacity(&network_id, &transaction)?;
+        let units = grant.observation().units;
+        ensure!(
+            asset.is_some() == (units > 0),
+            "mint asset differs from authenticated units"
+        );
+        let authorization = (capacity, asset.map(|script| (script, units)));
+        Self::resolve_with_capacity(
+            network_id,
+            transaction,
+            block,
+            Some(authorization),
+            live_cell,
+            committed_header,
+        )
+    }
+
+    fn resolve_with_capacity(
+        network_id: Byte32,
+        transaction: Transaction,
+        block: BlockContext<'_>,
+        mint: Option<(u64, Option<(Script, u128)>)>,
         mut live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         mut committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
         ensure!(
             network_id != Byte32::default(),
             "zero Fern network identity"
-        );
-        ensure!(
-            transaction.operation().is_none(),
-            "protocol transaction requires its authenticated execution path"
         );
         ensure!(
             transaction
@@ -846,9 +909,18 @@ impl ResolvedTransaction {
         for cell in &outputs {
             block.capacity.verify(cell)?;
         }
-        let fee = sum_capacity(inputs.iter().map(|input| &input.cell))?
-            .checked_sub(sum_capacity(outputs.iter())?)
-            .context("outputs exceed input capacity")?;
+        let output_capacity = sum_capacity(outputs.iter())?;
+        let fee = if let Some((minted_capacity, _)) = &mint {
+            ensure!(
+                output_capacity == *minted_capacity,
+                "mint differs from authenticated Capacity"
+            );
+            0
+        } else {
+            sum_capacity(inputs.iter().map(|input| &input.cell))?
+                .checked_sub(output_capacity)
+                .context("outputs exceed input capacity")?
+        };
 
         let mut groups = BTreeMap::new();
         for (index, input) in inputs.iter().enumerate() {
@@ -909,6 +981,7 @@ impl ResolvedTransaction {
             programs_by_data,
             programs_by_type,
             capacity: block.capacity,
+            minted_asset: mint.and_then(|(_, asset)| asset),
             resolved_cell_bytes: budget.bytes,
             cell_reads: budget.references,
         })
@@ -946,6 +1019,11 @@ impl ResolvedTransaction {
             hash.update(self.network_id.as_slice());
             hash.update(&self.capacity.bond_per_byte.to_le_bytes());
             hash.update(&self.capacity.state_overhead.to_le_bytes());
+            hash.update(&[u8::from(self.minted_asset.is_some())]);
+            if let Some((asset, units)) = &self.minted_asset {
+                hash.update(asset.calc_script_hash().as_slice());
+                hash.update(&units.to_le_bytes());
+            }
             hash.update(self.transaction.commitment(&self.network_id).as_slice());
             for header in &self.headers {
                 hash.update(&header.encode());
@@ -968,6 +1046,13 @@ impl ResolvedTransaction {
     }
     pub fn fee(&self) -> u64 {
         self.fee
+    }
+
+    pub fn minted_units(&self, group: &ScriptGroup) -> u128 {
+        self.minted_asset
+            .as_ref()
+            .filter(|(asset, _)| group.kind == ScriptGroupKind::Type && *asset == group.script)
+            .map_or(0, |(_, units)| *units)
     }
 
     pub fn capacity_policy(&self) -> CapacityPolicy {

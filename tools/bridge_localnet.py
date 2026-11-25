@@ -193,13 +193,13 @@ class Fixtures:
 
     def key(self, key, ed=False):
         args = ["--ed25519"] if ed else []
-        return json.loads(run(self.args.binary, "wallet", "key", "--key-file", key, *args))
+        return json.loads(run(self.args.binary, "ckb-wallet", "key", "--key-file", key, *args))
 
     def sign(self, name, tx, groups):
         tx_file, grp_file = self.out / f"{name}.json", self.out / f"{name}-groups.json"
         write_json(tx_file, tx)
         write_json(grp_file, groups)
-        signed = json.loads(run(self.args.binary, "wallet", "sign", "--transaction", tx_file,
+        signed = json.loads(run(self.args.binary, "ckb-wallet", "sign", "--transaction", tx_file,
                                 "--groups", grp_file))
         write_json(self.out / f"{name}-signed.json", signed)
         return signed

@@ -16,8 +16,6 @@ use ckb_types::{
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::bridge::{Bridge, Deposit};
-
 pub struct Rpc {
     client: reqwest::blocking::Client,
     url: reqwest::Url,
@@ -61,10 +59,6 @@ impl Journal {
             "guardian halted: previous L1 anchor was reorganized"
         );
         Ok(Some(height))
-    }
-
-    pub fn advance(&self, node: &Rpc, deposit: &Deposit) -> Result<()> {
-        self.pin(node, deposit.confirmed_height, &deposit.confirmed_block)
     }
 
     pub fn pin(&self, node: &Rpc, height: u64, hash: &H256) -> Result<()> {
@@ -126,45 +120,6 @@ impl Rpc {
             .get("result")
             .context("L1 RPC response has no result")?;
         Ok(serde_json::from_value(result.clone())?)
-    }
-
-    pub fn observe_deposit(
-        &self,
-        bridge: &Bridge,
-        deposit: &H256,
-        output_index: u32,
-        consolidation: &H256,
-    ) -> Result<Deposit> {
-        ensure!(
-            self.block_hash(0)? == bridge.l1_genesis,
-            "L1 RPC serves a different genesis"
-        );
-        let (deposit_tx, deposit_height, deposit_block) = self.committed(deposit)?;
-        let (consolidation_tx, consolidation_height, consolidation_block) =
-            self.committed(consolidation)?;
-        let confirmed_height = consolidation_height
-            .checked_add(bridge.confirmations)
-            .context("confirmation height overflow")?;
-        let confirmed_block = self
-            .block_hash(confirmed_height)
-            .context("consolidation has insufficient confirmations")?;
-        ensure!(
-            self.block_hash(deposit_height)? == deposit_block
-                && self.block_hash(consolidation_height)? == consolidation_block
-                && self.block_hash(confirmed_height)? == confirmed_block,
-            "L1 canonical chain changed during confirmation"
-        );
-        Ok(Deposit {
-            deposit_tx,
-            output_index,
-            deposit_block,
-            deposit_height,
-            consolidation_tx,
-            consolidation_block,
-            consolidation_height,
-            confirmed_block,
-            confirmed_height,
-        })
     }
 
     pub fn block_hash(&self, height: u64) -> Result<H256> {

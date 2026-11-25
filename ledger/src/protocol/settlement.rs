@@ -103,6 +103,10 @@ impl SettlementChanges {
                 let paid = Some((vault.lane.clone(), nonce));
                 (vec![(vault.lane, lane)], paid)
             }
+            SettlementAction::VaultRotated { vault } => (
+                vec![(vault.lane.clone(), updated_lane(state, &vault)?)],
+                None,
+            ),
             SettlementAction::ReserveMoved {
                 source,
                 destination,

@@ -66,10 +66,10 @@ def vote(i, validator):
     return struct.pack("<BqiqiBI", 2, 42, 0, 1_700_000_000, 13 + i, 1, 2) + block + parts + validator.sign(canonical)
 
 
-def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False):
+def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False):
     commitment = EMPTY if withdrawn else ckb_hash(b"Fern CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
-    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + commitment,
+    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + bytes([frozen]) + commitment,
             fields + meta)
 
 
@@ -193,7 +193,7 @@ class Scenario:
             self.stake_points.pop(key)
         return self.registry_tx
 
-    def observe(self, label, target_epoch, parent=None, missing=False, count=1):
+    def observe(self, label, target_epoch, parent=None, missing=False, count=1, signing_anchor=None):
         self.l1.mine(2)
         path = self.args.output / f"{label}-observe.json"
         request = {
@@ -220,6 +220,8 @@ class Scenario:
                 self.args.binary, "stake", "observe", "--request", path, "--l1-rpc", self.l1.url,
                 "--journal", self.args.output / f"stake-journal-{index}", "--key-file", key_path,
             ]
+            if signing_anchor:
+                command.extend(["--fern-signing-anchor", signing_anchor])
             if missing:
                 return reject_cli("incomplete Stake Cell set", *command)
             result = json.loads(run(*command))
@@ -300,42 +302,45 @@ class Scenario:
         results["exit_without_retirement_rejected"] = self.change(
             "withdraw-without-retirement", 5, key, mk_record(key, 0, 0, 6, active, True),
             since=(1 << 63), expected="ValidationFailure")
-        retired = owner + le(25, 8) + le(61, 8) + EMPTY
-        results["minority_retirement_rejected"] = self.change(
-            "minority-retirement", 4, key, mk_record(key, amount, 0, 6, retired),
-            certify(b"Fern CKB Stake retirement\0", 2), expected="ValidationFailure")
-        results["retired"] = self.change(
-            "retire", 4, key, mk_record(key, amount, 0, 6, retired),
-            certify(b"Fern CKB Stake retirement\0"))
-        results["withdraw_before_delay_rejected"] = self.change(
-            "withdraw-without-delay", 5, key, mk_record(key, 0, 0, 6, retired, True),
-            expected="ValidationFailure")
         penalty = ckb_hash(b"Fern CometBFT double vote\0" + self.network
                            + le(len(CHAIN), 4) + CHAIN + key + le(42, 8) + le(0, 4) + bytes([2]))
-        slashed = owner + le(25, 8) + le(61, 8) + penalty
+        frozen = owner + le(25, 8) + le(0, 8) + penalty
         votes = vote(0, validator) + vote(1, validator)
-        slash_record = mk_record(key, 0, 0, 6, slashed)
+        frozen_record = mk_record(key, amount, 0, 6, frozen, frozen=True)
         results["forged_vote_rejected"] = self.change(
-            "forged-votes", 6, key, slash_record,
-            lambda *_: votes[:-1] + bytes([votes[-1] ^ 1]), fee=amount + FEE,
+            "forged-votes", 6, key, frozen_record,
+            lambda *_: votes[:-1] + bytes([votes[-1] ^ 1]), expected="ValidationFailure")
+        results["frozen"] = self.change("freeze", 6, key, frozen_record, lambda *_: votes)
+        results["frozen_shannons"] = amount
+        results["snapshot_after_freeze"] = self.observe(
+            "frozen", 1, results["snapshot_at_activation"]["registry"])[0]
+        results["replay_rejected"] = self.change(
+            "replay-slash", 6, key, frozen_record, lambda *_: votes, expected="ValidationFailure")
+        results["slash_before_retirement_rejected"] = self.change(
+            "slash-before-retirement", 8, key, mk_record(key, 0, 0, 6, frozen, frozen=True),
+            fee=amount + FEE, expected="ValidationFailure")
+        retired = owner + le(25, 8) + le(61, 8) + penalty
+        retired_record = mk_record(key, amount, 0, 6, retired, frozen=True)
+        results["minority_retirement_rejected"] = self.change(
+            "minority-retirement", 4, key, retired_record,
+            certify(b"Fern CKB Stake retirement\0", 2), expected="ValidationFailure")
+        results["retired"] = self.change(
+            "retire", 4, key, retired_record, certify(b"Fern CKB Stake retirement\0"))
+        results["pending_penalty_withdrawal_rejected"] = self.change(
+            "withdraw-before-slash", 5, key, mk_record(key, 0, 0, 6, retired, True, frozen=True),
             expected="ValidationFailure")
+        slash_record = mk_record(key, 0, 0, 6, retired, frozen=True)
         results["unfunded_penalty_rejected"] = self.change(
-            "unfunded-penalty", 6, key, slash_record, lambda *_: votes,
-            expected="ValidationFailure")
-        results["slashed"] = self.change(
-            "slash", 6, key, slash_record, lambda *_: votes, fee=amount + FEE)
-        results["snapshot_after_slash"] = self.observe(
-            "slashed", 1, results["snapshot_at_activation"]["registry"])[0]
+            "unfunded-penalty", 8, key, slash_record, expected="ValidationFailure")
+        results["slashed"] = self.change("slash", 8, key, slash_record, fee=amount + FEE)
         results["slashed_shannons"] = amount
         results["penalty_id"] = hex_bytes(penalty)
-        results["replay_rejected"] = self.change(
-            "replay-slash", 6, key, slash_record, lambda *_: votes, expected="ValidationFailure")
         results["consensus_time_lock_rejected"] = self.change(
-            "ckb-delay-not-elapsed", 5, key, mk_record(key, 0, 0, 6, slashed, True),
+            "ckb-delay-not-elapsed", 5, key, mk_record(key, 0, 0, 6, retired, True, frozen=True),
             since=(1 << 63) | DELAY, expected="Immature")
         self.l1.mine(DELAY)
         results["withdrawn"] = self.change(
-            "withdraw", 5, key, mk_record(key, 0, 0, 6, slashed, True),
+            "withdraw", 5, key, mk_record(key, 0, 0, 6, retired, True, frozen=True),
             since=(1 << 63) | DELAY)
         results["reregistration_rejected"] = self.change(
             "reregister", 0, key, registered, register_signature, expected="ValidationFailure")

@@ -69,7 +69,7 @@ impl StakeCell {
             return Err(Error::Encoding);
         }
         let cell = Self::decode(metadata)?;
-        if cell.commitment() != record.stake_cell_hash {
+        if cell.commitment() != record.stake_cell_hash || record.frozen != (cell.penalty != EMPTY) {
             return Err(Error::Identity);
         }
         Ok(cell)
@@ -176,7 +176,8 @@ pub enum Action<'a> {
     Activate(GuardianProof<'a>),
     Retire(GuardianProof<'a>),
     Withdraw,
-    Slash(DoubleVote),
+    Freeze(DoubleVote),
+    FinalizeSlash,
 }
 
 impl ChangeContext<'_> {
@@ -217,6 +218,7 @@ impl ChangeContext<'_> {
                     || !self.owner_authorized
                     || stake.bonded_amount < self.policy.minimum_bond
                     || stake.exit_epoch.is_some()
+                    || stake.frozen
                     || cell.first_active_height != 0
                     || cell.first_inactive_height != 0
                     || cell.penalty != EMPTY
@@ -255,6 +257,7 @@ impl ChangeContext<'_> {
                     || before.exit_epoch.is_some()
                     || old_cell != new_cell
                     || before.activation_epoch != after.activation_epoch
+                    || before.frozen != after.frozen
                 {
                     return Err(Error::Sequence);
                 }
@@ -267,6 +270,7 @@ impl ChangeContext<'_> {
                 let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
                 let (_, new_cell) = self.new.ok_or(Error::Sequence)?;
                 if before.bonded_amount == 0
+                    || before.frozen
                     || old_cell.first_active_height != 0
                     || old_cell.first_inactive_height != 0
                     || new_cell.first_active_height
@@ -285,9 +289,17 @@ impl ChangeContext<'_> {
             Action::Retire(proof) => {
                 let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
                 let (_, new_cell) = self.new.ok_or(Error::Sequence)?;
-                let epoch = before.exit_epoch.ok_or(Error::Epoch)?;
+                let earliest = if before.frozen {
+                    old_cell
+                        .first_active_height
+                        .checked_add(1)
+                        .ok_or(Error::Overflow)?
+                } else {
+                    self.policy
+                        .epoch_height(before.exit_epoch.ok_or(Error::Epoch)?)?
+                };
                 if old_cell.first_inactive_height != 0
-                    || new_cell.first_inactive_height < self.policy.epoch_height(epoch)?
+                    || new_cell.first_inactive_height < earliest
                     || new_cell
                         != (StakeCell {
                             first_inactive_height: new_cell.first_inactive_height,
@@ -304,6 +316,7 @@ impl ChangeContext<'_> {
                 if self.new.is_some()
                     || !self.owner_authorized
                     || cell.first_inactive_height == 0
+                    || (before.frozen && before.bonded_amount != 0)
                     || (self.since & !MAX_DELAY) != RELATIVE_BLOCKS
                     || (self.since & MAX_DELAY) < self.policy.unbonding_blocks
                     || new_record
@@ -317,14 +330,9 @@ impl ChangeContext<'_> {
                 }
                 Ok(())
             }
-            Action::Slash(evidence) => {
+            Action::Freeze(evidence) => {
                 let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
-                // One proved double vote forfeits the full positive bond as an L1 fee.
-                // Preserving the Cell keeps the key's retirement history and storage collateral.
-                if before.bonded_amount == 0
-                    || old_cell.penalty != EMPTY
-                    || self.fee < before.bonded_amount
-                {
+                if before.bonded_amount == 0 || before.frozen || old_cell.penalty != EMPTY {
                     return Err(Error::Evidence);
                 }
                 let penalty = evidence.verify(
@@ -339,13 +347,31 @@ impl ChangeContext<'_> {
                 )?;
                 self.verify_cell_update(
                     StakeData {
-                        bonded_amount: 0,
+                        frozen: true,
                         ..before
                     },
                     StakeCell {
                         penalty,
                         ..old_cell
                     },
+                )
+            }
+            Action::FinalizeSlash => {
+                let (before, cell) = self.old.ok_or(Error::Sequence)?;
+                if !before.frozen
+                    || before.bonded_amount == 0
+                    || cell.penalty == EMPTY
+                    || cell.first_inactive_height == 0
+                    || self.fee < before.bonded_amount
+                {
+                    return Err(Error::Evidence);
+                }
+                self.verify_cell_update(
+                    StakeData {
+                        bonded_amount: 0,
+                        ..before
+                    },
+                    cell,
                 )
             }
         }

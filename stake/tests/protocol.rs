@@ -103,6 +103,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
             bonded_amount: [100, 200, 200][i],
             activation_epoch: 0,
             exit_epoch: (i == 1).then_some(1),
+            frozen: false,
             stake_cell_hash: [i as u8 + 1; 32],
         })
         .collect();

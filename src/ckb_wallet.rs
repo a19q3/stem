@@ -12,18 +12,18 @@ use ckb_hash::{blake2b_256, new_blake2b};
 use ckb_jsonrpc_types::{JsonBytes, Transaction as JsonTransaction};
 use ckb_types::{
     bytes::Bytes,
-    core::{Capacity, DepType, TransactionBuilder, TransactionView},
-    packed::{self, CellDep, CellInput, CellOutput, OutPoint, Script, WitnessArgs},
+    core::TransactionView,
+    packed::{self, WitnessArgs},
     prelude::*,
 };
 use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::bridge_cli::{print_json, read_json, read_json_limited, read_key};
+use crate::bridge_cli::{print_json, read_json_limited, read_key};
 
 #[derive(Subcommand)]
-pub enum WalletCommand {
+pub enum CkbWallet {
     /// Derive the lock argument for a CKB secp256k1 key or an Ed25519 public key.
     Key {
         #[arg(long)]
@@ -38,19 +38,6 @@ pub enum WalletCommand {
         #[arg(long)]
         groups: PathBuf,
     },
-    /// Sign separate one-input CKB payments funded by consecutive Cell outputs.
-    Payments {
-        #[arg(long)]
-        funding_hash: String,
-        #[arg(long)]
-        dep_group_hash: String,
-        #[arg(long)]
-        recipient: PathBuf,
-        #[arg(long)]
-        key_file: PathBuf,
-        #[arg(long)]
-        payments: u32,
-    },
 }
 
 #[derive(Deserialize)]
@@ -62,7 +49,7 @@ struct Group {
     lock_prefix: JsonBytes,
 }
 
-impl WalletCommand {
+impl CkbWallet {
     pub fn run(self) -> Result<()> {
         match self {
             Self::Key { key_file, ed25519 } => {
@@ -84,7 +71,7 @@ impl WalletCommand {
                 let tx: packed::Transaction =
                     read_json_limited::<JsonTransaction>(&transaction, 4 * 1024 * 1024)?.into();
                 let tx = tx.into_view();
-                let groups = read_json::<Vec<Group>>(&groups)?;
+                let groups = read_json_limited::<Vec<Group>>(&groups, 4 * 1024 * 1024)?;
                 let signed = sign(&tx, &groups)?;
                 let packed = signed.data();
                 print_json(&json!({
@@ -92,36 +79,6 @@ impl WalletCommand {
                     "json": JsonTransaction::from(packed.clone()),
                     "molecule": JsonBytes::from_bytes(packed.as_bytes()),
                 }))
-            }
-            Self::Payments {
-                funding_hash,
-                dep_group_hash,
-                recipient,
-                key_file,
-                payments,
-            } => {
-                ensure!((1..=65_536).contains(&payments), "invalid payment count");
-                let funding = crate::bridge_cli::hash(funding_hash)?.pack();
-                let dep_hash = crate::bridge_cli::hash(dep_group_hash)?.pack();
-                let dep = CellDep::new_builder()
-                    .dep_type(DepType::DepGroup)
-                    .out_point(OutPoint::new(dep_hash, 0))
-                    .build();
-                let lock: Script = read_json::<ckb_jsonrpc_types::Script>(&recipient)?.into();
-                let capacity = Capacity::bytes(100)?.safe_sub(1000u64)?;
-                let output = CellOutput::new_builder()
-                    .lock(lock)
-                    .capacity(capacity)
-                    .build();
-                let key = secret_key(&key_file)?;
-                let payments = (0..payments).map(|index| {
-                    let tx = TransactionBuilder::default()
-                        .input(CellInput::new(OutPoint::new(funding.clone(), index), 0))
-                        .output(output.clone()).output_data(Bytes::new()).cell_dep(dep.clone()).build();
-                    let signed = crate::dev::sign_fixture_lock_group(&tx, &key)?;
-                    Ok(json!({"hash": format!("{:#x}", signed.hash()), "tx": JsonTransaction::from(signed.data())}))
-                }).collect::<Result<Vec<_>>>()?;
-                print_json(&payments)
             }
         }
     }

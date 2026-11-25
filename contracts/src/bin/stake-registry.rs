@@ -24,6 +24,7 @@ entry!(main);
 default_alloc!();
 
 const ROTATE: u8 = 7;
+const FINALIZE_SLASH: u8 = 8;
 
 #[derive(Debug)]
 enum Error {
@@ -160,7 +161,11 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
             .map(|index| load_input_since(index, Source::Input))
             .transpose()?
             .unwrap_or(0),
-        fee: if operation == 6 { fee()? } else { 0 },
+        fee: if operation == FINALIZE_SLASH {
+            fee()?
+        } else {
+            0
+        },
     };
     match operation {
         0 => context.verify(Action::Register(
@@ -186,11 +191,12 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
         }
         5 if payload.is_empty() => context.verify(Action::Withdraw)?,
         6 if payload.len() == 2 * SignedVote::SIZE => {
-            context.verify(Action::Slash(DoubleVote {
+            context.verify(Action::Freeze(DoubleVote {
                 first: SignedVote::decode(&payload[..SignedVote::SIZE])?,
                 second: SignedVote::decode(&payload[SignedVote::SIZE..])?,
             }))?
         }
+        FINALIZE_SLASH if payload.is_empty() => context.verify(Action::FinalizeSlash)?,
         _ => return Err(Error::Encoding),
     }
     Ok(())
@@ -272,7 +278,7 @@ fn verify_stake_type(script: &Script, registry: Hash32, key: Hash32) -> Result<(
         }
     }
     let witness = witness(input)?;
-    if witness.first().copied().ok_or(Error::Encoding)? >= ROTATE
+    if !matches!(witness.first().copied(), Some(0..=6 | FINALIZE_SLASH))
         || witness.get(1..33) != Some(&key)
     {
         return Err(Error::Stake);

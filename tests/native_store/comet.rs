@@ -9,11 +9,13 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use fern::{native_abci, socket};
 use fern_ledger::block::Header;
 use serde_json::{Value, json};
 
 use super::*;
+
+#[path = "comet/bench.rs"]
+mod bench;
 
 const GENESIS_TIME: &str = "2025-01-01T00:00:00Z";
 const GENESIS_MS: u64 = 1_735_689_600_000;
@@ -116,7 +118,7 @@ impl Asset {
 }
 
 fn compile_types(home: &Path) -> Result<()> {
-    for rule in [1, 3] {
+    for rule in [1, 2, 3, 6] {
         let output =
             Command::new(std::env::var_os("FERN_RISCV_CC").unwrap_or_else(|| "clang".into()))
                 .args([
@@ -145,23 +147,31 @@ fn compile_types(home: &Path) -> Result<()> {
     Ok(())
 }
 
-#[test]
-#[ignore = "launched by the four-node network test"]
-fn serve_application() -> Result<()> {
-    let dir =
-        PathBuf::from(std::env::var_os("FERN_TEST_NATIVE_NODE").context("fixture node directory")?);
-    let genesis = read_json(&dir.join("config/genesis.json"))?;
-    let store = Store::open(
-        &dir.join("fern-db"),
-        &spec(&genesis, dir.parent().context("network directory")?)?.spec,
-        Retention::Archive,
-    )?;
-    socket::serve(
-        &dir.join("fern.sock"),
-        native_abci::App::new(store, 2)?,
-        2,
-        16,
-    )
+fn write_spec(path: &Path, spec: &Spec) -> Result<()> {
+    let committee = spec
+        .development_validators
+        .iter()
+        .map(|(key, power)| json!({ "ed25519": format!("0x{}", hex::encode(key)), "power": power }))
+        .collect::<Vec<_>>();
+    let cells = spec
+        .development_cells
+        .iter()
+        .map(|(point, cell)| {
+            let point = ckb_jsonrpc_types::OutPoint::from(point.clone());
+            json!({ "out_point": point, "cell": format!("0x{}", hex::encode(cell.as_slice())) })
+        })
+        .collect::<Vec<_>>();
+    let spec = json!({
+        "chain_id": spec.chain_id,
+        "network_id": format!("0x{}", hex::encode(spec.network.as_slice())),
+        "genesis_time_ms": spec.genesis_time_ms,
+        "capacity": { "bond_per_byte": spec.capacity.bond_per_byte, "state_overhead": spec.capacity.state_overhead },
+        "limits": spec.limits,
+        "development_validators": committee,
+        "development_cells": cells,
+    });
+    fs::write(path, serde_json::to_vec(&spec)?)?;
+    Ok(())
 }
 
 fn read_json(path: &Path) -> Result<Value> {
@@ -200,19 +210,30 @@ struct Node {
 
 impl Node {
     fn start(&mut self, comet: &Path, peers: &str) -> Result<()> {
-        let path = self.dir.join("fern.sock");
+        let app_home = self.dir.join("fern");
+        let path = app_home.join("abci.sock");
         if path.exists() {
             fs::remove_file(&path)?;
         }
+        let spec = self
+            .dir
+            .parent()
+            .context("network directory")?
+            .join("fern-genesis.json");
         self.app = Some(Process::spawn(
-            Command::new(std::env::current_exe()?)
+            Command::new(env!("CARGO_BIN_EXE_fern"))
+                .args(["run", "--home"])
+                .arg(app_home)
+                .arg("--genesis")
+                .arg(spec)
                 .args([
-                    "--ignored",
-                    "--exact",
-                    "comet::serve_application",
-                    "--nocapture",
-                ])
-                .env("FERN_TEST_NATIVE_NODE", &self.dir),
+                    "--workers",
+                    "2",
+                    "--abci-response-queue",
+                    "16",
+                    "--snapshot-interval",
+                    "3",
+                ]),
             &self.dir.join("fern.log"),
         )?);
         poll("native ABCI socket", Duration::from_secs(10), || {
@@ -305,12 +326,20 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     let comet =
         PathBuf::from(std::env::var_os("FERN_TEST_COMET").context("path to CometBFT binary")?)
             .canonicalize()?;
-    let output = tempfile::Builder::new().prefix("fernn-").tempdir()?.keep();
+    let mut temporary = tempfile::Builder::new();
+    temporary.prefix("fernn-");
+    let output = if let Some(root) = std::env::var_os("FERN_TEST_EVIDENCE_ROOT") {
+        fs::create_dir_all(&root)?;
+        temporary.tempdir_in(PathBuf::from(root).canonicalize()?)?
+    } else {
+        temporary.tempdir()?
+    }
+    .keep();
     eprintln!("native test evidence in {}", output.display());
     let home = output.join("net");
     ensure!(
         Command::new(&comet)
-            .args(["testnet", "--v", "4", "--o"])
+            .args(["testnet", "--v", "4", "--n", "1", "--o"])
             .arg(&home)
             .status()?
             .success(),
@@ -320,20 +349,27 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     genesis["genesis_time"] = json!(GENESIS_TIME);
     genesis["chain_id"] = json!("fern-native-abci-test");
     compile_types(&home)?;
-    let fixture = spec(&genesis, &home)?;
-    let store = Store::open(
-        &output.join("genesis-db"),
-        &fixture.spec,
-        Retention::Archive,
-    )?;
-    genesis["app_state"] = json!({ "fern_genesis": hex::encode(store.genesis_id().as_slice()) });
-    drop(store);
+    let mut fixture = spec(&genesis, &home)?;
+    let benchmark = bench::Benchmark::prepare(&mut fixture, &home, &output)?;
+    let spec_path = home.join("fern-genesis.json");
+    write_spec(&spec_path, &fixture.spec)?;
+    let identity = Command::new(env!("CARGO_BIN_EXE_fern"))
+        .args(["genesis-hash", "--genesis"])
+        .arg(&spec_path)
+        .output()?;
+    ensure!(
+        identity.status.success(),
+        "Fern genesis-hash: {}",
+        String::from_utf8_lossy(&identity.stderr)
+    );
+    let id: String = serde_json::from_slice(&identity.stdout)?;
+    genesis["app_state"] = json!({ "fern_genesis": id.trim_start_matches("0x") });
 
-    let ports = (0..8)
+    let ports = (0..10)
         .map(|_| TcpListener::bind("127.0.0.1:0"))
         .collect::<std::io::Result<Vec<_>>>()?;
     let mut nodes = Vec::new();
-    for index in 0..4 {
+    for index in 0..5 {
         let dir = home.join(format!("node{index}"));
         fs::write(
             dir.join("config/genesis.json"),
@@ -348,11 +384,12 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
             dir,
             id: String::from_utf8(id.stdout)?.trim().to_owned(),
             rpc: ports[index].local_addr()?.port(),
-            p2p: ports[index + 4].local_addr()?.port(),
+            p2p: ports[index + 5].local_addr()?.port(),
             app: None,
             comet: None,
         });
     }
+    let mut observer = nodes.pop().context("missing state sync observer")?;
     drop(ports);
     let peers = nodes
         .iter()
@@ -384,6 +421,9 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
             Ok(heights.iter().all(|&height| height >= 1).then_some(()))
         },
     )?;
+    if let Some(benchmark) = benchmark {
+        return benchmark.run(&output, &nodes, &client);
+    }
     let tx = fixture.signed(fixture.spend.clone(), None, FUND - FEE, None)?;
     let tx_result = nodes[0].rpc(
         &client,
@@ -482,8 +522,81 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         nodes[3].header(&client, target)?,
         nodes[0].header(&client, target)?
     );
-    println!(
-        "native payment H={height}, two Type Groups H={composed_height} cycles={total_cycles}, four replicas share H+1 AppHash, restarted replica agrees at H={target}"
+    let checkpoint = target.div_ceil(3) * 3;
+    poll(
+        "state sync checkpoint successors",
+        Duration::from_secs(15),
+        || Ok((nodes[0].signed_height(&client)? >= checkpoint + 3).then_some(())),
+    )?;
+    let trusted = nodes[0].rpc(&client, &format!("block?height={checkpoint}"))?;
+    let hash = trusted["block_id"]["hash"]
+        .as_str()
+        .context("trusted CometBFT block ID")?;
+    configure_state_sync(
+        &observer.dir.join("config/config.toml"),
+        checkpoint,
+        hash,
+        [nodes[0].rpc, nodes[1].rpc],
+    )?;
+    observer.start(&comet, &peers.join(","))?;
+    let restored = poll(
+        "native remote state snapshot",
+        Duration::from_secs(40),
+        || {
+            let log = fs::read_to_string(observer.dir.join("fern.log"))?;
+            let installed = log
+                .lines()
+                .find_map(|line| line.split_once("event=snapshot_installed height="))
+                .map(|(_, height)| height.parse::<u64>())
+                .transpose()?;
+            Ok(installed)
+        },
+    )?;
+    assert_eq!(
+        observer.header(&client, restored)?,
+        nodes[0].header(&client, restored)?
     );
+    println!(
+        "native payment H={height}, two Type Groups H={composed_height} cycles={total_cycles}, four replicas share H+1 AppHash, restarted replica agrees at H={target}, remote snapshot H={restored}"
+    );
+    Ok(())
+}
+
+fn configure_state_sync(path: &Path, height: u64, hash: &str, ports: [u16; 2]) -> Result<()> {
+    let original = fs::read_to_string(path)?;
+    let peers = format!(
+        "http://127.0.0.1:{},http://127.0.0.1:{}",
+        ports[0], ports[1]
+    );
+    let replacements = [
+        ("enable", "true".to_string()),
+        ("rpc_servers", format!("{peers:?}")),
+        ("trust_height", height.to_string()),
+        ("trust_hash", format!("{hash:?}")),
+        ("discovery_time", r#""5s""#.into()),
+    ];
+    let mut config = String::new();
+    let mut state_sync = false;
+    let mut changed = 0;
+    for line in original.lines() {
+        if line.starts_with('[') {
+            state_sync = line == "[statesync]";
+        }
+        if state_sync
+            && let Some((key, _)) = line.split_once(" = ")
+            && let Some((_, value)) = replacements.iter().find(|(name, _)| *name == key)
+        {
+            config.push_str(&format!("{key} = {value}\n"));
+            changed += 1;
+        } else {
+            config.push_str(line);
+            config.push('\n');
+        }
+    }
+    ensure!(
+        changed == replacements.len(),
+        "CometBFT state sync config keys missing"
+    );
+    fs::write(path, config)?;
     Ok(())
 }

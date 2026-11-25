@@ -19,13 +19,19 @@ use fern_ledger::{
     protocol::Operation,
     record,
 };
+use rayon::prelude::*;
 
+mod bridge;
+mod history_index;
+pub use history_index::HistoryIndex;
 mod staking;
 mod state_snapshot;
 
+use bridge::{Bridge, BridgeChanges, StagedBridge};
+pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
 pub use staking::StakeGenesis;
 use staking::{StagedStake, Staking};
-pub use state_snapshot::StateSnapshot;
+pub use state_snapshot::{SnapshotReader, StateSnapshot};
 
 const MARKER: &[u8] = b"fern/native-spec";
 const TIP: &[u8] = b"fern/tip";
@@ -38,7 +44,8 @@ const STATE_RECORD: u8 = b's';
 const FEE_KEY: &[u8] = b"fees/extinguished";
 const PARAMETER_KEY: &[u8] = b"genesis/network-parameters";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Limits {
     pub transaction_count: u32,
     pub transaction_bytes: u64,
@@ -72,6 +79,7 @@ pub struct Spec {
     pub chain_id: String,
     pub development_validators: Vec<([u8; 32], i64)>,
     pub stake: Option<StakeGenesis>,
+    pub bridge: Option<BridgeGenesis>,
     pub network: Byte32,
     pub genesis_time_ms: u64,
     pub capacity: CapacityPolicy,
@@ -87,11 +95,12 @@ pub enum Retention {
 }
 
 pub struct Store {
-    db: DB,
+    db: Arc<DB>,
     network: Byte32,
     chain_id: String,
     genesis_validators: Vec<([u8; 32], i64)>,
     staking: Option<Staking>,
+    bridge: Option<Bridge>,
     genesis_id: Byte32,
     tip: Header,
     history: History,
@@ -252,6 +261,22 @@ impl Store {
         } else {
             None
         };
+        let bridge = if let Some(config) = &spec.bridge {
+            ensure!(
+                spec.development_cells.is_empty(),
+                "a bridged network cannot assign development Capacity"
+            );
+            let (bridge, records) = Bridge::initialize(config)?;
+            for (name, value) in records {
+                let value = value.context("bridge genesis is missing a record value")?;
+                let id = system.record_key(&name);
+                system_edit.set(id, Some(system.value_hash(&value)))?;
+                batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
+            }
+            Some(bridge)
+        } else {
+            None
+        };
         let genesis = Header {
             context,
             state: StateCommitment {
@@ -294,11 +319,12 @@ impl Store {
             genesis
         };
         Ok(Self {
-            db,
+            db: Arc::new(db),
             network,
             chain_id: spec.chain_id.clone(),
             genesis_validators: validators,
             staking,
+            bridge,
             genesis_id,
             tip,
             history,
@@ -337,6 +363,36 @@ impl Store {
             .db
             .get(state_key(STATE_RECORD, Namespace::System, &id))?
             .map(|value| value.to_vec()))
+    }
+
+    pub fn prove_stake_snapshot(&self) -> Result<(Option<Vec<u8>>, Proof)> {
+        let key = self.system.record_key(staking::SNAPSHOT);
+        let mut tree = self.system.edit(as_key(&self.tip.state.system_root), |id| {
+            self.node(Namespace::System, id)
+        });
+        let (actual, proof) = tree.prove(&key)?;
+        let record = self.system_record(staking::SNAPSHOT)?;
+        ensure!(
+            actual == record.as_ref().map(|record| self.system.value_hash(record)),
+            "Stake Snapshot differs from its authenticated record"
+        );
+        Ok((record, proof))
+    }
+
+    pub fn verify_stake_snapshot(
+        network: &Byte32,
+        header: &Header,
+        record: Option<&[u8]>,
+        proof: &Proof,
+    ) -> bool {
+        let tree = Patricia::new(network.clone(), Namespace::System);
+        let key = tree.record_key(staking::SNAPSHOT);
+        tree.verify(
+            &as_key(&header.state.system_root),
+            &key,
+            record.map(|value| tree.value_hash(value)).as_ref(),
+            proof,
+        )
     }
 
     fn stage_stake(&self) -> Result<Option<StagedStake>> {
@@ -437,8 +493,9 @@ impl Store {
             .map(|bytes| bytes.to_vec()))
     }
 
-    /// Resolve in proposal order, execute Script Groups against immutable
-    /// contexts, and prepare one durable batch. Dropping it has no effect.
+    /// Resolve conflicts and protocol state in proposal order. Schedule immutable
+    /// VM contexts in bounded waves and charge each result in proposal order.
+    /// A failure discards the entire block overlay.
     pub fn prepare(
         &self,
         transactions: &[Transaction],
@@ -451,6 +508,7 @@ impl Store {
         );
         let mut budget = Budget::new(self.limits);
         let mut stake = self.stage_stake()?;
+        let mut bridge = self.bridge.as_ref().map(Bridge::stage);
         let mut live = BTreeMap::<OutPoint, Option<LiveCell>>::new();
         let mut receipts = Vec::with_capacity(transactions.len());
         let mut fees = 0u64;
@@ -472,20 +530,50 @@ impl Store {
         )?;
         let height = context.height;
         let origin = Origin::new(&self.network, &context);
-        for tx in transactions {
-            let receipt = self.stage(
-                tx,
-                &context,
-                &origin,
-                &mut budget,
-                &mut live,
-                &mut stake,
-                parallel,
-            )?;
-            fees = fees
-                .checked_add(receipt.fee)
-                .context("block fee overflow")?;
-            receipts.push(receipt);
+        let width = if parallel {
+            rayon::current_num_threads()
+        } else {
+            1
+        };
+        for wave in transactions.chunks(width) {
+            let mut jobs = Vec::with_capacity(wave.len());
+            for tx in wave {
+                let position = receipts.len();
+                let receipt = self.stage(
+                    tx,
+                    &context,
+                    &origin,
+                    &mut budget,
+                    &mut live,
+                    &mut stake,
+                    &mut bridge,
+                    |resolved, limit| {
+                        if width == 1 {
+                            self.cache.verify(resolved, limit, false)
+                        } else {
+                            jobs.push((position, resolved, limit));
+                            Ok(0)
+                        }
+                    },
+                )?;
+                fees = fees
+                    .checked_add(receipt.fee)
+                    .context("block fee overflow")?;
+                receipts.push(receipt);
+            }
+
+            let group_parallel = jobs.len() < width;
+            let completed: Vec<_> = jobs
+                .into_par_iter()
+                .map(|(position, resolved, limit)| {
+                    (position, self.cache.verify(resolved, limit, group_parallel))
+                })
+                .collect();
+            for (position, verified) in completed {
+                let cycles = verified?;
+                charge(&mut budget.cycles, cycles, "block VM cycles")?;
+                receipts[position].cycles = cycles;
+            }
         }
         let mut batch = Batch::default();
         let mut cells = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
@@ -525,6 +613,18 @@ impl Store {
                 let id = self.system.record_key(name);
                 system.set(id, Some(self.system.value_hash(&value)))?;
                 batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
+            }
+        }
+        if let Some(bridge) = bridge {
+            for (name, value) in bridge.records {
+                let id = self.system.record_key(&name);
+                let key = state_key(STATE_RECORD, Namespace::System, &id);
+                if let Some(value) = value {
+                    system.set(id, Some(self.system.value_hash(&value)))?;
+                    batch.put(key, value);
+                } else if system.set(id, None)?.is_some() {
+                    batch.delete(key);
+                }
             }
         }
         let system_root = system.root().pack();
@@ -573,6 +673,7 @@ impl Store {
     ) -> Result<Vec<Transaction>> {
         let mut budget = Budget::new(self.limits);
         let mut stake = self.stage_stake()?;
+        let mut bridge = self.bridge.as_ref().map(Bridge::stage);
         let mut wire_bytes = max_bytes;
         let context =
             HeaderContext::after(&self.network, &self.tip, timestamp_ms, Byte32::default())?;
@@ -599,7 +700,8 @@ impl Store {
                     &mut budget,
                     &mut live,
                     &mut stake,
-                    true,
+                    &mut bridge,
+                    |resolved, limit| self.cache.verify(resolved, limit, true),
                 )
                 .is_ok()
             {
@@ -624,7 +726,8 @@ impl Store {
             &mut Budget::new(self.limits),
             &mut BTreeMap::new(),
             &mut self.stage_stake()?,
-            false,
+            &mut self.bridge.as_ref().map(Bridge::stage),
+            |resolved, limit| self.cache.verify(resolved, limit, false),
         )
     }
 
@@ -636,7 +739,8 @@ impl Store {
         budget: &mut Budget,
         live: &mut BTreeMap<OutPoint, Option<LiveCell>>,
         stake: &mut Option<StagedStake>,
-        parallel: bool,
+        bridge: &mut Option<StagedBridge>,
+        verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
     ) -> Result<Receipt> {
         let mut next = *budget;
         charge(
@@ -654,23 +758,67 @@ impl Store {
             *budget = next;
             return Ok(receipt);
         }
-        let resolved = ResolvedTransaction::resolve(
-            self.network.clone(),
-            tx.clone(),
-            BlockContext {
-                candidate: context,
-                parent_timestamp_ms: self.tip.context.timestamp_ms,
-                capacity: self.capacity,
-            },
-            |point| {
-                match live.get(point) {
-                    Some(staged) => staged.clone(),
-                    None => self.live_cell(point)?,
-                }
-                .context("input or dependency is not a Live Cell")
-            },
-            |hash| self.resolve_header(hash, context.height),
-        )?;
+        if matches!(tx.operation(), Some(Operation::BridgeSettlement(_))) {
+            let (bridge, stage) = self
+                .bridge
+                .as_ref()
+                .zip(bridge.as_mut())
+                .context("native bridge is not configured")?;
+            let changes = bridge.settle(self, stage, tx)?;
+            let protocol_result = changes.protocol_result.clone();
+            stage.apply(changes);
+            *budget = next;
+            return Ok(Receipt {
+                fee: 0,
+                cycles: 0,
+                protocol_result,
+            });
+        }
+
+        let fresh = |point: &OutPoint| {
+            match live.get(point) {
+                Some(staged) => staged.clone(),
+                None => self.live_cell(point)?,
+            }
+            .context("input or dependency is not a Live Cell")
+        };
+        let header = |hash: &Byte32| self.resolve_header(hash, context.height);
+        let block = BlockContext {
+            candidate: context,
+            parent_timestamp_ms: self.tip.context.timestamp_ms,
+            capacity: self.capacity,
+        };
+        let (resolved, changes) = if matches!(tx.operation(), Some(Operation::BridgeMint(_))) {
+            let (bridge, stage) = self
+                .bridge
+                .as_ref()
+                .zip(bridge.as_ref())
+                .context("native bridge is not configured")?;
+            let (grant, asset, changes) = bridge.mint(self, stage, context.height, tx)?;
+            let resolved = ResolvedTransaction::resolve_mint(
+                self.network.clone(),
+                tx.clone(),
+                block,
+                &grant,
+                asset,
+                fresh,
+                header,
+            )?;
+            (resolved, changes)
+        } else {
+            let resolved = ResolvedTransaction::resolve(
+                self.network.clone(),
+                tx.clone(),
+                block,
+                fresh,
+                header,
+            )?;
+            let changes = match self.bridge.as_ref().zip(bridge.as_ref()) {
+                Some((bridge, stage)) => bridge.burn(self, stage, tx)?,
+                None => BridgeChanges::default(),
+            };
+            (resolved, changes)
+        };
         charge(
             &mut next.reads,
             resolved.cell_reads() as u64,
@@ -686,6 +834,7 @@ impl Store {
             .outputs()
             .iter()
             .enumerate()
+            .filter(|(index, _)| !changes.omit_outputs.contains(index))
             .map(|(index, cell)| {
                 charge(
                     &mut next.write_bytes,
@@ -708,18 +857,20 @@ impl Store {
             .collect::<Result<Vec<_>>>()?;
         let fee = resolved.fee();
         let cycle_limit = self.limits.transaction_cycles.min(next.cycles);
-        let cycles = self
-            .cache
-            .verify(Arc::new(resolved), cycle_limit, parallel)?;
+        let cycles = verify(Arc::new(resolved), cycle_limit)?;
         charge(&mut next.cycles, cycles, "block VM cycles")?;
 
         live.extend(tx.inputs().map(|input| (input.previous_output, None)));
         live.extend(outputs);
+        let protocol_result = changes.protocol_result.clone();
+        if let Some(bridge) = bridge.as_mut() {
+            bridge.apply(changes);
+        }
         *budget = next;
         Ok(Receipt {
             fee,
             cycles,
-            protocol_result: Default::default(),
+            protocol_result,
         })
     }
 

@@ -88,3 +88,185 @@ fn measure_canonical_payment_and_combined_output_bytes() -> Result<()> {
     assert_eq!(combined, 384);
     Ok(())
 }
+
+mod dictionary {
+    #![allow(dead_code, clippy::all)]
+    include!(concat!(env!("OUT_DIR"), "/dictionary.rs"));
+}
+use crate::wire as ledger;
+
+fn dictionary_transaction(
+    original: &wire::Transaction,
+) -> Result<dictionary::DictionaryTransaction> {
+    let raw = original.raw();
+    let mut scripts = raw
+        .outputs()
+        .into_iter()
+        .flat_map(|cell| std::iter::once(cell.lock()).chain(cell.type_scripts()))
+        .collect::<Vec<_>>();
+    scripts.sort_unstable_by(|left, right| left.as_slice().cmp(right.as_slice()));
+    scripts.dedup_by(|left, right| left.as_slice() == right.as_slice());
+    let index = |script: wire::Script| -> Result<wire::Uint16> {
+        let position = scripts
+            .binary_search_by(|item| item.as_slice().cmp(script.as_slice()))
+            .map_err(|_| anyhow::anyhow!("output script is missing from the dictionary"))?;
+        Ok(wire::Uint16::new_unchecked(Bytes::copy_from_slice(
+            &u16::try_from(position)?.to_le_bytes(),
+        )))
+    };
+    let outputs = raw
+        .outputs()
+        .into_iter()
+        .map(|cell| {
+            Ok(dictionary::IndexedOutput::new_builder()
+                .capacity(cell.capacity())
+                .lock(index(cell.lock())?)
+                .type_scripts(
+                    dictionary::ScriptIndexVec::new_builder()
+                        .set(
+                            cell.type_scripts()
+                                .into_iter()
+                                .map(index)
+                                .collect::<Result<_>>()?,
+                        )
+                        .build(),
+                )
+                .data(cell.data())
+                .build())
+        })
+        .collect::<Result<_>>()?;
+    Ok(dictionary::DictionaryTransaction::new_builder()
+        .raw(
+            dictionary::DictionaryRawTransaction::new_builder()
+                .cell_deps(raw.cell_deps())
+                .header_deps(raw.header_deps())
+                .inputs(raw.inputs())
+                .scripts(wire::ScriptVec::new_builder().set(scripts).build())
+                .outputs(
+                    dictionary::IndexedOutputVec::new_builder()
+                        .set(outputs)
+                        .build(),
+                )
+                .protocol(raw.protocol())
+                .valid_before_height(raw.valid_before_height())
+                .build(),
+        )
+        .witnesses(original.witnesses())
+        .certificate(original.certificate())
+        .build())
+}
+
+#[test]
+fn measure_transaction_script_dictionary() -> Result<()> {
+    let make = |locks: &[u8], asset: bool| -> Result<Transaction> {
+        let outputs = locks
+            .iter()
+            .map(|lock| {
+                Cell::new(
+                    10_000_000_000,
+                    script(*lock, 20),
+                    asset.then(|| script(42, 32)).into_iter().collect(),
+                    if asset {
+                        Bytes::from(50u128.to_le_bytes().to_vec())
+                    } else {
+                        Bytes::new()
+                    },
+                )
+            })
+            .collect::<Result<_>>()?;
+        Transaction::new(
+            vec![
+                CellDep::new_builder()
+                    .out_point(OutPoint::new([8; 32].pack(), 0))
+                    .build(),
+            ],
+            vec![],
+            vec![CellInput::new(OutPoint::new([7; 32].pack(), 0), None)],
+            outputs,
+            vec![GroupWitness {
+                group_index: 0,
+                proof_data: Bytes::new(),
+                seal: Bytes::from(vec![42; 65]),
+            }],
+        )
+    };
+    for (case, locks, asset, expected_direction) in [
+        (
+            "payment-distinct-locks",
+            vec![1, 2],
+            false,
+            std::cmp::Ordering::Greater,
+        ),
+        (
+            "payment-same-lock",
+            vec![1, 1],
+            false,
+            std::cmp::Ordering::Less,
+        ),
+        (
+            "one-asset-output",
+            vec![1],
+            true,
+            std::cmp::Ordering::Greater,
+        ),
+        (
+            "ten-asset-outputs-distinct-locks",
+            (0..10).collect(),
+            true,
+            std::cmp::Ordering::Less,
+        ),
+        (
+            "ten-asset-outputs-same-lock",
+            vec![1; 10],
+            true,
+            std::cmp::Ordering::Less,
+        ),
+    ] {
+        let original = make(&locks, asset)?;
+        let original = wire::Transaction::from_slice(original.as_slice())?;
+        let dictionary = dictionary_transaction(&original)?;
+        let dictionary = dictionary::DictionaryTransaction::from_slice(dictionary.as_slice())?;
+        assert_eq!(
+            dictionary.as_slice().len().cmp(&original.as_slice().len()),
+            expected_direction
+        );
+
+        let raw = dictionary.raw();
+        assert_eq!(original.raw().outputs().len(), raw.outputs().len());
+        assert_eq!(
+            original.witnesses().as_slice(),
+            dictionary.witnesses().as_slice()
+        );
+        let mut referenced = std::collections::BTreeSet::new();
+        let resolve = |index: wire::Uint16| {
+            usize::from(u16::from_le_bytes(index.as_slice().try_into().unwrap()))
+        };
+        for (before, after) in original.raw().outputs().into_iter().zip(raw.outputs()) {
+            assert_eq!(before.capacity().as_slice(), after.capacity().as_slice());
+            assert_eq!(before.data().as_slice(), after.data().as_slice());
+            let lock = resolve(after.lock());
+            assert_eq!(
+                before.lock().as_slice(),
+                raw.scripts().get(lock).unwrap().as_slice()
+            );
+            referenced.insert(lock);
+            assert_eq!(before.type_scripts().len(), after.type_scripts().len());
+            for (script, index) in before.type_scripts().into_iter().zip(after.type_scripts()) {
+                let index = resolve(index);
+                assert_eq!(
+                    script.as_slice(),
+                    raw.scripts().get(index).unwrap().as_slice()
+                );
+                referenced.insert(index);
+            }
+        }
+        assert_eq!(referenced.len(), raw.scripts().len());
+        println!(
+            "{case}: current={} candidate={} bytes; {} unique scripts",
+            original.as_slice().len(),
+            dictionary.as_slice().len(),
+            referenced.len()
+        );
+    }
+    Ok(())
+}

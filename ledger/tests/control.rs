@@ -458,6 +458,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         bonded_amount: 200,
         activation_epoch: 0,
         exit_epoch: None,
+        frozen: false,
         stake_cell_hash: [6; 32],
     };
     let registry = Registry::new(domain.fern_network_id, 1, generation, vec![record])?;
@@ -576,5 +577,124 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
     assert!(context.verify(&corrupted, &mut budget).is_err());
     let minority = sign(statement, body, 2)?;
     assert!(context.verify(&minority, &mut budget).is_err());
+    Ok(())
+}
+
+#[test]
+fn native_mint_authenticates_exact_capacity_and_outputs() -> Result<()> {
+    use ckb_types::{core::ScriptHashType, packed::Script};
+    use fern_ledger::{
+        Cell,
+        protocol::{BridgeMint, MintObservation, VerifiedMint},
+    };
+    let network = hash(1);
+    let genesis = hash(2);
+    let guardian = SigningKey::from_bytes(&[70; 32]);
+    let power = Member {
+        key: guardian.verifying_key().to_bytes(),
+        power: 1,
+    };
+    let authority = Authority::new([9; 32], &[power])?;
+    let previous = L1Anchor {
+        height: 3,
+        hash: hash(3),
+    };
+    let deposit = BridgeMint {
+        l1_genesis: genesis.clone(),
+        deposits: vec![point(7, 0), point(8, 3)],
+    };
+    let observation = MintObservation {
+        authority: hash(9),
+        previous_anchor: previous.clone(),
+        anchor: L1Anchor {
+            height: 4,
+            hash: hash(4),
+        },
+        vault: VaultUpdate {
+            lane: hash(5),
+            input: point(5, 0),
+            output: point(6, 0),
+        },
+        capacity: 20_000_000_000,
+        units: 0,
+    };
+    let lock = Script::new_builder()
+        .hash_type(ScriptHashType::Data)
+        .code_hash([42; 32])
+        .build();
+    let create = |capacity| Cell::new(capacity, lock.clone(), vec![], Bytes::new());
+    let valid = create(observation.capacity)?;
+    let digest = Transaction::bridge_mint_signing_digest(
+        &network,
+        &deposit,
+        &observation,
+        vec![],
+        vec![valid.clone()],
+    )?;
+    let signature = Attestation {
+        guardian: 0,
+        signature: guardian.sign(digest.as_slice()).to_bytes(),
+    };
+    let certificate = Certificate::new(observation.encode(), vec![signature])?;
+    let tx = Transaction::bridge_mint(
+        deposit.clone(),
+        certificate.clone(),
+        vec![],
+        vec![valid.clone()],
+    )?;
+    let inflated = Transaction::bridge_mint(
+        deposit.clone(),
+        certificate.clone(),
+        vec![],
+        vec![create(observation.capacity + 1)?],
+    )?;
+    let dup = BridgeMint {
+        deposits: vec![point(7, 0), point(7, 0)],
+        ..deposit.clone()
+    };
+    assert!(Transaction::bridge_mint(dup, certificate, vec![], vec![valid]).is_err());
+    let mut budget = BlockBudget::new(limits(4), limits(0), limits(0));
+    assert!(
+        VerifiedMint::verify(
+            &inflated,
+            &network,
+            &genesis,
+            &previous,
+            &authority,
+            &mut budget
+        )
+        .is_err()
+    );
+    assert!(
+        VerifiedMint::verify(&tx, &hash(8), &genesis, &previous, &authority, &mut budget).is_err()
+    );
+    let grant = VerifiedMint::verify(&tx, &network, &genesis, &previous, &authority, &mut budget)?;
+
+    let header = HeaderContext {
+        height: 1,
+        timestamp_ms: 0,
+        parent: hash(0),
+        transaction_root: hash(0),
+    };
+    let context = BlockContext {
+        candidate: &header,
+        parent_timestamp_ms: 0,
+        capacity: Default::default(),
+    };
+    let resolve = |tx| {
+        ResolvedTransaction::resolve_mint(
+            network.clone(),
+            tx,
+            context,
+            &grant,
+            None,
+            |_| anyhow::bail!("unexpected Cell read"),
+            |_| anyhow::bail!("unexpected Header read"),
+        )
+    };
+    assert!(resolve(inflated).is_err());
+    let resolved = resolve(tx)?;
+    assert_eq!(resolved.fee(), 0);
+    assert_eq!(resolved.outputs()[0].capacity(), observation.capacity);
     Ok(())
 }

@@ -1,0 +1,29 @@
+// Benchmark candidate, compiled into tests only.
+import ledger;
+
+vector ScriptIndexVec <Uint16>;
+
+table IndexedOutput {
+    capacity: Uint64,
+    lock: Uint16,
+    type_scripts: ScriptIndexVec,
+    data: Bytes,
+}
+
+vector IndexedOutputVec <IndexedOutput>;
+
+table DictionaryRawTransaction {
+    cell_deps: CellDepVec,
+    header_deps: Byte32Vec,
+    inputs: CellInputVec,
+    scripts: ScriptVec,
+    outputs: IndexedOutputVec,
+    protocol: ProtocolOperationOpt,
+    valid_before_height: Uint64Opt,
+}
+
+table DictionaryTransaction {
+    raw: DictionaryRawTransaction,
+    witnesses: GroupWitnessVec,
+    certificate: CertificateOpt,
+}

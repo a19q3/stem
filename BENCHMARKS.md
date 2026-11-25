@@ -513,10 +513,51 @@ The current fixtures use CKB-VM assembly and reuse, independently compiled RISC-
 
 Run `cargo test --locked -p ckb-script --features vm-reuse --test fern_native -- --nocapture`. Serial and four-worker validation charge identical cycles for the settlement fixture. The tests exercise cache-hit cycle accounting, Spawn, Exec and native Witness parsing. The lock change and the different signatures across fixtures are part of the current cycle measurements.
 
-The native four-node test committed a signed payment at height 2 and a two-Type-Script transfer at height 3, after rejecting an attempted removal of its input Transfer Policy. The composed transfer charged 5,783,509 VM cycles. The test verified the signed AppHash at height 4 on all replicas and compared the restarted replica's Header at height 6. This is a correctness run. The native throughput baseline still needs a sustained load run. [Reproduce the four-node test](OPERATIONS.md#exercise-the-native-cometbft-path)
+The native four-node test committed a signed payment at height 2 and a two-Type-Script transfer at height 3, after rejecting an attempted removal of its input Transfer Policy. The composed transfer charged 5,783,509 VM cycles. The test verified the signed AppHash at height 4 on all replicas and compared the restarted replica's Header at height 6. This is a correctness run. A fifth node restored a native state snapshot and caught up to height 9 using CometBFT state sync. [Reproduce the four-node test](OPERATIONS.md#exercise-the-native-cometbft-path)
 
 ## Four-node original-ledger control
 
 A debug build with the bridge recipient fix ran four local CometBFT 0.38.26 replicas and two VM workers per replica. The load offered 64 signed CKB payments per second for 12 seconds, including a restart of one replica. The runner scheduled, offered, admitted, and observed all 768 transactions on every replica. Its sampled admission rate was 63.33 TPS, confirmed rate 56.00 TPS, and client drops zero. Full-replica visibility was p50 2,861 ms, p95 6,473 ms, p99 6,973 ms. The sampled CPU total was 17.67 seconds, process writes were 117,301,248 bytes, and peak combined Fern/CometBFT RSS per replica ranged from 140.5 MB to 146.1 MB. Aggregate sampled P2P counters increased by about 4.67 MB received and 4.73 MB sent, counting sampled increments across the process restart.
 
-The snapshot observer restored checkpoint 16 and caught up through application height 18 in 10.02 seconds. The single-worker observer replayed from genesis through height 19 in 7.49 seconds. The runner verified the exported execution proof. The original ledger control and local CKB/xUDT custody runs exercise the current network binary. Native committee handoffs and 1,000–5,000 TPS remain unmeasured.
+The snapshot observer restored checkpoint 16 and caught up through application height 18 in 10.02 seconds. The single-worker observer replayed from genesis through height 19 in 7.49 seconds. The runner verified the exported execution proof. These original-ledger measurements use the code preceding the native execution cutover. The transaction format, Lock implementation, build profile, restart schedule and cycle budget differ from the native measurements.
+
+## Native four-node release baseline
+
+Four local CometBFT v0.38.26 replicas used Fern release builds with CKB-VM assembly and VM allocation reuse, native RISC-V secp256k1 signatures, separate admission workers, and synchronous RocksDB commits. The host had a Core i9-13900H and 20 logical CPUs. Results report the minimum confirmed receipt count across all four replicas. Each latency starts when the client sends a transaction and ends when all four replicas report its successful receipt. CPU, sampled RSS, process write bytes and CometBFT P2P counters aggregate across the four replicas. All sizes below use decimal MB.
+
+Each workload offered 512 transactions at 64 TPS and all 512 passed admission. The different business fixtures use different Cells, dependencies and scripts.
+
+| Workload | Confirmed | Confirmed TPS | p50/p95/p99 (s) | Client drops | CPU (s) | RSS (MB) | Writes (MB) | P2P rx/tx (MB) |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| CKB payment | 512 | 34.14 | 4.21/7.01/7.26 | 0 | 31.47 | 360.8 | 54.59 | 3.48/3.50 |
+| One Type Group | 512 | 34.32 | 4.26/7.06/7.43 | 0 | 28.20 | 358.1 | 55.10 | 4.33/4.33 |
+| Two Type Groups | 512 | 34.04 | 4.08/7.18/7.56 | 0 | 29.64 | 356.1 | 57.53 | 5.27/5.27 |
+| Three Type Groups | 512 | 34.16 | 4.26/7.13/7.38 | 0 | 30.90 | 360.7 | 57.27 | 6.23/6.23 |
+| Cross-asset settlement | 512 | 34.17 | 4.33/7.12/7.50 | 0 | 32.26 | 396.6 | 73.60 | 10.66/10.71 |
+
+Each payment sweep scheduled 1,024 transactions at the requested target. HTTP submission throughput peaked near 166 TPS. The fixed observation window ended with pending transactions; the confirmation and latency columns cover the receipts visible within that window.
+
+| Target TPS | Offered TPS | Admitted (TPS) | Confirmed | Confirmed TPS | p50/p95/p99 (s) | Client drops | CPU (s) | RSS (MB) | Writes (MB) | P2P rx/tx (MB) |
+| ---: | ---: | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| 1,000 | 165.71 | 1024 (165.71) | 770 | 33.29 | 10.75/18.84/20.91 | 0 | 82.36 | 392.0 | 79.56 | 6.14/6.14 |
+| 2,000 | 163.11 | 960 (152.92) | 728 | 33.77 | 10.22/17.46/18.36 | 0 | 81.92 | 393.9 | 72.14 | 6.07/6.07 |
+| 3,000 | 160.82 | 1024 (160.82) | 728 | 33.67 | 10.57/17.56/18.61 | 0 | 83.41 | 387.6 | 69.38 | 5.96/5.96 |
+| 5,000 | 159.56 | 1024 (159.56) | 728 | 33.68 | 10.39/17.43/18.40 | 0 | 83.90 | 390.9 | 73.92 | 6.07/6.07 |
+
+The native lock's cycle cost and the configured block cycle limit constrain how many transactions each block can confirm. Similar throughput across the five workloads describes these fixtures under this budget. Measuring marginal Type Group cost requires matched fixtures and independent cycle attribution. Sustained high-rate submission, remote hosts, and throughput during committee changes remain unmeasured.
+
+The compressed run bundle records all nine runs, per-transaction admission and visibility samples, and executable SHA-256 fingerprints. [Raw native measurements](benchmarks/2026-11-25-native-comet.json.xz)
+
+## Transaction Script Dictionary encoding experiment
+
+Both columns are actual complete Molecule transactions. They contain the same input, Cell Dep, output data and 65-byte seal. Asset outputs include the same 16-byte amount. The candidate stores each complete output Script once in canonical byte order and uses little-endian 16-bit references in outputs. Lock and Type Group Witness addressing stays unchanged.
+
+| Fixture | Current (bytes) | Dictionary (bytes) | Change |
+| --- | ---: | ---: | ---: |
+| Payment, two distinct output Locks | 467 | 487 | +4.3% |
+| Payment, same Lock on both outputs | 467 | 410 | −12.2% |
+| One UDT output | 459 | 475 | +3.5% |
+| Ten UDT outputs, distinct Locks | 2,421 | 1,708 | −29.5% |
+| Ten UDT outputs, same Lock | 2,421 | 1,015 | −58.1% |
+
+The test decodes the candidate and reconstructs the output Scripts, Capacity and Cell Data. These fixtures place the dictionary in the raw transaction and preserve the byte count of the seal. The candidate is a test schema. Fern continues to accept the existing canonical transaction encoding. Run `cargo test --locked -p fern-ledger measure_transaction_script_dictionary -- --nocapture`. [Historical CKB Script Table proposal](https://talk.nervos.org/t/cell-model-changes-preview-in-v0-19-0/3349)

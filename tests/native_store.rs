@@ -63,6 +63,7 @@ impl Fixture {
                 chain_id: "fern-native-storage-test".into(),
                 development_validators: vec![],
                 stake: None,
+                bridge: None,
                 network: [5; 32].pack(),
                 genesis_time_ms: TIME,
                 capacity,
@@ -267,3 +268,6 @@ mod comet;
 
 #[path = "native_store/staking.rs"]
 mod staking;
+
+#[path = "native_store/bridge.rs"]
+mod bridge;

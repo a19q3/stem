@@ -21,9 +21,15 @@ use serde_json::json;
 
 use crate::{
     bridge_cli::{print_json, read_json_limited, read_key},
-    genesis::Validator,
     l1::{Journal, Rpc},
 };
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Validator {
+    ed25519: JsonBytes,
+    power: i64,
+}
 
 #[derive(Subcommand)]
 pub enum StakeCommand {
@@ -31,6 +37,11 @@ pub enum StakeCommand {
     Observe(Observe),
     /// Authenticate a threshold-certified snapshot against a pinned network and guardian set.
     Verify(Verify),
+    /// Assemble a Stake Snapshot transaction from guardian observations.
+    Snapshot {
+        #[arg(long)]
+        observations: PathBuf,
+    },
 }
 
 #[derive(Args)]
@@ -43,6 +54,9 @@ pub struct Observe {
     journal: PathBuf,
     #[arg(long)]
     key_file: PathBuf,
+    /// Raw Fern Header ID at the scheduled signing height.
+    #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+    fern_signing_anchor: Option<H256>,
 }
 
 #[derive(Args)]
@@ -95,6 +109,14 @@ struct Observation {
     guardian_generation: H256,
     registry_data: JsonBytes,
     attestation: Signature,
+    native: Option<NativeVote>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeVote {
+    signing_anchor: H256,
+    signature: JsonBytes,
 }
 
 impl Observation {
@@ -173,6 +195,7 @@ impl StakeCommand {
         match self {
             Self::Observe(args) => args.run(),
             Self::Verify(args) => args.run(),
+            Self::Snapshot { observations } => build_native_snapshot(&observations),
         }
     }
 }
@@ -410,6 +433,27 @@ impl Observe {
 
         journal.pin(&l1, height, &block_hash)?;
         let signature = key.sign(&snapshot.signing_digest()).to_bytes();
+        let native = self
+            .fern_signing_anchor
+            .map(|anchor| {
+                ensure!(
+                    snapshot.target_epoch != 0 && anchor != H256::default(),
+                    "invalid native signing anchor"
+                );
+                let network = request.fern_network_id.pack();
+                let body = fern_ledger::protocol::snapshot_body(&snapshot, &registry);
+                let statement = fern_ledger::protocol::StakeSnapshot {
+                    epoch: snapshot.target_epoch,
+                    signing_anchor: anchor.pack(),
+                    commitment: fern_ledger::protocol::snapshot_commitment(&network, &body),
+                };
+                let digest = fern_ledger::protocol::snapshot_digest(&network, &statement);
+                Ok(NativeVote {
+                    signing_anchor: anchor,
+                    signature: JsonBytes::from_vec(key.sign(digest.as_slice()).to_bytes().to_vec()),
+                })
+            })
+            .transpose()?;
         print_json(&json!({
             "fern_network_id": request.fern_network_id,
             "ckb_genesis": request.ckb_genesis,
@@ -420,6 +464,7 @@ impl Observe {
             "guardian_generation": H256::from(generation),
             "registry_data": data,
             "attestation": { "guardian": guardian, "signature": JsonBytes::from_vec(signature.to_vec()) },
+            "native": native,
         }))
     }
 }
@@ -456,4 +501,129 @@ fn live_cell(l1: &Rpc, point: &OutPoint, anchor_height: u64) -> Result<(CellOutp
         "live Stake Cell differs from the committed transaction"
     );
     Ok((output, data))
+}
+
+pub(crate) fn native_genesis(
+    trust_path: &std::path::Path,
+    observations_path: &std::path::Path,
+    signing_window: u64,
+    limits: fern_ledger::protocol::Limits,
+) -> Result<fern::native_store::StakeGenesis> {
+    let trust: Trust = read_json_limited(trust_path, 256 * 1024)?;
+    let votes: Vec<Observation> = read_json_limited(observations_path, 16 * 1024 * 1024)?;
+    ensure!(
+        (1..=MAX_RECORDS).contains(&votes.len())
+            && trust.target_epoch == 0
+            && trust.previous.is_none(),
+        "invalid Stake Registry genesis observations"
+    );
+    let first = &votes[0];
+    let statement = first.snapshot();
+    ensure!(
+        statement.domain
+            == domain(
+                &trust.fern_network_id,
+                &trust.ckb_genesis,
+                &trust.registry_id
+            )
+            && statement.target_epoch == 0
+            && statement.parent.is_none(),
+        "genesis observation identifies a different network or epoch"
+    );
+    let guardians = trust
+        .guardians
+        .iter()
+        .map(member)
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        statement.guardian_generation
+            == (GuardianProof {
+                committee: &guardians,
+                votes: &[]
+            })
+            .generation(),
+        "genesis guardian generation differs from the trust file"
+    );
+    let mut signatures = votes
+        .iter()
+        .map(|observation| {
+            ensure!(
+                observation.snapshot() == statement
+                    && observation.registry_data == first.registry_data,
+                "guardians observed different L1 genesis snapshots"
+            );
+            Ok(Attestation {
+                guardian: observation.attestation.guardian,
+                signature: observation.attestation.signature.as_bytes().try_into()?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    signatures.sort_unstable_by_key(|signature| signature.guardian);
+    Ok(fern::native_store::StakeGenesis {
+        config: StakeConfig {
+            minimum_bond: trust.minimum_bond,
+            shannons_per_power: trust.shannons_per_power,
+            max_validators: trust.max_validators,
+            max_total_power: trust.max_total_power,
+            blocks_per_epoch: trust.blocks_per_epoch,
+        },
+        signing_window,
+        limits,
+        registry: Registry::decode(first.registry_data.as_bytes())?,
+        statement,
+        guardians,
+        signatures,
+    })
+}
+
+fn build_native_snapshot(observations: &std::path::Path) -> Result<()> {
+    use fern_ledger::{
+        Transaction,
+        protocol::{Certificate, Operation, snapshot_body, snapshot_commitment},
+    };
+    let mut votes: Vec<Observation> = read_json_limited(observations, 16 * 1024 * 1024)?;
+    ensure!(
+        (1..=MAX_RECORDS).contains(&votes.len()),
+        "invalid guardian observations"
+    );
+    votes.sort_unstable_by_key(|vote| vote.attestation.guardian);
+    let first = &votes[0];
+    let snapshot = first.snapshot();
+    let anchor = &first
+        .native
+        .as_ref()
+        .context("missing native Stake Snapshot signature")?
+        .signing_anchor;
+    let registry = Registry::decode(first.registry_data.as_bytes())?;
+    let body = snapshot_body(&snapshot, &registry);
+    let network = first.fern_network_id.pack();
+    let statement = fern_ledger::protocol::StakeSnapshot {
+        epoch: snapshot.target_epoch,
+        signing_anchor: anchor.pack(),
+        commitment: snapshot_commitment(&network, &body),
+    };
+    let signatures = votes
+        .iter()
+        .map(|observation| {
+            let native = observation
+                .native
+                .as_ref()
+                .context("missing native signature")?;
+            ensure!(
+                observation.snapshot() == snapshot
+                    && observation.registry_data == first.registry_data
+                    && &native.signing_anchor == anchor,
+                "guardians observed different native Stake Snapshots"
+            );
+            Ok(Attestation {
+                guardian: observation.attestation.guardian,
+                signature: native.signature.as_bytes().try_into()?,
+            })
+        })
+        .collect::<Result<_>>()?;
+    let tx = Transaction::control(
+        Operation::StakeSnapshot(statement),
+        Certificate::new(body, signatures)?,
+    )?;
+    print_json(&JsonBytes::from_vec(tx.as_slice().to_vec()))
 }

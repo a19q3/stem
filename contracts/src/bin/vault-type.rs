@@ -2,18 +2,18 @@
 #![no_main]
 
 use ckb_hash::new_blake2b;
-use fern_bridge_wire::{self as wire, Asset, Gate};
 use ckb_std::{
     ckb_constants::Source,
     ckb_types::{core::ScriptHashType, packed::Script, prelude::*},
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_lock, load_cell_lock_hash, load_cell_type_hash, load_script,
-        load_script_hash,
+        load_cell_capacity, load_cell_lock, load_cell_lock_hash, load_cell_type,
+        load_cell_type_hash, load_script, load_script_hash,
     },
     syscalls, type_id,
 };
+use fern_bridge_wire::{self as wire, Asset, Gate};
 
 entry!(main);
 default_alloc!();
@@ -25,6 +25,8 @@ enum Action {
     Consolidate = 0,
     Release = 1,
     Rotate = 2,
+    SendReserve = 3,
+    ReceiveReserve = 4,
 }
 
 struct State {
@@ -65,8 +67,12 @@ impl From<SysError> for Error {
 
 impl State {
     fn load(source: Source) -> Result<Self, Error> {
+        Self::at(0, source)
+    }
+
+    fn at(index: usize, source: Source) -> Result<Self, Error> {
         let mut data = [0; wire::XUDT_VAULT_SIZE];
-        let len = syscalls::load_cell_data(&mut data, 0, 0, source)?;
+        let len = syscalls::load_cell_data(&mut data, 0, index, source)?;
         let asset = match (data[0], len) {
             (1, wire::NATIVE_VAULT_SIZE) => None,
             (2, wire::XUDT_VAULT_SIZE) => Some(wire::vault_asset(&data).ok_or(Error::Encoding)?),
@@ -76,6 +82,8 @@ impl State {
             0 => Action::Consolidate,
             1 => Action::Release,
             2 => Action::Rotate,
+            3 => Action::SendReserve,
+            4 => Action::ReceiveReserve,
             _ => return Err(Error::Encoding),
         };
         Ok(Self {
@@ -141,6 +149,9 @@ fn verify() -> Result<(), Error> {
     let after = load_cell_capacity(0, Source::GroupOutput)?;
     let same_lock = load_cell_lock(0, Source::GroupInput)? == output_lock;
     let native_deposits = deposit_capacity(&next)?;
+    if next.asset.is_some() && native_deposits != 0 {
+        return Err(Error::Accounting);
+    }
     let (assets_in, assets_out) = match &next.asset {
         Some(asset) => {
             let vault = load_script_hash()?;
@@ -215,6 +226,62 @@ fn verify() -> Result<(), Error> {
                 return Err(Error::Rotation);
             }
         }
+        Action::SendReserve | Action::ReceiveReserve => {
+            if !same_lock
+                || deposits != 0
+                || next.next != previous.next
+                || assets_in.escrow_units != assets_out.escrow_units
+                || next.amount == 0
+                || next.payout_lock == EMPTY
+                || next.burn_id != EMPTY
+                || next.units != 0
+            {
+                return Err(Error::Accounting);
+            }
+            let (capacity, opposite) = if next.action == Action::SendReserve {
+                (before.checked_sub(next.amount), Action::ReceiveReserve)
+            } else {
+                (before.checked_add(next.amount), Action::SendReserve)
+            };
+            if capacity != Some(after) {
+                return Err(Error::Accounting);
+            }
+            verify_reserve_peer(&next, opposite)?;
+        }
+    }
+    Ok(())
+}
+
+fn verify_reserve_peer(state: &State, action: Action) -> Result<(), Error> {
+    let own = load_script()?;
+    let id = load_script_hash()?;
+    if id == state.payout_lock {
+        return Err(Error::Identity);
+    }
+    let mut matched = false;
+    for index in 0.. {
+        match load_cell_type_hash(index, Source::Output) {
+            Ok(Some(hash)) if hash == state.payout_lock => {
+                let counterpart = load_cell_type(index, Source::Output)?.ok_or(Error::Identity)?;
+                let other = State::at(index, Source::Output)?;
+                if matched
+                    || counterpart.code_hash() != own.code_hash()
+                    || counterpart.hash_type() != own.hash_type()
+                    || other.action != action
+                    || other.amount != state.amount
+                    || other.payout_lock != id
+                {
+                    return Err(Error::Accounting);
+                }
+                matched = true;
+            }
+            Ok(_) => {}
+            Err(SysError::IndexOutOfBound) => break,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if !matched {
+        return Err(Error::Accounting);
     }
     Ok(())
 }

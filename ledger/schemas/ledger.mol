@@ -1,6 +1,7 @@
 // Primitives use the canonical CKB Molecule layout.
 array Uint32 [byte; 4];
 array Uint64 [byte; 8];
+array Uint128 [byte; 16];
 option Uint64Opt (Uint64);
 array Byte32 [byte; 32];
 array Uint16 [byte; 2];
@@ -51,9 +52,20 @@ struct L1Anchor {
     hash: Byte32,
 }
 
-struct BridgeMint {
+vector OutPointVec <OutPoint>;
+
+table BridgeMint {
     l1_genesis: Byte32,
-    deposit: OutPoint,
+    deposits: OutPointVec,
+}
+
+struct MintObservation {
+    authority: Byte32,
+    previous_anchor: L1Anchor,
+    anchor: L1Anchor,
+    vault: VaultUpdate,
+    capacity: Uint64,
+    units: Uint128,
 }
 
 struct StakeSnapshot {
@@ -88,7 +100,7 @@ table BridgeSettlement {
     action: Bytes,
 }
 
-// Kinds 0, 1, 2, 3 encode BridgeMint, StakeSnapshot, WithdrawalPaid, ReserveMoved.
+// Kinds 0–4 encode BridgeMint, StakeSnapshot, WithdrawalPaid, ReserveMoved, VaultRotated.
 table ProtocolOperation {
     kind: byte,
     payload: Bytes,

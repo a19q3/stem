@@ -1,6 +1,9 @@
 //! CometBFT lifecycle for the native state machine.
 
-use std::sync::{Mutex, RwLock};
+use std::{
+    path::Path,
+    sync::{Mutex, RwLock},
+};
 
 use anyhow::{Context, Result, ensure};
 use bytes::Bytes;
@@ -20,7 +23,10 @@ use crate::{
 };
 use fern_ledger::Transaction;
 
+mod snapshots;
+
 pub struct App {
+    snapshots: snapshots::Snapshots,
     workers: rayon::ThreadPool,
     store: RwLock<Store>,
     candidate: Mutex<Option<Candidate>>,
@@ -35,7 +41,13 @@ struct Candidate {
 }
 
 impl App {
-    pub fn new(store: Store, workers: usize) -> Result<Self> {
+    pub fn new(
+        store: Store,
+        workers: usize,
+        archive: &Path,
+        interval: u64,
+        max_bytes: u64,
+    ) -> Result<Self> {
         ensure!(
             (1..=64).contains(&workers),
             "VM workers must be between 1 and 64"
@@ -45,6 +57,12 @@ impl App {
             "missing genesis committee"
         );
         Ok(Self {
+            snapshots: snapshots::Snapshots::open(
+                archive,
+                store.snapshot_reader(),
+                interval,
+                max_bytes,
+            )?,
             workers: rayon::ThreadPoolBuilder::new()
                 .num_threads(workers)
                 .thread_name(|index| format!("fern-vm-{index}"))
@@ -226,6 +244,7 @@ impl App {
             .take()
             .context("Commit without FinalizeBlock")?;
         store.commit(block)?;
+        self.snapshots.committed(store.tip().context.height);
         Ok(abci::ResponseCommit::default())
     }
 
@@ -244,6 +263,18 @@ impl App {
                 .header(requested)?
                 .context("Header outside local retention window")?
                 .encode(),
+            "/fern/stake-snapshot" if request.prove && request.data.is_empty() => {
+                ensure!(
+                    requested == tip,
+                    "Stake Snapshot queries require the current height"
+                );
+                let (snapshot, proof) = store.prove_stake_snapshot()?;
+                serde_json::to_vec(&serde_json::json!({
+                    "snapshot": snapshot.map(hex::encode),
+                    "nodes": proof.nodes.iter().map(hex::encode).collect::<Vec<_>>(),
+                }))?
+                .into()
+            }
             "/fern/cell" => {
                 ensure!(
                     requested == tip,
@@ -357,18 +388,39 @@ impl Handler for App {
                     status: status as i32,
                 })
             }
-            Value::ListSnapshots(_) => Out::ListSnapshots(abci::ResponseListSnapshots::default()),
-            Value::LoadSnapshotChunk(_) => {
-                Out::LoadSnapshotChunk(abci::ResponseLoadSnapshotChunk::default())
+            Value::ListSnapshots(_) => {
+                let height = self.store.read().expect("state lock").tip().context.height;
+                Out::ListSnapshots(self.snapshots.list(height))
             }
-            Value::OfferSnapshot(_) => Out::OfferSnapshot(abci::ResponseOfferSnapshot {
-                result: abci::response_offer_snapshot::Result::Reject as i32,
-            }),
-            Value::ApplySnapshotChunk(_) => {
-                Out::ApplySnapshotChunk(abci::ResponseApplySnapshotChunk {
-                    result: abci::response_apply_snapshot_chunk::Result::Abort as i32,
-                    ..Default::default()
-                })
+            Value::LoadSnapshotChunk(request) => {
+                let height = self.store.read().expect("state lock").tip().context.height;
+                Out::LoadSnapshotChunk(self.snapshots.chunk(request, height).unwrap_or_default())
+            }
+            Value::OfferSnapshot(request) => {
+                let height = self.store.read().expect("state lock").tip().context.height;
+                Out::OfferSnapshot(
+                    self.snapshots
+                        .offer(request, height)
+                        .unwrap_or_else(|error| {
+                            eprintln!("level=warn event=snapshot_offer_rejected error={error:#}");
+                            abci::ResponseOfferSnapshot {
+                                result: abci::response_offer_snapshot::Result::Reject as i32,
+                            }
+                        }),
+                )
+            }
+            Value::ApplySnapshotChunk(request) => {
+                let mut state = self.store.write().expect("state lock");
+                Out::ApplySnapshotChunk(self.snapshots.apply(request, &mut state).unwrap_or_else(
+                    |error| {
+                        eprintln!("level=warn event=snapshot_restore_rejected error={error:#}");
+                        abci::ResponseApplySnapshotChunk {
+                            result: abci::response_apply_snapshot_chunk::Result::RejectSnapshot
+                                as i32,
+                            ..Default::default()
+                        }
+                    },
+                ))
             }
         }
     }

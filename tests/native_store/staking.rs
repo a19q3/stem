@@ -37,6 +37,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         bonded_amount,
         activation_epoch,
         exit_epoch,
+        frozen: false,
         stake_cell_hash: validator_pubkey,
     };
     let registry = Registry::new(

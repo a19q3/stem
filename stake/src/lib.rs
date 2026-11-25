@@ -9,7 +9,9 @@ use core::fmt;
 use ckb_hash::new_blake2b;
 use ed25519_dalek::{Signature, VerifyingKey};
 
+pub mod checkpoint;
 mod evidence;
+pub mod history;
 pub mod l1;
 pub use evidence::{BlockId, DoubleVote, Liability, SignedVote, VoteKind};
 
@@ -18,7 +20,7 @@ pub type ValidatorKey = [u8; 32];
 
 pub const MAX_TOTAL_VOTING_POWER: u64 = (i64::MAX / 8) as u64;
 pub const MAX_RECORDS: usize = 256;
-const RECORD_BYTES: usize = 32 + 8 + 8 + 1 + 8 + 32;
+const RECORD_BYTES: usize = 32 + 8 + 8 + 1 + 8 + 1 + 32;
 const REGISTRY_HEADER: usize = 32 + 8 + 32 + 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,6 +56,7 @@ pub struct StakeData {
     pub bonded_amount: u64,
     pub activation_epoch: u64,
     pub exit_epoch: Option<u64>,
+    pub frozen: bool,
     pub stake_cell_hash: Hash32,
 }
 
@@ -123,7 +126,12 @@ impl Registry {
                 bonded_amount: u64::from_le_bytes(record[32..40].try_into().unwrap()),
                 activation_epoch: u64::from_le_bytes(record[40..48].try_into().unwrap()),
                 exit_epoch,
-                stake_cell_hash: record[57..89].try_into().unwrap(),
+                frozen: match record[57] {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(Error::Encoding),
+                },
+                stake_cell_hash: record[58..90].try_into().unwrap(),
             });
         }
         Self::new(network, sequence, guardian_generation, records)
@@ -141,6 +149,7 @@ impl Registry {
             data.extend_from_slice(&entry.activation_epoch.to_le_bytes());
             data.push(u8::from(entry.exit_epoch.is_some()));
             data.extend_from_slice(&entry.exit_epoch.unwrap_or(0).to_le_bytes());
+            data.push(u8::from(entry.frozen));
             data.extend_from_slice(&entry.stake_cell_hash);
         }
         data
@@ -434,7 +443,8 @@ impl StakeConfig {
             .records
             .iter()
             .filter(|stake| {
-                stake.bonded_amount >= self.minimum_bond
+                !stake.frozen
+                    && stake.bonded_amount >= self.minimum_bond
                     && stake.activation_epoch <= epoch
                     && stake.exit_epoch.is_none_or(|exit| epoch < exit)
             })

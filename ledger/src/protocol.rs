@@ -10,15 +10,17 @@ use fern_stake::{Attestation, Authority, MAX_RECORDS};
 
 use crate::{Transaction, hash, wire};
 
+mod mint;
 mod settlement;
 mod snapshot;
+pub use mint::{MintObservation, VerifiedMint, mint_digest};
 pub use settlement::{BridgeLedger, Lane, PendingWithdrawal, SettlementChanges};
 pub use snapshot::{SnapshotContext, snapshot_body, snapshot_commitment, snapshot_digest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgeMint {
     pub l1_genesis: Byte32,
-    pub deposit: OutPoint,
+    pub deposits: Vec<OutPoint>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +43,9 @@ pub enum SettlementAction {
         vault: VaultUpdate,
         nonce: u64,
         receipt: Byte32,
+    },
+    VaultRotated {
+        vault: VaultUpdate,
     },
     ReserveMoved {
         source: VaultUpdate,
@@ -78,7 +83,11 @@ impl Operation {
                 0,
                 wire::BridgeMint::new_builder()
                     .l1_genesis(byte32(&mint.l1_genesis))
-                    .deposit(out_point(&mint.deposit))
+                    .deposits(
+                        wire::OutPointVec::new_builder()
+                            .set(mint.deposits.iter().map(out_point).collect())
+                            .build(),
+                    )
                     .build()
                     .as_bytes(),
             ),
@@ -106,6 +115,7 @@ impl Operation {
                             .build()
                             .as_bytes(),
                     ),
+                    SettlementAction::VaultRotated { vault } => (4, vault.encode().as_bytes()),
                     SettlementAction::ReserveMoved {
                         source,
                         destination,
@@ -144,7 +154,11 @@ impl Operation {
                 let value = wire::BridgeMint::from_slice(&payload)?;
                 Ok(Self::BridgeMint(BridgeMint {
                     l1_genesis: hash32(value.l1_genesis()),
-                    deposit: OutPoint::new_unchecked(value.deposit().as_bytes()),
+                    deposits: value
+                        .deposits()
+                        .into_iter()
+                        .map(|point| OutPoint::new_unchecked(point.as_bytes()))
+                        .collect(),
                 }))
             }
             1 => {
@@ -155,7 +169,7 @@ impl Operation {
                     commitment: hash32(value.commitment()),
                 }))
             }
-            kind @ (2 | 3) => {
+            kind @ (2..=4) => {
                 let value = wire::BridgeSettlement::from_slice(&payload)?;
                 let action = value.action().raw_data();
                 let action = if kind == 2 {
@@ -164,6 +178,10 @@ impl Operation {
                         vault: VaultUpdate::decode(paid.vault()),
                         nonce: number(paid.nonce()),
                         receipt: hash32(paid.receipt()),
+                    }
+                } else if kind == 4 {
+                    SettlementAction::VaultRotated {
+                        vault: VaultUpdate::decode(wire::VaultUpdate::from_slice(&action)?),
                     }
                 } else {
                     let moved = wire::ReserveMoved::from_slice(&action)?;
@@ -189,8 +207,14 @@ impl Operation {
         match self {
             Self::BridgeMint(mint) => ensure!(
                 mint.l1_genesis != Byte32::default()
-                    && !mint.deposit.is_null()
-                    && !certificate.body().is_empty(),
+                    && !mint.deposits.is_empty()
+                    && mint.deposits.len() <= mint::MAX_DEPOSITS
+                    && mint.deposits.iter().all(|point| !point.is_null())
+                    && mint
+                        .deposits
+                        .windows(2)
+                        .all(|pair| pair[0].as_slice() < pair[1].as_slice())
+                    && MintObservation::decode(&certificate.body()).is_ok(),
                 "invalid Bridge Mint certificate"
             ),
             Self::StakeSnapshot(snapshot) => ensure!(
@@ -221,6 +245,22 @@ impl Operation {
 }
 
 impl BridgeSettlement {
+    pub fn encode(&self) -> Bytes {
+        Operation::BridgeSettlement(self.clone())
+            .encode()
+            .as_bytes()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let Operation::BridgeSettlement(statement) =
+            Operation::decode(wire::ProtocolOperation::from_slice(bytes)?)?
+        else {
+            bail!("expected a Bridge Settlement statement");
+        };
+        statement.validate()?;
+        Ok(statement)
+    }
+
     fn validate(&self) -> Result<()> {
         ensure!(
             [
@@ -243,6 +283,7 @@ impl BridgeSettlement {
                 vault.validate()?;
                 ensure!(*receipt != Byte32::default(), "missing withdrawal receipt");
             }
+            SettlementAction::VaultRotated { vault } => vault.validate()?,
             SettlementAction::ReserveMoved {
                 source,
                 destination,
