@@ -41,6 +41,7 @@ pub struct Status {
     pub invalid_messages: u64,
     pub mempool_transactions: usize,
     pub mempool_bytes: usize,
+    pub admission: Option<super::AdmissionMetrics>,
 }
 
 #[derive(Debug, Deserialize)]

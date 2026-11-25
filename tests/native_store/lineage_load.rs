@@ -6,13 +6,14 @@ use std::{
 
 use anyhow::ensure;
 use ckb_types::{packed::Byte32, prelude::*};
+use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::{Value, json};
 use stem::jolteon::Client;
 use stem_ledger::{lineage::Outcome, record};
 
 use super::{
-    Context, Fixture, Result, Retention, Store, Transaction,
+    Context, Fixture, Result, Retention, Store, TIME, Transaction,
     comet::poll,
     keeper_load::{statuses, transactions},
     lineage::{DynamicLineage, FixtureLineage, fund_amm_market, swap_payload},
@@ -53,6 +54,85 @@ pub(super) struct Workload {
     mode: Mode,
     dynamic: DynamicLineage,
     registrations: Vec<Transaction>,
+}
+
+#[test]
+#[ignore = "matched admission checks over signed AMM commands and a fixed finalized tip"]
+fn measure_lineage_admission_groups() -> Result<()> {
+    const COUNT: usize = 512;
+    const WIDTH: usize = 4;
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 128;
+    fixture.spec.limits.cell_reads = 8192;
+    fixture.spec.limits.cell_read_bytes = 128 * 1024 * 1024;
+    fixture.spec.limits.cell_write_bytes = 4 * 1024 * 1024;
+    let (workload, commands) = Workload::fund(&mut fixture, Mode::HotspotAmm, COUNT)?;
+    let temp = tempfile::tempdir()?;
+    let store = |name| -> Result<Store> {
+        let mut store = Store::open(&temp.path().join(name), &fixture.spec, Retention::Archive)?;
+        store.commit(store.prepare(&workload.registrations, TIME, false)?)?;
+        Ok(store)
+    };
+    let sequential = store("single-request")?;
+    let grouped = store("grouped")?;
+    assert_eq!(sequential.tip(), grouped.tip());
+    let workers = || rayon::ThreadPoolBuilder::new().num_threads(2).build();
+    let one_at_a_time = workers()?;
+    let parallel = workers()?;
+    let mut single_samples = Vec::new();
+    let mut group_samples = Vec::new();
+    let measure_single = || -> Result<_> {
+        let start = Instant::now();
+        let receipts = commands
+            .iter()
+            .map(|tx| one_at_a_time.install(|| sequential.check(tx)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok((receipts, start.elapsed().as_micros()))
+    };
+    let measure_grouped = || -> Result<_> {
+        let start = Instant::now();
+        let mut receipts = Vec::with_capacity(COUNT);
+        for wave in commands.chunks(WIDTH) {
+            let checked = parallel.install(|| {
+                wave.par_iter()
+                    .map(|tx| grouped.check(tx))
+                    .collect::<Result<Vec<_>>>()
+            })?;
+            receipts.extend(checked);
+        }
+        Ok((receipts, start.elapsed().as_micros()))
+    };
+    for sample in 0..11 {
+        let ((serial, a), (batched, b)) = if sample % 2 == 0 {
+            (measure_single()?, measure_grouped()?)
+        } else {
+            let group = measure_grouped()?;
+            (measure_single()?, group)
+        };
+        assert_eq!(serial, batched);
+        assert!(serial.iter().all(|receipt| {
+            Outcome::decode(&receipt.protocol_result)
+                .is_ok_and(|outcome| outcome == Outcome::Applied)
+        }));
+        single_samples.push(a);
+        group_samples.push(b);
+    }
+    let raw = commands
+        .iter()
+        .flat_map(Transaction::as_slice)
+        .copied()
+        .collect::<Vec<_>>();
+    let report = json!({
+        "commands": COUNT, "group_width": WIDTH, "workers": 2,
+        "signed_workload_id": hex::encode(ckb_hash::blake2b_256(raw)),
+        "header": hex::encode(sequential.tip().encode()),
+        "single_us": single_samples, "grouped_us": group_samples,
+    });
+    if let Some(path) = std::env::var_os("STEM_ADMISSION_REPORT") {
+        std::fs::write(path, serde_json::to_vec(&report)?)?;
+    }
+    println!("{report}");
+    Ok(())
 }
 
 impl Workload {

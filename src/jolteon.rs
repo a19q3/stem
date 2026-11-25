@@ -25,6 +25,7 @@ use stem_stake::{
 
 use crate::native_store::{Prepared, Store};
 
+mod admission;
 mod client;
 mod mempool;
 mod recovery;
@@ -36,6 +37,7 @@ use mempool::Mempool;
 use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
+pub use admission::Metrics as AdmissionMetrics;
 pub use client::{Certificate, Client, QueryResult, Status};
 
 const STATE: &[u8] = b"state";
@@ -158,6 +160,7 @@ struct Replica {
     certificates: HashSet<Hash32>,
     requests: HashMap<Point, Instant>,
     mempool: Mempool,
+    admission: admission::Metrics,
     rejected: u64,
     timeout_views: VecDeque<u64>,
     last_untimely_view: u64,
@@ -315,6 +318,11 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         committee.verify_share(&committee.timeout_digest(timeout.view, qc.point), vote)?;
     }
 
+    let admission_width = if config.vm_workers == 1 {
+        1
+    } else {
+        (2 * config.vm_workers).min(8)
+    };
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -354,6 +362,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 certificates: HashSet::new(),
                 requests: HashMap::new(),
                 mempool: Mempool::default(),
+                admission: admission::Metrics::default(),
                 rejected: 0,
                 timeout_views: VecDeque::new(),
                 last_untimely_view: 0,
@@ -367,6 +376,10 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                     _ = ticker.tick() => replica.tick()?,
                     event = incoming.recv() => {
                         let event = event.context("replica transport stopped")?;
+                        if event.is_admission() {
+                            replica.admit_transactions(incoming.admission_group(event, admission_width))?;
+                            continue;
+                        }
                         if let Err(error) = replica.handle(event) {
                             if error.is::<StorageFault>() {
                                 return Err(error);
@@ -1260,11 +1273,7 @@ impl Replica {
             let _ = reply.send(serde_json::to_vec(&result)?);
             return Ok(());
         }
-        let peer = u16::try_from(frame.sender)?;
-        ensure!(
-            usize::from(peer) < self.directory.keys.len(),
-            "unknown peer route"
-        );
+        let peer = self.peer_index(frame.sender)?;
         let epoch = self.committee.epoch();
         if frame.kind == wire::GET {
             let point = Point::decode(&frame.body)?;
@@ -1290,15 +1299,7 @@ impl Replica {
         if frame.kind == wire::GET_REPLAY {
             return self.serve_replay(frame.epoch, peer, &frame.body);
         }
-        if frame.epoch != epoch {
-            if frame.epoch > epoch
-                && self
-                    .handoff_requested
-                    .is_none_or(|time| time.elapsed() >= Duration::from_millis(500))
-            {
-                self.handoff_requested = Some(Instant::now());
-                self.net.broadcast(wire::GET_HANDOFF, Vec::new());
-            }
+        if !self.accept_epoch(frame.epoch) {
             return Ok(());
         }
         match frame.kind {
@@ -1340,28 +1341,31 @@ impl Replica {
                     self.learn_tc(tc)?;
                 }
             }
-            wire::RELAY_TX => {
-                self.insert_tx(frame.body)?;
-            }
             _ => anyhow::bail!("unknown replica message"),
         }
         Ok(())
     }
 
-    fn insert_tx(&mut self, raw: Vec<u8>) -> Result<bool> {
-        let id = ckb_hash::blake2b_256(&raw);
-        if self.mempool.contains(&id) {
-            return Ok(false);
-        }
+    fn peer_index(&self, sender: u32) -> Result<u16> {
+        let peer = u16::try_from(sender)?;
         ensure!(
-            raw.len() <= stem_ledger::MAX_TRANSACTION_BYTES
-                && self.mempool.bytes().saturating_add(raw.len()) <= MAX_MEMPOOL_BYTES,
-            "mempool capacity exceeded"
+            usize::from(peer) < self.directory.keys.len(),
+            "unknown peer route"
         );
-        let tx = Transaction::from_slice(&raw)?;
-        self.workers.install(|| self.store.check(&tx))?;
-        self.mempool.insert(id, tx)?;
-        Ok(true)
+        Ok(peer)
+    }
+
+    fn accept_epoch(&mut self, epoch: u64) -> bool {
+        let local = self.committee.epoch();
+        if epoch > local
+            && self
+                .handoff_requested
+                .is_none_or(|time| time.elapsed() >= Duration::from_millis(500))
+        {
+            self.handoff_requested = Some(Instant::now());
+            self.net.broadcast(wire::GET_HANDOFF, Vec::new());
+        }
+        epoch == local
     }
 
     fn client(&mut self, kind: u32, body: Vec<u8>) -> Result<serde_json::Value> {
@@ -1386,14 +1390,8 @@ impl Replica {
                 "invalid_messages": self.rejected,
                 "mempool_transactions": self.mempool.len(),
                 "mempool_bytes": self.mempool.bytes(),
+                "admission": self.admission,
             })),
-            wire::SUBMIT => {
-                let id = hex::encode(ckb_hash::blake2b_256(&body));
-                if self.insert_tx(body.clone())? {
-                    self.net.broadcast(wire::RELAY_TX, body);
-                }
-                Ok(json!({"admitted": id}))
-            }
             wire::HEADER => {
                 let height = u64::from_le_bytes(body.as_slice().try_into()?);
                 let header = self

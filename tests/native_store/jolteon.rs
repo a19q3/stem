@@ -26,11 +26,77 @@ use super::{
     comet::{Asset, Process, compile_types, poll, write_spec},
     intent::{Swap, altered_action},
     keeper,
+    keeper_load::{NetworkOptions, start_network_configured, statuses},
     lineage::{DynamicLineage, FixtureLineage},
     lineage_batch::{BatchFixture, Schedule},
 };
 
 const WAIT: Duration = Duration::from_secs(20);
+
+#[test]
+fn concurrent_admission_checks_each_signed_wire_identity() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let signed = fixture.signed(fixture.spend.clone(), None, super::FUND - FEE, None)?;
+    let unsigned = signed.with_witnesses(vec![])?;
+    assert_eq!(
+        signed.id(&fixture.spec.network),
+        unsigned.id(&fixture.spec.network)
+    );
+    assert_ne!(signed.as_slice(), unsigned.as_slice());
+    let root = tempfile::tempdir()?;
+    let (_processes, clients) = start_network_configured(
+        &mut fixture,
+        root.path(),
+        4,
+        NetworkOptions {
+            interval_ms: 200,
+            timeout_ms: 2000,
+            vm_workers: 2,
+            history_window: None,
+            storage_metrics: false,
+        },
+    )?;
+    let first = &clients[0];
+    let gate = std::sync::Barrier::new(12);
+    std::thread::scope(|scope| -> Result<()> {
+        let gate = &gate;
+        let attempts = (0..12)
+            .map(|index| {
+                let tx = if index % 2 == 0 { &signed } else { &unsigned };
+                scope.spawn(move || {
+                    gate.wait();
+                    first.submit(tx)
+                })
+            })
+            .collect::<Vec<_>>();
+        for (index, attempt) in attempts.into_iter().enumerate() {
+            let result = attempt.join().expect("admission submitter");
+            if index % 2 == 0 {
+                assert_eq!(result?, ckb_hash::blake2b_256(signed.as_slice()));
+            } else {
+                assert!(
+                    result.is_err(),
+                    "an unsigned variant received an admission reply"
+                );
+            }
+        }
+        Ok(())
+    })?;
+    let values = poll("deduplicated admission finality", WAIT, || {
+        let values = statuses(&clients)?;
+        Ok(values
+            .iter()
+            .all(|status| status.committed_transactions == 1)
+            .then_some(values))
+    })?;
+    let height = values.iter().map(|status| status.height).min().unwrap();
+    let expected = first.header(height)?;
+    for client in &clients {
+        assert_eq!(client.header(height)?, expected);
+    }
+    assert!(values[0].admission.context("admission metrics")?.requests >= 12);
+    Ok(())
+}
 
 #[test]
 #[ignore = "inspect a stopped four-replica run produced by --check-pruning"]
