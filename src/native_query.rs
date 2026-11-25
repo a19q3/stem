@@ -221,6 +221,20 @@ pub(crate) fn query(
                 "backing_proof": format!("0x{}", hex::encode(backing_proof.encode()?)),
             }))?.into()
         }
+        "/stem/bridge-anchor" if prove && data.is_empty() => {
+            ensure!(
+                requested == tip,
+                "bridge anchor proof requires the current height"
+            );
+            let ((anchor, adopted_at), proof) = store.prove_bridge_anchor()?;
+            serde_json::to_vec(&serde_json::json!({
+                "height": anchor.height,
+                "hash": format!("0x{}", hex::encode(anchor.hash.as_slice())),
+                "adopted_at": adopted_at,
+                "proof": format!("0x{}", hex::encode(proof.encode()?)),
+            }))?
+            .into()
+        }
         "/stem/bridge-backing" if prove && data.is_empty() => {
             ensure!(
                 requested == tip,

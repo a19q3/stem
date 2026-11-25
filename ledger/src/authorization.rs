@@ -200,8 +200,9 @@ impl Transaction {
         ensure!(
             self.operation().is_none()
                 && self.keeper_action().is_none()
+                && self.l1_references().len() == 0
                 && !self.has_lineage_command(),
-            "protocol and Lineage transactions cannot carry paired intents"
+            "paired intents cannot authorize this transaction's controls or L1 references"
         );
         let consumed = self.inputs().map(|input| input.previous_output).collect();
         let mut digest = dependency_hasher();

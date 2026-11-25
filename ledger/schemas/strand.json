@@ -430,6 +430,24 @@
       "item": "Certificate"
     },
     {
+      "name": "L1ReferenceVec",
+      "kind": "dense_vector",
+      "item": "Certificate"
+    },
+    {
+      "name": "L1Reference",
+      "kind": "sequence",
+      "fields": [
+        { "name": "kind", "type": "byte" },
+        { "name": "genesis", "type": "Byte32" },
+        { "name": "out_point", "type": "OutPoint" },
+        { "name": "creation", "type": "L1Anchor" },
+        { "name": "anchor", "type": "L1Anchor" },
+        { "name": "output", "type": "Bytes" },
+        { "name": "data", "type": "Bytes" }
+      ]
+    },
+    {
       "name": "LineageTarget",
       "kind": "sequence",
       "fields": [
@@ -605,6 +623,11 @@
           "name": "lineage_seals",
           "type": "Bytes",
           "bit": 1
+        },
+        {
+          "name": "l1_references",
+          "type": "L1ReferenceVec",
+          "bit": 2
         }
       ],
       "flag_bytes": 1

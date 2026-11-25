@@ -225,6 +225,23 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         .build();
     let code_capacity: u64 = code_mint.outputs().map(|cell| cell.capacity()).sum();
     commit(&mut store, code_mint)?;
+    let ((confirmed, adopted), path) = store.prove_bridge_anchor()?;
+    assert_eq!(confirmed, anchor(2));
+    assert_eq!(adopted, store.tip().context.height);
+    assert!(Store::verify_bridge_anchor(
+        store.network(),
+        store.tip(),
+        &confirmed,
+        adopted,
+        &path
+    ));
+    assert!(!Store::verify_bridge_anchor(
+        store.network(),
+        store.tip(),
+        &confirmed,
+        0,
+        &path
+    ));
     let mint = make_mint(
         out(51, 0),
         2,

@@ -443,6 +443,29 @@ impl Transaction {
             "Transaction exceeds byte limit"
         );
         let raw = encoded.raw();
+        let l1_references = encoded.l1_references();
+        ensure!(
+            l1_references.len() <= protocol::l1_reference::MAX_REFERENCES,
+            "too many L1 Cell references"
+        );
+        if !l1_references.is_empty() {
+            ensure!(
+                raw.protocol().to_opt().is_none() && raw.lineage_command().to_opt().is_none(),
+                "L1 references require an ordinary Cell transaction"
+            );
+            let mut previous = None::<OutPoint>;
+            for certificate in l1_references {
+                let certificate = Certificate::decode(certificate)?;
+                let record = protocol::l1_reference::L1Reference::decode(&certificate.body())?;
+                ensure!(
+                    previous
+                        .as_ref()
+                        .is_none_or(|last| last.as_slice() < record.out_point.as_slice()),
+                    "L1 references must be ordered by unique OutPoint"
+                );
+                previous = Some(record.out_point);
+            }
+        }
         check_count(
             raw.cell_deps().len(),
             raw.header_deps().len(),
@@ -639,10 +662,18 @@ impl Transaction {
     }
 
     pub fn id(&self, network_id: &Byte32) -> Byte32 {
+        let references = self.encoded.l1_references();
         hash(
             b"Stem transaction ID\0",
             network_id,
-            &[self.encoded.raw().as_slice()],
+            &[
+                self.encoded.raw().as_slice(),
+                if references.is_empty() {
+                    &[]
+                } else {
+                    references.as_slice()
+                },
+            ],
         )
     }
 
@@ -901,6 +932,31 @@ impl Transaction {
             .map(Certificate::validated_entity)
     }
 
+    pub fn l1_references(&self) -> impl ExactSizeIterator<Item = Certificate> {
+        self.encoded
+            .l1_references()
+            .into_iter()
+            .map(Certificate::validated_entity)
+    }
+
+    pub fn with_l1_references(&self, certificates: Vec<Certificate>) -> Result<Self> {
+        ensure!(
+            self.witnesses().all(|witness| witness.seal.is_empty()),
+            "attach L1 references before collecting seals"
+        );
+        Self::from_entity(
+            self.encoded
+                .clone()
+                .as_builder()
+                .l1_references(
+                    wire::L1ReferenceVec::new_builder()
+                        .set(certificates.iter().map(Certificate::encode).collect())
+                        .build(),
+                )
+                .build(),
+        )
+    }
+
     pub fn cell_deps(&self) -> impl ExactSizeIterator<Item = CellDep> {
         self.encoded
             .raw()
@@ -1133,6 +1189,7 @@ pub struct ResolvedTransaction {
     inputs: Vec<LiveCell>,
     outputs: Vec<Cell>,
     cell_deps: Vec<LiveCell>,
+    l1_references: Vec<Bytes>,
     headers: Vec<Header>,
     headers_by_origin: HashMap<Byte32, usize>,
     cache_key: OnceLock<Byte32>,
@@ -1158,7 +1215,9 @@ impl ResolvedTransaction {
         committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
         ensure!(
-            transaction.operation().is_none() && !transaction.has_lineage_command(),
+            transaction.operation().is_none()
+                && !transaction.has_lineage_command()
+                && transaction.l1_references().len() == 0,
             "transaction requires its authenticated execution path"
         );
         Self::resolve_with_capacity(
@@ -1166,6 +1225,31 @@ impl ResolvedTransaction {
             transaction,
             block,
             None,
+            Vec::new(),
+            live_cell,
+            committed_header,
+        )
+    }
+
+    pub fn resolve_referenced(
+        network_id: Byte32,
+        transaction: Transaction,
+        block: BlockContext<'_>,
+        grant: protocol::l1_reference::VerifiedL1References,
+        live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
+        committed_header: impl FnMut(&Byte32) -> Result<Header>,
+    ) -> Result<Self> {
+        ensure!(
+            transaction.operation().is_none() && !transaction.has_lineage_command(),
+            "L1 references require an ordinary Cell transaction"
+        );
+        let references = grant.authorize(&transaction, &network_id)?;
+        Self::resolve_with_capacity(
+            network_id,
+            transaction,
+            block,
+            None,
+            references,
             live_cell,
             committed_header,
         )
@@ -1192,6 +1276,7 @@ impl ResolvedTransaction {
             transaction,
             block,
             Some(authorization),
+            Vec::new(),
             live_cell,
             committed_header,
         )
@@ -1202,6 +1287,7 @@ impl ResolvedTransaction {
         transaction: Transaction,
         block: BlockContext<'_>,
         mint: Option<(u64, Option<(Script, u128)>)>,
+        l1_references: Vec<Bytes>,
         live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         mut committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
@@ -1341,6 +1427,7 @@ impl ResolvedTransaction {
             inputs,
             outputs,
             cell_deps,
+            l1_references,
             headers,
             headers_by_origin,
             cache_key: OnceLock::new(),
@@ -1370,6 +1457,9 @@ impl ResolvedTransaction {
     }
     pub fn cell_deps(&self) -> &[LiveCell] {
         &self.cell_deps
+    }
+    pub fn l1_references(&self) -> &[Bytes] {
+        &self.l1_references
     }
     pub fn header(&self, index: usize) -> Option<&Header> {
         self.headers.get(index)

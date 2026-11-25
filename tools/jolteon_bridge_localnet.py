@@ -9,7 +9,7 @@ import secrets
 import struct
 import subprocess
 
-from bridge_localnet import CKB, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, point, script, write_key
+from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, script, write_key
 from jolteon_checkpoint_localnet import Relay
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, QUERY, STATUS, SUBMIT, evidence_keys, rpc, write_configuration
 from localnet import run, write_json
@@ -163,6 +163,138 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
             "rejections": {"unearned": unearned, "overclaim": wrong_amount, "dust": dust, "replay": replay}}
 
 
+def reference_round(args, l1, fixture, spec, spec_path, mint, client):
+    anchor_query = client.query("/stem/bridge-anchor", prove=True)
+    anchor = json.loads(bytes.fromhex(anchor_query["value"]))
+    assert anchor["height"] == mint["confirmed_height"] and anchor["hash"] == mint["confirmed_hash"]
+    l1.mine(spec["bridge"]["confirmations"])
+    live_point = point(mint["l1_consolidation"], 0)
+    spent_point = point(mint["l1_deposits"], 1)
+    historical_inclusion = l1.prove_committed(mint["l1_deposits"])
+
+    def attest(label, target, live, height=anchor["height"], block=anchor["hash"], rejected=None):
+        path = args.output / f"reference-{label}-request.json"
+        write_json(path, {"out_point": target, "live_at_anchor": live,
+                          "anchor_height": height, "anchor_hash": block})
+        votes = []
+        for index, key in enumerate(fixture.guardian_keys[:3]):
+            command = [args.binary, "bridge", "attest-reference", "--genesis", spec_path,
+                       "--l1-rpc", l1.url, "--request", path, "--key-file", key,
+                       "--journal", args.output / f"journal-{index}"]
+            if rejected:
+                result = subprocess.run(command, text=True, capture_output=True)
+                assert result.returncode and rejected in result.stderr, result
+                return result.stderr
+            votes.append(json.loads(run(*command)))
+        assert len({vote["record"] for vote in votes}) == 1
+        votes_file = args.output / f"reference-{label}-votes.json"
+        write_json(votes_file, votes)
+        return votes, votes_file
+
+    def reject(tx, message):
+        answer = client.call("broadcast_tx_sync", tx=tx)
+        assert answer["code"] == 1 and message in answer["log"], answer
+        return answer["log"]
+
+    native_lock = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())),
+                         fixture.key(fixture.owner)["blake160"], "data")
+    script_code = ckb_hash(args.reference_script.read_bytes())
+    code_points = [mint["lock_dep"], point(mint["mint_id"], 2)]
+    lock_file = args.output / "reference-owner-lock.json"
+    write_json(lock_file, native_lock)
+
+    def sign(label, input_point, outputs, votes=None):
+        request, unsigned, context = (args.output / f"reference-{label}-{part}.json"
+                                      for part in ("build", "unsigned", "context"))
+        write_json(request, {"inputs": [{"out_point": input_point}], "outputs": outputs,
+                    "cell_deps": [dependency(p) for p in code_points]})
+        write_json(unsigned, json.loads(run(args.binary, "wallet", "build", "--request", request)))
+        if votes:
+            attached = args.output / f"reference-{label}-attached.json"
+            write_json(attached, json.loads(run(args.binary, "bridge", "attach-references",
+                "--genesis", spec_path, "--transaction", unsigned, "--observations", votes)))
+            unsigned = attached
+        write_json(context, {"cells": [signing_cell(client, p) for p in [input_point, *code_points]]})
+        encoded = json.loads(run(args.binary, "wallet", "sign", "--genesis", spec_path,
+            "--transaction", unsigned, "--context", context, "--group-index", "0",
+            "--lock", lock_file, "--key-file", fixture.owner))
+        write_json(args.output / f"reference-{label}-signed.json", encoded)
+        return encoded
+
+    part = mint["payment_capacity"] // 2
+    split = sign("split", mint["payment"], [cell(part, native_lock), cell(part - FEE, native_lock)])
+    split_tx = client.call("broadcast_tx_commit", tx=split)
+    assert split_tx["check_tx"]["code"] == 0, split_tx
+    live_input, history_input = point("0x" + split_tx["hash"], 0), point("0x" + split_tx["hash"], 1)
+    live_votes, live_file = attest("live", live_point, True)
+    old_votes, old_file = attest("historical", spent_point, False)
+    historical_live_votes, historical_live_file = attest("historical-vault", live_point, False)
+    errors = {"spent_observation": attest("spent", spent_point, True, rejected="no longer live")}
+
+    def output(record, kind, capacity):
+        policy = script(hex_bytes(script_code), hex_bytes(bytes([kind]) + ckb_hash(binary(record))), "data")
+        return [cell(capacity, native_lock, types=[policy])]
+
+    live_outputs = output(live_votes[0]["record"], 1, part - FEE)
+    errors["missing"] = reject(sign("missing", live_input, live_outputs), "exited with 13")
+    errors["wrong_kind"] = reject(sign("wrong-kind", live_input,
+        output(historical_live_votes[0]["record"], 1, part - FEE), historical_live_file), "exited with 13")
+    submit_live = sign("accepted-live", live_input, live_outputs, live_file)
+    corrupted = bytearray(binary(submit_live))
+    signature = binary(live_votes[0]["signature"])
+    offset = corrupted.index(signature)
+    corrupted[offset] ^= 1
+    errors["invalid_signature"] = reject(hex_bytes(corrupted), "Signature")
+    live_tx = client.call("broadcast_tx_commit", tx=submit_live)
+    assert live_tx["check_tx"]["code"] == 0, live_tx
+
+    l1.mine(2)
+    newer = anchor["height"] + 1
+    _, future_file = attest("other-anchor", live_point, True, newer, l1.call("get_block_hash", hex(newer)))
+    history_outputs = output(old_votes[0]["record"], 0, part - 2 * FEE)
+    errors["uncommitted_anchor"] = reject(sign("uncommitted-anchor", history_input, history_outputs, future_file),
+                                          "committed CKB anchor")
+    expiry = anchor["adopted_at"] + spec["limits"]["header_dep_age"]
+    wait_for(lambda: client.status()["height"] >= expiry, "expire the CKB live observation", seconds=65)
+    errors["stale_live"] = reject(sign("stale-live", history_input, live_outputs, live_file), "observation is stale")
+    submit_history = sign("accepted-history", history_input, history_outputs, old_file)
+    history = client.call("broadcast_tx_commit", tx=submit_history)
+    assert history["check_tx"]["code"] == 0, history
+
+    def execution(tx):
+        location = client.locations[tx["hash"]]
+        response = client.query("/stem/execution", data=hex_bytes(le(location["index"], 4)),
+                                height=location["height"], prove=True)
+        evidence = json.loads(bytes.fromhex(response["value"]))
+        raw = binary(evidence["receipt"])
+        compact = iter(raw[1:])
+
+        def number():
+            value = 0
+            for shift in range(0, 70, 7):
+                digit = next(compact)
+                value |= (digit & 127) << shift
+                if digit < 128:
+                    return value
+            raise AssertionError("oversized receipt number")
+
+        fee, cycles = number(), number()
+        assert cycles >= 12_000_000
+        return {"fee": fee, "cycles": cycles, "proof": evidence}
+
+    ancestor = l1.call("get_block_hash", hex(anchor["height"] - 1))
+    l1.call("truncate", ancestor)
+    l1.mine(spec["bridge"]["confirmations"] + 3)
+    replacement = l1.call("get_block_hash", hex(anchor["height"]))
+    assert replacement != anchor["hash"]
+    errors["reorganized_observation"] = attest("reorganized", spent_point, False, rejected="anchor was reorganized")
+    return {"anchor": anchor, "live": live_tx, "historical": history, "split": split_tx,
+            "live_execution": execution(live_tx), "historical_execution": execution(history),
+            "accepted_transaction_bytes": [len(binary(submit_live)), len(binary(submit_history))],
+            "expiry": expiry, "replacement_anchor": replacement, "rejections": errors,
+            "historical_out_point": spent_point, "historical_inclusion": historical_inclusion}
+
+
 def bridge_round(args, l1, fixture, children):
     network = hex_bytes(ckb_hash(b"Stem native Jolteon bridge fixture\0" + secrets.token_bytes(32)))
     vault = deploy(args, l1, fixture, network)
@@ -199,7 +331,9 @@ def bridge_round(args, l1, fixture, children):
     mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client)
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
-    if args.fee_funds:
+    if args.reference_script:
+        report["references"] = reference_round(args, l1, fixture, spec, spec_path, mint, client)
+    elif args.fee_funds:
         report["fee_funds"] = fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
     else:
         payout = withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
@@ -210,7 +344,7 @@ def bridge_round(args, l1, fixture, children):
         report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                      report["xudt"], spec_path, client)
     report["checkpoint"] = relay.report()
-    if not args.fee_funds:
+    if not (args.fee_funds or args.reference_script):
         report["backing"] = reconcile_backing(client, report)
         report["authenticated_ckb_outputs"] = verify_l1_output(args, l1, payout, token is not None)
     report["lane_proofs"] = {lane: lane_proof(client, lane)}
@@ -234,9 +368,12 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--validators", type=int, default=4)
     parser.add_argument("--fee-funds", action="store_true")
+    parser.add_argument("--reference-script", type=lambda path: Path(path).resolve())
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
     args = parser.parse_args()
+    if args.reference_script and (args.fee_funds or args.xudt or args.xudt_gate):
+        parser.error("--reference-script uses the native CKB lane without the fee-fund fixture")
     if bool(args.xudt) != bool(args.xudt_gate):
         parser.error("--xudt and --xudt-gate must be specified together")
     if args.fee_funds and args.xudt:
@@ -247,7 +384,9 @@ def main():
     try:
         report = bridge_round(args, l1, Fixtures(args), children)
         write_json(args.output / "jolteon-bridge-report.json", report)
-        if args.fee_funds:
+        if args.reference_script:
+            print(f"Verified historical and live-at-anchor CKB references at agreed height {report['agreed']['height']}")
+        elif args.fee_funds:
             print(f"Reconciled {len(report['fee_funds']['payouts'])} CKB fee payouts at agreed height {report['agreed']['height']}")
         else:
             print(f"Verified CKB payout {report['withdrawal']['l1_payout']} and agreed height {report['agreed']['height']}")

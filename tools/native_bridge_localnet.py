@@ -85,7 +85,10 @@ def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=Non
         funds = previous["outputs"][int(funding_point["index"], 16)]
     codes = [args.vault.read_bytes(), args.deposit_lock.read_bytes()]
     amounts = [(len(code) + 200) * CKB for code in codes]
+    reference = getattr(args, "reference_script", None)
     programs = len(args.native_lock.read_bytes()) + (len(args.wrapped.read_bytes()) if args.xudt else 0)
+    if reference:
+        programs += len(reference.read_bytes())
     funding = (programs + 20_000) * CKB
     authorization = 300 * CKB
     change = int(funds["capacity"], 16) - sum(amounts) - funding - authorization - FEE
@@ -203,6 +206,10 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
     if args.xudt:
         wrapper = args.wrapped.read_bytes()
         payloads.append(cell((len(wrapper) + 500) * CKB, lock, wrapper))
+    reference = getattr(args, "reference_script", None)
+    if reference:
+        code = reference.read_bytes()
+        payloads.append(cell((len(code) + 500) * CKB, lock, code))
     body = []
     for index, payload in enumerate(payloads):
         path = args.output / f"deposit-cell-{index}.json"

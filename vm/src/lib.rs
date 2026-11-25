@@ -54,6 +54,7 @@ pub const LOAD_GROUP_MESSAGE: u64 = 2123;
 pub const LOAD_INTENT_CONTEXT: u64 = 2124;
 pub const LOAD_LINEAGE_AUTHORIZATION: u64 = 2125;
 pub const LOAD_LINEAGE_COMMAND: u64 = 2129;
+pub const LOAD_L1_REFERENCE: u64 = 2130;
 
 #[derive(Clone)]
 struct GroupContext {
@@ -362,6 +363,15 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
             LOAD_TX_HASH_SYSCALL_NUMBER => store_data(machine, context.transaction_id.as_slice()),
             LOAD_TRANSACTION_SYSCALL_NUMBER => store_data(machine, tx.as_slice()),
             LOAD_NETWORK_ID => store_data(machine, context.tx.network_id().as_slice()),
+            LOAD_L1_REFERENCE => {
+                if source != 0 || arg != 0 {
+                    return Ok(status(machine, INDEX_OUT_OF_BOUND));
+                }
+                let Some(reference) = context.tx.l1_references().get(index) else {
+                    return Ok(status(machine, INDEX_OUT_OF_BOUND));
+                };
+                store_data(machine, reference)
+            }
             LOAD_BLOCK_CONTEXT => {
                 if source != 0 || index != 0 {
                     return Ok(status(machine, INDEX_OUT_OF_BOUND));
@@ -454,7 +464,11 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 let mut value = [0; 41];
                 value[..32].copy_from_slice(deps.as_slice());
                 value[32..40].copy_from_slice(&context.tx.fee().to_le_bytes());
-                value[40] = u8::from(tx.messages().len() != 0 || tx.keeper_action().is_some());
+                value[40] = u8::from(
+                    tx.messages().len() != 0
+                        || tx.keeper_action().is_some()
+                        || tx.l1_references().len() != 0,
+                );
                 store_data(machine, &value)
             }
             LOAD_LINEAGE_AUTHORIZATION => {

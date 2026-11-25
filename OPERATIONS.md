@@ -332,6 +332,21 @@ stem ckb-wallet verify-inclusion --transaction ckb-payout-packed.json \
 
 The result authenticates the selected output at creation. It provides no authorization to consume the output or evidence about its later spend status.
 
+### Read a CKB Cell from StemVM
+
+Query `/stem/bridge-anchor` with `prove=true` and empty data to get the accepted CKB height and hash and the Stem adoption height. Verify the path with `Store::verify_bridge_anchor` and the finalized Header. Build a request with the CKB JSON `out_point`, integer `anchor_height`, hex `anchor_hash`, and boolean `live_at_anchor`. Wait until the selected CKB anchor itself meets the configured confirmation depth. The guardian checks output inclusion and, for a live request, that unspent state is visible on a stable descendant of the requested anchor.
+
+```sh
+stem bridge attest-reference --genesis STEM_GENESIS --l1-rpc CKB_RPC \
+  --request reference.json --journal observer-journal --key-file guardian.key
+stem bridge attach-references --genesis STEM_GENESIS --transaction draft.json \
+  --observations reference-votes.json
+```
+
+Collect strictly more than two-thirds of guardian weight in the input JSON array for each requested OutPoint. Save the returned transaction and sign it through the ordinary full Lock path. Use syscall 2130 and decode its Strand `L1Reference` at index `a3`. Applications can check the observation kind, CKB genesis and anchor, OutPoint, full Molecule CellOutput and Data. If the accepted CKB anchor advances, collect signatures against the new anchor. A live record expires after the Stem Header Dep horizon measured from adoption of the anchor.
+
+Compile `stem-l1-reference` with the [RISC-V contract build flags](#build). Run `tools/jolteon_bridge_localnet.py` with the native CKB bridge options and `--reference-script /path/to/stem-l1-reference`. The fixture deposits the real sample Type Script into Stem, verifies both reference kinds, checks expiry and replaces the observed CKB fork.
+
 ### Redeem fee revenue on CKB
 
 An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.

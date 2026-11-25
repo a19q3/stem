@@ -21,7 +21,7 @@ use stem_ledger::{
     history::History,
     patricia::{Key, Namespace, Patricia, Proof},
     proof::Tree,
-    protocol::Operation,
+    protocol::{Operation, l1_reference::VerifiedL1References},
     record,
 };
 use stem_stake::jolteon::{COMMITTEE_RECORD, CommitteeChange};
@@ -1445,7 +1445,7 @@ impl Store {
                 Some(Operation::RewardClaim(claim)) => {
                     bridge.claim_reward(self, stage, tx, claim)?
                 }
-                _ => bridge.settle(self, stage, tx)?,
+                _ => bridge.settle(self, stage, tx, context.height)?,
             };
             let protocol_result = changes.protocol_result.clone();
             stage.apply(changes);
@@ -1467,6 +1467,16 @@ impl Store {
         let concrete = materialized
             .as_ref()
             .map_or(tx, |command| &command.transaction);
+        let reference_cycles = VerifiedL1References::cycles(concrete);
+        ensure!(
+            reference_cycles <= self.limits.transaction_cycles,
+            "L1 reference verification exceeds transaction cycles"
+        );
+        charge(
+            &mut next.cycles,
+            reference_cycles,
+            "block L1 reference verification cycles",
+        )?;
         let (resolved, changes) = if matches!(operation, Some(Operation::BridgeMint(_))) {
             let (bridge, stage) = self
                 .bridge
@@ -1485,13 +1495,29 @@ impl Store {
             )?;
             (resolved, changes)
         } else {
-            let resolved = ResolvedTransaction::resolve(
-                self.network.clone(),
-                concrete.clone(),
-                block,
-                fresh,
-                header,
-            )?;
+            let resolved = if reference_cycles != 0 {
+                let bridge = self
+                    .bridge
+                    .as_ref()
+                    .context("L1 references require a configured bridge")?;
+                let grant = bridge.verify_l1_references(self, concrete, context.height)?;
+                ResolvedTransaction::resolve_referenced(
+                    self.network.clone(),
+                    concrete.clone(),
+                    block,
+                    grant,
+                    fresh,
+                    header,
+                )?
+            } else {
+                ResolvedTransaction::resolve(
+                    self.network.clone(),
+                    concrete.clone(),
+                    block,
+                    fresh,
+                    header,
+                )?
+            };
             let changes = match self.bridge.as_ref().zip(bridge.as_ref()) {
                 Some((bridge, stage)) => bridge.burn(self, stage, concrete)?,
                 None => BridgeChanges::default(),
@@ -1524,9 +1550,15 @@ impl Store {
             .unwrap_or_default();
         let lineage_reads = lineage_changes.len() as u64;
         let reads = resolved.cell_reads() as u64
+            + resolved.l1_references().len() as u64
             + lineage_reads
             + materialized.as_ref().map_or(0, |command| command.reads);
         let read_bytes = resolved.resolved_cell_bytes() as u64
+            + resolved
+                .l1_references()
+                .iter()
+                .map(|record| record.len() as u64)
+                .sum::<u64>()
             + lineage_reads
                 * (lineage::KEY_BYTES + stem_ledger::lineage::Head::MAX_ENCODED_BYTES as u64)
             + materialized
@@ -1580,8 +1612,8 @@ impl Store {
         let cycle_limit = self
             .limits
             .transaction_cycles
-            .checked_sub(keeper_cycles)
-            .context("Keeper authorization exceeds transaction cycles")?
+            .checked_sub(keeper_cycles + reference_cycles)
+            .context("authorization exceeds transaction cycles")?
             .min(next.cycles);
         let cycle_limit = if tx.operation().is_none() {
             cycle_limit.min(
@@ -1594,8 +1626,8 @@ impl Store {
                         budget.write_bytes - next.write_bytes,
                         keeper_change.as_ref().map_or(0, |change| change.fee),
                     )?
-                    .checked_sub(keeper_cycles)
-                    .context("Keeper authorization exceeds paid VM cycles")?,
+                    .checked_sub(keeper_cycles + reference_cycles)
+                    .context("authorization exceeds paid VM cycles")?,
             )
         } else {
             cycle_limit
@@ -1660,7 +1692,7 @@ impl Store {
         *budget = next;
         Ok(Receipt {
             fee,
-            cycles: cycles + keeper_cycles,
+            cycles: cycles + keeper_cycles + reference_cycles,
             protocol_result,
         })
     }

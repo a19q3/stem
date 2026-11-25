@@ -12,7 +12,8 @@ use stem_ledger::{
     protocol::{
         BlockBudget, BridgeBacking, BridgeLedger, FeeClaim, FeeFund, FeeFundDestination,
         FeeFundPolicy, FeePayouts, L1Anchor, Lane, Limits, PendingWithdrawal, RewardClaim,
-        SettlementChanges, VerifiedMint, reward_balance_key, reward_claim_key,
+        SettlementChanges, VerifiedMint, l1_reference::VerifiedL1References, reward_balance_key,
+        reward_claim_key,
     },
     replay,
 };
@@ -169,7 +170,7 @@ impl Bridge {
         );
         let authority = Authority::new(spec.guardian_generation.unpack(), &spec.guardians)?;
         let mut records = Records::new();
-        records.insert(ANCHOR.to_vec(), Some(encode_anchor(&spec.anchor)));
+        records.insert(ANCHOR.to_vec(), Some(encode_anchor(&spec.anchor, 0)));
         records.insert(
             BACKING.to_vec(),
             Some(BridgeBacking::default().encode().to_vec()),
@@ -392,9 +393,10 @@ impl Bridge {
             key(LANE, &observation.vault.lane, None),
             Some(lane.encode(next_request).to_vec()),
         );
-        changes
-            .records
-            .insert(ANCHOR.to_vec(), Some(encode_anchor(&observation.anchor)));
+        changes.records.insert(
+            ANCHOR.to_vec(),
+            Some(encode_anchor(&observation.anchor, height)),
+        );
 
         let deposits = &mint.statement().deposits;
         let count = u32::try_from(deposits.len())?;
@@ -709,6 +711,7 @@ impl Bridge {
         store: &Store,
         state: &StagedBridge,
         tx: &Transaction,
+        height: u64,
     ) -> Result<BridgeChanges> {
         let view = View {
             store,
@@ -757,9 +760,10 @@ impl Bridge {
                 changes.records.insert(fund_key, None);
             }
         }
-        changes
-            .records
-            .insert(ANCHOR.to_vec(), Some(encode_anchor(&settlement.anchor)));
+        changes.records.insert(
+            ANCHOR.to_vec(),
+            Some(encode_anchor(&settlement.anchor, height)),
+        );
         changes.protocol_result = settlement.anchor.hash.as_bytes();
         Ok(changes)
     }
@@ -788,9 +792,58 @@ impl Bridge {
         );
         Ok(())
     }
+
+    pub fn verify_l1_references(
+        &self,
+        store: &Store,
+        tx: &Transaction,
+        height: u64,
+    ) -> Result<VerifiedL1References> {
+        let (anchor, adopted_at) = decode_anchor(
+            &store
+                .system_record(ANCHOR)?
+                .context("missing L1 backing anchor")?,
+        )?;
+        let age = height
+            .checked_sub(adopted_at)
+            .context("L1 anchor is newer than the transaction")?;
+        VerifiedL1References::verify(
+            tx,
+            store.network(),
+            &self.l1_genesis,
+            &anchor,
+            age <= store.limits.header_dep_age,
+            &self.authority,
+        )
+    }
 }
 
 impl Store {
+    pub fn prove_bridge_anchor(&self) -> Result<((L1Anchor, u64), super::Proof)> {
+        let (record, proof) = self.prove_system(ANCHOR)?;
+        Ok((
+            decode_anchor(&record.context("bridge is not configured")?)?,
+            proof,
+        ))
+    }
+
+    pub fn verify_bridge_anchor(
+        network: &Byte32,
+        header: &super::Header,
+        anchor: &L1Anchor,
+        adopted_at: u64,
+        proof: &super::Proof,
+    ) -> bool {
+        adopted_at <= header.context.height
+            && Self::verify_system_record(
+                network,
+                header,
+                ANCHOR,
+                Some(&encode_anchor(anchor, adopted_at)),
+                proof,
+            )
+    }
+
     pub fn prove_stake_reward_balance(&self, owner: &[u8; 32]) -> Result<(u64, super::Proof)> {
         let (record, proof) = self.prove_system(&reward_balance_key(owner))?;
         let balance = record
@@ -1029,12 +1082,7 @@ impl View<'_> {
     }
 
     fn anchor(&self) -> Result<L1Anchor> {
-        let encoded = self.read(ANCHOR)?.context("missing L1 backing anchor")?;
-        ensure!(encoded.len() == 40, "invalid L1 backing anchor");
-        Ok(L1Anchor {
-            height: u64::from_le_bytes(encoded[..8].try_into()?),
-            hash: Byte32::from_slice(&encoded[8..])?,
-        })
+        Ok(decode_anchor(&self.read(ANCHOR)?.context("missing L1 backing anchor")?)?.0)
     }
 
     fn backing(&self) -> Result<BridgeBacking> {
@@ -1102,12 +1150,23 @@ fn key(prefix: &[u8], id: &Byte32, nonce: Option<u64>) -> Vec<u8> {
     key
 }
 
-fn encode_anchor(anchor: &L1Anchor) -> Vec<u8> {
+fn encode_anchor(anchor: &L1Anchor, adopted_at: u64) -> Vec<u8> {
     let mut value = anchor.height.to_le_bytes().to_vec();
     value.extend_from_slice(anchor.hash.as_slice());
+    value.extend_from_slice(&adopted_at.to_le_bytes());
     value
 }
 
+fn decode_anchor(encoded: &[u8]) -> Result<(L1Anchor, u64)> {
+    ensure!(encoded.len() == 48, "invalid L1 backing anchor");
+    Ok((
+        L1Anchor {
+            height: u64::from_le_bytes(encoded[..8].try_into()?),
+            hash: Byte32::from_slice(&encoded[8..40])?,
+        },
+        u64::from_le_bytes(encoded[40..].try_into()?),
+    ))
+}
 fn decode_units(data: &[u8]) -> Result<u128> {
     let units = u128::from_le_bytes(
         data.try_into()

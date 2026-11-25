@@ -33,6 +33,7 @@ use crate::{
 };
 
 mod payout;
+mod reference;
 mod vault;
 
 const DEPOSIT_MEMO: &[u8] = b"STEM-PIN";
@@ -87,6 +88,10 @@ pub enum BridgeCommand {
     AttestPayout(payout::AttestPayout),
     /// Observe a confirmed L1 vault rotation or two-vault reserve adjustment.
     AttestVault(vault::AttestVault),
+    /// Observe and sign a historical output or live-at-anchor CKB reference.
+    AttestReference(reference::AttestReference),
+    /// Attach verified CKB reference certificates to an unsigned Stem transaction.
+    AttachReferences(reference::AttachReferences),
     /// Assemble a native settlement from guardian attestations.
     Settle {
         #[arg(long)]
@@ -193,6 +198,8 @@ impl BridgeCommand {
             Self::WithdrawalWitness(args) => args.run(),
             Self::AttestPayout(args) => args.run(),
             Self::AttestVault(args) => args.run(),
+            Self::AttestReference(args) => args.run(),
+            Self::AttachReferences(args) => args.run(),
             Self::Settle { observations } => payout::settlement(&observations),
             Self::Deposit {
                 genesis,
