@@ -6,7 +6,10 @@ use ed25519_dalek::Signature;
 
 use crate::{
     Attestation, Authority, DoubleVote, Error, Hash32, Liability, Member, Registry, Result,
-    StakeData, ValidatorKey, digest, public_key, retirement,
+    StakeData, ValidatorKey, digest,
+    finality::{CheckpointId, Tip},
+    patricia::decode_path,
+    public_key, retirement,
 };
 
 const EMPTY: Hash32 = [0; 32];
@@ -95,11 +98,15 @@ pub struct Policy<'a> {
     pub minimum_bond: u64,
     pub blocks_per_epoch: u64,
     pub unbonding_blocks: u64,
+    pub checkpoint: CheckpointId,
 }
 
 impl Policy<'_> {
+    pub const MIN_ARGS: usize = 185;
+    pub const MAX_ARGS: usize = 234;
+
     pub fn decode(registry_id: Hash32, args: &[u8]) -> Result<Policy<'_>> {
-        if !(121..=170).contains(&args.len()) {
+        if !(Self::MIN_ARGS..=Self::MAX_ARGS).contains(&args.len()) {
             return Err(Error::Encoding);
         }
         let policy = Policy {
@@ -109,13 +116,18 @@ impl Policy<'_> {
             minimum_bond: u64::from_le_bytes(args[96..104].try_into().unwrap()),
             blocks_per_epoch: u64::from_le_bytes(args[104..112].try_into().unwrap()),
             unbonding_blocks: u64::from_le_bytes(args[112..120].try_into().unwrap()),
-            chain_id: core::str::from_utf8(&args[120..]).map_err(|_| Error::Encoding)?,
+            checkpoint: CheckpointId {
+                code_hash: args[120..152].try_into().unwrap(),
+                type_id: args[152..184].try_into().unwrap(),
+            },
+            chain_id: core::str::from_utf8(&args[184..]).map_err(|_| Error::Encoding)?,
         };
         policy.validate()?;
         Ok(policy)
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.checkpoint.validate()?;
         if [self.registry_id, self.network_id, self.ckb_genesis].contains(&EMPTY)
             || self.chain_id.is_empty()
             || self.chain_id.len() > 50
@@ -185,7 +197,7 @@ pub enum Action<'a> {
     Increase,
     RequestExit,
     Activate(GuardianProof<'a>),
-    Retire(GuardianProof<'a>),
+    Retire { checkpoint: &'a Tip, path: &'a [u8] },
     Withdraw(&'a [u8]),
     Freeze(DoubleVote),
     FinalizeSlash,
@@ -308,7 +320,7 @@ impl ChangeContext<'_> {
                 self.verify_cell_update(before, new_cell)?;
                 self.certify(b"Stem CKB Stake activation\0", &proof)
             }
-            Action::Retire(proof) => {
+            Action::Retire { checkpoint, path } => {
                 let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
                 let (_, new_cell) = self.new.ok_or(Error::Sequence)?;
                 let expected = retirement_cell(
@@ -318,9 +330,16 @@ impl ChangeContext<'_> {
                     new_cell.first_inactive_height,
                 )?;
                 self.verify_cell_update(before, expected)?;
-                proof.verify(
-                    self.old_registry.guardian_generation,
-                    &retirement_digest(self.policy, self.old_registry, self.new_registry),
+                let effective =
+                    u64::try_from(expected.first_inactive_height).map_err(|_| Error::Epoch)?;
+                retirement::verify_marker(
+                    &self.policy.network_id,
+                    &self.policy.registry_id,
+                    &self.validator,
+                    effective,
+                    checkpoint.height(),
+                    &checkpoint.system_root(),
+                    decode_path(path)?.into_iter(),
                 )
             }
             Action::Withdraw(_) => {
@@ -430,10 +449,6 @@ pub fn retirement_cell(
         first_inactive_height: inactive,
         ..cell
     })
-}
-
-pub fn retirement_digest(policy: &Policy<'_>, old: &Registry, new: &Registry) -> Hash32 {
-    transition_digest(b"Stem CKB Stake retirement\0", policy, old, new)
 }
 
 fn matches_cell(record: Option<StakeData>, cell: Option<(StakeData, StakeCell)>) -> bool {

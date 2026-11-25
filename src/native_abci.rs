@@ -309,7 +309,7 @@ impl App {
                 let (height, proof) = store.prove_stake_retirement(validator)?;
                 serde_json::to_vec(&serde_json::json!({
                     "effective_height": height,
-                    "nodes": proof.nodes.iter().map(hex::encode).collect::<Vec<_>>(),
+                    "proof": format!("0x{}", hex::encode(proof.encode()?)),
                 }))?
                 .into()
             }

@@ -36,11 +36,12 @@ impl Key {
             Self::Retirement {
                 registry,
                 validator,
-            } => hash(
-                b"Stem retired stake\0",
-                network_id,
-                &[registry.as_slice(), validator.as_slice()],
-            ),
+            } => stem_stake::retirement::marker_key(
+                &network_id.unpack(),
+                &registry.unpack(),
+                &validator.unpack(),
+            )
+            .pack(),
         }
     }
 }

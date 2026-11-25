@@ -626,14 +626,16 @@ impl Store {
         effective: u64,
         proof: &Proof,
     ) -> bool {
-        let key = staking::retirement_key(network, registry, validator);
-        Self::verify_system_record(
-            network,
-            header,
-            key.as_slice(),
-            Some(&effective.to_le_bytes()),
-            proof,
+        stem_stake::retirement::verify_marker(
+            &network.unpack(),
+            &registry,
+            &validator,
+            effective,
+            header.context.height,
+            &header.state.system_root.unpack(),
+            proof.nodes.iter().map(Vec::as_slice),
         )
+        .is_ok()
     }
 
     fn verify_system_record(

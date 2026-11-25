@@ -1,16 +1,11 @@
-#!/usr/bin/env python3
-"""Deploy and exercise the Stake Registry on an isolated CKB dev chain."""
+"""Shared Stake Registry transactions and observations for the native devnet."""
 
-import argparse
-import hashlib
 import json
-from pathlib import Path
-import struct
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import (
-    CKB, FAUCET_ARG, FEE, Fixtures, L1, binary, ckb_hash, dependency,
+    CKB, FAUCET_ARG, FEE, binary, ckb_hash, dependency,
     hex_bytes, le, output, point, reject_cli, script, script_hash, transaction, wallet_group, write_key,
 )
 from localnet import run, write_json
@@ -18,7 +13,6 @@ from localnet import run, write_json
 EMPTY = bytes(32)
 DOMAIN = b"Stem Stake Registry\0"
 CHAIN = b"stem-stake-fixture"
-BOND = 200 * CKB
 DELAY = 20
 
 
@@ -53,19 +47,6 @@ def witness(payload):
     return hex_bytes(b"".join(le(value, 4) for value in (size, 16, 16, size, len(payload))) + payload)
 
 
-def vote(i, validator):
-    block = bytes([i + 1]) * 32
-    parts = bytes([i + 5]) * 32
-    # CometBFT 0.38.26 VoteSignBytes output for height 42, round 0 and two block IDs.
-    canonical = (
-        bytes.fromhex("730802112a0000000000000022480a20") + block
-        + bytes.fromhex("122408021220") + parts
-        + bytes.fromhex("2a080880e2cfaa0610") + bytes([13 + i])
-        + bytes.fromhex("3212") + CHAIN
-    )
-    return struct.pack("<BqiqiBI", 2, 42, 0, 1_700_000_000, 13 + i, 1, 2) + block + parts + validator.sign(canonical)
-
-
 def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False):
     commitment = EMPTY if withdrawn else ckb_hash(b"Stem CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
@@ -83,6 +64,7 @@ class Scenario:
         self.records = {}
         self.retired = set()
         self.retired_root = EMPTY
+        self.measurements = {}
         self.deploy()
 
     def deploy(self):
@@ -96,18 +78,33 @@ class Scenario:
         binary_code = self.args.stake_registry.read_bytes()
         capacity = (len(binary_code) + 200) * CKB
         funding = 12_000 * CKB
-        change = int(funds["capacity"], 16) - capacity - funding - FEE
+        checkpoint_code = self.args.direct_checkpoint.read_bytes()
+        checkpoint_capacity = (len(checkpoint_code) + 200) * CKB
+        relay_funding = 8_000 * CKB
+        change = int(funds["capacity"], 16) - capacity - funding - checkpoint_capacity - 2 * relay_funding - FEE
         self.code_hash = hex_bytes(ckb_hash(binary_code))
         deployment = transaction(
             [point(faucet["hash"], index)],
-            [output(value, self.fixture.standard) for value in (capacity, funding, change)],
-            [hex_bytes(binary_code), "0x", "0x"],
+            [output(value, self.fixture.standard) for value in (capacity, funding, change, checkpoint_capacity, relay_funding, relay_funding)],
+            [hex_bytes(binary_code), "0x", "0x", hex_bytes(checkpoint_code), "0x", "0x"],
             [self.secp],
         )
         code_tx = self.l1.send(self.sign("deploy-stake", deployment, 0))
         self.code = dependency(point(code_tx, 0))
+        checkpoint_hash = hex_bytes(ckb_hash(checkpoint_code))
+        def anchor(index):
+            return {
+                "hash": checkpoint_hash,
+                "id": ckb_hash(le(0, 8) + binary(code_tx) + le(index, 4) + le(0, 8)),
+                "code": dependency(point(code_tx, 3)), "seed": point(code_tx, index),
+                "genesis": hex_bytes(self.genesis), "network": hex_bytes(self.network),
+            }
+
+        self.checkpoint = anchor(4)
+        self.foreign_checkpoint = anchor(5)
         type_id = ckb_hash(le(0, 8) + binary(code_tx) + le(1, 4) + le(0, 8))
-        args = type_id + self.network + self.genesis + le(100 * CKB, 8) + le(10, 8) + le(DELAY, 8) + CHAIN
+        args = (type_id + self.network + self.genesis + le(100 * CKB, 8) + le(10, 8) + le(DELAY, 8)
+                + binary(self.checkpoint["hash"]) + self.checkpoint["id"] + CHAIN)
         self.registry_type = script(self.code_hash, hex_bytes(args), "data2")
         self.registry_id = script_hash(self.registry_type)
         self.lock = script(self.code_hash, hex_bytes(self.registry_id + bytes(1)), "data2")
@@ -139,7 +136,7 @@ class Scenario:
                 + b"".join(records[key][0] for key in sorted(records)))
 
     def change(self, name, number, key, new_record=None, certificate=None, fee=FEE,
-               since=0, expected=None, next_authority=None, capacity_adjustment=0):
+               since=0, expected=None, next_authority=None, capacity_adjustment=0, *, dependencies=(), measure=False):
         records = self.records.copy()
         root = self.retired_root
         path = b""
@@ -190,7 +187,7 @@ class Scenario:
         inputs.append(self.fee_point)
         outputs.append(output(change, self.fixture.standard))
         data.append("0x")
-        tx = transaction(inputs, outputs, data, [self.secp, self.code])
+        tx = transaction(inputs, outputs, data, [self.secp, self.code, *dependencies])
         if since:
             tx["inputs"][1]["since"] = hex(since)
         tx["witnesses"] = [witness(payload)]
@@ -203,6 +200,11 @@ class Scenario:
                     raise RuntimeError(f"{name} expected {expected}, got {error}") from error
                 return str(error)
             raise RuntimeError(f"CKB accepted the invalid {name} transaction")
+        if measure:
+            self.measurements[name] = {
+                "estimated_cycles": int(self.l1.call("estimate_cycles", signed["json"])["cycles"], 16),
+                "payload_bytes": len(payload), "transaction_bytes": len(binary(signed["molecule"])),
+            }
         self.registry_tx = self.l1.send(signed)
         self.sequence += 1
         self.records = records
@@ -299,170 +301,3 @@ class Scenario:
         rejected = reject_cli("Quorum", *command)
         write_json(path, votes)
         return json.loads(run(*command)), rejected
-
-    def report(self):
-        validator = Ed25519PrivateKey.from_private_bytes(
-            hashlib.sha256(b"stem staking evidence fixture").digest())
-        key = validator.public_key().public_bytes_raw()
-        assert key.hex() == "fbf590e7a87e2f4453ed292b83ab5746fd445dc7d93dfbe62cff374c742e8674"
-        owner = script_hash(self.fixture.standard)
-        zero = owner + bytes(48)
-        registered = mk_record(key, BOND, 0, None, zero)
-
-        def message(domain, old, new):
-            return signable(domain, self.network, self.genesis, self.registry_id, old, new)
-
-        def register_signature(old, new):
-            return validator.sign(message(b"Stem CKB Stake registration\0", old, new))
-
-        results = {"l1_genesis": hex_bytes(self.genesis), "registry_type": self.registry_type,
-                   "registry_hash": hex_bytes(self.registry_id), "registry_creation": self.registry_tx}
-        results["underfunded_rejected"] = self.change(
-            "underfunded", 0, key, registered, register_signature,
-            expected="ValidationFailure", capacity_adjustment=-1)
-        results["registered"] = self.change("register", 0, key, registered, register_signature)
-        results["duplicate_rejected"] = self.change(
-            "duplicate-register", 0, key, mk_record(key, BOND, 2, None, zero),
-            register_signature, expected="ValidationFailure")
-        amount = BOND + 50 * CKB
-        results["increased"] = self.change("increase", 1, key, mk_record(key, amount, 0, None, zero))
-
-        def certify(domain, limit=3):
-            return lambda old, new: proof(self.authority, message(domain, old, new), limit)
-
-        active = owner + le(1, 8) + le(0, 8) + EMPTY
-        results["activated"] = self.change(
-            "activate", 3, key, mk_record(key, amount, 0, None, active),
-            certify(b"Stem CKB Stake activation\0"))
-        results["incomplete_snapshot_rejected"] = self.observe("omitted", 0, missing=True)
-        votes = self.observe("activated", 0, count=3)
-        results["snapshot_at_activation"] = votes[0]
-        verified, quorum_reject = self.verify_genesis_snapshot(votes)
-        if verified["validators"] != [{"ed25519": hex_bytes(key), "power": amount // CKB}]:
-            raise RuntimeError("Incorrect stake-derived validator power")
-        results["verified_genesis_snapshot"] = verified
-        results["snapshot_minority_rejected"] = quorum_reject
-        results["exit_requested"] = self.change(
-            "request-exit", 2, key, mk_record(key, amount, 0, 6, active))
-        results["exit_without_retirement_rejected"] = self.change(
-            "withdraw-without-retirement", 5, key, mk_record(key, 0, 0, 6, active, True),
-            since=(1 << 63), expected="ValidationFailure")
-        penalty = ckb_hash(b"Stem CometBFT double vote\0" + self.network
-                           + le(len(CHAIN), 4) + CHAIN + key + le(42, 8) + le(0, 4) + bytes([2]))
-        frozen = owner + le(1, 8) + le(0, 8) + penalty
-        votes = vote(0, validator) + vote(1, validator)
-        frozen_record = mk_record(key, amount, 0, 6, frozen, frozen=True)
-        results["forged_vote_rejected"] = self.change(
-            "forged-votes", 6, key, frozen_record,
-            lambda *_: votes[:-1] + bytes([votes[-1] ^ 1]), expected="ValidationFailure")
-        results["frozen"] = self.change("freeze", 6, key, frozen_record, lambda *_: votes)
-        results["frozen_shannons"] = amount
-        results["snapshot_after_freeze"] = self.observe(
-            "frozen", 1, results["snapshot_at_activation"]["registry"])[0]
-        results["replay_rejected"] = self.change(
-            "replay-slash", 6, key, frozen_record, lambda *_: votes, expected="ValidationFailure")
-        results["slash_before_retirement_rejected"] = self.change(
-            "slash-before-retirement", 8, key, mk_record(key, 0, 0, 6, frozen, frozen=True),
-            fee=amount + FEE, expected="ValidationFailure")
-        retired = owner + le(1, 8) + le(61, 8) + penalty
-        retired_record = mk_record(key, amount, 0, 6, retired, frozen=True)
-        results["minority_retirement_rejected"] = self.change(
-            "minority-retirement", 4, key, retired_record,
-            certify(b"Stem CKB Stake retirement\0", 2), expected="ValidationFailure")
-        results["retired"] = self.change(
-            "retire", 4, key, retired_record, certify(b"Stem CKB Stake retirement\0"))
-        results["pending_penalty_withdrawal_rejected"] = self.change(
-            "withdraw-before-slash", 5, key, mk_record(key, 0, 0, 6, retired, True, frozen=True),
-            expected="ValidationFailure")
-        slash_record = mk_record(key, 0, 0, 6, retired, frozen=True)
-        results["unfunded_penalty_rejected"] = self.change(
-            "unfunded-penalty", 8, key, slash_record, expected="ValidationFailure")
-        results["slashed"] = self.change("slash", 8, key, slash_record, fee=amount + FEE)
-        results["slashed_shannons"] = amount
-        results["penalty_id"] = hex_bytes(penalty)
-        results["consensus_time_lock_rejected"] = self.change(
-            "ckb-delay-not-elapsed", 5, key, mk_record(key, 0, 0, 6, retired, True, frozen=True),
-            since=(1 << 63) | DELAY, expected="Immature")
-        self.l1.mine(DELAY)
-        results["withdrawn"] = self.change(
-            "withdraw", 5, key, mk_record(key, 0, 0, 6, retired, True, frozen=True),
-            since=(1 << 63) | DELAY)
-        results["reregistration_rejected"] = self.change(
-            "reregister", 0, key, registered, register_signature, expected="ValidationFailure")
-        next_authority = guardian_group(11)
-
-        def rotation(old, new):
-            digest = message(b"Stem CKB Stake authority rotation\0", old, new)
-            return proof(self.authority, digest) + proof(next_authority, digest)
-
-        results["authority_rotated"] = self.change(
-            "rotate-authority", 7, None, certificate=rotation, next_authority=next_authority)
-        old_authority, self.authority = self.authority, next_authority
-        second = Ed25519PrivateKey.from_private_bytes(bytes([90]) * 32)
-        key = second.public_key().public_bytes_raw()
-        results["second_registration"] = self.change(
-            "register-second", 0, key, mk_record(key, BOND, 7, None, zero),
-            lambda old, new: second.sign(message(b"Stem CKB Stake registration\0", old, new)))
-        activated = owner + le(71, 8) + le(0, 8) + EMPTY
-        results["departed_guardians_rejected"] = self.change(
-            "departed-guardians", 3, key, mk_record(key, BOND, 7, None, activated),
-            lambda old, new: proof(old_authority, message(b"Stem CKB Stake activation\0", old, new)),
-            expected="ValidationFailure")
-        self.change("activate-second", 3, key, mk_record(key, BOND, 7, None, activated),
-                    certify(b"Stem CKB Stake activation\0"))
-        self.change("exit-second", 2, key, mk_record(key, BOND, 7, 8, activated))
-        retired = owner + le(71, 8) + le(81, 8) + EMPTY
-        self.change("retire-second", 4, key, mk_record(key, BOND, 7, 8, retired),
-                    certify(b"Stem CKB Stake retirement\0"))
-        self.l1.mine(DELAY)
-        before = self.fee_capacity
-        _, stake_capacity = self.stake_points[key]
-        results["unslashed_withdrawal"] = self.change(
-            "withdraw-second", 5, key, mk_record(key, 0, 7, 8, retired, True),
-            since=(1 << 63) | DELAY)
-        if self.fee_capacity != before + stake_capacity - FEE:
-            raise RuntimeError("Withdrawal did not return the full Stake Cell to the owner")
-        results["unslashed_withdrawal_bonded_shannons"] = BOND
-        if self.records or len(self.retired) != 2:
-            raise AssertionError("retirement should release the Registry slots")
-        results["retired_root"] = hex_bytes(self.retired_root)
-        results["final_sequence"] = self.sequence
-        results["slash_inclusion"] = self.l1.prove_committed(results["slashed"])
-        results["withdrawal_inclusion"] = self.l1.prove_committed(results["withdrawn"])
-        observed = results["snapshot_after_freeze"]["registry"]
-        height = observed["height"]
-        self.l1.call("truncate", self.l1.call("get_block_hash", hex(height - 1)))
-        self.l1.mine(3)
-        replacement = self.l1.call("get_block_hash", hex(height))
-        if replacement == observed["block_hash"]:
-            raise AssertionError("CKB test node reproduced the original anchor")
-        results["reorganized_anchor_rejected"] = reject_cli(
-            "previous L1 anchor was reorganized",
-            self.args.binary, "stake", "observe",
-            "--request", self.args.output / "frozen-observe.json",
-            "--l1-rpc", self.l1.url,
-            "--journal", self.args.output / "stake-journal-0",
-            "--key-file", self.args.output / "stake-observer-0.key",
-        )
-        results["replacement_l1_hash"] = replacement
-        return results
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for flag in ("binary", "l1", "stake-registry", "output"):
-        parser.add_argument("--" + flag, type=lambda path: Path(path).resolve(), required=True)
-    parser.add_argument("--l1-port", type=int, default=42000)
-    args = parser.parse_args()
-    args.output.mkdir(mode=0o700, parents=True)
-    l1 = L1(args)
-    try:
-        results = Scenario(args, l1, Fixtures(args)).report()
-        write_json(args.output / "stake-round-trip.json", results)
-        print(json.dumps(results, indent=2))
-    finally:
-        l1.stop()
-
-
-if __name__ == "__main__":
-    main()

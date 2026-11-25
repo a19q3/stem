@@ -156,10 +156,29 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     drop(store);
 
     let mut store = Store::open(path.path(), &fixture.spec, Retention::Recent(4))?;
-    assert_eq!(
-        store.prove_stake_retirement(first)?.0,
-        Some(config.effective_height(1)?)
+    let effective = config.effective_height(1)?;
+    let (marker, early_proof) = store.prove_stake_retirement(first)?;
+    assert_eq!(marker, Some(effective));
+    let tree = stem_ledger::patricia::Patricia::new(
+        store.network().clone(),
+        stem_ledger::patricia::Namespace::System,
     );
+    let key =
+        stem_stake::retirement::marker_key(&domain.stem_network_id, &domain.registry_id, &first);
+    assert!(tree.verify(
+        &store.tip().state.system_root.unpack(),
+        &tree.record_key(&key),
+        Some(&tree.value_hash(&effective.to_le_bytes())),
+        &early_proof,
+    ));
+    assert!(!Store::verify_stake_retirement(
+        store.network(),
+        store.tip(),
+        domain.registry_id,
+        first,
+        effective,
+        &early_proof,
+    ));
     assert_eq!(store.prove_stake_retirement(second)?.0, None);
     for height in 3..=4 {
         let block = store.prepare(&[], TIME, true)?;
@@ -184,6 +203,31 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         assert!(block.validator_updates().is_empty());
         store.commit(block)?;
     }
+    let (_, proof) = store.prove_stake_retirement(first)?;
+    assert!(Store::verify_stake_retirement(
+        store.network(),
+        store.tip(),
+        domain.registry_id,
+        first,
+        effective,
+        &proof,
+    ));
+    assert!(!Store::verify_stake_retirement(
+        store.network(),
+        store.tip(),
+        domain.registry_id,
+        second,
+        effective,
+        &proof,
+    ));
+    assert!(!Store::verify_stake_retirement(
+        store.network(),
+        store.tip(),
+        [71; 32],
+        first,
+        effective,
+        &proof,
+    ));
     let later = StakeSnapshot {
         target_epoch: 2,
         parent: Some(new.registry),
@@ -266,7 +310,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
 }
 
 #[test]
-#[ignore = "uses actual CKB observations from tools/stake_localnet.py"]
+#[ignore = "uses actual CKB observations from tools/native_stake_localnet.py"]
 fn opens_native_genesis_from_ckb_guardian_observations() -> Result<()> {
     let evidence =
         PathBuf::from(std::env::var_os("STEM_TEST_L1_STAKE").context("stake evidence directory")?);

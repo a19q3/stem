@@ -7,14 +7,15 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash, load_cell_type,
+        load_cell_capacity, load_cell_lock, load_cell_lock_hash, load_cell_type,
         load_cell_type_hash, load_script, load_script_hash, load_witness_args,
     },
     syscalls, type_id,
 };
 use stem_bridge_wire::{self as wire, Asset, Gate};
+use stem_contracts::load_checkpoint;
 use stem_stake::{
-    finality::{CheckpointPolicy, Tip},
+    finality::CheckpointId,
     patricia::{Commitment, MAX_PATH_BYTES, Namespace, decode_path},
 };
 
@@ -26,8 +27,7 @@ const TYPE_ARGS: usize = 5 * 32;
 const LOCK_ARGS: usize = 32 + 20;
 
 struct Policy {
-    checkpoint_code: [u8; 32],
-    checkpoint_id: [u8; 32],
+    checkpoint: CheckpointId,
     ckb_genesis: [u8; 32],
     network: [u8; 32],
 }
@@ -38,38 +38,19 @@ impl Policy {
             return Err(Error::Identity);
         }
         Ok(Self {
-            checkpoint_code: args[32..64].try_into().unwrap(),
-            checkpoint_id: args[64..96].try_into().unwrap(),
+            checkpoint: CheckpointId {
+                code_hash: args[32..64].try_into().unwrap(),
+                type_id: args[64..96].try_into().unwrap(),
+            },
             ckb_genesis: args[96..128].try_into().unwrap(),
             network: args[128..160].try_into().unwrap(),
         })
     }
 
     fn system_root(&self) -> Result<[u8; 32], Error> {
-        for index in 0.. {
-            let checkpoint = match load_cell_type(index, Source::CellDep) {
-                Ok(Some(script)) => script,
-                Ok(None) => continue,
-                Err(SysError::IndexOutOfBound) => break,
-                Err(err) => return Err(err.into()),
-            };
-            if checkpoint.code_hash().as_slice() != self.checkpoint_code
-                || u8::from(checkpoint.hash_type()) != ScriptHashType::Data2 as u8
-            {
-                continue;
-            }
-            let args = checkpoint.args().raw_data();
-            let policy = CheckpointPolicy::decode(&args).map_err(|_| Error::Proof)?;
-            if policy.type_id == self.checkpoint_id
-                && policy.ckb_genesis == self.ckb_genesis
-                && policy.trust.network == self.network
-            {
-                let tip = Tip::decode(&load_cell_data(index, Source::CellDep)?)
-                    .map_err(|_| Error::Proof)?;
-                return Ok(tip.system_root());
-            }
-        }
-        Err(Error::Proof)
+        let tip = load_checkpoint(&self.checkpoint, &self.ckb_genesis, &self.network, None)?
+            .ok_or(Error::Proof)?;
+        Ok(tip.system_root())
     }
 }
 

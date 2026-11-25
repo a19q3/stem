@@ -39,6 +39,21 @@ pub struct Trust<'a> {
     pub genesis_app_hash: Hash32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CheckpointId {
+    pub code_hash: Hash32,
+    pub type_id: Hash32,
+}
+
+impl CheckpointId {
+    pub fn validate(&self) -> Result<()> {
+        if self.code_hash == [0; 32] || self.type_id == [0; 32] {
+            return Err(Error::Identity);
+        }
+        Ok(())
+    }
+}
+
 /// CKB direct checkpoint Type Script args.
 pub struct CheckpointPolicy<'a> {
     pub type_id: Hash32,

@@ -15,6 +15,7 @@ use ckb_std::{
     },
     type_id,
 };
+use stem_contracts::load_checkpoint;
 use stem_stake::{
     Attestation, DoubleVote, Hash32, MAX_RECORDS, Member, Registry, SignedVote, StakeData,
     l1::{Action, ChangeContext, GuardianProof, Policy, StakeCell, verify_rotation},
@@ -73,7 +74,7 @@ fn verify() -> Result<(), Error> {
             args[..32].try_into().unwrap(),
             args[32..].try_into().unwrap(),
         ),
-        121..=170 => verify_registry(&script, &args),
+        Policy::MIN_ARGS..=Policy::MAX_ARGS => verify_registry(&script, &args),
         _ => Err(Error::Encoding),
     }
 }
@@ -174,7 +175,7 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
         }
         1 if payload.is_empty() => context.verify(Action::Increase)?,
         2 if payload.is_empty() => context.verify(Action::RequestExit)?,
-        3 | 4 => {
+        3 => {
             let (keys, votes, rest) = read_proof(payload)?;
             if !rest.is_empty() {
                 return Err(Error::Encoding);
@@ -183,12 +184,20 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
                 committee: &keys,
                 votes: &votes,
             };
-            let action = if operation == 3 {
-                Action::Activate(proof)
-            } else {
-                Action::Retire(proof)
-            };
-            context.verify(action)?;
+            context.verify(Action::Activate(proof))?;
+        }
+        4 => {
+            let checkpoint = load_checkpoint(
+                &policy.checkpoint,
+                &policy.ckb_genesis,
+                &policy.network_id,
+                Some(policy.chain_id),
+            )?
+            .ok_or(Error::Stake)?;
+            context.verify(Action::Retire {
+                checkpoint: &checkpoint,
+                path: payload,
+            })?;
         }
         5 => context.verify(Action::Withdraw(payload))?,
         6 if payload.len() == 2 * SignedVote::SIZE => {
@@ -273,7 +282,8 @@ fn verify_stake_type(script: &Script, registry: Hash32, key: Hash32) -> Result<(
     let output = find_type(&registry, Source::Output)?.ok_or(Error::Registry)?;
     for (index, source) in [(input, Source::Input), (output, Source::Output)] {
         let registry = load_cell_type(index, source)?.ok_or(Error::Registry)?;
-        if !same_code(script, &registry) || !(121..=170).contains(&registry.args().raw_data().len())
+        if !same_code(script, &registry)
+            || !(Policy::MIN_ARGS..=Policy::MAX_ARGS).contains(&registry.args().raw_data().len())
         {
             return Err(Error::Registry);
         }

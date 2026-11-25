@@ -2,11 +2,41 @@
 
 use alloc::{collections::BTreeMap, vec::Vec};
 
-use crate::{Error, Hash32, Result, ValidatorKey, digest};
+use crate::{
+    Error, Hash32, Result, ValidatorKey, digest,
+    patricia::{Commitment, Namespace},
+};
 
 pub const EMPTY: Hash32 = [0; 32];
 const DEPTH: usize = 256;
 const BITMAP: usize = DEPTH / 8;
+
+pub fn marker_key(network: &Hash32, registry: &Hash32, validator: &ValidatorKey) -> Hash32 {
+    digest(b"Stem retired stake\0", &[network, registry, validator])
+}
+
+/// The Stem kernel writes a permanent marker during the snapshot signing
+/// window. It can only authorize L1 retirement after the handoff is active.
+pub fn verify_marker<'a>(
+    network: &Hash32,
+    registry: &Hash32,
+    validator: &ValidatorKey,
+    effective: u64,
+    finalized_height: u64,
+    root: &Hash32,
+    nodes: impl ExactSizeIterator<Item = &'a [u8]>,
+) -> Result<()> {
+    if effective == 0 || effective > finalized_height {
+        return Err(Error::Epoch);
+    }
+    let tree = Commitment::new(*network, Namespace::System);
+    let key = tree.record_key(&marker_key(network, registry, validator));
+    let value = tree.value_hash(&effective.to_le_bytes());
+    if !tree.verify(root, &key, Some(&value), nodes) {
+        return Err(Error::Anchor);
+    }
+    Ok(())
+}
 
 fn leaf(network: &Hash32, validator: &ValidatorKey) -> Hash32 {
     digest(b"Stem CKB retired validator\0", &[network, validator])

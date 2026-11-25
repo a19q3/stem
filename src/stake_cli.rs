@@ -40,8 +40,8 @@ pub enum StakeCommand {
     Observe(Observe),
     /// Authenticate a threshold-certified snapshot against a pinned network and guardian set.
     Verify(Verify),
-    /// Verify finalized Stem exclusion and authorize CKB Stake Cell retirement.
-    AuthorizeRetirement(Box<retirement::AuthorizeRetirement>),
+    /// Verify finalized Stem exclusion and build the retirement proof for CKB.
+    RetirementWitness(retirement::RetirementWitness),
     /// Build the compact absence proof for a registration or withdrawal.
     RetirementProof {
         #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
@@ -222,7 +222,7 @@ impl StakeCommand {
         match self {
             Self::Observe(args) => args.run(),
             Self::Verify(args) => args.run(),
-            Self::AuthorizeRetirement(retirement) => retirement.run(),
+            Self::RetirementWitness(retirement) => retirement.run(),
             Self::RetirementProof {
                 network,
                 validator,
