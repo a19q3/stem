@@ -813,6 +813,41 @@ The Stem escrow arguments use the original complete identity Type hash, CKB gene
 
 Approval and ownership have their own inputs and signatures. The fixture uses a single approval key under two network-specific Locks and distinct owner keys. It archives successful and rejected transactions through creation, export, CKB transfer, verified burn and restoration, including attempts to remove the independent policy or pay the remote escrow Lock.
 
+### Measure native storage and sustained payments
+
+Start a native node with `stem run --storage-metrics` to enable the
+local diagnostic query `/stem/storage-metrics`. Request the current tip
+with empty data and `prove=false`. The counters reset on process restart.
+
+The query counts successful synchronous RocksDB writes and partitions the
+serialized WriteBatch bytes by key family. It reports proposal journal,
+other consensus records, execution, Headers and history, Live Cells, system
+records, both Patricia node namespaces and batch framing. Bootstrap, journal
+writes, finality commits and snapshot restoration have separate counters.
+Sync buckets use powers of two microseconds. Bucket zero covers zero and
+one microsecond. RocksDB reports WAL bytes and syncs plus bytes written
+to flush and compaction files. WAL, SSTs and file-system activity are
+shared across key families in the atomic store.
+
+Run the sustained fixture with the local filesystem used for the test:
+
+```sh
+STEM_TEST_EVIDENCE_ROOT=/tmp/stem-storage-measurements \
+STEM_STORAGE_RATE=400 STEM_STORAGE_SECONDS=45 STEM_STORAGE_DRAIN=8 \
+cargo test --locked --release --test native_store \
+  sustained_payment_storage -- --ignored --nocapture
+```
+
+The fixture uses real signed payments, four Jolteon replicas, three 64-block
+retention nodes and one archive by default. `STEM_STORAGE_METRICS=0` runs
+the control without RocksDB statistics or per-batch instrumentation.
+The fixture preserves signed workload bytes, per-payment offer and admission
+times, per-replica status and process statistics, sampled common finality,
+the certified Header and a separate history-index process measurement.
+Set `STEM_STORAGE_REPLICAS`, `STEM_STORAGE_VM_WORKERS`,
+`STEM_STORAGE_BLOCK_CYCLES`, `STEM_STORAGE_CADENCE` or
+`STEM_STORAGE_RETENTION` to make an explicit comparison.
+
 ### Exercise the browser SDK
 
 Build the ES module and TypeScript declarations with the [SDK build

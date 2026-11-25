@@ -6,6 +6,7 @@ use std::{
     ops::Range,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
+    time::Instant,
 };
 
 use anyhow::{Context, Result, ensure};
@@ -38,6 +39,9 @@ mod lineage;
 pub use lineage::LineageProof;
 mod staking;
 mod state_snapshot;
+mod storage_metrics;
+pub use storage_metrics::StorageSample;
+use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
 
 use bridge::{Bridge, BridgeChanges, StagedBridge};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
@@ -245,6 +249,7 @@ pub enum Retention {
 
 pub struct Store {
     db: Arc<DB>,
+    metrics: Option<Arc<StorageMetrics>>,
     network: Byte32,
     chain_id: String,
     genesis_validators: Vec<([u8; 32], i64)>,
@@ -378,6 +383,15 @@ impl Prepared {
 
 impl Store {
     pub fn open(path: &Path, spec: &Spec, retention: Retention) -> Result<Self> {
+        Self::open_with_storage_metrics(path, spec, retention, false)
+    }
+
+    pub fn open_with_storage_metrics(
+        path: &Path,
+        spec: &Spec,
+        retention: Retention,
+        measured: bool,
+    ) -> Result<Self> {
         spec.validate_l1_policies()?;
         ensure!(
             spec.network != Byte32::default(),
@@ -443,7 +457,11 @@ impl Store {
         );
         let mut options = Options::default();
         options.create_if_missing(true);
+        if measured {
+            options.enable_statistics();
+        }
         let db = DB::open(&options, path)?;
+        let metrics = measured.then(|| Arc::new(StorageMetrics::new(options)));
         let network = spec.network.clone();
         let cells = Patricia::new(network.clone(), Namespace::Cells);
         let system = Patricia::new(network.clone(), Namespace::System);
@@ -604,11 +622,18 @@ impl Store {
             put_nodes(&mut batch, Namespace::System, system_nodes);
             batch.put(MARKER, genesis_id.as_slice());
             put_tip(&mut batch, &network, &genesis, &history);
-            sync(&db, &batch)?;
+            sync_with_consensus(
+                &db,
+                &batch,
+                &[],
+                &[],
+                metrics.as_deref().map(|m| (m, Purpose::Bootstrap)),
+            )?;
             genesis
         };
         Ok(Self {
             db: Arc::new(db),
+            metrics,
             network,
             chain_id: spec.chain_id.clone(),
             genesis_validators: validators,
@@ -629,6 +654,13 @@ impl Store {
             cache: Arc::new(VerificationCache::new(4096)),
             branch: Vec::new(),
         })
+    }
+
+    pub fn storage_metrics(&self) -> Result<Option<StorageSample>> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.sample())
+            .transpose()
     }
 
     pub fn tip(&self) -> &Header {
@@ -695,6 +727,7 @@ impl Store {
         }
         let view = Self {
             db: self.db.clone(),
+            metrics: self.metrics.clone(),
             network: self.network.clone(),
             chain_id: self.chain_id.clone(),
             genesis_validators: self.genesis_validators.clone(),
@@ -734,11 +767,13 @@ impl Store {
 
     pub(crate) fn persist_consensus(&self, records: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
         ensure!(self.branch.is_empty(), "cannot persist a speculative view");
-        let mut batch = Batch::default();
-        for (key, value) in records {
-            batch.put(index_key(b'j', key), value);
-        }
-        sync(&self.db, &batch)
+        sync_with_consensus(
+            &self.db,
+            &Batch::default(),
+            records,
+            &[],
+            self.metrics.as_deref().map(|m| (m, Purpose::Journal)),
+        )
     }
 
     fn system_record(&self, name: &[u8]) -> Result<Option<Vec<u8>>> {
@@ -1900,7 +1935,13 @@ impl Store {
             prepared.parent == self.tip.id(&self.network),
             "stale prepared block"
         );
-        sync_with_consensus(&self.db, &prepared.batch, records, retired)?;
+        sync_with_consensus(
+            &self.db,
+            &prepared.batch,
+            records,
+            retired,
+            self.metrics.as_deref().map(|m| (m, Purpose::Finality)),
+        )?;
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
         self.live_cache.get_mut().expect("Live Cell cache").clear();
@@ -2098,31 +2139,44 @@ impl Batch {
     }
 }
 
-fn sync(db: &DB, batch: &Batch) -> Result<()> {
-    sync_with_consensus(db, batch, &[], &[])
-}
-
 fn sync_with_consensus(
     db: &DB,
     batch: &Batch,
     records: &[(Vec<u8>, Vec<u8>)],
     retired: &[Range<Vec<u8>>],
+    measured: Option<(&StorageMetrics, Purpose)>,
 ) -> Result<()> {
     let mut raw = WriteBatch::default();
+    let mut bytes = measured.map(|_| BatchBytes::new(raw.size_in_bytes()));
     for (key, entry) in &batch.writes {
         match entry {
             Some(value) => raw.put(key, value)?,
             None => raw.delete(key)?,
         }
+        if let Some(bytes) = &mut bytes {
+            bytes.add(key, raw.size_in_bytes());
+        }
     }
     for (key, value) in records {
-        raw.put(index_key(b'j', key), value)?;
+        let key = index_key(b'j', key);
+        raw.put(&key, value)?;
+        if let Some(bytes) = &mut bytes {
+            bytes.add(&key, raw.size_in_bytes());
+        }
     }
     for range in retired {
-        raw.delete_range(index_key(b'j', &range.start), index_key(b'j', &range.end))?;
+        let start = index_key(b'j', &range.start);
+        raw.delete_range(&start, &index_key(b'j', &range.end))?;
+        if let Some(bytes) = &mut bytes {
+            bytes.add(&start, raw.size_in_bytes());
+        }
     }
     let mut options = WriteOptions::default();
     options.set_sync(true);
+    let started = measured.map(|_| Instant::now());
     db.write_opt(&raw, &options)?;
+    if let (Some((metrics, purpose)), Some(bytes), Some(started)) = (measured, bytes, started) {
+        metrics.commit(purpose, bytes, started.elapsed());
+    }
     Ok(())
 }

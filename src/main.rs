@@ -102,6 +102,9 @@ enum Command {
         archive: bool,
         #[arg(long, default_value_t = 256)]
         history_window: u64,
+        /// Collect local WriteBatch and RocksDB counters for the storage metrics query.
+        #[arg(long)]
+        storage_metrics: bool,
     },
     /// Export the trusted genesis and initial Jolteon committee for light clients.
     JolteonTrust {
@@ -310,6 +313,7 @@ fn main() -> Result<()> {
             initialize,
             archive,
             history_window,
+            storage_metrics,
         } => {
             let spec = native_spec::load(&genesis)?;
             let config = bridge_cli::read_json_limited(&configuration, 64 * 1024)?;
@@ -322,10 +326,11 @@ fn main() -> Result<()> {
                 metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
                 "application home must be a private directory with mode 0700"
             );
-            let store = stem::native_store::Store::open(
+            let store = stem::native_store::Store::open_with_storage_metrics(
                 &home.join("db"),
                 &spec,
                 node_retention(archive, history_window),
+                storage_metrics,
             )?;
             stem::jolteon::run(store, key, config, initialize)
         }

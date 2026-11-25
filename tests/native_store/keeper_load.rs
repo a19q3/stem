@@ -105,7 +105,7 @@ struct Observation {
 }
 
 #[derive(Serialize)]
-struct ProcessStats {
+pub(super) struct ProcessStats {
     cpu_ticks: u64,
     write_bytes: u64,
     resident_kib: u64,
@@ -360,6 +360,34 @@ fn start_network(
     output: &Path,
     count: usize,
 ) -> Result<(Vec<Process>, Vec<Client>)> {
+    start_network_configured(
+        fixture,
+        output,
+        count,
+        NetworkOptions {
+            interval_ms: 250,
+            timeout_ms: 2400,
+            vm_workers: 2,
+            history_window: None,
+            storage_metrics: false,
+        },
+    )
+}
+
+pub(super) struct NetworkOptions {
+    pub interval_ms: u64,
+    pub timeout_ms: u64,
+    pub vm_workers: usize,
+    pub history_window: Option<u64>,
+    pub storage_metrics: bool,
+}
+
+pub(super) fn start_network_configured(
+    fixture: &mut Fixture,
+    output: &Path,
+    count: usize,
+    options: NetworkOptions,
+) -> Result<(Vec<Process>, Vec<Client>)> {
     let mut keys = (1..=count)
         .map(|seed| SigningKey::from_bytes(&[seed as u8; 32]))
         .collect::<Vec<_>>();
@@ -383,7 +411,8 @@ fn start_network(
     fs::write(
         &configuration,
         serde_json::to_vec_pretty(&json!({
-            "peers": peers, "view_timeout_ms": 2400, "proposal_interval_ms": 250, "vm_workers": 2,
+            "peers": peers, "view_timeout_ms": options.timeout_ms,
+            "proposal_interval_ms": options.interval_ms, "vm_workers": options.vm_workers,
         }))?,
     )?;
     drop(listeners);
@@ -394,7 +423,7 @@ fn start_network(
         fs::set_permissions(&key_file, fs::Permissions::from_mode(0o600))?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_stem"));
         command
-            .args(["run", "--initialize", "--archive", "--home"])
+            .args(["run", "--initialize", "--home"])
             .arg(output.join(format!("node-{index}")))
             .arg("--configuration")
             .arg(&configuration)
@@ -402,6 +431,17 @@ fn start_network(
             .arg(&spec)
             .arg("--key-file")
             .arg(key_file);
+        match options.history_window.filter(|_| index + 1 != count) {
+            Some(window) => {
+                command.arg("--history-window").arg(window.to_string());
+            }
+            None => {
+                command.arg("--archive");
+            }
+        }
+        if options.storage_metrics {
+            command.arg("--storage-metrics");
+        }
         replicas.push(Process::spawn(
             &mut command,
             &output.join(format!("node-{index}.log")),
@@ -520,11 +560,11 @@ fn elapsed(start: Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
 
-fn statuses(clients: &[Client]) -> Result<Vec<Status>> {
+pub(super) fn statuses(clients: &[Client]) -> Result<Vec<Status>> {
     clients.iter().map(Client::status).collect()
 }
 
-fn wait_common(clients: &[Client], height: u64) -> Result<()> {
+pub(super) fn wait_common(clients: &[Client], height: u64) -> Result<()> {
     poll("common Keeper load height", Duration::from_secs(30), || {
         Ok(statuses(clients)?
             .iter()
@@ -589,7 +629,7 @@ fn observe(
     Ok(records)
 }
 
-fn transactions(client: &Client, height: u64) -> Result<Vec<String>> {
+pub(super) fn transactions(client: &Client, height: u64) -> Result<Vec<String>> {
     let result = client.query("/stem/transactions", height, &[], false)?;
     Ok(serde_json::from_slice(&result.value)?)
 }
@@ -630,7 +670,7 @@ fn execution(
     Ok((receipt, evidence))
 }
 
-fn stats(pid: u32) -> Result<ProcessStats> {
+pub(super) fn stats(pid: u32) -> Result<ProcessStats> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
     let fields = stat
         .rsplit_once(')')

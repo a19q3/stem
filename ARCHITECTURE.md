@@ -183,6 +183,13 @@ The bridge anchor record commits CKB height and hash plus the Stem adoption heig
 
 A fee-exempt `L1AnchorUpdate` lets the bridge guardian quorum advance the anchor during periods without deposits or settlements. It uses a distinct signing domain and shares the bridge guardian journal for reorg detection. Each update extends the exact accepted predecessor and charges its separate operation, byte and signature budget. Only the anchor record changes. Vault OutPoints, reserve accounting and nonce state remain stable. A transaction can read the new anchor once it is in the parent state.
 
+The optional native storage metrics query classifies bytes in each actual
+RocksDB WriteBatch before its shared synchronous commit. It also exposes
+RocksDB WAL, flush and compaction counters for the database as a whole.
+Measurements are local to a process and the sync boundary stays identical.
+The separate history index can be measured in its own process.
+[Storage experiment and RPC](OPERATIONS.md#measure-native-storage-and-sustained-payments)
+
 ## Browser verification
 
 The browser SDK links the same Strand transaction codec, Patricia and receipt

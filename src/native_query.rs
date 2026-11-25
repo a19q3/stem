@@ -20,6 +20,16 @@ pub(crate) fn query(
     let tip = store.tip().context.height;
     let requested = if height == 0 { tip } else { height };
     let value = match path {
+        "/stem/storage-metrics" if !prove && data.is_empty() => {
+            ensure!(
+                requested == tip,
+                "storage metrics describe the local process at its tip"
+            );
+            let metrics = store
+                .storage_metrics()?
+                .context("storage metrics are disabled")?;
+            serde_json::to_vec(&metrics)?.into()
+        }
         "/stem/lineage" if prove => {
             ensure!(
                 requested == tip,
