@@ -156,6 +156,12 @@ application event. Both share the replica's execution loop. The
 transport still uses the canonical Frame and the replica verifies the
 same signatures and state transitions.
 
+Admission checks individual transactions against the finalized tip.
+The receiver computes the full witnessed wire digest once and reuses
+it for deduplication and the client reply. Node status records client
+and relayed requests, checks performed against the Store and the
+elapsed time in those checks.
+
 The application includes the next epoch, activation height and ordered roster in the authenticated `stake/announced` record at height `A−2`. The final execution height for the outgoing validators is `A−1`. Before starting the successor, the old epoch certifies an adjacent parent and seal pair. The seal commits the same boundary Header in a separate domain. After a timeout, the seal can extend an earlier seal for that boundary, preserving the adjacent-view finality rule. Only executed blocks advance the Header history. The boundary execution, handoff proof and new vote journal commit in one RocksDB batch. Signed handoffs and certified payloads remain available to a replica that rejoins across a committee change.
 
 A pair of conflicting signed votes at one view is portable evidence. Collectors retain pairs they observe. A CKB slashing witness authenticates the historical committee from its epoch anchor and opens the closing height under the live checkpoint's SystemRoot. Epoch 0 uses the genesis roster commitment. Later epochs use a Patricia roster path and the MMR inclusion of their boundary Header. The contract verifies both votes, the validator key, signer index, epoch, view, distinct points and the applicable execution heights. The authenticated epoch closing height and the Stake Cell's liability interval both constrain admissible votes. An open epoch uses an absence proof. The native network uses independent Ed25519 signatures and bitmap QCs. The BLS experiment keeps individual signatures for evidence.

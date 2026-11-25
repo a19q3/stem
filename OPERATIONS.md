@@ -901,6 +901,17 @@ uses it for the history index. Status samples include current and high
 views, observed timeout certificates, and the most recent view whose
 proposal failed the local timestamp window.
 
+The `admission` status counters report client requests, received
+transaction relays, Store checks and accumulated check microseconds.
+Use start and end deltas in load tests. The fixed-state comparison
+isolates verification of signed AMM commands over a single tip.
+
+```sh
+STEM_ADMISSION_REPORT=/tmp/stem-admission.json \
+cargo test --locked --release --test native_store \
+  measure_lineage_admission_groups -- --ignored --nocapture
+```
+
 To measure only proposal selection against an exhausted read budget,
 run the fixed-queue test. For checkout comparisons use the same
 directory of prebuilt RISC-V contracts in both runs.

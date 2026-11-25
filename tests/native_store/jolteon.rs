@@ -94,7 +94,12 @@ fn concurrent_admission_checks_each_signed_wire_identity() -> Result<()> {
     for client in &clients {
         assert_eq!(client.header(height)?, expected);
     }
-    assert!(values[0].admission.context("admission metrics")?.requests >= 12);
+    let admission = values[0].admission.context("admission metrics")?;
+    assert_eq!(admission.client_requests, 12);
+    assert!(
+        admission.checks <= 7,
+        "valid duplicates should use the admitted entry"
+    );
     Ok(())
 }
 

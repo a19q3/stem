@@ -28,26 +28,16 @@ pub struct Incoming {
     pub reply: Option<oneshot::Sender<Vec<u8>>>,
 }
 
-impl Incoming {
-    pub(super) fn is_admission(&self) -> bool {
-        matches!(self.frame.kind, wire::RELAY_TX | wire::SUBMIT)
-    }
-}
-
 pub(super) struct Inbox {
     control: mpsc::Receiver<Incoming>,
     application: mpsc::Receiver<Incoming>,
     burst: usize,
-    deferred: Option<Incoming>,
 }
 
 impl Inbox {
     pub(super) async fn recv(&mut self) -> Option<Incoming> {
         if self.burst == CONTROL_BURST
-            && let Some(event) = self
-                .deferred
-                .take()
-                .or_else(|| self.application.try_recv().ok())
+            && let Ok(event) = self.application.try_recv()
         {
             self.burst = 0;
             return Some(event);
@@ -58,33 +48,12 @@ impl Inbox {
                 self.burst = (self.burst + 1).min(CONTROL_BURST);
                 Some(event)
             }
-            Some(event) = async {
-                if let Some(event) = self.deferred.take() {
-                    Some(event)
-                } else {
-                    self.application.recv().await
-                }
-            } => {
+            Some(event) = self.application.recv() => {
                 self.burst = 0;
                 Some(event)
             }
             else => None,
         }
-    }
-
-    pub(super) fn admission_group(&mut self, first: Incoming, limit: usize) -> Vec<Incoming> {
-        let mut group = vec![first];
-        while group.len() < limit && self.control.is_empty() && self.deferred.is_none() {
-            let Ok(event) = self.application.try_recv() else {
-                break;
-            };
-            if !event.is_admission() {
-                self.deferred = Some(event);
-                break;
-            }
-            group.push(event);
-        }
-        group
     }
 }
 
@@ -168,7 +137,6 @@ impl Network {
                 control,
                 application,
                 burst: 0,
-                deferred: None,
             },
         ))
     }
@@ -328,7 +296,6 @@ mod tests {
             control,
             application,
             burst: 0,
-            deferred: None,
         };
         let event = |kind| Incoming {
             frame: Frame {
@@ -380,50 +347,6 @@ mod tests {
         assert_eq!(
             (frame.sender, frame.epoch, frame.kind, frame.body),
             (0, 3, wire::QUORUM, vec![2, 3])
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn admission_groups_stop_for_queries_and_control() -> Result<()> {
-        let (control_tx, control) = mpsc::channel(1);
-        let (app_tx, application) = mpsc::channel(4);
-        let mut inbox = Inbox {
-            control,
-            application,
-            burst: 0,
-            deferred: None,
-        };
-        let event = |kind| Incoming {
-            frame: Frame {
-                kind,
-                ..Frame::default()
-            },
-            reply: None,
-        };
-        app_tx.try_send(event(wire::SUBMIT))?;
-        app_tx.try_send(event(wire::STATUS))?;
-        app_tx.try_send(event(wire::RELAY_TX))?;
-        let group = inbox.admission_group(event(wire::RELAY_TX), 4);
-        assert_eq!(
-            group.iter().map(|e| e.frame.kind).collect::<Vec<_>>(),
-            [wire::RELAY_TX, wire::SUBMIT]
-        );
-        assert_eq!(
-            inbox.recv().await.context("deferred status")?.frame.kind,
-            wire::STATUS
-        );
-
-        control_tx.try_send(event(wire::QUORUM))?;
-        let group = inbox.admission_group(event(wire::SUBMIT), 4);
-        assert_eq!(group.len(), 1);
-        assert_eq!(
-            inbox.recv().await.context("quorum")?.frame.kind,
-            wire::QUORUM
-        );
-        assert_eq!(
-            inbox.recv().await.context("queued relay")?.frame.kind,
-            wire::RELAY_TX
         );
         Ok(())
     }

@@ -20,6 +20,14 @@ pub struct Client {
     timeout: Duration,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct AdmissionMetrics {
+    pub client_requests: u64,
+    pub relayed_requests: u64,
+    pub checks: u64,
+    pub verification_us: u64,
+}
+
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct Status {
     pub height: u64,
@@ -41,7 +49,7 @@ pub struct Status {
     pub invalid_messages: u64,
     pub mempool_transactions: usize,
     pub mempool_bytes: usize,
-    pub admission: Option<super::AdmissionMetrics>,
+    pub admission: Option<AdmissionMetrics>,
 }
 
 #[derive(Debug, Deserialize)]
