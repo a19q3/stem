@@ -163,28 +163,59 @@ The result authenticates the selected output at creation. It provides no authori
 ## Exercise the CKB Stake Registry
 
 ```sh
-python3 tools/stake_localnet.py \
-  --binary target/release/stem --l1 /path/to/ckb \
-  --stake-registry "$contracts_dir/stake-registry" --output target/stem-runs/ckb-stake
 python3 tools/native_stake_localnet.py \
   --binary target/release/stem --l1 /path/to/ckb --comet target/stem-tools/cometbft \
-  --stake-registry "$contracts_dir/stake-registry" \
+  --stake-registry "$contracts_dir/stake-registry" --direct-checkpoint "$contracts_dir/direct-checkpoint" \
   --proof-verifier target/stem-tools/stem-proof --output target/stem-runs/native-stake
 ```
 
-The first runner checks the L1 contract's registration, increase, freeze, retirement, penalty, withdrawal and guardian rotation. The second uses actual L1 observations to initialize a CometBFT committee, add and remove a validator at H+2, verify both signed handoffs, and unbond the removed validator. Use the emitted evidence directories to inspect transaction proofs and exact block heights.
+The runner registers and increases CKB bonds, rotates snapshot guardians,
+verifies both actual CometBFT handoffs at H+2, retires an excluded key with
+the direct checkpoint and exercises delayed withdrawal. Add `--slash`
+to freeze and slash a fixture bond on CKB. That run verifies one precommit
+recorded by CometBFT and a local conflicting nil precommit for the same
+slot. The latter stays in the CKB test evidence. Use the emitted
+directory for proof bundles and exact CKB inclusion heights. Keep the
+absolute output path short enough for the local ABCI Unix sockets.
 
 Use `stem stake retirement-proof` with the retired public keys from confirmed CKB Registry history. Compare its returned root with the current Registry Cell. A registration supplies the absence proof after the 64-byte registration signature. A delayed withdrawal supplies the proof as its operation payload and installs the returned next root. The L1 Stake Cell and Registry are consumed atomically. The old public key stays retired after the active slot is released.
 
-`stem stake authorize-retirement` signs the next Registry state after checking an authenticated `/stem/stake-retirement` proof, the signed successor's committee, and the actual CKB Stake Cell. The L1 Stake Registry accepts the certificate only from the current guardian quorum. For a change of guardians, `stem stake observe` accepts the previous confirmed Registry OutPoint and outgoing committee in the rotation request. Collect observations from both sets before submitting the native snapshot.
+Query `/stem/stake-retirement` at the current height with `prove=true`
+and the 32-byte validator public key as data. Save its decoded response
+value and the native Header at its height. Advance the Registry's
+direct checkpoint to this Header using the signed CometBFT successor.
+Build the canonical Patricia path with the following command.
+
+```sh
+stem stake retirement-witness --genesis STEM_GENESIS --validator VALIDATOR_PUBLIC_KEY \
+  --header AUTHENTICATED_HEADER.json --marker RETIREMENT_QUERY_VALUE.json
+```
+
+Consume the current Registry and Stake Cells together. The Registry
+input's CKB `WitnessArgs.input_type` holds operation byte `0x04`, the
+32-byte validator public key and the returned path. Reference the live
+direct checkpoint as a Cell Dep and put the proved effective height in
+the updated Stake Cell. The validator's owner still authorizes withdrawal
+using the configured relative block delay.
+
+Stake Registry Type Script args encode its 32-byte CKB Type ID, 32-byte
+Stem network, 32-byte CKB genesis, three little-endian u64 values for
+minimum bond, blocks per epoch and unbonding delay, the direct checkpoint
+code hash and Type ID, and the CometBFT chain ID. Reserve the checkpoint
+seed OutPoint and output index before deriving the Registry identity
+and roll the exact resulting Stem genesis into the checkpoint bootstrap.
+Control the seed until the checkpoint has been initialized with that
+genesis. Snapshot guardians still authorize activation and attest CKB
+observations. For rotation, provide the previous confirmed Registry
+OutPoint and outgoing committee to `stem stake observe`, then submit
+observations from both sets.
 
 To benchmark during committee changes, add the following flags to the native stake runner. The runner makes a real CKB deposit, mints native Capacity, splits it into independent payment inputs and signs each payment before the timed window. The optional workload uses two same-host replicas with a three-second commit wait. The window includes both validator updates.
 
 ```sh
 --loadgen target/stem-tools/stem-loadgen \
   --vault "$contracts_dir/vault-type" --deposit-lock "$contracts_dir/deposit-lock" \
-  --native-lock "$contracts_dir/stem-lock" --wrapped "$contracts_dir/bridge-udt" \
-  --direct-checkpoint "$contracts_dir/direct-checkpoint"
+  --native-lock "$contracts_dir/stem-lock" --wrapped "$contracts_dir/bridge-udt"
 ```
 
 ## Exercise CKB Checkpoint publication

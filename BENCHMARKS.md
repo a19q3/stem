@@ -739,3 +739,52 @@ This is a low-rate shared-host regression. The
 [raw stake evidence](benchmarks/2026-11-25-stem-bridge-funded-stake-rerun.json.xz)
 preserves both attempts, the error, the workload, measured events and
 the public chain evidence.
+
+## Direct CKB stake retirement
+
+The Stake Registry was exercised on CKB 0.210.0 devnet with two local
+Stem replicas and CometBFT 0.38.26. The epoch-2 snapshot wrote a permanent
+retirement marker at Stem height 16. The old validator was still active at
+height 20 and excluded at height 21. CKB rejected the authenticated
+height-16 marker and accepted a fresh proof at height 34. The Registry pins
+the exact checkpoint code hash and Type ID.
+
+The final runs paid the retirement transaction from a different CKB Lock
+than the stake owner's. Only the owner could withdraw when the relative
+20-block delay elapsed. One run returned the full 250 CKB bond. The slash
+run froze and forfeited 250 CKB after retirement, then released the
+remaining Cell collateral. The double vote used one precommit from a
+live CometBFT commit and one offline nil precommit at the same vote
+position, both with valid canonical signatures.
+
+| Final round | Operation | Witness payload bytes | Full CKB transaction bytes | Estimated CKB cycles |
+| --- | --- | ---: | ---: | ---: |
+| Owner withdrawal | Prove retirement | 412 | 1,999 | 2,102,585 |
+| Owner withdrawal | Unbond | 65 | 1,166 | 4,192,318 |
+| Double vote | Freeze | 349 | 1,899 | 6,034,842 |
+| Double vote | Prove retirement | 514 | 2,101 | 2,113,320 |
+| Double vote | Finalize slash | 33 | 1,583 | 1,962,072 |
+| Double vote | Withdraw storage collateral | 65 | 1,166 | 4,217,194 |
+
+These are complete CKB transaction estimates including fee-input script
+verification. The witness payload also includes the operation byte and
+validator key. The two retirement proofs have different Patricia path
+lengths. CKB rejected the wrong checkpoint Type ID, a missing checkpoint,
+a modified path, a guardian certificate, a replay, and early or
+unauthorized withdrawal. The guardian journal rejected an observed CKB
+anchor after a real devnet reorganization in both final runs. Inclusion
+evidence was captured before that test reorganization.
+
+A separate funded run confirmed all 384 payments on both replicas at
+7.58 TPS including drain. The offered rate was 8 TPS and p99 visibility
+was 3.854 seconds. This low-load regression exercised both committee
+updates with real L1 backing. The bridge runner also completed native
+CKB and xUDT payouts with the shared checkpoint reader.
+
+The [runbook](OPERATIONS.md#exercise-the-ckb-stake-registry) gives the
+reproduction commands. The [raw retirement archive](benchmarks/2026-11-25-stem-direct-retirement.json.xz)
+preserves the six successful runs and five fixture failures. It includes
+the observed heads and proof payloads, both canonical precommits, signed
+CKB transactions, observer evidence, test summaries and executable
+fingerprints. Two failures came from long Unix socket paths. Three came
+from the CKB-versus-Stem anchor fields in the reorganization fixture.

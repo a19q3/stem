@@ -22,5 +22,6 @@ available. Published network evidence contains public genesis and proof data.
 | Direct CKB finality and scaled committee verification | [Report](../BENCHMARKS.md#direct-ckb-finality), [initial rounds](2026-11-25-stem-direct-finality.json.xz), [pagination rerun](2026-11-25-stem-direct-finality-pagination.json.xz) |
 | Direct CKB and xUDT withdrawals | [Report](../BENCHMARKS.md#direct-bridge-withdrawals), [evidence](2026-11-25-stem-direct-payout.json.xz) |
 | CKB-funded committee change regression | [Report](../BENCHMARKS.md#ckb-funded-committee-regression), [evidence](2026-11-25-stem-bridge-funded-stake-rerun.json.xz) |
+| Direct CKB stake retirement, delayed withdrawal and slashing | [Report](../BENCHMARKS.md#direct-ckb-stake-retirement), [evidence](2026-11-25-stem-direct-retirement.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

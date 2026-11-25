@@ -20,9 +20,9 @@
 | 12 | OTX / Intent | 已实现配对部分授权、唯一交付和 CLI 重组。两种真实 RISC-V UDT 已在四副本网络原子交换。当前签名锁定精确 OutPoint、单 Cell 交付、共同依赖及空 Group Messages，Lineage 动态命令已支持预签目标、版本、Executor 和载荷，双边业务签名可在选择 Sponsor 之前并行采集。通用 Action 授权与跨命令 Solver 重组尚待实现。 |
 | 13 | Fee Sponsorship | 完整交易支持独立代付锁组。配对 OTX 支持预签一笔纯 Capacity 代付，绑定指定业务配对并限制扣款。四副本已验证。Lineage 支持独立的纯 Capacity 扣费授权及固定退款 Lock。Keeper 已复用固定退款 Lock 和单独签名的执行费 Cell。独立业务参与者与代付方已分别授权，覆盖费用上限、精确版本防重放、双资产双边成交和 Keeper 续接。通用 Solver 批量重组仍待实现。 |
 | 14 | 多维资源计费 | 已实现 genesis 费率、计费和缓存一致性测试。当前收费按交易容量差额冲销负债。系统操作继续走独立资源预算。 |
-| 15 | 开放委托质押 | CKB devnet 重新验证自质押和委员会变更。尚无委托份额、收益或责任分摊。 |
+| 15 | 开放委托质押 | CKB devnet 复验自质押、委员会变更、直接退休和双签罚没。尚无委托份额、收益或责任分摊。 |
 | 16 | DevFund / Ecosystem Fund | SystemRoot 认证手续费冲销总额，也认证已观察的 CKB 储备、流通负债及待兑余额。实际 CKB 和 xUDT 往返后对账通过。逐金库收入归属、分配份额、可兑付应付款及授权支出待实现。 |
-| 17 | CKB 直接验证 Stem 最终性 | 直接检查点合约验证 CometBFT 签名、完整区块链接、委员会交接和 Stem 执行头。实际 CKB devnet 确认五次发布，覆盖三次委员会变化并拒绝六种无效提交。4–128 委员的 Ed25519 成本另由 CKB-VM 探针测量。CKB 与 xUDT 已使用已认证 SystemRoot 的待付记录在 CKB 无许可兑付。退休及通用跨链消息仍待接入直接检查点。 |
+| 17 | CKB 直接验证 Stem 最终性 | 直接检查点合约验证 CometBFT 签名、完整区块链接、委员会交接和 Stem 执行头。实际 CKB devnet 确认五次发布，覆盖三次委员会变化并拒绝六种无效提交。4–128 委员的 Ed25519 成本另由 CKB-VM 探针测量。CKB 与 xUDT 已使用已认证 SystemRoot 的待付记录在 CKB 无许可兑付。退休也由 CKB 合约直接验证已生效的 SystemRoot 标记，已测正常退还与双签罚没。通用跨链消息仍待接入。 |
 | 18 | Intercell Messaging | CKB 和 xUDT 通道已实跑无许可兑付中继，Stem 仍经 guardians 认证 CKB 确认与核销。通用跨链消息及反向证明认证待实现。 |
 | 19 | L1 Cell Reference | Rust 与 CLI 可使用可信 CKB Header、交易与见证 Merkle 路径独立验证历史输出。CKB devnet 用实际兑付和已消费的金库输出验证历史查询。StemVM 只读引用与锚点存活认证仍待实现。 |
 | 20 | UDT / Spore 结算 | CKB 与 xUDT 双向路径已用实际 devnet 复验。Stem 原生 UDT 和 Spore 导出需独立身份、生命周期和供应规则。 |

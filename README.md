@@ -8,7 +8,7 @@ May the Cells grow.
 
 Stem is a standalone Rust network with a Polytype Cell Model. A Cell has one Lock Script and any number of Type Scripts within protocol limits. Stem derives the required Script Groups from the consumed and created Cells, and runs them in StemVM on its vendored CKB-VM backend. CometBFT orders transactions and certifies the application state.
 
-Stem uses CKB capacity. A threshold-certified bridge backs spendable Capacity and wrapped xUDT with reserves on CKB L1. Validator power can come from a separate CKB Stake Registry. New networks commit to their own identity and genesis.
+Stem uses CKB capacity. A threshold-certified bridge backs spendable Capacity and wrapped xUDT with reserves on CKB L1. Validator power can come from a separate CKB Stake Registry, which verifies finalized Stem exclusion before starting the CKB unbonding period. New networks commit to their own identity and genesis.
 
 The `stem run` executable uses the Strand ledger, group-indexed messages and Witnesses, authenticated RocksDB state and state sync. Devnet runs cover four-validator finality and restart, remote state sync, bidirectional CKB and xUDT, L1-derived validator addition and removal, and Checkpoint Type ID publications on CKB. The bridge guardians audit the confirmed CKB chain for mint and reconciliation. Anyone can relay a pending withdrawal proof to CKB against the vault's direct checkpoint. Custody authorizes consolidation, reserve moves and rotation. Stake and custody have independent authorization. The [direct checkpoint contract](OPERATIONS.md#exercise-the-direct-ckb-checkpoint) also verifies signed CometBFT headers and committee changes on CKB, allowing anyone to relay a contiguous proof.
 
