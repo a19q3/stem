@@ -468,6 +468,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
     let record = StakeData {
         validator_pubkey: members[0].key,
         bonded_amount: 200,
+        delegated_amount: 50,
         activation_epoch: 0,
         exit_epoch: None,
         frozen: false,
@@ -552,7 +553,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         committee,
         vec![Member {
             key: record.validator_pubkey,
-            power: 20
+            power: 25
         }]
     );
     assert!(

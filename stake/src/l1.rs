@@ -13,6 +13,59 @@ use crate::{
 const EMPTY: Hash32 = [0; 32];
 pub const RELATIVE_BLOCKS: u64 = 1 << 63;
 pub const MAX_DELAY: u64 = (1 << 56) - 1;
+pub const BOND_DELEGATION: u8 = 9;
+pub const WITHDRAW_DELEGATION: u8 = 10;
+pub const SLASH_DELEGATION: u8 = 11;
+
+/// A delegation uses a native Type ID bound to its own CKB creation input and output index.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DelegationId {
+    pub registry: Hash32,
+    pub validator: ValidatorKey,
+    pub owner: Hash32,
+    pub nonce: Hash32,
+}
+
+impl DelegationId {
+    pub const NONCE_OFFSET: usize = 96;
+    pub const SIZE: usize = Self::NONCE_OFFSET + 32;
+
+    pub fn decode(args: &[u8]) -> Result<Self> {
+        if args.len() != Self::SIZE {
+            return Err(Error::Encoding);
+        }
+        let id = Self {
+            registry: args[..32].try_into().unwrap(),
+            validator: args[32..64].try_into().unwrap(),
+            owner: args[64..96].try_into().unwrap(),
+            nonce: args[96..].try_into().unwrap(),
+        };
+        if [id.registry, id.validator, id.owner, id.nonce].contains(&EMPTY) {
+            return Err(Error::Identity);
+        }
+        Ok(id)
+    }
+
+    pub fn encode(self) -> [u8; Self::SIZE] {
+        let mut bytes = [0; Self::SIZE];
+        for (field, value) in
+            bytes
+                .chunks_exact_mut(32)
+                .zip([self.registry, self.validator, self.owner, self.nonce])
+        {
+            field.copy_from_slice(&value);
+        }
+        bytes
+    }
+}
+
+pub fn delegation_amount(data: &[u8]) -> Result<u64> {
+    let amount = u64::from_le_bytes(data.try_into().map_err(|_| Error::Encoding)?);
+    if amount == 0 {
+        return Err(Error::Encoding);
+    }
+    Ok(amount)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StakeCell {
@@ -231,26 +284,10 @@ impl ChangeContext<'_> {
         if next_root != self.new_registry.retired_root {
             return Err(Error::Sequence);
         }
-        let stake_data = |registry: &Registry| {
-            registry
-                .records
-                .binary_search_by_key(&self.validator, |stake| stake.validator_pubkey)
-                .ok()
-                .map(|index| registry.records[index])
-        };
         let (old_record, new_record) =
-            (stake_data(self.old_registry), stake_data(self.new_registry));
-        if old_record == new_record
-            || !self
-                .old_registry
-                .records
-                .iter()
-                .filter(|stake| stake.validator_pubkey != self.validator)
-                .eq(self
-                    .new_registry
-                    .records
-                    .iter()
-                    .filter(|stake| stake.validator_pubkey != self.validator))
+            verify_subject(self.old_registry, self.new_registry, &self.validator)?;
+        if old_record.map_or(0, |stake| stake.delegated_amount)
+            != new_record.map_or(0, |stake| stake.delegated_amount)
             || !matches_cell(old_record, self.old)
             || !matches_cell(new_record, self.new)
         {
@@ -450,6 +487,126 @@ impl ChangeContext<'_> {
         let message = transition_digest(domain, self.policy, self.old_registry, self.new_registry);
         proof.verify(self.old_registry.guardian_generation, &message)
     }
+}
+
+pub enum DelegationAction {
+    Bond {
+        before: u64,
+        after: u64,
+        owner_authorized: bool,
+    },
+    Withdraw {
+        amount: u64,
+        retired_block: u64,
+        since: u64,
+    },
+    Slash {
+        amount: u64,
+        fee: u64,
+    },
+}
+
+pub fn verify_delegation(
+    policy: &Policy<'_>,
+    old: &Registry,
+    new: &Registry,
+    validator: &ValidatorKey,
+    action: DelegationAction,
+) -> Result<()> {
+    verify_sequence(policy, old, new)?;
+    if old.guardian_generation != new.guardian_generation || old.retired_root != new.retired_root {
+        return Err(Error::Sequence);
+    }
+    let (Some(before), Some(after)) = verify_subject(old, new, validator)? else {
+        return Err(Error::Sequence);
+    };
+    let delegated_amount = match action {
+        DelegationAction::Bond {
+            before: previous,
+            after,
+            owner_authorized,
+        } => {
+            if !owner_authorized
+                || before.first_active_height == 0
+                || before.first_inactive_height != 0
+                || before.exit_epoch.is_some()
+                || before.frozen
+                || before.bonded_amount < policy.minimum_bond
+            {
+                return Err(Error::Sequence);
+            }
+            let delta = after
+                .checked_sub(previous)
+                .filter(|delta| *delta > 0)
+                .ok_or(Error::Sequence)?;
+            before
+                .delegated_amount
+                .checked_add(delta)
+                .ok_or(Error::Overflow)?
+        }
+        DelegationAction::Withdraw {
+            amount,
+            retired_block,
+            since,
+        } => {
+            let minimum = retired_block
+                .checked_add(policy.unbonding_blocks)
+                .ok_or(Error::Overflow)?;
+            if before.first_inactive_height == 0
+                || before.frozen
+                || retired_block == 0
+                || since & !MAX_DELAY != 0
+                || since < minimum
+                || amount == 0
+            {
+                return Err(Error::Sequence);
+            }
+            before
+                .delegated_amount
+                .checked_sub(amount)
+                .ok_or(Error::Sequence)?
+        }
+        DelegationAction::Slash { amount, fee } => {
+            if !before.frozen || before.first_inactive_height == 0 || amount == 0 || fee < amount {
+                return Err(Error::Evidence);
+            }
+            before
+                .delegated_amount
+                .checked_sub(amount)
+                .ok_or(Error::Sequence)?
+        }
+    };
+    if after
+        != (StakeData {
+            delegated_amount,
+            ..before
+        })
+    {
+        return Err(Error::Sequence);
+    }
+    Ok(())
+}
+
+fn verify_subject(
+    old: &Registry,
+    new: &Registry,
+    validator: &ValidatorKey,
+) -> Result<(Option<StakeData>, Option<StakeData>)> {
+    let before = old.record(validator);
+    let after = new.record(validator);
+    if before == after
+        || !old
+            .records
+            .iter()
+            .filter(|stake| &stake.validator_pubkey != validator)
+            .eq(new
+                .records
+                .iter()
+                .filter(|stake| &stake.validator_pubkey != validator))
+    {
+        return Err(Error::Sequence);
+    }
+    Ok((before, after))
 }
 
 pub fn retirement_cell(

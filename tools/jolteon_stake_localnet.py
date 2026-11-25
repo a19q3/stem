@@ -115,9 +115,30 @@ def publish_checkpoints(args, l1, scenario, relay, spec, client, target_height, 
             failures["unfunded_slash"] = scenario.change("slash-unfunded", 8, validator, slash_record,
                 expected="error code 23")
             slashed = scenario.change("finalize-slash", 8, validator, slash_record, fee=low + FEE, measure=True)
-        failures["immature"] = scenario.change("early-unbonding", 5, validator, final_record,
-            since=since, expected="Immature")
+        delegated = []
+        if args.delegation:
+            if not frozen:
+                failures["delegation_immature"] = scenario.delegation("delegation-immature", 10, validator,
+                    expected="Immature", funded_by_owner=False)
+        else:
+            failures["immature"] = scenario.change("early-unbonding", 5, validator, final_record,
+                since=since, expected="Immature")
         l1.mine(DELAY)
+        if args.delegation:
+            failures["registry_release_leaves_delegations"] = scenario.change("withdraw-with-delegations", 5,
+                validator, final_record, since=since, expected="error code 23")
+            action = 11 if frozen else 10
+            failures["wrong_delegation_recipient"] = scenario.delegation("redirect-delegation-release", action,
+                validator, expected="error code 23", wrong_recipient=True, funded_by_owner=False)
+            if not frozen:
+                failures["invalid_delegation_clock"] = scenario.delegation("delegation-clock", 10, validator,
+                    since=0, expected="error code 23", funded_by_owner=False)
+            else:
+                failures["withdraw_frozen_delegation"] = scenario.delegation("withdraw-frozen-delegation", 10,
+                    validator, expected="error code 23", funded_by_owner=False)
+            for label in list(scenario.delegations):
+                delegated.append(scenario.delegation(f"settle-{label}", action, validator,
+                    label=label, funded_by_owner=False))
         failures["owner_required"] = scenario.change("unbond-by-relayer", 5, validator, final_record,
             since=since, expected="error code 23", relayer=True)
         unbonded = scenario.change("unbond-retired", 5, validator, final_record, since=since, measure=True)
@@ -126,6 +147,7 @@ def publish_checkpoints(args, l1, scenario, relay, spec, client, target_height, 
                    "bond_shannons": low, "retirement_l1_proof": l1.prove_committed(retirement),
                    "unbonding_l1_proof": l1.prove_committed(unbonded), "rejections": failures,
                    "measurements": scenario.measurements, "freeze": frozen, "slash": slashed,
+                   "delegations": delegated,
                    "released_bond": 0 if slashed else low, "slashed_bond": low if slashed else 0}
         if slashed:
             retired["frozen_before_snapshot"] = bool(active_freeze)
@@ -155,11 +177,26 @@ def run_epochs(args, l1, scenario, fixture):
         return registered, activated, meta
 
     registered_old, activated_old, old_meta = activate(old, low, 0)
+    delegation = None
+    if args.delegation:
+        key = public(old)
+        wrong_owner = scenario.delegation("unauthorized-delegation", 9, key, 100 * CKB,
+            expected="error code 23", funded_by_owner=False)
+        fake_weight = scenario.delegation("inflated-delegation-weight", 9, key, 100 * CKB,
+            expected="error code 23", registry_delta=120 * CKB)
+        start_bond = scenario.delegation("first-delegation", 9, key, 100 * CKB)
+        delegation = {"bond": start_bond, "rejections": {"unauthorized": wrong_owner, "inflated": fake_weight}}
     genesis = scenario.observe("initial", 0, count=3)
     verified, _ = scenario.verify_genesis_snapshot(genesis)
     genesis_committee = verified["validators"]
-    assert genesis_committee == [{"ed25519": hex_bytes(public(old)), "power": 250}]
+    assert genesis_committee == [{"ed25519": hex_bytes(public(old)), "power": 350 if delegation else 250}]
     registered_new, activated_new, new_meta = activate(incoming, high, 1)
+    if delegation:
+        delegation["top_up"] = scenario.delegation("top-up-delegation", 9, public(old), 175 * CKB)
+        delegation["separate_position"] = scenario.delegation("second-delegation", 9, public(old), 70 * CKB,
+            label="second", separate_owner=True)
+        delegation["rejections"]["before_retirement"] = scenario.delegation("active-delegation-withdraw", 10,
+            public(old), since=0, expected="error code 23", funded_by_owner=False)
 
     spec = args.output / "stem-genesis.json"
     write_json(spec, {
@@ -242,7 +279,7 @@ def run_epochs(args, l1, scenario, fixture):
             launch(key, True)
         initial = [progress(key, 3, 0) for key in (old, incoming, observer)]
         assert initial[0]["member"] == 0 and all(status["member"] is None for status in initial[1:])
-        assert [status["voting_power"] for status in initial] == [250, None, None]
+        assert [status["voting_power"] for status in initial] == [350 if delegation else 250, None, None]
         if args.replace:
             retired = scenario.change("request-live-exit", 2, public(old), mk_record(public(old), low, 0, 1, old_meta))
         original = snapshot(1, old, genesis[0]["registry"])
@@ -266,7 +303,8 @@ def run_epochs(args, l1, scenario, fixture):
                 mk_record(public(incoming), 450 * CKB, 1, None, new_meta))
         else:
             assert sorted(status["member"] for status in joined) == [0, 1]
-            assert [status["voting_power"] for status in joined] == [250, 400]
+            expected = [442, 357] if args.delegation_power_cap else [495 if delegation else 250, 400]
+            assert [status["voting_power"] for status in joined] == expected
             if args.active_slash:
                 handoff_proof = request(incoming, HANDOFF, le(0, 8))["proof"]
                 verify(handoff_proof, "handoff-0", terminal=True)
@@ -385,6 +423,7 @@ def run_epochs(args, l1, scenario, fixture):
             "handoffs": handoffs, "post_handoff_header": verified, "missing_handoff_rejected": wrong_epoch.stderr,
             "altered_handoff_rejected": bad_handoff.stderr,
             "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report, "snapshot_restore": restored,
+            "delegation": delegation,
         }
     finally:
         for child in processes.values():
@@ -411,6 +450,8 @@ def main():
     parser.add_argument("--retire", action="store_true", help="retire and unbond the outgoing stake using the native checkpoint")
     parser.add_argument("--slash", action="store_true", help="slash the outgoing fixture validator using native vote evidence")
     parser.add_argument("--active-slash", action="store_true", help="freeze while the outgoing validator is still active")
+    parser.add_argument("--delegation", action="store_true", help="fund and settle two separate CKB delegation positions")
+    parser.add_argument("--delegation-power-cap", action="store_true", help="exercise a committee cap below raw delegated power")
     args = parser.parse_args()
     if args.observer_extra_lag < 0:
         parser.error("--observer-extra-lag must be nonnegative")
@@ -422,6 +463,10 @@ def main():
         parser.error("--snapshot-restore requires --publish-checkpoint")
     if args.slash and not args.retire:
         parser.error("--slash requires --retire")
+    if args.delegation and (not args.retire or args.replace):
+        parser.error("--delegation uses the committee join and retirement scenario")
+    if args.delegation_power_cap and not args.delegation:
+        parser.error("--delegation-power-cap requires --delegation")
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)
     try:

@@ -100,6 +100,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         .enumerate()
         .map(|(i, member)| StakeData {
             validator_pubkey: member.key,
+            delegated_amount: 0,
             bonded_amount: [100, 200, 200][i],
             activation_epoch: 0,
             exit_epoch: (i == 1).then_some(1),
@@ -117,6 +118,23 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         records.clone(),
     )?;
     assert_eq!(registry, Registry::decode(&registry.encode())?);
+    let mut over_cap = records.clone();
+    over_cap[0].delegated_amount = 4_900;
+    let over_cap = Registry::new(domain.stem_network_id, 0, [14; 32], [0; 32], over_cap)?;
+    let weighted = config.select(&over_cap, 0)?;
+    assert_eq!(
+        weighted,
+        vec![
+            Member {
+                key: guardians[0].key,
+                power: 47
+            },
+            Member {
+                key: guardians[1].key,
+                power: 2
+            }
+        ]
+    );
     let mut duplicate = records.clone();
     duplicate[1] = duplicate[0];
     assert_eq!(

@@ -47,10 +47,11 @@ def witness(payload):
     return hex_bytes(b"".join(le(value, 4) for value in (size, 16, 16, size, len(payload))) + payload)
 
 
-def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False):
+def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False, *, delegated=0):
     commitment = EMPTY if withdrawn else ckb_hash(b"Stem CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
-    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + bytes([frozen]) + meta[32:48] + commitment,
+    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + bytes([frozen])
+            + meta[32:48] + commitment + le(delegated, 8),
             fields + meta)
 
 
@@ -65,6 +66,7 @@ class Scenario:
         self.retired = set()
         self.retired_root = EMPTY
         self.measurements = {}
+        self.delegations = {}
         self.deploy()
 
     def deploy(self):
@@ -81,9 +83,11 @@ class Scenario:
         checkpoint_code = self.args.direct_checkpoint.read_bytes()
         checkpoint_capacity = (len(checkpoint_code) + 200) * CKB
         relay_funding = 8_000 * CKB
-        self.relay_fee_capacity = 200 * CKB
+        delegated = getattr(self.args, "delegation", False)
+        self.relay_fee_capacity = (2000 if delegated else 200) * CKB
+        self.delegate_fee_capacity = (1200 if delegated else 0) * CKB
         change = (int(funds["capacity"], 16) - capacity - funding - checkpoint_capacity
-                  - 2 * relay_funding - self.relay_fee_capacity - FEE)
+                  - 2 * relay_funding - self.relay_fee_capacity - self.delegate_fee_capacity - FEE)
         self.code_hash = hex_bytes(ckb_hash(binary_code))
         deployment = transaction(
             [point(faucet["hash"], index)],
@@ -93,6 +97,9 @@ class Scenario:
             [hex_bytes(binary_code), "0x", "0x", hex_bytes(checkpoint_code), "0x", "0x", "0x"],
             [self.secp],
         )
+        if delegated:
+            deployment["outputs"].append(output(self.delegate_fee_capacity, self.fixture.owner_lock))
+            deployment["outputs_data"].append("0x")
         code_tx = self.l1.send(self.sign("deploy-stake", deployment, 0))
         self.code = dependency(point(code_tx, 0))
         checkpoint_hash = hex_bytes(ckb_hash(checkpoint_code))
@@ -107,6 +114,8 @@ class Scenario:
         self.checkpoint = anchor(4)
         self.foreign_checkpoint = anchor(5)
         self.relay_fee_point = point(code_tx, 6)
+        if delegated:
+            self.delegate_fee_point = point(code_tx, 7)
         type_id = ckb_hash(le(0, 8) + binary(code_tx) + le(1, 4) + le(0, 8))
         args = (type_id + self.network + self.genesis + le(100 * CKB, 8) + le(10, 8) + le(DELAY, 8)
                 + binary(self.checkpoint["hash"]) + self.checkpoint["id"] + CHAIN)
@@ -162,6 +171,8 @@ class Scenario:
         if number == 5:
             records.pop(key)
         elif new_record is not None:
+            if key in records:
+                new_record = (new_record[0][:-8] + records[key][0][-8:], new_record[1])
             records[key] = new_record
         state = self.encode(self.sequence + 1, records, next_authority, root)
         payload = bytes([number])
@@ -229,6 +240,106 @@ class Scenario:
         elif key is not None:
             self.stake_points.pop(key)
         return self.registry_tx
+
+    def delegation(self, name, operation, validator, amount=0, *, label="holder", expected=None,
+                   separate_owner=False, funded_by_owner=True, wrong_recipient=False, registry_delta=None, since=None):
+        prior = self.delegations.get(label)
+        owner_lock = self.fixture.owner_lock if separate_owner else self.fixture.friend_lock
+        if prior is None:
+            registry_path = self.args.output / f"{name}-registry-type.json"
+            input_path = self.args.output / f"{name}-first-input.json"
+            write_json(registry_path, self.registry_type)
+            write_json(input_path, {"since": "0x0", "previous_output": point(self.registry_tx, 0)})
+            stake_type = json.loads(run(self.args.binary, "stake", "delegation-script",
+                "--registry-type", registry_path, "--validator", hex_bytes(validator),
+                "--owner", hex_bytes(script_hash(owner_lock)), "--first-input", input_path,
+                "--output-index", "1"))
+            previous_amount = 0
+        else:
+            stake_type, previous_amount, _, owner_lock = prior
+        args = binary(stake_type["args"])
+        occupied = (8 + 33 + len(binary(self.lock["args"])) + 33 + len(args) + 8) * CKB
+        records = self.records.copy()
+        record, own_data = records[validator]
+        delta = amount - previous_amount if registry_delta is None else registry_delta
+        records[validator] = (record[:-8] + le(int.from_bytes(record[-8:], "little") + delta, 8), own_data)
+        next_state = self.encode(self.sequence + 1, records)
+        inputs = [point(self.registry_tx, 0)]
+        outputs = [output(self.registry_capacity, self.lock, self.registry_type)]
+        data = [hex_bytes(next_state)]
+        deps = [self.secp, self.code]
+        headers = []
+        payment = 0
+        if prior:
+            inputs.append(prior[2])
+        if operation == 9:
+            outputs.append(output(occupied + amount, self.lock, stake_type))
+            data.append(hex_bytes(le(amount, 8)))
+            fee = FEE
+        else:
+            payment = occupied + (previous_amount if operation == 10 else 0)
+            outputs.append(output(payment, self.fixture.standard if wrong_recipient else owner_lock))
+            data.append("0x")
+            fee = FEE + (previous_amount if operation == 11 else 0)
+            if operation == 10:
+                stake, _ = self.stake_points[validator]
+                header = self.l1.prove_committed(stake["tx_hash"])["header"]
+                headers.append(header["hash"])
+                deps.append(dependency(stake))
+                if since is None:
+                    since = int(header["number"], 16) + DELAY
+        if not funded_by_owner:
+            fee_point, available = self.fee_point, self.fee_capacity
+            fee_key, fee_lock = self.fixture.faucet, self.fixture.standard
+        elif owner_lock == self.fixture.owner_lock:
+            fee_point, available = self.delegate_fee_point, self.delegate_fee_capacity
+            fee_key, fee_lock = self.fixture.owner, self.fixture.owner_lock
+        else:
+            fee_point, available = self.relay_fee_point, self.relay_fee_capacity
+            fee_key, fee_lock = self.fixture.friend, self.fixture.friend_lock
+        change = available - fee
+        change += (occupied + previous_amount if prior else 0) - (occupied + amount if operation == 9 else payment)
+        inputs.append(fee_point)
+        outputs.append(output(change, fee_lock))
+        data.append("0x")
+        tx = transaction(inputs, outputs, data, deps)
+        tx["header_deps"] = headers
+        if since is not None:
+            tx["inputs"][1]["since"] = hex(since)
+        tx["witnesses"] = [witness(bytes([operation]) + args)]
+        signed = self.fixture.sign(name, tx, [wallet_group(len(inputs) - 1, [fee_key])])
+        if expected:
+            try:
+                self.l1.call("send_transaction", signed["json"], "passthrough")
+            except RuntimeError as error:
+                if expected.lower() not in str(error).lower():
+                    raise RuntimeError(f"{name} expected {expected}, got {error}") from error
+                return str(error)
+            raise RuntimeError(f"CKB accepted the invalid {name} transaction")
+        self.measurements[name] = {
+            "estimated_cycles": int(self.l1.call("estimate_cycles", signed["json"])["cycles"], 16),
+            "transaction_bytes": len(binary(signed["molecule"])),
+        }
+        self.registry_tx = self.l1.send(signed)
+        self.sequence += 1
+        self.records = records
+        self.state = next_state
+        committed = self.l1.call("get_transaction", self.registry_tx)["transaction"]
+        assert committed["outputs"][1] == outputs[1], committed
+        fee_point = point(self.registry_tx, len(outputs) - 1)
+        if not funded_by_owner:
+            self.fee_point, self.fee_capacity = fee_point, change
+        elif owner_lock == self.fixture.owner_lock:
+            self.delegate_fee_point, self.delegate_fee_capacity = fee_point, change
+        else:
+            self.relay_fee_point, self.relay_fee_capacity = fee_point, change
+        if operation == 9:
+            self.delegations[label] = (stake_type, amount, point(self.registry_tx, 1), owner_lock)
+        else:
+            del self.delegations[label]
+        return {"transaction": self.registry_tx, "inclusion": self.l1.prove_committed(self.registry_tx),
+                "principal": amount if operation == 9 else previous_amount,
+                "occupied": occupied, "recipient_paid": payment, "fee": fee, "type": stake_type}
 
     def observe(self, label, target_epoch, parent=None, missing=False, count=1, signing_anchor=None,
                 rotation=None):
@@ -299,7 +410,8 @@ class Scenario:
             "stem_network_id": hex_bytes(self.network), "ckb_genesis": hex_bytes(self.genesis),
             "registry_id": hex_bytes(self.registry_id), "target_epoch": 0, "previous": None,
             "minimum_bond": 100 * CKB, "shannons_per_power": CKB,
-            "max_validators": 4, "max_total_power": 1000, "blocks_per_epoch": 10,
+            "max_validators": 4, "max_total_power": 800 if getattr(self.args, "delegation_power_cap", False) else 1000,
+            "blocks_per_epoch": 10,
             "guardians": [
                 {"ed25519": hex_bytes(key.public_key().public_bytes_raw()), "power": 1}
                 for key in self.authority

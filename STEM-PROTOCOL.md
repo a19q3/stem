@@ -220,15 +220,21 @@ Stem UDT Type Script 负责标识、发行权限、数量解码和守恒。桥�
 
 ### Registry 与历史责任
 
-CKB L1 Registry 用 Type ID 保证唯一性。Stake Cell Type Script 绑定 Registry 和验证者 Ed25519 公钥。该 Cell 的 L1 Capacity 等于实际 occupied Capacity 加声明质押。注册需要验证者签名、资金所有者授权以及公钥尚未退休的证明。增押、退出请求、罚没和提现都原子更新 Registry 与对应 Stake Cell。
+CKB L1 Registry 用 Type ID 保证唯一性。Stake Cell Type Script 绑定 Registry 和验证者 Ed25519 公钥。该 Cell 的 L1 Capacity 等于实际 occupied Capacity 加自有质押。注册需要验证者签名、资金所有者授权以及公钥尚未退休的证明。增押、退出请求、罚没和提现都原子更新 Registry 与对应 Stake Cell。
 
 | Registry 的承诺 | 状态内容和保留规则 |
 | --- | --- |
-| 当前质押 | 按公钥排列的已质押和退出中记录，绑定实际 Stake Cell、金额和经认证的活跃高度区间。最多保留 256 个尚未结清的公钥 |
+| 当前质押 | 按公钥排列的已质押和退出中记录，绑定实际 Stake Cell、自有质押、委托总额和经认证的活跃高度区间。最多保留 256 个尚未结清的公钥 |
 | 待结责任 | 退休后仍有余额可支取或处罚待执行时，保留完整 Stake Cell 和 Registry 记录 |
 | 退休根 | 提现时从当前记录移除公钥，并在稀疏 Merkle 根中永久承诺该公钥已退休。原记录及证据可从 CKB 交易历史审计 |
 
 退休证明编码一个 32 字节位图和按层号由低至高排列的非零兄弟哈希。合约验证当前根下公钥不存在。提现同时将该公钥插入退休根，释放 Registry 名额。历史公钥始终保留在认证根中。曾结清的质押公钥永久退休，后续验证者注册使用新公钥。仍在责任窗口内的 Stake Cell 无法通过更换 OutPoint 或重新注册解除责任。
+
+### 开放委托
+
+委托人用自己的 CKB 输入授权锁定本金。每个委托 Cell 使用独立 Type ID，绑定 Registry、验证者公钥、委托人的 CKB Lock 哈希以及创建输入与输出位置。其容量等于占用容量加委托本金。该 Cell 只能随同唯一的 Registry 状态转换创建、增押或结清，合约逐笔核验本金变化等于目标验证者的委托总额变化。验证者必须已激活、满足自押门槛且未冻结或请求退出。验证者无须为每个委托签名。每个 Registry 更新至多处理一个委托 Cell。
+
+当前委托期限覆盖验证者这一整次注册。委托资本承担该注册仍可追责的双签，包括委托加入前发生的违规。正常退役后，中继者用当前退休 Stake Cell 及其 CKB Header 作为依赖，等待自该 Cell 上链起的 L1 解锁期，再把本金和占用容量返还到原 Lock。`since` 按 CKB 绝对高度编码并由 CKB 检查。冻结验证者在完成 Stem 退役后，每笔委托可独立执行全额本金罚没，占用容量返还到原 Lock。合约要求罚没本金体现在实付 CKB 交易费用。任何人可以为既定收款地址提交该结算。验证者的 Registry 记录保留到全部委托余额结清；自有质押的提现规则独立验证。当前实现没有任内撤出、部分减押、佣金或逐人收益。
 
 ### 快照签署窗口
 
@@ -236,7 +242,9 @@ CKB L1 Registry 用 Type ID 保证唯一性。Stake Cell Type Script 绑定 Regi
 
 令 epoch 生效高度为 `A(e) = 1 + e × blocks_per_epoch`。对非 genesis epoch，网络固定整数 `W`，满足 `3 ≤ W < blocks_per_epoch`。签署锚点为已最终确定的 `A(e)−W−1` 区块。只能从下一块开始签发与提交，到 `A(e)−2` 截止，过期证书不得转用于其他 epoch。每个 epoch 最多接受一个快照。Registry 序号不可倒退，同序号只能对应相同承诺。后续快照必须延续前一已认证 L1 锚点。深重组跨过该锚点时停签新授权，并重新核验仍受锁定的质押和桥负债。已确定的 Stem 历史继续有效。
 
-先排除未激活、已退休、已冻结和已到退出 epoch 的记录。对其余合格记录按质押从高到低排列，公钥字节序打破平局，取配置规模。票权为 `bonded_shannons / shannons_per_power` 的整数商。非空、最小质押、正权重和总权重上限全部是确定性检查。genesis 委员会通过同一认证路径直接生效。Jolteon 在 `A−2` 认证下一届名单，在 `A−1` 执行后由旧委员会提交终结证明。新委员会自高度 `A` 开始。冻结的 CometBFT 对照在 `A−2` 发出 `ValidatorUpdate`，验证新旧委员会的签名 Header。缺少新快照时，只有旧委员会对应质押仍锁在 L1 的情况下，旧委员会才能继续按原权重执行。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
+先排除未激活、已退休、已冻结、已到退出 epoch 和未满足自押门槛的记录。对其余合格记录按自押与委托总额从高到低排列，公钥字节序打破平局，取配置规模。票权为 `(bonded_shannons + delegated_shannons) / shannons_per_power` 的整数商。自押门槛、加法溢出、非空、正权重和总权重上限全部是确定性检查。genesis 委员会通过同一认证路径直接生效。Jolteon 在 `A−2` 认证下一届名单，在 `A−1` 执行后由旧委员会提交终结证明。新委员会自高度 `A` 开始。冻结的 CometBFT 对照在 `A−2` 发出 `ValidatorUpdate`，验证新旧委员会的签名 Header。缺少新快照时，只有旧委员会对应质押仍锁在 L1 的情况下，旧委员会才能继续按原权重执行。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
+
+当入选委员的原始权重总和 `R` 超过上限 `M`，先为每位委员保留 1 票。入选人数为 `N`，每位原始权重为 `p` 的委员获得 `1 + floor((p−1) × (M−N) / (R−N))`。配置要求 `M` 至少等于委员会人数上限。总权重保持在上限内，法定人数按实际分配后的总权重计算。原始总和未超过上限时直接使用整数商。
 
 ### Jolteon 委员会交接
 

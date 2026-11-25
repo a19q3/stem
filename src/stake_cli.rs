@@ -2,11 +2,13 @@ use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::{Context, Result, ensure};
 use ckb_hash::new_blake2b;
-use ckb_jsonrpc_types::{CellWithStatus, JsonBytes, OutPoint, Script as JsonScript, Uint64};
+use ckb_jsonrpc_types::{
+    CellInput as JsonCellInput, CellWithStatus, JsonBytes, OutPoint, Script as JsonScript, Uint64,
+};
 use ckb_types::{
     H256,
     core::{Capacity, ScriptHashType},
-    packed::{CellOutput, Script, Transaction},
+    packed::{CellInput, CellOutput, Script, Transaction},
     prelude::*,
 };
 use clap::{Args, Subcommand};
@@ -17,7 +19,7 @@ use stem_ledger::protocol::ARRIVING_GUARDIAN;
 use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, MAX_RECORDS, Member, Registry,
     RegistryAnchor, StakeConfig, StakeDomain, StakeSnapshot,
-    l1::{GuardianProof, Policy, StakeCell, guardian_generation},
+    l1::{DelegationId, GuardianProof, Policy, StakeCell, guardian_generation},
 };
 
 use crate::{
@@ -36,7 +38,7 @@ struct Guardian {
 
 #[derive(Subcommand)]
 pub enum StakeCommand {
-    /// Verify every registry-backed live Stake Cell on a trusted full CKB node.
+    /// Verify active Stake Cells and the contract-enforced delegation totals on a trusted full CKB node.
     Observe(Observe),
     /// Authenticate a threshold-certified snapshot against a pinned network and guardian set.
     Verify(Verify),
@@ -55,6 +57,19 @@ pub enum StakeCommand {
     Snapshot {
         #[arg(long)]
         observations: PathBuf,
+    },
+    /// Derive a delegation Type Script from the Registry and its CKB creation position.
+    DelegationScript {
+        #[arg(long)]
+        registry_type: PathBuf,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        validator: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        owner: H256,
+        #[arg(long)]
+        first_input: PathBuf,
+        #[arg(long)]
+        output_index: u64,
     },
 }
 
@@ -243,6 +258,39 @@ impl StakeCommand {
                                   "proof": JsonBytes::from_vec(proof)}))
             }
             Self::Snapshot { observations } => build_native_snapshot(&observations),
+            Self::DelegationScript {
+                registry_type,
+                validator,
+                owner,
+                first_input,
+                output_index,
+            } => {
+                let registry: Script =
+                    read_json_limited::<JsonScript>(&registry_type, 4096)?.into();
+                let registry_id = registry.calc_script_hash().unpack();
+                ensure!(
+                    registry.hash_type() == ScriptHashType::Data2.into(),
+                    "expected a Data2 Stake Registry"
+                );
+                Policy::decode(registry_id, &registry.args().raw_data())?;
+                let input: CellInput =
+                    read_json_limited::<JsonCellInput>(&first_input, 4096)?.into();
+                let mut nonce = [0; 32];
+                let mut blake = new_blake2b();
+                blake.update(input.as_slice());
+                blake.update(&output_index.to_le_bytes());
+                blake.finalize(&mut nonce);
+                let args = DelegationId {
+                    registry: registry_id,
+                    validator: validator.as_bytes().try_into()?,
+                    owner: owner.as_bytes().try_into()?,
+                    nonce,
+                }
+                .encode();
+                DelegationId::decode(&args)?;
+                let script = registry.as_builder().args(args.as_slice().pack()).build();
+                print_json(&JsonScript::from(script))
+            }
         }
     }
 }

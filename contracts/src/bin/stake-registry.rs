@@ -10,15 +10,19 @@ use ckb_std::{
     error::SysError,
     high_level::{
         load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash,
-        load_cell_occupied_capacity, load_cell_type, load_cell_type_hash, load_input_since,
-        load_script, load_script_hash, load_witness_args,
+        load_cell_occupied_capacity, load_cell_type, load_cell_type_hash, load_header,
+        load_input_since, load_script, load_script_hash, load_witness_args,
     },
     type_id,
 };
 use stem_contracts::load_checkpoint;
 use stem_stake::{
     Attestation, Hash32, MAX_RECORDS, Member, Registry, StakeData,
-    l1::{Action, ChangeContext, GuardianProof, Policy, StakeCell, verify_rotation},
+    l1::{
+        Action, BOND_DELEGATION, ChangeContext, DelegationAction, DelegationId, GuardianProof,
+        Policy, SLASH_DELEGATION, StakeCell, WITHDRAW_DELEGATION, delegation_amount,
+        verify_delegation, verify_rotation,
+    },
 };
 #[cfg(not(feature = "jolteon"))]
 use stem_stake::{DoubleVote, SignedVote};
@@ -76,6 +80,7 @@ fn verify() -> Result<(), Error> {
             args[..32].try_into().unwrap(),
             args[32..].try_into().unwrap(),
         ),
+        DelegationId::SIZE => verify_delegation_type(&script, &args),
         Policy::MIN_ARGS..=Policy::MAX_ARGS => verify_registry(&script, &args),
         _ => Err(Error::Encoding),
     }
@@ -129,6 +134,13 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
                 votes: &new_votes,
             },
         )?);
+    }
+
+    if matches!(
+        operation,
+        BOND_DELEGATION | WITHDRAW_DELEGATION | SLASH_DELEGATION
+    ) {
+        return verify_delegation_transition(script, &policy, &old, &new, operation, payload);
     }
 
     let (validator, payload) = payload.split_at_checked(32).ok_or(Error::Encoding)?;
@@ -230,6 +242,97 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
+fn verify_delegation_transition(
+    script: &Script,
+    policy: &Policy<'_>,
+    old: &Registry,
+    new: &Registry,
+    operation: u8,
+    args: &[u8],
+) -> Result<(), Error> {
+    let id = DelegationId::decode(args)?;
+    let lock = registry_lock(script, &policy.registry_id);
+    if id.registry != policy.registry_id || id.owner == lock.calc_script_hash().as_slice() {
+        return Err(Error::Stake);
+    }
+    let hash = with_args(script, args).calc_script_hash();
+    let hash = hash.as_slice().try_into().unwrap();
+    let input = find_type(hash, Source::Input)?;
+    let output = find_type(hash, Source::Output)?;
+    let before = input
+        .map(|index| read_delegation(&lock, index, Source::Input))
+        .transpose()?;
+    let after = output
+        .map(|index| read_delegation(&lock, index, Source::Output))
+        .transpose()?;
+    let action = match (operation, before, after) {
+        (BOND_DELEGATION, before, Some(after)) => DelegationAction::Bond {
+            before: before.map_or(0, |(amount, _)| amount),
+            after: after.0,
+            owner_authorized: inputs_authorize(&id.owner)?,
+        },
+        (WITHDRAW_DELEGATION, Some((amount, occupied)), None) => {
+            pay_delegator(
+                &id.owner,
+                amount.checked_add(occupied).ok_or(Error::Capacity)?,
+            )?;
+            let stake_args = [&id.registry[..], &id.validator[..]].concat();
+            let stake_hash = with_args(script, &stake_args).calc_script_hash();
+            let stake = find_type(stake_hash.as_slice().try_into().unwrap(), Source::CellDep)?
+                .ok_or(Error::Stake)?;
+            read_stake(old, &id.validator, &lock, Some(stake), Source::CellDep)?;
+            // CKB associates this Header with the actual Stake Cell dependency.
+            let header = load_header(stake, Source::CellDep)?;
+            DelegationAction::Withdraw {
+                amount,
+                retired_block: header.raw().number().unpack(),
+                since: load_input_since(input.ok_or(Error::Stake)?, Source::Input)?,
+            }
+        }
+        (SLASH_DELEGATION, Some((amount, occupied)), None) => {
+            pay_delegator(&id.owner, occupied)?;
+            DelegationAction::Slash {
+                amount,
+                fee: fee()?,
+            }
+        }
+        _ => return Err(Error::Stake),
+    };
+    Ok(verify_delegation(policy, old, new, &id.validator, action)?)
+}
+
+fn read_delegation(lock: &Script, index: usize, source: Source) -> Result<(u64, u64), Error> {
+    if load_cell_lock(index, source)? != *lock {
+        return Err(Error::Stake);
+    }
+    let data = load_cell_data(index, source)?;
+    let amount = delegation_amount(&data)?;
+    let occupied = load_cell_occupied_capacity(index, source)?;
+    if occupied.checked_add(amount) != Some(load_cell_capacity(index, source)?) {
+        return Err(Error::Capacity);
+    }
+    Ok((amount, occupied))
+}
+
+fn pay_delegator(owner: &Hash32, minimum: u64) -> Result<(), Error> {
+    for index in 0.. {
+        match load_cell_lock_hash(index, Source::Output) {
+            Ok(candidate)
+                if candidate == *owner
+                    && load_cell_type_hash(index, Source::Output)?.is_none()
+                    && load_cell_data(index, Source::Output)?.is_empty()
+                    && load_cell_capacity(index, Source::Output)? >= minimum =>
+            {
+                return Ok(());
+            }
+            Ok(_) => {}
+            Err(SysError::IndexOutOfBound) => return Err(Error::Stake),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!()
+}
+
 fn with_args(script: &Script, args: &[u8]) -> Script {
     script.clone().as_builder().args(args.pack()).build()
 }
@@ -267,10 +370,7 @@ fn read_stake(
     let Some(index) = index else {
         return Ok(None);
     };
-    let records = registry.records();
-    let record = records[records
-        .binary_search_by_key(key, |record| record.validator_pubkey)
-        .map_err(|_| Error::Stake)?];
+    let record = registry.record(key).ok_or(Error::Stake)?;
     if load_cell_lock(index, source)? != *lock {
         return Err(Error::Stake);
     }
@@ -295,7 +395,7 @@ fn same_code(a: &Script, b: &Script) -> bool {
     a.code_hash() == b.code_hash() && a.hash_type() == b.hash_type()
 }
 
-fn verify_stake_type(script: &Script, registry: Hash32, key: Hash32) -> Result<(), Error> {
+fn registry_witness(script: &Script, registry: Hash32) -> Result<Vec<u8>, Error> {
     let input = find_type(&registry, Source::Input)?.ok_or(Error::Registry)?;
     let output = find_type(&registry, Source::Output)?.ok_or(Error::Registry)?;
     for (index, source) in [(input, Source::Input), (output, Source::Output)] {
@@ -306,9 +406,28 @@ fn verify_stake_type(script: &Script, registry: Hash32, key: Hash32) -> Result<(
             return Err(Error::Registry);
         }
     }
-    let witness = witness(input)?;
+    witness(input)
+}
+
+fn verify_stake_type(script: &Script, registry: Hash32, key: Hash32) -> Result<(), Error> {
+    let witness = registry_witness(script, registry)?;
     if !matches!(witness.first().copied(), Some(0..=6 | FINALIZE_SLASH))
         || witness.get(1..33) != Some(&key)
+    {
+        return Err(Error::Stake);
+    }
+    Ok(())
+}
+
+fn verify_delegation_type(script: &Script, args: &[u8]) -> Result<(), Error> {
+    let id = DelegationId::decode(args)?;
+    type_id::check_type_id(DelegationId::NONCE_OFFSET, 32)?;
+    let witness = registry_witness(script, id.registry)?;
+    let (code, subject) = witness.split_first().ok_or(Error::Encoding)?;
+    if !matches!(
+        *code,
+        BOND_DELEGATION | WITHDRAW_DELEGATION | SLASH_DELEGATION
+    ) || subject != args
     {
         return Err(Error::Stake);
     }
@@ -322,7 +441,8 @@ fn verify_lock(script: &Script, registry: Hash32) -> Result<(), Error> {
                 let args = kind.args().raw_data();
                 if !same_code(script, &kind)
                     || (kind.calc_script_hash().as_slice() != registry
-                        && (args.len() != 64 || args[..32] != registry))
+                        && (!matches!(args.len(), 64 | DelegationId::SIZE)
+                            || args[..32] != registry))
                     || load_cell_lock(index, Source::GroupInput)? != *script
                 {
                     return Err(Error::Stake);

@@ -25,7 +25,7 @@ pub type ValidatorKey = [u8; 32];
 
 pub const MAX_TOTAL_VOTING_POWER: u64 = (i64::MAX / 8) as u64;
 pub const MAX_RECORDS: usize = 256;
-const RECORD_BYTES: usize = 32 + 8 + 8 + 1 + 8 + 1 + 8 + 8 + 32;
+const RECORD_BYTES: usize = 114;
 const REGISTRY_HEADER: usize = 32 + 8 + 32 + 32 + 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,12 +59,21 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub struct StakeData {
     pub validator_pubkey: ValidatorKey,
     pub bonded_amount: u64,
+    pub delegated_amount: u64,
     pub activation_epoch: u64,
     pub exit_epoch: Option<u64>,
     pub frozen: bool,
     pub first_active_height: i64,
     pub first_inactive_height: i64,
     pub stake_cell_hash: Hash32,
+}
+
+impl StakeData {
+    pub fn total_bond(&self) -> Result<u64> {
+        self.bonded_amount
+            .checked_add(self.delegated_amount)
+            .ok_or(Error::Overflow)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,7 +113,7 @@ impl Registry {
                 return Err(Error::Encoding);
             }
             bonded_sum = bonded_sum
-                .checked_add(entry.bonded_amount)
+                .checked_add(entry.total_bond()?)
                 .ok_or(Error::Overflow)?;
             last = Some(entry.validator_pubkey);
         }
@@ -139,6 +148,7 @@ impl Registry {
             records.push(StakeData {
                 validator_pubkey: record[..32].try_into().unwrap(),
                 bonded_amount: u64::from_le_bytes(record[32..40].try_into().unwrap()),
+                delegated_amount: u64::from_le_bytes(record[106..114].try_into().unwrap()),
                 activation_epoch: u64::from_le_bytes(record[40..48].try_into().unwrap()),
                 exit_epoch,
                 frozen: match record[57] {
@@ -177,6 +187,7 @@ impl Registry {
             data.extend_from_slice(&entry.first_active_height.to_le_bytes());
             data.extend_from_slice(&entry.first_inactive_height.to_le_bytes());
             data.extend_from_slice(&entry.stake_cell_hash);
+            data.extend_from_slice(&entry.delegated_amount.to_le_bytes());
         }
         data
     }
@@ -199,6 +210,13 @@ impl Registry {
 
     pub fn records(&self) -> &[StakeData] {
         &self.records
+    }
+
+    pub fn record(&self, validator: &ValidatorKey) -> Option<StakeData> {
+        self.records
+            .binary_search_by_key(validator, |stake| stake.validator_pubkey)
+            .ok()
+            .map(|index| self.records[index])
     }
 
     pub fn retired_keys(&self, epoch: u64) -> impl Iterator<Item = ValidatorKey> + '_ {
@@ -474,6 +492,7 @@ impl StakeConfig {
             || self.minimum_bond < self.shannons_per_power
             || !(1..=MAX_RECORDS).contains(&self.max_validators)
             || !(1..=MAX_TOTAL_VOTING_POWER).contains(&self.max_total_power)
+            || self.max_total_power < self.max_validators as u64
             || self.blocks_per_epoch < 3
         {
             return Err(Error::Configuration);
@@ -484,7 +503,7 @@ impl StakeConfig {
     pub fn select(&self, registry: &Registry, epoch: u64) -> Result<Vec<Member>> {
         self.validate()?;
         let height = i64::try_from(self.effective_height(epoch)?).map_err(|_| Error::Overflow)?;
-        let mut eligible: Vec<_> = registry
+        let mut eligible = registry
             .records
             .iter()
             .filter(|stake| {
@@ -496,10 +515,11 @@ impl StakeConfig {
                     && stake.activation_epoch <= epoch
                     && stake.exit_epoch.is_none_or(|exit| epoch < exit)
             })
-            .collect();
-        eligible.sort_unstable_by(|a, b| {
-            b.bonded_amount
-                .cmp(&a.bonded_amount)
+            .map(|stake| Ok((stake, stake.total_bond()?)))
+            .collect::<Result<Vec<_>>>()?;
+        eligible.sort_unstable_by(|(a, a_bond), (b, b_bond)| {
+            b_bond
+                .cmp(a_bond)
                 .then_with(|| a.validator_pubkey.cmp(&b.validator_pubkey))
         });
         eligible.truncate(self.max_validators);
@@ -509,9 +529,9 @@ impl StakeConfig {
 
         let mut total = 0u64;
         let mut validators = Vec::with_capacity(eligible.len());
-        for stake in eligible {
+        for (stake, bond) in eligible {
             public_key(&stake.validator_pubkey)?;
-            let power = stake.bonded_amount / self.shannons_per_power;
+            let power = bond / self.shannons_per_power;
             total = total.checked_add(power).ok_or(Error::Overflow)?;
             validators.push(Member {
                 key: stake.validator_pubkey,
@@ -519,7 +539,14 @@ impl StakeConfig {
             });
         }
         if total > self.max_total_power {
-            return Err(Error::Committee);
+            // Keep one vote per member, then scale the remaining votes within the cap.
+            let members = validators.len() as u64;
+            let available = u128::from(self.max_total_power - members);
+            let requested = u128::from(total - members);
+            for member in &mut validators {
+                let scaled = u128::from(member.power - 1) * available / requested;
+                member.power = 1 + u64::try_from(scaled).map_err(|_| Error::Overflow)?;
+            }
         }
         validators.sort_unstable_by_key(|validator| validator.key);
         Ok(validators)

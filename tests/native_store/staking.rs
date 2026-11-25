@@ -46,6 +46,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     let make_stake = |validator_pubkey, bonded_amount, activation_epoch, exit_epoch| StakeData {
         validator_pubkey,
         bonded_amount,
+        delegated_amount: 0,
         activation_epoch,
         exit_epoch,
         frozen: false,

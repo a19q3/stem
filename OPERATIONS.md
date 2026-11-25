@@ -415,6 +415,24 @@ To benchmark during committee changes, add the following flags to the native sta
   --native-lock "$contracts_dir/stem-lock" --wrapped "$contracts_dir/bridge-udt"
 ```
 
+### Exercise CKB delegation
+
+Deploy the current default `stake-registry` contract and pin its new Type Script in a fresh devnet genesis. Use the Jolteon stake runner with `--publish-checkpoint --retire --delegation`. It funds two positions from distinct CKB Locks, increases one position, verifies the resulting committee weights and redeems both after authenticated retirement. Add `--slash --active-slash` in a separate run to freeze the validator while it is serving and settle the delegated penalties after its exclusion. Use a new output directory and CKB port for each run.
+
+Add `--delegation-power-cap` to test a power cap of 800 against the combined raw epoch-one weight of 895. The fixture checks the effective weights of 442 and 357 after normalization.
+
+```sh
+python3 tools/jolteon_stake_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb \
+  --stake-registry "$native_dir/stake-registry" \
+  --direct-checkpoint "$native_dir/jolteon-checkpoint" \
+  --publish-checkpoint --retire --delegation --output /tmp/stem-delegation
+```
+
+`stem stake delegation-script` takes the Registry Type Script JSON, the validator key, the beneficiary CKB Lock hash, the JSON first `CellInput` and the output index. Put the resulting Script on the funded delegation output with the Registry Lock and eight bytes of little-endian principal as its Cell Data. Add the principal to the output's occupied CKB Capacity. Creation and top-up require a funding input authorized by the beneficiary. A relayer can submit retirement settlement using a separate fee input.
+
+The Registry input witness contains operation `0x09` for creation or top-up, `0x0a` for unbonded withdrawal or `0x0b` for penalty settlement, followed by the complete 128-byte delegation Script args. Update the target validator's final eight-byte `delegated_amount` field by the exact principal delta. Every Registry witness names a single delegation position. For an unbonded withdrawal add the live retired validator Stake Cell and its creation block as Cell and Header Deps, and set the delegation input's absolute block `since` to the retirement block height plus the configured delay. The payout must go to the beneficiary Lock as a plain CKB Cell. A penalty settlement pays at least the delegated principal as a CKB transaction fee and returns the occupied Capacity to that Lock.
+
 ## Exercise CKB Checkpoint publication
 
 Add `--checkpoint "$contracts_dir/checkpoint"` to the native stake runner. It builds an archive index, verifies signed Stem successors and committee handoffs, and prepares two Checkpoint Type ID transactions for the CKB devnet. The update rotates the checkpoint authority with both quorums. The runner also submits invalid transactions to check that CKB rejects a minority certificate, missing rotation signatures and a corrupted history extension.
