@@ -564,6 +564,10 @@ impl Bridge {
     fn check_recipient(&self, recipient: &Script) -> Result<()> {
         let hash_type = recipient.hash_type().as_slice()[0];
         ensure!(
+            recipient.as_slice().len() <= stem_bridge_wire::MAX_RECIPIENT_SIZE,
+            "L1 recipient Lock exceeds the withdrawal proof size limit"
+        );
+        ensure!(
             !self.reserved_locks.contains(recipient),
             "reserved L1 recipient"
         );

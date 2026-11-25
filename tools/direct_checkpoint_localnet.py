@@ -151,7 +151,7 @@ def publish(args, scenario, stem_genesis, comet_genesis, rpc, header, funding=No
 class Relay:
     """Publish checkpoint updates paid from an independent relayer Cell."""
 
-    def __init__(self, args, l1, fixture, anchor, spec_path, comet_genesis, rpc):
+    def __init__(self, args, l1, fixture, anchor, spec_path, comet_genesis, rpc, *, directory="bridge-checkpoints"):
         self.args, self.l1, self.fixture, self.anchor, self.rpc = args, l1, fixture, anchor, rpc
         self.comet_genesis = comet_genesis
         self.chain = json.loads(comet_genesis.read_text())["chain_id"]
@@ -159,7 +159,7 @@ class Relay:
         self.native_genesis = binary(json.loads(run(args.binary, "genesis-hash", "--genesis", spec_path, "--header")))
         genesis_id = ckb_hash(b"Stem Header\0" + binary(self.network) + self.native_genesis)
         self.app_hash = ckb_hash(b"Stem AppHash\0" + binary(self.network) + bytes(8) + genesis_id)
-        self.root = args.output / "bridge-checkpoints"
+        self.root = args.output / directory
         self.root.mkdir()
         self.point = self.lock = self.type = None
         self.funding, self.height = anchor["seed"], -1
@@ -183,7 +183,7 @@ class Relay:
                 validators, _ = committee_at(self.rpc, height)
                 entries.append({"commit": self.rpc.call("commit", height=height), "validators": validators,
                                 "native_header": hex_bytes(self.header(height - 1))})
-            label = f"bridge-checkpoint-{end}"
+            label = f"{self.root.name}-{end}"
             source = self.root / f"{label}-source.json"
             write_json(source, entries)
             bundle = json.loads(run(self.args.proof_verifier, "-genesis", self.comet_genesis, "-direct-bundle", source))

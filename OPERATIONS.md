@@ -133,10 +133,20 @@ python3 tools/native_bridge_localnet.py \
   --binary target/release/stem --l1 /path/to/ckb --comet target/stem-tools/cometbft \
   --vault "$contracts_dir/vault-type" --deposit-lock "$contracts_dir/deposit-lock" \
   --native-lock "$contracts_dir/stem-lock" --wrapped "$contracts_dir/bridge-udt" \
+  --direct-checkpoint "$contracts_dir/direct-checkpoint" \
   --proof-verifier target/stem-tools/stem-proof --output target/stem-runs/native-bridge
 ```
 
 Add `--xudt /path/to/xudt_rce --xudt-gate "$contracts_dir/xudt-gate"` to deploy a separate xUDT vault and execute both asset round trips. The runner uses isolated CKB and CometBFT nodes and disposable key files. At mint, guardians audit the actual confirmed consolidation and sign the exact native output bytes. To reconcile a payout, they authenticate the Stem execution receipt and the CKB transaction that matches its recipient, quantity and vault nonce.
+
+To construct a release, query `/stem/bridge-withdrawal` with `prove=true` and 40 bytes of data containing the lane ID and little-endian `u64` nonce. Save the JSON response value and the native Header at the response height. Relay the signed successor to the vault's direct checkpoint. Use the checkpoint as a CKB Cell Dep, pay from a separate CKB input and place the command's result in the vault input's `WitnessArgs.input_type`.
+
+```sh
+stem bridge withdrawal-witness --genesis STEM_GENESIS --lane LANE --nonce NONCE \
+  --header AUTHENTICATED_HEADER.json --proof WITHDRAWAL_QUERY_VALUE.json
+```
+
+The vault Type Script args are five 32-byte values in order. They encode the vault Type ID, direct checkpoint code hash, direct checkpoint Type ID, CKB genesis hash and Stem network ID. Use the intended checkpoint creation input and output index to commit its Type ID before writing the Stem genesis. The checkpoint bootstraps with the resulting Stem genesis AppHash. Vault locks use the same executable with the vault Type Script hash followed by the 20-byte CKB multisig identifier. Consolidation, reserve movement and rotation require a separate input authorized by that multisig.
 
 The runner also reconciles the recognized balance and liabilities against the amounts minted and paid on both lanes. The final report includes the ABCI backing record and path. Store and snapshot tests independently authenticate the path and reject altered amounts.
 
@@ -173,7 +183,8 @@ To benchmark during committee changes, add the following flags to the native sta
 ```sh
 --loadgen target/stem-tools/stem-loadgen \
   --vault "$contracts_dir/vault-type" --deposit-lock "$contracts_dir/deposit-lock" \
-  --native-lock "$contracts_dir/stem-lock" --wrapped "$contracts_dir/bridge-udt"
+  --native-lock "$contracts_dir/stem-lock" --wrapped "$contracts_dir/bridge-udt" \
+  --direct-checkpoint "$contracts_dir/direct-checkpoint"
 ```
 
 ## Exercise CKB Checkpoint publication

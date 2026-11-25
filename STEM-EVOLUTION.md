@@ -22,8 +22,8 @@
 | 14 | 多维资源计费 | 已实现 genesis 费率、计费和缓存一致性测试。当前收费按交易容量差额冲销负债。系统操作继续走独立资源预算。 |
 | 15 | 开放委托质押 | CKB devnet 重新验证自质押和委员会变更。尚无委托份额、收益或责任分摊。 |
 | 16 | DevFund / Ecosystem Fund | SystemRoot 认证手续费冲销总额，也认证已观察的 CKB 储备、流通负债及待兑余额。实际 CKB 和 xUDT 往返后对账通过。逐金库收入归属、分配份额、可兑付应付款及授权支出待实现。 |
-| 17 | CKB 直接验证 Stem 最终性 | 直接检查点合约验证 CometBFT 签名、完整区块链接、委员会交接和 Stem 执行头。实际 CKB devnet 确认五次发布，覆盖三次委员会变化并拒绝六种无效提交。4–128 委员的 Ed25519 成本另由 CKB-VM 探针测量。兑付、退休及通用消息仍待接入该证明。 |
-| 18 | Intercell Messaging | 现有 CKB 和 xUDT 通道重新验证。通用认证消息和无许可中继待实现。 |
+| 17 | CKB 直接验证 Stem 最终性 | 直接检查点合约验证 CometBFT 签名、完整区块链接、委员会交接和 Stem 执行头。实际 CKB devnet 确认五次发布，覆盖三次委员会变化并拒绝六种无效提交。4–128 委员的 Ed25519 成本另由 CKB-VM 探针测量。CKB 与 xUDT 已使用已认证 SystemRoot 的待付记录在 CKB 无许可兑付。退休及通用跨链消息仍待接入直接检查点。 |
+| 18 | Intercell Messaging | CKB 和 xUDT 通道已实跑无许可兑付中继，Stem 仍经 guardians 认证 CKB 确认与核销。通用跨链消息及反向证明认证待实现。 |
 | 19 | L1 Cell Reference | Rust 与 CLI 可使用可信 CKB Header、交易与见证 Merkle 路径独立验证历史输出。CKB devnet 用实际兑付和已消费的金库输出验证历史查询。StemVM 只读引用与锚点存活认证仍待实现。 |
 | 20 | UDT / Spore 结算 | CKB 与 xUDT 双向路径已用实际 devnet 复验。Stem 原生 UDT 和 Spore 导出需独立身份、生命周期和供应规则。 |
 | 21 | CKB PoW Entropy | 独立工具从固定锚点与确认后继推导域隔离种子。CKB devnet 重复值一致，拒绝错误锚点和确认不足。未进入领导者或委员会选择。 |
@@ -44,7 +44,7 @@
 | 开放委托质押 | 已有真实 CKB 自有质押、责任期、解除质押和罚没。委托份额、减押、佣金、领取和责任分摊仍需 CKB 合约状态转换和实际 devnet 验证。 |
 | 可编程安全域 | 待实现。安全资本必须与独立可验证的服务义务绑定，且同一笔资金不能同时支撑基础委员会和附加责任。现有质押身份与桥接资产身份、权限已分离。 |
 | 四类收入账户和 PoW Security Fund | 待实现。当前只可认证桥接净余额与手续费累计。65/15/10/10 是实验场景。对实际 CKB L1 检查点、结算与质押交易的费用预算及支付，需要从可分配收入原子扣减。 |
-| 应用与 SDK | Rust 可解析并验证桥接聚合负债、通道金额与 nonce，也可核验 CKB 历史输出。现有查询与钱包工具继续服务 Cell、交易及质押快照。WASM 或 TypeScript SDK 以及委托、收益和安全服务接口待实现。 |
+| 应用与 SDK | Rust 可解析并验证桥接聚合负债、通道金额与 nonce，也可核验 CKB 历史输出。现有查询与钱包工具继续服务 Cell、交易及质押快照。待付款 RPC 返回记录和 Patricia 路径，CLI 可验证并生成 L1 Witness。WASM 或 TypeScript SDK 以及委托、收益和安全服务接口待实现。 |
 | Polytype | 当前仓库的 Cell Model 与性能记录统一使用 Polytype。Git 的旧提交及原始测量保持可追溯。 |
 | Lineage Cell | 已实现显式注册、稳定 ID、单一 Live Head、单调版本、权限变更、退休和双根证明。执行时解析、RISC-V Executor、预签命令、原子多目标后继及费用回滚已进入运行路径。四个验证者与恢复节点验证动态 Head 证明，固定资产供应的双储备 AMM 完成同机热点实验。已复用至一次性 Keeper 预约。通用 Solver 组合和多副本持续压力测试仍待完成。 |
 | Universal Stake Protocol 与外部链再质押 | **Deferred / Future Research**。本轮共识抵押来源限定为 CKB L1。 |

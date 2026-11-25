@@ -678,3 +678,41 @@ submissions were rejected again. Full-transaction estimates ranged from
 4,234,032 to 36,237,820 cycles. This exercises actual paginated committee
 data from CometBFT. The 128-member cycle figure above still comes from
 the VM probe. [Pagination round evidence](benchmarks/2026-11-25-stem-direct-finality-pagination.json.xz)
+
+## Direct bridge withdrawals
+
+Two runs on the Intel Core i9-13900H used a local CKB 0.210.0 devnet
+and a single Stem replica with CometBFT 0.38.26. Each round consolidated
+real CKB and xUDT on L1, minted on Stem, burned the funded Cells, advanced
+a directly verified checkpoint and paid the withdrawals on CKB. Each
+release used a separate ordinary CKB fee input. Settlement into Stem
+remained guardian-authenticated. Payouts were 119,999,000,000 shannons
+on each lane and 1,200 units on the xUDT lane.
+
+| Round | Lane | Burn → Stem checkpoint → settlement | L1 inclusion height | Withdrawal proof bytes | Estimated full CKB transaction cycles |
+| --- | --- | --- | ---: | ---: | ---: |
+| Initial | CKB | 5 → 6 → 9 | 37 | 486 | 1,855,548 |
+| Initial | xUDT | 12 → 13 → 16 | 57 | 486 | 1,912,206 |
+| Extended | CKB | 4 → 5 → 8 | 41 | 690 | 1,893,384 |
+| Extended | xUDT | 11 → 12 → 15 | 61 | 690 | 1,945,195 |
+
+The cycle figures are CKB RPC estimates for complete release transactions,
+including unrelated input verification and xUDT scripts. Checkpoint
+publication has its own cost and reuses the published root across
+withdrawals. These runs measure individual transactions on local nodes.
+
+The vault rejected an older authenticated root without the pending record,
+an omitted checkpoint, a corrupted path, an altered recipient and an
+old nonce against a live successor vault. The extended round additionally
+rejected a valid direct checkpoint for the same network with a different
+Type ID and a one-unit change to the xUDT payout that otherwise balanced.
+Both rounds completed a 500,000-shannon reserve move and rotated the
+custody multisig. CKB rejected the reserve move when the custody input
+was omitted or the paired amounts differed. Reconciliation brought
+pending liabilities to zero and preserved the 2,000,000-shannon fee surplus.
+
+The [bridge runbook](OPERATIONS.md#exercise-the-native-bridge) gives the
+command, native query and witness builder. The
+[raw bridge evidence](benchmarks/2026-11-25-stem-direct-payout.json.xz)
+preserves both rounds, signed transactions, CKB inclusion, proof
+bundles, node output and executable fingerprints.

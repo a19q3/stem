@@ -288,6 +288,35 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     let pending = store
         .bridge_receipt(&asset_lane, 0)?
         .context("pending nonce zero")?;
+    let burn_tip = store.tip().clone();
+    let (pending_record, pending_path) = store.prove_bridge_withdrawal(&asset_lane, 0)?;
+    assert_eq!(pending_record.as_ref(), Some(&pending));
+    let encoded_path = pending_path.encode()?;
+    let pending_path = stem_ledger::patricia::Proof::decode(&encoded_path)?;
+    assert!(Store::verify_bridge_withdrawal(
+        store.network(),
+        &burn_tip,
+        &asset_lane,
+        0,
+        &pending,
+        &pending_path,
+    ));
+    assert!(!Store::verify_bridge_withdrawal(
+        store.network(),
+        &burn_tip,
+        &ckb_lane,
+        0,
+        &pending,
+        &pending_path,
+    ));
+    assert!(!Store::verify_bridge_withdrawal(
+        store.network(),
+        &burn_tip,
+        &asset_lane,
+        1,
+        &pending,
+        &pending_path,
+    ));
     let quote = store.bridge_lane(&asset_lane)?;
     assert_eq!(
         (quote.capacity, quote.reserved_capacity),
@@ -345,6 +374,14 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         (0, 0, 1)
     );
     assert!(store.bridge_receipt(&asset_lane, 0)?.is_none());
+    assert!(!Store::verify_bridge_withdrawal(
+        store.network(),
+        store.tip(),
+        &asset_lane,
+        0,
+        &pending,
+        &pending_path,
+    ));
     let (backing, _) = store.prove_bridge_backing()?;
     assert_eq!(backing.liquid(), code_capacity + FEE);
     assert_eq!(backing.circulating(), code_capacity);

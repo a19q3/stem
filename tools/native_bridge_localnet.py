@@ -89,11 +89,11 @@ def deploy(args, l1, fixture, network, funding_point=None):
     funding = (programs + 20_000) * CKB
     checkpoint = args.direct_checkpoint.read_bytes()
     checkpoint_capacity, relay_funding, authorization = (len(checkpoint) + 200) * CKB, 8_000 * CKB, 300 * CKB
-    change = int(funds["capacity"], 16) - sum(amounts) - funding - checkpoint_capacity - relay_funding - authorization - FEE
+    change = int(funds["capacity"], 16) - sum(amounts) - funding - checkpoint_capacity - 2 * relay_funding - authorization - FEE
     deployment = transaction(
         [funding_point], [output(c, fixture.standard) for c in amounts + [funding, change, checkpoint_capacity, relay_funding]]
-        + [output(authorization, custody)],
-        [hex_bytes(code) for code in codes] + ["0x", "0x", hex_bytes(checkpoint), "0x", "0x"], [secp],
+        + [output(authorization, custody), output(relay_funding, fixture.standard)],
+        [hex_bytes(code) for code in codes] + ["0x", "0x", hex_bytes(checkpoint), "0x", "0x", "0x"], [secp],
     )
     deployed = l1.send(fixture.sign("deploy", deployment, [wallet_group(0, [fixture.faucet])]))
     vault_code = dependency(point(deployed, 0))
@@ -120,6 +120,8 @@ def deploy(args, l1, fixture, network, funding_point=None):
         "secp": secp, "multisig": multisig, "vault_code": vault_code, "deposit_code": deposit_code,
         "change_point": point(deployed, 3), "change": change, "anchor": anchor,
         "custody": custody, "custody_cell": point(deployed, 6), "authorization": authorization,
+        "foreign_anchor": dict(anchor, id=ckb_hash(le(0, 8) + binary(deployed) + le(7, 4) + le(0, 8)),
+                               seed=point(deployed, 7)),
     }
 
 
@@ -361,6 +363,23 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     negative["missing_checkpoint"] = l1.reject(release("no-checkpoint", None))
     negative["modified_path"] = l1.reject(release("bad-path", checkpoint, payload[:-1] + bytes([payload[-1] ^ 1])))
     negative["wrong_recipient"] = l1.reject(release("wrong-recipient", checkpoint, modify=wrong_recipient))
+    foreign_checkpoint = None
+    if typed:
+        def wrong_units(tx):
+            other_units = typed["amount"] - 1
+            tx["outputs_data"][0] = hex_bytes(le(other_units, 16))
+            tx["outputs_data"][1] = hex_bytes(state[:210] + le(other_units, 16))
+            tx["outputs_data"][2] = hex_bytes(le(1, 16))
+
+        negative["wrong_xudt_units"] = l1.reject(release("wrong-units", checkpoint, modify=wrong_units))
+    else:
+        foreign = Relay(args, l1, fixture, vault["foreign_anchor"], spec_path, relay.comet_genesis, comet_rpc,
+                        directory="bridge-foreign-checkpoints")
+        foreign_dep = foreign.advance(pending_height, vault["secp"])
+        foreign_checkpoint = {"type": foreign.type, "publications": foreign.publications}
+        if foreign.type == relay.type:
+            raise AssertionError("fixture derived duplicate checkpoint identities")
+        negative["foreign_checkpoint_type_id"] = l1.reject(release("foreign-checkpoint", foreign_dep))
     signed_release = release("release", checkpoint)
     estimate = int(l1.call("estimate_cycles", signed_release["json"])["cycles"], 16)
     payout = l1.send(signed_release)
@@ -394,10 +413,18 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     confirmed = comet_rpc.call("broadcast_tx_commit", tx=settlement)
     if int(confirmed["height"]) == 0 or confirmed["check_tx"]["code"] != 0:
         raise AssertionError(confirmed)
+    settled = comet_rpc.call(
+        "abci_query", path=json.dumps("/stem/bridge-withdrawal"), prove="true",
+        data=hex_bytes(binary(lane) + le(0, 8)),
+    )["response"]
+    if settled["code"] != 0 or json.loads(base64.b64decode(settled["value"]))["record"] is not None:
+        raise AssertionError(settled)
     return {"burn": burned, "l1_payout": payout, "l1_payout_proof": l1.prove_committed(payout),
             "settlement": confirmed, "signature_verification": verification, "capacity": capacity,
             "direct_release": {"checkpoint": checkpoint, "pending_height": pending_height,
-                               "proof_bytes": len(payload), "estimated_cycles": estimate, "rejections": negative},
+                                "proof_bytes": len(payload), "estimated_cycles": estimate, "rejections": negative,
+                               "foreign_checkpoint": foreign_checkpoint,
+                               "settled_pending_query": settled},
             "confirmed_height": approvals[0]["confirmed_height"],
             "confirmed_hash": approvals[0]["confirmed_hash"]}
 
