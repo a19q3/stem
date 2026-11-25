@@ -2794,3 +2794,51 @@ feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
 [Signed transactions, reference certificates, proofs and failed runs](benchmarks/2026-11-26-stem-intercell-composition.json.xz).
+
+## Intercell delivery across funded committee handoffs
+
+Revision `1b07157` exercised 4, 16 and 128 active Jolteon voters
+with one additional incoming process per run. Each devnet funded its
+validators through the CKB Stake Registry and minted the sender's
+Stem Cells against CKB reserves. It saved an Outbox proof in epoch 0.
+At height 40 the new committee replaced one validator and changed a
+continuing validator's weight. A paused continuing voter caught up
+across the boundary. A second message in epoch 1 changed the Outbox
+proof. All Stem replicas agreed on the later checkpoint Header.
+
+| Committee | Original Outbox → later checkpoint | Fresh proof signed B / estimated cycles | Historical proof signed B / committed cycles | CKB P2P arrival / receiving inclusion |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 10 → 49 | 1,607 / 4,227,101 | 1,977 / 4,306,532 | 172.8 / 482.7 ms |
+| 16 | 9 → 49 | 1,403 / 4,181,189 | 1,875 / 4,278,288 | 168.4 / 475.8 ms |
+| 128 | 9 → 54 | 1,403 / 4,184,125 | 1,907 / 4,294,913 | 254.1 / 564.4 ms |
+
+Each row pairs different witnesses over the same CKB transaction body.
+The historical delivery keeps the earlier Patricia path. It adds the
+old execution Header and an MMR inclusion path under the successor
+checkpoint. The fresh controls were estimated. The signed historical
+transactions committed on the original devnet and again on two
+independently initialized CKB peers. Those peers imported only the
+prefix through the first checkpoint, then accepted the boundary, both
+successor checkpoints and the historical delivery as new transactions.
+Only the sending node submitted them by RPC. The receiving node
+reported pending transactions received over P2P, mined them, and both
+nodes verified the original signed bytes, witness inclusion and
+recorded cycles. These are single-host devnet samples.
+
+The 128-member boundary consumed 408,833,487 cycles. The later
+checkpoint at height 54 consumed 408,471,906 cycles. Both entered the
+receiving peer's stock pool over P2P with a 70-million-cycle transaction
+verification setting and a 3.5-billion-cycle block limit. Those costs
+are separate from mailbox consumption. The mailbox authenticates its
+message with the already validated checkpoint Cell.
+
+All three runs rejected a successor that skipped the handoff, an old
+Outbox path without its history proof, and a repeat against the live
+Mailbox. The relay rebuilt the consumed message ID from canonical CKB
+history. An independent four-voter non-Intercell handoff and relay
+control passed, as did the four-replica bidirectional fixture with 33
+expected rejections. The locked Rust release workspace passed 460
+tests with 15 ignored, and the Go proof suite passed.
+
+[Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
+[Raw CKB spends, witnesses, P2P traces, rejected attempts and commands](benchmarks/2026-11-26-stem-intercell-epoch.json.xz).
