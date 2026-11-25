@@ -9,13 +9,13 @@ import secrets
 import struct
 import subprocess
 
-from bridge_localnet import Fixtures, L1, binary, ckb_hash, hex_bytes
+from bridge_localnet import CKB, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, point, script, write_key
 from jolteon_checkpoint_localnet import Relay
 from jolteon_localnet import FINALITY, HEADER, QUERY, STATUS, SUBMIT, evidence_keys, rpc, write_configuration
-from localnet import write_json
-from native_bridge_localnet import (bridge_configuration, deploy, deploy_token, deposit_and_mint, lane_proof,
-                                    reconcile_backing, start, stem_id, vault_operations, verify_l1_output,
-                                    wait_for, withdraw_and_settle, xudt_round_trip)
+from localnet import run, write_json
+from native_bridge_localnet import (bridge_configuration, cell, deploy, deploy_token, deposit_and_mint, lane_proof,
+                                    reconcile_backing, redeem_withdrawal, signing_cell, start, stem_id,
+                                    vault_operations, verify_l1_output, wait_for, withdraw_and_settle, xudt_round_trip)
 
 
 class Client:
@@ -79,11 +79,90 @@ class Client:
         return {"height": height, "hash": id_, "check_tx": {"code": 0}}
 
 
+def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay):
+    fee = 800 * CKB
+    native_lock = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())),
+                         fixture.key(fixture.owner)["blake160"], "data")
+    request, draft, context, lock = (args.output / f"fee-payment-{name}.json"
+                                     for name in ("request", "draft", "context", "lock"))
+    write_json(request, {"inputs": [{"out_point": mint["payment"]}],
+                         "outputs": [cell(mint["payment_capacity"] - fee, native_lock)],
+                         "cell_deps": [dependency(mint["lock_dep"])]})
+    write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", request)))
+    write_json(context, {"cells": [signing_cell(client, mint[key]) for key in ("payment", "lock_dep")]})
+    write_json(lock, native_lock)
+    payment = json.loads(run(args.binary, "wallet", "sign", "--genesis", spec_path,
+                             "--transaction", draft, "--context", context, "--group-index", "0",
+                             "--lock", lock, "--key-file", fixture.owner))
+
+    def proved(path):
+        reply = client.query(path, prove=True)
+        return json.loads(bytes.fromhex(reply["value"]))
+
+    def claim(fund, amount, claimed_before=0):
+        return json.loads(run(args.binary, "bridge", "claim-fees", "--fund", str(fund),
+                              "--amount", str(amount), "--claimed-before", str(claimed_before)))
+
+    def reject(tx, message):
+        result = client.call("broadcast_tx_sync", tx=tx)
+        assert result["code"] == 1 and message in result["log"], result
+        return result["log"]
+
+    unearned = reject(claim(0, 100 * CKB), "exceeds fund allocation")
+    paid_fee = client.call("broadcast_tx_commit", tx=payment)
+    before = proved("/stem/fee-funds")
+    assert int(before["extinguished_shannons"], 16) == fee, before
+    wrong_amount = reject(claim(0, 521 * CKB), "exceeds fund allocation")
+    dust = reject(claim(0, 1), "below L1 occupied Capacity")
+    amounts = [520 * CKB, 120 * CKB, 80 * CKB, 80 * CKB]
+    claims = []
+    for fund, amount in enumerate(amounts):
+        tx = claim(fund, amount)
+        claims.append(client.call("broadcast_tx_commit", tx=tx))
+    replay = reject(claim(0, amounts[0]), "stale fee claim")
+    queued = proved("/stem/fee-funds")
+    backing_queued = proved("/stem/bridge-backing")
+    assert int(backing_queued["pending_shannons"], 16) == fee
+    assert int(backing_queued["unallocated_shannons"], 16) == 0
+    assert [int(fund["queued_shannons"], 16) for fund in queued["accounts"]] == amounts
+    assert [int(fund["paid_shannons"], 16) for fund in queued["accounts"]] == [0] * 4
+
+    vault_input = point(mint["l1_consolidation"], 0)
+    fee_input = point(mint["l1_consolidation"], 1)
+    previous_anchor = mint
+    payouts = []
+    for fund, (amount, transaction) in enumerate(zip(amounts, claims)):
+        recipient = spec["bridge"]["fee_funds"][fund]["recipient"]
+        redeemed = redeem_withdrawal(
+            args, l1, fixture, vault, spec, spec_path, lane, client, relay,
+            name=f"fee-fund-{fund}", burned=transaction, recipient=recipient, capacity=amount,
+            units=b"", nonce=fund, input_vault=vault_input, fee_input=fee_input, previous_anchor=previous_anchor,
+        )
+        output = l1.call("get_transaction", redeemed["l1_payout"])["transaction"]["outputs"][0]
+        assert output["lock"] == recipient and int(output["capacity"], 16) == amount
+        payouts.append(redeemed)
+        vault_input = point(redeemed["l1_payout"], 1)
+        fee_input = point(redeemed["l1_payout"], 2)
+        previous_anchor = redeemed
+    after = proved("/stem/fee-funds")
+    assert [int(fund["paid_shannons"], 16) for fund in after["accounts"]] == amounts
+    backing = proved("/stem/bridge-backing")
+    assert int(backing["liquid_shannons"], 16) == int(backing["circulating_shannons"], 16) == mint["capacity"] - fee
+    assert int(backing["pending_shannons"], 16) == int(backing["unallocated_shannons"], 16) == 0
+    return {"payment": paid_fee, "before": before, "queued": queued, "backing_queued": backing_queued,
+            "payouts": payouts, "after": after, "backing": backing,
+            "rejections": {"unearned": unearned, "overclaim": wrong_amount, "dust": dust, "replay": replay}}
+
+
 def bridge_round(args, l1, fixture, children):
     network = hex_bytes(ckb_hash(b"Stem native Jolteon bridge fixture\0" + secrets.token_bytes(32)))
     vault = deploy(args, l1, fixture, network)
     token = deploy_token(args, l1, fixture, vault) if args.xudt else None
     bridge, lane = bridge_configuration(args, l1, fixture, vault, token, network)
+    if args.fee_funds:
+        bridge["fee_funds"] = [{"basis_points": share, "recipient": dict(fixture.standard, args=fixture.key(
+            write_key(args.output, f"fund-{i}", secrets.token_bytes(32)))["blake160"])}
+            for i, share in enumerate((6500, 1500, 1000, 1000))]
     keys = evidence_keys(args)
     members = [{"ed25519": hex_bytes(key), "power": 1} for key, _ in keys]
     spec = {"chain_id": "stem-jolteon-ckb-local", "network_id": network, "genesis_time_ms": 1_735_689_600_000,
@@ -110,16 +189,21 @@ def bridge_round(args, l1, fixture, children):
     relay.advance(1, vault["secp"], probe=True)
     mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client)
     write_json(args.output / "native-mint-report.json", mint)
-    payout = withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
-    report = {"mint": mint, "withdrawal": payout}
+    report = {"mint": mint}
+    if args.fee_funds:
+        report["fee_funds"] = fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
+    else:
+        payout = withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
+        report["withdrawal"] = payout
     if token:
         token["custody_cell"] = vault["custody_cell"]
         report["xudt"] = xudt_round_trip(args, l1, fixture, token, spec, spec_path, mint, payout, client, relay)
         report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                      report["xudt"], spec_path, client)
     report["checkpoint"] = relay.report()
-    report["backing"] = reconcile_backing(client, report)
-    report["authenticated_ckb_outputs"] = verify_l1_output(args, l1, payout, token is not None)
+    if not args.fee_funds:
+        report["backing"] = reconcile_backing(client, report)
+        report["authenticated_ckb_outputs"] = verify_l1_output(args, l1, payout, token is not None)
     report["lane_proofs"] = {lane: lane_proof(client, lane)}
     if token:
         asset_lane = report["xudt"]["lane"]
@@ -140,18 +224,24 @@ def main():
     for name in ("xudt", "xudt-gate"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--validators", type=int, default=4)
+    parser.add_argument("--fee-funds", action="store_true")
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
     args = parser.parse_args()
     if bool(args.xudt) != bool(args.xudt_gate):
         parser.error("--xudt and --xudt-gate must be specified together")
+    if args.fee_funds and args.xudt:
+        parser.error("fee funds and xUDT use separate test rounds")
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)
     children = []
     try:
         report = bridge_round(args, l1, Fixtures(args), children)
         write_json(args.output / "jolteon-bridge-report.json", report)
-        print(f"Verified CKB payout {report['withdrawal']['l1_payout']} and agreed height {report['agreed']['height']}")
+        if args.fee_funds:
+            print(f"Reconciled {len(report['fee_funds']['payouts'])} CKB fee payouts at agreed height {report['agreed']['height']}")
+        else:
+            print(f"Verified CKB payout {report['withdrawal']['l1_payout']} and agreed height {report['agreed']['height']}")
         if args.xudt:
             print(f"Verified xUDT payout {report['xudt']['withdrawal']['l1_payout']}")
     finally:

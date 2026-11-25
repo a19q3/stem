@@ -281,6 +281,18 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
                             "--transaction", draft, "--context", context, "--group-index", "0", "--lock", lock_path,
                             "--key-file", fixture.owner))
     burned = comet_rpc.call("broadcast_tx_commit", tx=signed)
+    return redeem_withdrawal(
+        args, l1, fixture, vault, spec, spec_path, lane, comet_rpc, relay,
+        name=name, burned=burned, recipient=recipient, capacity=capacity, units=units,
+        nonce=0, input_vault=point(mint["l1_consolidation"], 0),
+        fee_input=point(mint["l1_consolidation"], 2 if typed else 1),
+        previous_anchor=mint, typed=typed, probe_checkpoints=True,
+    )
+
+
+def redeem_withdrawal(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc, relay, *,
+                      name, burned, recipient, capacity, units, nonce, input_vault,
+                      fee_input, previous_anchor, typed=None, probe_checkpoints=False):
     height = int(burned["height"])
     if not height or burned["check_tx"]["code"] != 0:
         raise AssertionError(burned)
@@ -301,13 +313,11 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
     proof["transaction"] = hex_bytes(bytes.fromhex(proof["transaction"]))
     proof["receipt"] = hex_bytes(bytes.fromhex(proof["receipt"]))
     commit, finality_arguments, verification = relay.audit_burn(f"{name}-burn", height, header)
-    input_vault = point(mint["l1_consolidation"], 0)
-    fee_input = point(mint["l1_consolidation"], 2 if typed else 1)
     fee_cell = l1.call("get_live_cell", fee_input, True)["cell"]["output"]
-    before = vault["reserve"] + mint["capacity"]
+    before = int(l1.call("get_live_cell", input_vault, True)["cell"]["output"]["capacity"], 16)
     response = comet_rpc.call(
         "abci_query", path=json.dumps("/stem/bridge-withdrawal"), prove="true",
-        data=hex_bytes(binary(lane) + le(0, 8)),
+        data=hex_bytes(binary(lane) + le(nonce, 8)),
     )["response"]
     pending = json.loads(base64.b64decode(response["value"]))
     pending_height = int(response["height"])
@@ -321,11 +331,11 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
     write_json(pending_header, hex_bytes(relay.header(pending_height)))
     payload = binary(json.loads(run(
         args.binary, "bridge", "withdrawal-witness", "--genesis", spec_path, "--lane", lane,
-        "--nonce", "0", "--header", pending_header, "--proof", pending_proof,
+        "--nonce", str(nonce), "--header", pending_header, "--proof", pending_proof,
     )))
     l1_claim = binary(pending["record"])[:32]
     previous = binary(vault["state"])
-    state = binary(vault_state(1, 1, hex_bytes(previous[10:42]), hex_bytes(previous[42:74]),
+    state = binary(vault_state(1, nonce + 1, hex_bytes(previous[10:42]), hex_bytes(previous[42:74]),
                               amount=capacity, payout_hash=script_hash(recipient), burn_id=l1_claim))
     inputs = [input_vault]
     outs = [output(capacity, recipient, vault["l1_type"] if typed else None),
@@ -333,7 +343,7 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
     deps = [vault["vault_code"], vault["secp"]]
     if typed:
         state = bytes([2]) + state[1:] + previous[146:210] + units
-        inputs.append(point(mint["l1_consolidation"], 1))
+        inputs.append(point(input_vault["tx_hash"], 1))
         outs.append(output(vault["escrow_capacity"], vault["escrow_lock"], vault["l1_type"]))
         deps.extend([vault["gate_dep"], vault["token_dep"]])
     data = [hex_bytes(units), hex_bytes(state)] + ([hex_bytes(le(0, 16))] if typed else [])
@@ -348,12 +358,15 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
         return fixture.sign(f"{name}-{label}", tx, [wallet_group(len(inputs) - 1, [fixture.faucet])])
 
     def wrong_recipient(tx):
-        tx["outputs"][0]["lock"] = fixture.owner_lock
+        other = fixture.owner_lock if recipient != fixture.owner_lock else fixture.friend_lock
+        tx["outputs"][0]["lock"] = other
         after = binary(tx["outputs_data"][1])
-        tx["outputs_data"][1] = hex_bytes(after[:82] + script_hash(fixture.owner_lock) + after[114:])
+        tx["outputs_data"][1] = hex_bytes(after[:82] + script_hash(other) + after[114:])
 
     pre_checkpoint = dependency(relay.point)
-    negative = {"old_system_root": l1.reject(release("early-release", pre_checkpoint))}
+    negative = {}
+    if probe_checkpoints:
+        negative["old_system_root"] = l1.reject(release("early-release", pre_checkpoint))
     checkpoint = relay.advance(pending_height, vault["secp"])
     negative["missing_checkpoint"] = l1.reject(release("no-checkpoint", None))
     negative["modified_path"] = l1.reject(release("bad-path", checkpoint, payload[:-1] + bytes([payload[-1] ^ 1])))
@@ -367,7 +380,7 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
             tx["outputs_data"][2] = hex_bytes(le(1, 16))
 
         negative["wrong_xudt_units"] = l1.reject(release("wrong-units", checkpoint, modify=wrong_units))
-    else:
+    elif probe_checkpoints:
         foreign = relay.foreign(vault["foreign_anchor"])
         foreign_dep = foreign.advance(pending_height, vault["secp"])
         foreign_checkpoint = {"type": foreign.type, "publications": foreign.publications}
@@ -377,9 +390,9 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
     signed_release = release("release", checkpoint)
     estimate = int(l1.call("estimate_cycles", signed_release["json"])["cycles"], 16)
     payout = l1.send(signed_release)
-    if not typed:
+    if not typed and probe_checkpoints:
         fee = int(outs[-1]["capacity"], 16)
-        replay_after = state[:2] + le(2, 8) + state[10:]
+        replay_after = state[:2] + le(nonce + 2, 8) + state[10:]
         replay = transaction([point(payout, 1), point(payout, 2)],
                              [outs[0], output(before - 2 * capacity, vault["lock"], vault["type"]),
                               output(fee - FEE, fixture.standard)],
@@ -388,14 +401,14 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
         negative["old_nonce"] = l1.reject(fixture.sign("ckb-replay-withdrawal", replay, [wallet_group(1, [fixture.faucet])]))
     l1.mine(spec["bridge"]["confirmations"])
     request = {
-        "lane": lane, "nonce": 0, "payout": payout, "vault_input": input_vault,
-        "previous_l1_height": mint["confirmed_height"], "previous_l1_hash": mint["confirmed_hash"],
+        "lane": lane, "nonce": nonce, "payout": payout, "vault_input": input_vault,
+        "previous_l1_height": previous_anchor["confirmed_height"], "previous_l1_hash": previous_anchor["confirmed_hash"],
         "header": hex_bytes(header), "commit": commit.name, **proof,
     }
     request_file = args.output / f"{name}-payout-request.json"
     write_json(request_file, request)
     ancestry_rejection = None
-    if not finality_arguments:
+    if not finality_arguments and probe_checkpoints:
         bundle = json.loads(commit.read_text())
         frontier = bytearray(binary(bundle["history"]["frontier"]))
         frontier[-1] ^= 1
@@ -421,7 +434,7 @@ def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, c
         raise AssertionError(confirmed)
     settled = comet_rpc.call(
         "abci_query", path=json.dumps("/stem/bridge-withdrawal"), prove="true",
-        data=hex_bytes(binary(lane) + le(0, 8)),
+        data=hex_bytes(binary(lane) + le(nonce, 8)),
     )["response"]
     if settled["code"] != 0 or json.loads(base64.b64decode(settled["value"]))["record"] is not None:
         raise AssertionError(settled)

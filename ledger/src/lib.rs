@@ -349,7 +349,7 @@ impl Transaction {
             Vec::new(),
             outputs,
             Vec::new(),
-            Some((Operation::BridgeMint(mint), certificate)),
+            Some((Operation::BridgeMint(mint), Some(certificate))),
         )
     }
 
@@ -361,7 +361,18 @@ impl Transaction {
             Vec::new(),
             Vec::new(),
             Vec::new(),
-            Some((operation, certificate)),
+            Some((operation, Some(certificate))),
+        )
+    }
+
+    pub fn fee_claim(claim: protocol::FeeClaim) -> Result<Self> {
+        Self::build(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Some((Operation::FeeClaim(claim), None)),
         )
     }
 
@@ -371,7 +382,7 @@ impl Transaction {
         inputs: Vec<CellInput>,
         outputs: Vec<Cell>,
         witnesses: Vec<GroupWitness>,
-        protocol: Option<(Operation, Certificate)>,
+        protocol: Option<(Operation, Option<Certificate>)>,
     ) -> Result<Self> {
         check_count(
             cell_deps.len(),
@@ -380,21 +391,21 @@ impl Transaction {
             outputs.len(),
             witnesses.len(),
         )?;
-        let variable_size = outputs
-            .iter()
-            .map(|cell| cell.as_slice().len())
-            .chain(
-                protocol
-                    .iter()
-                    .map(|(_, certificate)| certificate.encoded_len()),
-            )
-            .try_fold(0usize, |size, next| size.checked_add(next))
-            .context("Transaction size overflow")?;
+        let variable_size =
+            outputs
+                .iter()
+                .map(|cell| cell.as_slice().len())
+                .chain(protocol.iter().filter_map(|(_, certificate)| {
+                    certificate.as_ref().map(Certificate::encoded_len)
+                }))
+                .try_fold(0usize, |size, next| size.checked_add(next))
+                .context("Transaction size overflow")?;
         check_witness_bytes(&witnesses, variable_size)?;
         let (operation, certificate) = match protocol {
-            Some((operation, certificate)) => {
-                (Some(operation.encode()), Some(certificate.encode()))
-            }
+            Some((operation, certificate)) => (
+                Some(operation.encode()),
+                certificate.map(|certificate| certificate.encode()),
+            ),
             None => (None, None),
         };
         let raw = raw_transaction(cell_deps, header_deps, inputs, outputs, operation);
@@ -483,14 +494,22 @@ impl Transaction {
                 !raw.inputs().is_empty(),
                 "ordinary Transaction requires an input"
             ),
-            (Some(operation), Some(certificate)) => {
+            (Some(operation), certificate) => {
                 ensure!(
                     tx.valid_before_height().is_none() && tx.messages().len() == 0,
                     "protocol transaction cannot include an expiry or Group Messages"
                 );
                 let operation = Operation::decode(operation)?;
-                let certificate = Certificate::decode(certificate)?;
-                operation.validate(&certificate)?;
+                if matches!(operation, Operation::FeeClaim(_)) {
+                    ensure!(
+                        certificate.is_none(),
+                        "fee claims cannot carry a certificate"
+                    );
+                } else {
+                    let certificate =
+                        certificate.context("protocol operation requires a certificate")?;
+                    operation.validate(&Certificate::decode(certificate)?)?;
+                }
                 if matches!(operation, Operation::BridgeMint(_)) {
                     ensure!(
                         !raw.outputs().is_empty()
@@ -505,11 +524,11 @@ impl Transaction {
                             && raw.cell_deps().is_empty()
                             && raw.header_deps().is_empty()
                             && tx.encoded.witnesses().is_empty(),
-                        "control transaction must contain only its operation and certificate"
+                        "control transaction cannot contain Cells, dependencies or witnesses"
                     );
                 }
             }
-            _ => bail!("protocol operation and certificate must occur together"),
+            (None, Some(_)) => bail!("certificate without a protocol operation"),
         }
         if let Some(command) = tx.lineage_command() {
             ensure!(

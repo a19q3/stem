@@ -10,8 +10,9 @@ use ckb_types::{
 use stem_ledger::{
     Transaction,
     protocol::{
-        BlockBudget, BridgeBacking, BridgeLedger, L1Anchor, Lane, Limits, PendingWithdrawal,
-        SettlementChanges, VerifiedMint,
+        BlockBudget, BridgeBacking, BridgeLedger, FeeClaim, FeeFund, FeeFundDestination,
+        FeeFundPolicy, FeePayouts, L1Anchor, Lane, Limits, PendingWithdrawal, SettlementChanges,
+        VerifiedMint,
     },
     replay,
 };
@@ -25,6 +26,9 @@ const BACKING: &[u8] = b"bridge/backing";
 const DEPOSITS: &[u8] = b"bridge/replay-count";
 const LANE: &[u8] = b"bridge/lane/";
 const DEPOSIT: &[u8] = b"bridge/deposit/";
+const FUND_POLICY: &[u8] = b"fees/fund-policy";
+const FUND_PAYOUTS: &[u8] = b"fees/fund-payouts";
+const FUND_PENDING: &[u8] = b"fees/fund-pending/";
 
 pub struct BridgeGenesis {
     pub l1_genesis: Byte32,
@@ -40,6 +44,7 @@ pub struct BridgeGenesis {
     pub mint_limits: Limits,
     pub settlement_limits: Limits,
     pub deposits_per_block: u32,
+    pub fee_funds: Option<[FeeFundDestination; 4]>,
 }
 
 pub struct LaneGenesis {
@@ -64,6 +69,7 @@ pub(super) struct Bridge {
     mint_limits: Limits,
     settlement_limits: Limits,
     deposits_per_block: u32,
+    fee_funds: Option<FeeFundPolicy>,
 }
 
 struct Asset {
@@ -77,6 +83,7 @@ pub(super) struct StagedBridge {
     pub records: Records,
     budget: BlockBudget,
     deposits_remaining: u32,
+    claimed_funds: u8,
 }
 
 #[derive(Default)]
@@ -86,6 +93,7 @@ pub(super) struct BridgeChanges {
     pub protocol_result: Bytes,
     budget: Option<BlockBudget>,
     deposits_remaining: Option<u32>,
+    claimed_funds: u8,
 }
 
 impl StagedBridge {
@@ -97,19 +105,26 @@ impl StagedBridge {
         if let Some(remaining) = change.deposits_remaining {
             self.deposits_remaining = remaining;
         }
+        self.claimed_funds |= change.claimed_funds;
     }
 
     pub fn finish(mut self, store: &Store, fees: u64, total_fees: Option<u64>) -> Result<Records> {
         if fees > 0 || self.records.contains_key(BACKING) {
-            let backing = View {
+            let view = View {
                 store,
                 staged: &self.records,
-            }
-            .backing()?
-            .extinguish_fee(fees)?;
-            let expected = match total_fees {
+            };
+            let backing = view.backing()?.extinguish_fee(fees)?;
+            let total = match total_fees {
                 Some(value) => value,
                 None => store.fee_surplus()?,
+            };
+            let expected = if store.fee_fund_policy().is_some() {
+                total
+                    .checked_sub(view.fee_payouts()?.total_queued()?)
+                    .context("fund claims exceed total fees")?
+            } else {
+                total
             };
             ensure!(
                 backing.unallocated() == expected,
@@ -235,20 +250,40 @@ impl Bridge {
         }
         records.insert(CONFIG.to_vec(), Some(config));
 
-        Ok((
-            Self {
-                l1_genesis: spec.l1_genesis.clone(),
-                authority,
-                burn: spec.burn_code_hash.clone(),
-                lanes,
-                recipient_locks,
-                reserved_locks: spec.reserved_recipient_locks.clone(),
-                mint_limits: spec.mint_limits,
-                settlement_limits: spec.settlement_limits,
-                deposits_per_block: spec.deposits_per_block,
-            },
-            records,
-        ))
+        let mut bridge = Self {
+            l1_genesis: spec.l1_genesis.clone(),
+            authority,
+            burn: spec.burn_code_hash.clone(),
+            lanes,
+            recipient_locks,
+            reserved_locks: spec.reserved_recipient_locks.clone(),
+            mint_limits: spec.mint_limits,
+            settlement_limits: spec.settlement_limits,
+            deposits_per_block: spec.deposits_per_block,
+            fee_funds: None,
+        };
+        if let Some(funds) = &spec.fee_funds {
+            let (lane, _) = bridge
+                .lanes
+                .iter()
+                .find(|(_, asset)| asset.l1.is_none())
+                .context("fee funds require a native CKB vault")?;
+            for fund in funds {
+                bridge.check_recipient(&fund.recipient)?;
+            }
+            let policy = FeeFundPolicy {
+                lane: lane.clone(),
+                funds: funds.clone(),
+            };
+            policy.validate()?;
+            records.insert(FUND_POLICY.to_vec(), Some(policy.encode().to_vec()));
+            records.insert(
+                FUND_PAYOUTS.to_vec(),
+                Some(FeePayouts::default().encode().to_vec()),
+            );
+            bridge.fee_funds = Some(policy);
+        }
+        Ok((bridge, records))
     }
 
     pub fn stage(&self) -> StagedBridge {
@@ -261,6 +296,7 @@ impl Bridge {
             records: Records::new(),
             budget: BlockBudget::new(self.mint_limits, zero, self.settlement_limits),
             deposits_remaining: self.deposits_per_block,
+            claimed_funds: 0,
         }
     }
 
@@ -439,60 +475,26 @@ impl Bridge {
                 "Burn Cell is below L1 occupied Capacity"
             );
 
-            let name = key(LANE, &lane_id, None);
-            let (mut lane, nonce) = match changes.records.get(&name).and_then(Option::as_ref) {
-                Some(encoded) => Lane::decode(encoded)?,
-                None => View {
-                    store,
-                    staged: &state.records,
-                }
-                .lane_state(&lane_id)?,
+            let view = View {
+                store,
+                staged: &state.records,
             };
-            lane.reserved_capacity = lane
-                .reserved_capacity
-                .checked_add(cell.capacity())
-                .context("pending withdrawal Capacity overflow")?;
-            lane.reserved_units = lane
-                .reserved_units
-                .checked_add(units)
-                .context("pending withdrawal units overflow")?;
-            ensure!(
-                lane.reserved_capacity <= lane.capacity && lane.reserved_units <= lane.units,
-                "Burn Cell exceeds available vault reserve"
-            );
-            let next = nonce.checked_add(1).context("withdrawal nonce exhausted")?;
-            let mut receipt = Vec::new();
-            receipt.extend_from_slice(lane_id.as_slice());
-            receipt.extend_from_slice(&nonce.to_le_bytes());
-            receipt.extend_from_slice(tx_id.as_slice());
-            receipt.extend_from_slice(&u32::try_from(index)?.to_le_bytes());
-            receipt.extend_from_slice(&cell.capacity().to_le_bytes());
-            receipt.extend_from_slice(&units.to_le_bytes());
-            receipt.extend_from_slice(recipient.as_slice());
-            let id: Byte32 =
-                stem_bridge_wire::withdrawal_receipt_id(&store.network().unpack(), &receipt).pack();
-            let mut pending = id.as_slice().to_vec();
-            pending.extend_from_slice(&receipt);
-            let pending_key = pending_key(&lane_id, nonce).to_vec();
-            ensure!(
-                View {
-                    store,
-                    staged: &state.records
-                }
-                .read(&pending_key)?
-                .is_none(),
-                "withdrawal nonce already pending"
-            );
-            changes.records.insert(pending_key, Some(pending));
-            changes
-                .records
-                .insert(name, Some(lane.encode(next).to_vec()));
+            let (_, receipt) = view.queue_withdrawal(
+                &mut changes.records,
+                Withdrawal {
+                    lane: &lane_id,
+                    tx_id: &tx_id,
+                    index: u32::try_from(index)?,
+                    capacity: cell.capacity(),
+                    units,
+                    recipient: &recipient,
+                },
+            )?;
             changes.omit_outputs.insert(index);
             withdrawal_capacity = withdrawal_capacity
                 .checked_add(cell.capacity())
                 .context("withdrawal capacity overflow")?;
-            receipts.extend_from_slice(&u32::try_from(receipt.len())?.to_le_bytes());
-            receipts.extend_from_slice(&receipt);
+            append_ticket(&mut receipts, &receipt)?;
         }
         if withdrawal_capacity > 0 {
             let backing = View {
@@ -506,6 +508,67 @@ impl Bridge {
                 .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
         }
         changes.protocol_result = receipts.into();
+        Ok(changes)
+    }
+
+    pub fn claim_fee(
+        &self,
+        store: &Store,
+        state: &StagedBridge,
+        tx: &Transaction,
+        claim: FeeClaim,
+    ) -> Result<BridgeChanges> {
+        let policy = self.fee_funds.as_ref().context("fee funds are disabled")?;
+        let bit = 1 << claim.fund as u8;
+        ensure!(
+            state.claimed_funds & bit == 0,
+            "fee fund already claimed in this block"
+        );
+        let view = View {
+            store,
+            staged: &state.records,
+        };
+        let destination = &policy.funds[claim.fund as usize];
+        let output = CellOutput::new_builder()
+            .capacity(claim.amount)
+            .lock(destination.recipient.clone())
+            .build();
+        ensure!(
+            !output.is_lack_of_capacity(Capacity::zero())?,
+            "fee claim is below L1 occupied Capacity"
+        );
+        let mut payouts = view.fee_payouts()?;
+        let allocation = FeeFund::allocation(store.fee_surplus()?, destination.basis_points)?;
+        payouts.queue(claim, allocation)?;
+        let backing = view.backing()?.reserve_fee_payout(claim.amount)?;
+        let mut changes = BridgeChanges {
+            claimed_funds: bit,
+            ..Default::default()
+        };
+        let (nonce, receipt) = view.queue_withdrawal(
+            &mut changes.records,
+            Withdrawal {
+                lane: &policy.lane,
+                tx_id: &tx.id(store.network()),
+                index: 0,
+                capacity: claim.amount,
+                units: 0,
+                recipient: &destination.recipient,
+            },
+        )?;
+        changes
+            .records
+            .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
+        changes
+            .records
+            .insert(FUND_PAYOUTS.to_vec(), Some(payouts.encode().to_vec()));
+        changes.records.insert(
+            key(FUND_PENDING, &policy.lane, Some(nonce)),
+            Some(vec![claim.fund as u8]),
+        );
+        let mut ticket = Vec::new();
+        append_ticket(&mut ticket, &receipt)?;
+        changes.protocol_result = ticket.into();
         Ok(changes)
     }
 
@@ -549,6 +612,18 @@ impl Bridge {
             changes
                 .records
                 .insert(pending_key(&lane, nonce).to_vec(), None);
+            let fund_key = key(FUND_PENDING, &lane, Some(nonce));
+            if self.fee_funds.is_some()
+                && let Some(value) = view.read(&fund_key)?
+            {
+                let [id]: [u8; 1] = value.as_slice().try_into()?;
+                let mut payouts = view.fee_payouts()?;
+                payouts.settle(FeeFund::from_id(id)?, paid.capacity)?;
+                changes
+                    .records
+                    .insert(FUND_PAYOUTS.to_vec(), Some(payouts.encode().to_vec()));
+                changes.records.insert(fund_key, None);
+            }
         }
         changes
             .records
@@ -584,6 +659,46 @@ impl Bridge {
 }
 
 impl Store {
+    pub fn fee_fund_policy(&self) -> Option<&FeeFundPolicy> {
+        self.bridge.as_ref()?.fee_funds.as_ref()
+    }
+
+    pub fn prove_fee_fund_policy(&self) -> Result<super::Proof> {
+        Ok(self.prove_system(FUND_POLICY)?.1)
+    }
+
+    pub fn verify_fee_fund_policy(
+        network: &Byte32,
+        header: &super::Header,
+        policy: &FeeFundPolicy,
+        proof: &super::Proof,
+    ) -> bool {
+        Self::verify_system_record(network, header, FUND_POLICY, Some(&policy.encode()), proof)
+    }
+
+    pub fn prove_fee_payouts(&self) -> Result<(FeePayouts, super::Proof)> {
+        let (record, proof) = self.prove_system(FUND_PAYOUTS)?;
+        Ok((
+            FeePayouts::decode(&record.context("fee funds are disabled")?)?,
+            proof,
+        ))
+    }
+
+    pub fn verify_fee_payouts(
+        network: &Byte32,
+        header: &super::Header,
+        payouts: &FeePayouts,
+        proof: &super::Proof,
+    ) -> bool {
+        Self::verify_system_record(
+            network,
+            header,
+            FUND_PAYOUTS,
+            Some(&payouts.encode()),
+            proof,
+        )
+    }
+
     pub fn prove_bridge_backing(&self) -> Result<(BridgeBacking, super::Proof)> {
         let (record, proof) = self.prove_system(BACKING)?;
         let record = record.context("bridge backing is not configured")?;
@@ -668,7 +783,68 @@ struct View<'a> {
     staged: &'a Records,
 }
 
+struct Withdrawal<'a> {
+    lane: &'a Byte32,
+    tx_id: &'a Byte32,
+    index: u32,
+    capacity: u64,
+    units: u128,
+    recipient: &'a Script,
+}
+
 impl View<'_> {
+    fn queue_withdrawal(
+        &self,
+        changes: &mut Records,
+        withdrawal: Withdrawal<'_>,
+    ) -> Result<(u64, Vec<u8>)> {
+        let name = key(LANE, withdrawal.lane, None);
+        let (mut lane, nonce) = match changes.get(&name).and_then(Option::as_ref) {
+            Some(encoded) => Lane::decode(encoded)?,
+            None => self.lane_state(withdrawal.lane)?,
+        };
+        lane.reserved_capacity = lane
+            .reserved_capacity
+            .checked_add(withdrawal.capacity)
+            .context("pending withdrawal Capacity overflow")?;
+        lane.reserved_units = lane
+            .reserved_units
+            .checked_add(withdrawal.units)
+            .context("pending withdrawal units overflow")?;
+        ensure!(
+            lane.reserved_capacity <= lane.capacity && lane.reserved_units <= lane.units,
+            "withdrawal exceeds available vault reserve"
+        );
+        let next = nonce.checked_add(1).context("withdrawal nonce exhausted")?;
+        let mut receipt = Vec::new();
+        receipt.extend_from_slice(withdrawal.lane.as_slice());
+        receipt.extend_from_slice(&nonce.to_le_bytes());
+        receipt.extend_from_slice(withdrawal.tx_id.as_slice());
+        receipt.extend_from_slice(&withdrawal.index.to_le_bytes());
+        receipt.extend_from_slice(&withdrawal.capacity.to_le_bytes());
+        receipt.extend_from_slice(&withdrawal.units.to_le_bytes());
+        receipt.extend_from_slice(withdrawal.recipient.as_slice());
+        let id = stem_bridge_wire::withdrawal_receipt_id(&self.store.network().unpack(), &receipt);
+        let mut pending = id.to_vec();
+        pending.extend_from_slice(&receipt);
+        let pending_key = pending_key(withdrawal.lane, nonce).to_vec();
+        ensure!(
+            !changes.contains_key(&pending_key) && self.read(&pending_key)?.is_none(),
+            "withdrawal nonce already pending"
+        );
+        changes.insert(pending_key, Some(pending));
+        changes.insert(name, Some(lane.encode(next).to_vec()));
+        Ok((nonce, receipt))
+    }
+
+    fn fee_payouts(&self) -> Result<FeePayouts> {
+        FeePayouts::decode(
+            &self
+                .read(FUND_PAYOUTS)?
+                .context("missing fee fund payout record")?,
+        )
+    }
+
     fn read(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         match self.staged.get(key) {
             Some(value) => Ok(value.clone()),
@@ -733,6 +909,12 @@ pub fn lane_id(genesis: &Byte32, vault_type: &Byte32, asset: Option<&Byte32>) ->
 
 fn pending_key(lane: &Byte32, nonce: u64) -> [u8; stem_bridge_wire::WITHDRAWAL_KEY_SIZE] {
     stem_bridge_wire::pending_key(&lane.unpack(), nonce)
+}
+
+fn append_ticket(tickets: &mut Vec<u8>, receipt: &[u8]) -> Result<()> {
+    tickets.extend_from_slice(&u32::try_from(receipt.len())?.to_le_bytes());
+    tickets.extend_from_slice(receipt);
+    Ok(())
 }
 
 fn key(prefix: &[u8], id: &Byte32, nonce: Option<u64>) -> Vec<u8> {

@@ -44,6 +44,7 @@ pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
 pub use staking::StakeGenesis;
 use staking::{StagedStake, Staking};
 pub use state_snapshot::{SnapshotReader, StateSnapshot};
+pub use stem_ledger::protocol::{FeeFundDestination, FeeFundPolicy};
 
 const MARKER: &[u8] = b"\0stem/native-spec";
 const TIP: &[u8] = b"\0stem/tip";
@@ -1277,7 +1278,8 @@ impl Store {
             lineages,
             keeper,
         } = overlay;
-        if matches!(tx.operation(), Some(Operation::StakeSnapshot(_))) {
+        let operation = tx.operation();
+        if matches!(operation, Some(Operation::StakeSnapshot(_))) {
             let (staking, stake) = self
                 .staking
                 .as_ref()
@@ -1287,13 +1289,19 @@ impl Store {
             *budget = next;
             return Ok(receipt);
         }
-        if matches!(tx.operation(), Some(Operation::BridgeSettlement(_))) {
+        if matches!(
+            operation,
+            Some(Operation::BridgeSettlement(_) | Operation::FeeClaim(_))
+        ) {
             let (bridge, stage) = self
                 .bridge
                 .as_ref()
                 .zip(bridge.as_mut())
                 .context("native bridge is not configured")?;
-            let changes = bridge.settle(self, stage, tx)?;
+            let changes = match operation {
+                Some(Operation::FeeClaim(claim)) => bridge.claim_fee(self, stage, tx, claim)?,
+                _ => bridge.settle(self, stage, tx)?,
+            };
             let protocol_result = changes.protocol_result.clone();
             stage.apply(changes);
             *budget = next;
@@ -1314,7 +1322,7 @@ impl Store {
         let concrete = materialized
             .as_ref()
             .map_or(tx, |command| &command.transaction);
-        let (resolved, changes) = if matches!(tx.operation(), Some(Operation::BridgeMint(_))) {
+        let (resolved, changes) = if matches!(operation, Some(Operation::BridgeMint(_))) {
             let (bridge, stage) = self
                 .bridge
                 .as_ref()

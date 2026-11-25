@@ -16,7 +16,7 @@ Local runs reached 128 replicas. Four replicas tested recovery from a skewed lea
 
 Lineage commands can authorize work on registered Cells by stable ID. Stem resolves the current Head, runs the signed RISC-V Executor, and validates all affected Script Groups before committing. A rejected operation can settle its pre-authorized fee while preserving every Head. The `stem wallet lineage` commands build and seal these transactions. A Keeper-enabled network can reserve a one-shot command and execute it at a committed block height. For a sponsored intent, business parties sign first and a separate payer can fund execution.
 
-Bridged networks expose SystemRoot proofs at `/stem/bridge-backing`, `/stem/bridge-lane` and `/stem/bridge-withdrawal`. They authenticate Stem's accounting of certified CKB observations, including recognized reserve, circulating Capacity, pending withdrawals and lane nonces. Development-network fee accounting is available separately at `/stem/extinguished-fees`.
+Bridged networks expose SystemRoot proofs at `/stem/bridge-backing`, `/stem/bridge-lane` and `/stem/bridge-withdrawal`. They authenticate Stem's accounting of certified CKB observations, including recognized reserve, circulating Capacity, pending withdrawals and lane nonces. The fee tally is available at `/stem/extinguished-fees`. Networks that configure fee funds expose `/stem/fee-funds` for the four accounts and support permissionless claims to their fixed CKB recipients.
 
 - [Protocol](STEM-PROTOCOL.md)
 - [Implementation and VM ABI](ARCHITECTURE.md)

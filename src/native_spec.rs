@@ -7,7 +7,8 @@ use ckb_jsonrpc_types::{JsonBytes, OutPoint as JsonOutPoint, Script as JsonScrip
 use ckb_types::{H256, core::ScriptHashType, packed::Script, prelude::*};
 use serde::Deserialize;
 use stem::native_store::{
-    BridgeGenesis, KeeperPolicy, LaneGenesis, Limits, RecipientLock, ResourceFees, Spec,
+    BridgeGenesis, FeeFundDestination, KeeperPolicy, LaneGenesis, Limits, RecipientLock,
+    ResourceFees, Spec,
 };
 use stem_ledger::{
     CapacityPolicy, Cell,
@@ -82,6 +83,14 @@ struct Bridge {
     mint_limits: OperationLimits,
     settlement_limits: OperationLimits,
     deposits_per_block: u32,
+    fee_funds: Option<[FundDestination; 4]>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FundDestination {
+    basis_points: u16,
+    recipient: JsonScript,
 }
 
 #[derive(Deserialize)]
@@ -224,6 +233,12 @@ fn load_bridge(bridge: Bridge) -> Result<BridgeGenesis> {
         mint_limits: bridge.mint_limits.into(),
         settlement_limits: bridge.settlement_limits.into(),
         deposits_per_block: bridge.deposits_per_block,
+        fee_funds: bridge.fee_funds.map(|funds| {
+            funds.map(|fund| FeeFundDestination {
+                basis_points: fund.basis_points,
+                recipient: fund.recipient.into(),
+            })
+        }),
     })
 }
 

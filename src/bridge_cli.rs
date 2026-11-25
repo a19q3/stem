@@ -21,7 +21,9 @@ use stem::native_store::{BridgeGenesis, LaneGenesis, lane_id};
 use stem_bridge_wire::{Gate, NATIVE_VAULT_SIZE, XUDT_VAULT_SIZE};
 use stem_ledger::{
     Cell, Transaction,
-    protocol::{BridgeMint, Certificate, L1Anchor, MintObservation, VaultUpdate},
+    protocol::{
+        BridgeMint, Certificate, FeeClaim, FeeFund, L1Anchor, MintObservation, VaultUpdate,
+    },
 };
 use stem_stake::Attestation;
 
@@ -66,6 +68,18 @@ pub enum BridgeCommand {
     Mint {
         #[arg(long)]
         observations: PathBuf,
+    },
+    /// Claim reconciled fees for an immutable L1 destination.
+    ClaimFees {
+        /// 0 validators and delegators, 1 development, 2 ecosystem, 3 PoW security.
+        #[arg(long)]
+        fund: u8,
+        /// Claim size in shannons.
+        #[arg(long)]
+        amount: u64,
+        /// Fund's cumulative queued amount in shannons, from /stem/fee-funds.
+        #[arg(long)]
+        claimed_before: u64,
     },
     /// Verify a pending withdrawal against an authenticated Header and build its CKB input_type.
     WithdrawalWitness(payout::WithdrawalWitness),
@@ -163,6 +177,19 @@ impl MintBody {
 impl BridgeCommand {
     pub fn run(self) -> Result<()> {
         match self {
+            Self::ClaimFees {
+                fund,
+                amount,
+                claimed_before,
+            } => {
+                let claim = Transaction::fee_claim(FeeClaim {
+                    fund: FeeFund::from_id(fund)?,
+                    amount,
+                    claimed_before,
+                })?;
+                println!("{}", json!(JsonBytes::from_vec(claim.as_slice().to_vec())));
+                Ok(())
+            }
             Self::WithdrawalWitness(args) => args.run(),
             Self::AttestPayout(args) => args.run(),
             Self::AttestVault(args) => args.run(),

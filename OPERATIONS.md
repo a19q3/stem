@@ -332,6 +332,20 @@ stem ckb-wallet verify-inclusion --transaction ckb-payout-packed.json \
 
 The result authenticates the selected output at creation. It provides no authorization to consume the output or evidence about its later spend status.
 
+### Redeem fee revenue on CKB
+
+An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.
+
+Request `/stem/fee-funds` with `prove=true` at the current finalized height. Authenticate its `policy_record`, `payout_record` and cumulative fee tally against the finalized Header using `Store::verify_fee_fund_policy`, `Store::verify_fee_payouts` and `Store::verify_extinguished_fees`. The two Strand fund records can be decoded with `stem_ledger::protocol::{FeeFundPolicy, FeePayouts}`. Supply the chosen account's `queued_shannons` as a decimal integer. The result is a JSON hex transaction suitable for the ordinary submission endpoint.
+
+```sh
+stem bridge claim-fees --fund 3 --amount 8000000000 --claimed-before 0
+```
+
+An accepted claim creates a pending withdrawal in the native CKB lane. Use the next lane nonce with the same checkpoint relay and `stem bridge withdrawal-witness` flow as a user withdrawal. Anyone can relay the release to the fixed CKB recipient. The separate CKB fee input pays the relay costs. Guardians check that the L1 transaction paid the prescribed recipient and amount. An accepted `bridge settle` confirms the payment in Stem and removes its pending marker.
+
+For a four-replica devnet run, use the same binary and contract options as the [Jolteon bridge exercise](#exercise-the-native-jolteon-path), replace both xUDT flags with `--fee-funds`, and choose a new output directory. The fixture pays a deliberately high 800 CKB transaction fee from a confirmed bridged Cell, allocates it at 65/15/10/10 and redeems all four accounts on CKB. The output directory contains the success and rejection evidence. The fixture's fee and allocation rates are experimental values.
+
 ## Exercise the CKB Stake Registry
 
 ```sh

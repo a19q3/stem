@@ -70,6 +70,17 @@ impl BridgeBacking {
         Ok(self)
     }
 
+    pub fn reserve_fee_payout(mut self, amount: u64) -> Result<Self> {
+        self.unallocated()
+            .checked_sub(amount)
+            .context("fee payout exceeds unallocated reserve")?;
+        self.pending = self
+            .pending
+            .checked_add(amount)
+            .context("bridge pending liability overflow")?;
+        Ok(self)
+    }
+
     pub fn extinguish_fee(mut self, amount: u64) -> Result<Self> {
         self.circulating = self
             .circulating

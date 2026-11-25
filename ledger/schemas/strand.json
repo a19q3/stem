@@ -326,6 +326,15 @@
       ]
     },
     {
+      "name": "FeeClaim",
+      "kind": "sequence",
+      "fields": [
+        { "name": "fund", "type": "byte" },
+        { "name": "amount", "type": "CompactUint64" },
+        { "name": "claimed_before", "type": "CompactUint64" }
+      ]
+    },
+    {
       "name": "ProtocolOperation",
       "kind": "sequence",
       "fields": [
@@ -833,6 +842,43 @@
         { "name": "liquid", "type": "CompactUint64" },
         { "name": "circulating", "type": "CompactUint64" },
         { "name": "pending", "type": "CompactUint64" }
+      ]
+    },
+    {
+      "name": "FeePayout",
+      "kind": "sequence",
+      "fields": [
+        { "name": "queued", "type": "CompactUint64" },
+        { "name": "paid", "type": "CompactUint64" }
+      ]
+    },
+    {
+      "name": "FeeFundDestination",
+      "kind": "sequence",
+      "fields": [
+        { "name": "basis_points", "type": "Uint16" },
+        { "name": "recipient", "type": "Bytes" }
+      ]
+    },
+    {
+      "name": "FeeFundPolicy",
+      "kind": "sequence",
+      "fields": [
+        { "name": "lane", "type": "Byte32" },
+        { "name": "validators", "type": "FeeFundDestination" },
+        { "name": "development", "type": "FeeFundDestination" },
+        { "name": "ecosystem", "type": "FeeFundDestination" },
+        { "name": "pow", "type": "FeeFundDestination" }
+      ]
+    },
+    {
+      "name": "FeePayouts",
+      "kind": "sequence",
+      "fields": [
+        { "name": "validators", "type": "FeePayout" },
+        { "name": "development", "type": "FeePayout" },
+        { "name": "ecosystem", "type": "FeePayout" },
+        { "name": "pow", "type": "FeePayout" }
       ]
     },
     {

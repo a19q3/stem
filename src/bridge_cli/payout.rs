@@ -218,10 +218,19 @@ impl AttestPayout {
             ),
             "Stem receipt is outside the authenticated execution roots"
         );
-        ensure!(
-            raw.operation().is_none(),
-            "a bridge control operation cannot issue a withdrawal ticket"
-        );
+        let fund_claim = match raw.operation() {
+            None => None,
+            Some(stem_ledger::protocol::Operation::FeeClaim(claim)) => {
+                let bridge = spec.bridge.as_ref().context("native bridge disabled")?;
+                let funds = bridge.fee_funds.as_ref().context("fee funds disabled")?;
+                ensure!(
+                    find_lane(bridge, &request.lane.pack())?.l1_type.is_none(),
+                    "fee claim requires the native CKB lane"
+                );
+                Some((claim.amount, &funds[claim.fund as usize].recipient))
+            }
+            Some(_) => anyhow::bail!("this protocol operation cannot issue a withdrawal ticket"),
+        };
         let tx_id = raw.id(&spec.network);
         let expected_lane = request.lane.as_bytes();
         let mut data = receipt.protocol_result.as_ref();
@@ -246,6 +255,15 @@ impl AttestPayout {
             let capacity = u64::from_le_bytes(item[76..84].try_into()?);
             let units = u128::from_le_bytes(item[84..100].try_into()?);
             let recipient = Script::from_slice(&item[100..])?;
+            if let Some((amount, destination)) = fund_claim {
+                ensure!(
+                    capacity == amount
+                        && units == 0
+                        && &recipient == destination
+                        && item[72..76] == [0; 4],
+                    "withdrawal ticket does not match the configured fee claim"
+                );
+            }
             let id = stem_bridge_wire::withdrawal_receipt_id(&spec.network.unpack(), item);
             return Ok(Ticket {
                 id: id.into(),

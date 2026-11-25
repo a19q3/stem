@@ -12,10 +12,12 @@ use stem_stake::{Attestation, Authority, MAX_RECORDS};
 use crate::{Transaction, hash, wire};
 
 mod backing;
+mod fees;
 mod mint;
 mod settlement;
 mod snapshot;
 pub use backing::BridgeBacking;
+pub use fees::{FeeClaim, FeeFund, FeeFundDestination, FeeFundPolicy, FeePayout, FeePayouts};
 pub use mint::{MintObservation, VerifiedMint, mint_digest};
 pub use settlement::{BridgeLedger, Lane, PendingWithdrawal, SettlementChanges};
 pub use snapshot::{
@@ -81,6 +83,7 @@ pub enum Operation {
     BridgeMint(BridgeMint),
     StakeSnapshot(StakeSnapshot),
     BridgeSettlement(BridgeSettlement),
+    FeeClaim(FeeClaim),
 }
 
 impl Operation {
@@ -147,6 +150,7 @@ impl Operation {
                     .as_bytes();
                 (kind, payload)
             }
+            Self::FeeClaim(claim) => (5, claim.encode().as_bytes()),
         };
         wire::ProtocolOperation::new_builder()
             .kind(kind.into())
@@ -206,6 +210,7 @@ impl Operation {
                     action,
                 }))
             }
+            5 => Ok(Self::FeeClaim(FeeClaim::decode(&payload)?)),
             _ => bail!("unknown protocol operation"),
         }
     }
@@ -238,16 +243,18 @@ impl Operation {
                     "settlement certificate has unexpected body"
                 );
             }
+            Self::FeeClaim(_) => bail!("fee claims do not use certificates"),
         }
         Ok(())
     }
 
-    fn class(&self) -> Class {
-        match self {
+    fn class(&self) -> Result<Class> {
+        Ok(match self {
             Self::BridgeMint(_) => Class::Mint,
             Self::StakeSnapshot(_) => Class::StakeSnapshot,
             Self::BridgeSettlement(_) => Class::BridgeSettlement,
-        }
+            Self::FeeClaim(_) => bail!("fee claims have a separate block allowance"),
+        })
     }
 }
 
@@ -483,7 +490,7 @@ impl BlockBudget {
             .operation()
             .context("ordinary transactions have their own resource budget")?;
         let certificate = tx.certificate().context("missing certificate")?;
-        let available = match operation.class() {
+        let available = match operation.class()? {
             Class::Mint => &mut self.mint,
             Class::StakeSnapshot => &mut self.stake_snapshot,
             Class::BridgeSettlement => &mut self.settlement,

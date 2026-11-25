@@ -108,6 +108,51 @@ pub(crate) fn query(
             }))?
             .into()
         }
+        "/stem/fee-funds" if prove && data.is_empty() => {
+            use stem_ledger::protocol::FeeFund;
+
+            ensure!(
+                requested == tip,
+                "fee fund proofs require the current height"
+            );
+            let policy = store.fee_fund_policy().context("fee funds are disabled")?;
+            let (fees, fee_proof) = store.prove_extinguished_fees()?;
+            let (payouts, payout_proof) = store.prove_fee_payouts()?;
+            let accounts = FeeFund::ALL
+                .iter()
+                .map(|&fund| {
+                    use ckb_jsonrpc_types::Uint64;
+
+                    let destination = &policy.funds[fund as usize];
+                    let payout = payouts.fund(fund);
+                    let allocated =
+                        FeeFund::allocation(fees.unwrap_or_default(), destination.basis_points)?;
+                    let available = allocated
+                        .checked_sub(payout.queued)
+                        .context("fee fund is overallocated")?;
+                    Ok(serde_json::json!({
+                        "id": fund as u8,
+                        "name": fund.name(),
+                        "basis_points": destination.basis_points,
+                        "recipient": ckb_jsonrpc_types::Script::from(destination.recipient.clone()),
+                        "allocated_shannons": Uint64::from(allocated),
+                        "available_shannons": Uint64::from(available),
+                        "queued_shannons": Uint64::from(payout.queued),
+                        "paid_shannons": Uint64::from(payout.paid),
+                    }))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            serde_json::to_vec(&serde_json::json!({
+                "lane": format!("0x{}", hex::encode(policy.lane.as_slice())),
+                "accounts": accounts,
+                "extinguished_shannons": fees.map(ckb_jsonrpc_types::Uint64::from),
+                "fee_proof": format!("0x{}", hex::encode(fee_proof.encode()?)),
+                "policy_record": format!("0x{}", hex::encode(policy.encode())),
+                "policy_proof": format!("0x{}", hex::encode(store.prove_fee_fund_policy()?.encode()?)),
+                "payout_record": format!("0x{}", hex::encode(payouts.encode())),
+                "payout_proof": format!("0x{}", hex::encode(payout_proof.encode()?)),
+            }))?.into()
+        }
         "/stem/bridge-backing" if prove && data.is_empty() => {
             ensure!(
                 requested == tip,

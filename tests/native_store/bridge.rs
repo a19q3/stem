@@ -3,10 +3,13 @@ use std::path::Path;
 use anyhow::{Context, ensure};
 use ckb_types::packed::Byte32;
 use ed25519_dalek::{Signer, SigningKey};
-use stem::native_store::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
+use stem::native_store::{
+    BridgeGenesis, FeeFundDestination, FeeFundPolicy, LaneGenesis, RecipientLock, lane_id,
+};
 use stem_ledger::protocol::{
-    BridgeMint, BridgeSettlement, Certificate, L1Anchor, Limits as ProtocolLimits, MintObservation,
-    Operation, SettlementAction, VaultUpdate, settlement_digest,
+    BridgeMint, BridgeSettlement, Certificate, FeeClaim, FeeFund, FeePayouts, L1Anchor,
+    Limits as ProtocolLimits, MintObservation, Operation, SettlementAction, VaultUpdate,
+    settlement_digest,
 };
 use stem_stake::{Attestation, Member};
 
@@ -105,6 +108,14 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         mint_limits: protocol,
         settlement_limits: protocol,
         deposits_per_block: 4,
+        fee_funds: Some(std::array::from_fn(|index| FeeFundDestination {
+            basis_points: [6500, 1500, 1000, 1000][index],
+            recipient: recipient
+                .clone()
+                .as_builder()
+                .args(Bytes::from(vec![70 + index as u8; 20]).pack())
+                .build(),
+        })),
     });
     let store_path = tempfile::tempdir()?;
     let mut store = Store::open(store_path.path(), &fixture.spec, Retention::Recent(2))?;
@@ -404,6 +415,48 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     ));
     assert!(restored.bridge_receipt(&asset_lane, 0)?.is_none());
     assert_eq!(restored.fee_surplus()?, FEE);
+    let policy = restored
+        .fee_fund_policy()
+        .context("missing restored funds")?;
+    let policy_proof = restored.prove_fee_fund_policy()?;
+    assert_eq!(&FeeFundPolicy::decode(&policy.encode())?, policy);
+    assert!(Store::verify_fee_fund_policy(
+        restored.network(),
+        restored.tip(),
+        policy,
+        &policy_proof
+    ));
+    let mut changed = policy.clone();
+    changed.funds.swap(0, 1);
+    assert!(!Store::verify_fee_fund_policy(
+        restored.network(),
+        restored.tip(),
+        &changed,
+        &policy_proof
+    ));
+    let (funds, proof) = restored.prove_fee_payouts()?;
+    assert_eq!(funds, FeePayouts::default());
+    assert!(Store::verify_fee_payouts(
+        restored.network(),
+        restored.tip(),
+        &funds,
+        &proof
+    ));
+    let mut forged = funds;
+    forged.queue(
+        FeeClaim {
+            fund: FeeFund::Validators,
+            amount: 1,
+            claimed_before: 0,
+        },
+        1,
+    )?;
+    assert!(!Store::verify_fee_payouts(
+        restored.network(),
+        restored.tip(),
+        &forged,
+        &proof
+    ));
     let (restored_backing, proof) = restored.prove_bridge_backing()?;
     assert_eq!(restored_backing, backing);
     assert!(Store::verify_bridge_backing(
