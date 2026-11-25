@@ -1673,3 +1673,45 @@ all successful devnet runs and signed rejection cases.
 
 [Reproduction](OPERATIONS.md#exercise-stem-native-udt-settlement) ·
 [Raw reports, proofs and rejections](benchmarks/2026-11-26-stem-udt-settlement.json.xz).
+
+## CKB Spore V2 settlement through Stem
+
+Revision `d08fefa` ran three settlement rounds on four Jolteon replicas
+with CKB 0.210.0. The fixture deployed the published Spore V2 mainnet
+ELF with data hash `4a4dce1d…b9f5` on the local CKB chain. It minted a
+real Spore, locked the original in CKB custody, issued its Stem
+representation from a confirmed CKB output, transferred it to a
+different Stem owner and burned it. The final CKB transfer released
+the original Spore with its exact Type Script, original ID, data and
+360 CKB capacity. The native endpoint retained a separate 100 CKB
+bond. The final round then redeposited that original and reissued the
+same representation Type Script at Stem height 33.
+
+| Operation in the final round | Signed bytes | Cycles |
+| --- | ---: | ---: |
+| CKB original mint | 899 | 1,787,710 CKB estimate |
+| CKB original into custody | 2,223 | 3,501,380 CKB estimate |
+| Stem import | 2,203 | 14,050,692 Stem receipt |
+| Stem ownership transfer | 415 | 1,941,880 Stem receipt |
+| Stem return with burn | 877 | 2,055,722 Stem receipt |
+| CKB original release | 2,710 | 4,383,142 CKB estimate |
+| CKB redeposit | 2,223 | 3,538,299 CKB estimate |
+| Stem reimport | 2,203 | 14,050,692 Stem receipt |
+
+The three guardian signatures account for 12,000,000 cycles of each
+Stem import. The CKB Spore V2 Type Script itself rejected a transfer
+without its CoBuild witness. The fixture also rejected content or
+recipient substitution, fake issuance, duplicate mapped outputs,
+repeat imports, premature burns, missing checkpoints, attempts to
+take the original Cell's capacity and an earlier return proof
+submitted against the newly redeposited Spore. All 16 final rejection
+cases appear in the raw report.
+
+The final four replicas agreed at height 33. Native UDT full return,
+CKB/xUDT payout and generic Intercell regressions passed. The Rust
+workspace passed 447 tests with 12 ignored. The Go proof suite passed.
+The measured asset used plain MIME content with no Cluster. The tested
+lifecycle begins with an original CKB Spore.
+
+[Reproduction](OPERATIONS.md#exercise-ckb-spore-settlement) ·
+[Raw runs, signed rejections and fingerprints](benchmarks/2026-11-26-stem-spore-settlement.json.xz).

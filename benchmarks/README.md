@@ -45,5 +45,6 @@ available. Published network evidence contains public genesis and proof data.
 | Delegation occupancy and both vote heights | [Report](../BENCHMARKS.md#delegation-occupancy-and-both-vote-heights), [devnet runs and build evidence](2026-11-26-stem-delegation-liability.json.xz) |
 | Bidirectional Intercell Messaging | [Report](../BENCHMARKS.md#bidirectional-intercell-messaging), [three message rounds, regressions and rejection evidence](2026-11-26-stem-intercell.json.xz) |
 | Stem-native UDT export and return | [Report](../BENCHMARKS.md#stem-native-udt-settlement), [full and partial returns, rejections and regressions](2026-11-26-stem-udt-settlement.json.xz) |
+| CKB Spore V2 settlement through Stem | [Report](../BENCHMARKS.md#ckb-spore-v2-settlement-through-stem), [three settlement rounds and regression evidence](2026-11-26-stem-spore-settlement.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
