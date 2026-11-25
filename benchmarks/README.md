@@ -31,5 +31,6 @@ available. Published network evidence contains public genesis and proof data.
 | Jolteon CKB and xUDT payouts, retirement and slashing | [Report](../BENCHMARKS.md#jolteon-withdrawals-retirement-and-slashing), [12 runs including the failed report attempt](2026-11-25-stem-jolteon-l1-consumers.json.xz) |
 | Jolteon time, long-gap recovery, anchored snapshot and 128-member CKB relay | [Recovery report](../BENCHMARKS.md#jolteon-clock-and-long-gap-recovery), [relay report](../BENCHMARKS.md#128-member-checkpoint-through-ckb-p2p), [18 runs](2026-11-25-stem-clock-recovery-ckb-relay.json.xz) |
 | Default Jolteon runner, ordinary retention and CKB regression | [Report](../BENCHMARKS.md#default-jolteon-runtime-and-ordinary-retention), [raw runs](2026-11-25-stem-default-jolteon.json.xz) |
+| CKB fee fund settlement and bridge regression | [Report](../BENCHMARKS.md#ckb-fee-fund-settlement), [raw runs including the failed attempt](2026-11-25-stem-fee-funds.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

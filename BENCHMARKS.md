@@ -1101,3 +1101,37 @@ checks were ignored by that command, including the live composition and
 database inspections run separately above. The Go proof tests and the
 native systemd unit syntax check also passed. [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
 [Raw records](benchmarks/2026-11-25-stem-default-jolteon.json.xz).
+
+## CKB fee fund settlement
+
+On an Intel Core i9-13900H host, four default Jolteon replicas and CKB
+0.210.0 (119598b) settled a real fee from a bridged CKB Cell. The fixture
+paid 800 CKB in Stem fees to put all four accounts above their CKB
+occupied Capacity thresholds. It claimed each account through the same
+native vault and authenticated its actual CKB payment back into Stem.
+
+| Account | CKB paid | CKB payout estimate | Patricia witness |
+| --- | ---: | ---: | ---: |
+| Validators and delegators | 520 | 1,870,673 cycles | 588 B |
+| DevFund | 120 | 1,887,606 cycles | 690 B |
+| Ecosystem Fund | 80 | 1,902,285 cycles | 894 B |
+| PoW Security Fund | 80 | 1,868,811 cycles | 690 B |
+
+Each payout transaction includes an independent fee input. The four proofs
+rejected a modified Patricia path, omission of the checkpoint, and a
+different recipient. Admission rejected an unfunded claim, an overclaim,
+a below-capacity claim and a replay. After the last authenticated payout,
+the four replicas agreed at height 47. Recognized reserve and circulation
+were both 27,468 CKB, with zero pending and unallocated Capacity. The four
+payout checkpoints cost 14.31–14.38 million estimated cycles each. This
+round measures contract correctness and transaction verification costs.
+Its fee and split are fixture settings.
+
+The CKB and xUDT regression rerun passed with ordinary bridge withdrawals,
+reserve transfer and rotation. The first regression attempt exposed a
+test-runner reference to a variable removed during helper extraction. The
+archive preserves that failure with the rerun. The release Rust workspace
+suite passed 439 tests, with 12 ignored. The Go proof suite passed.
+
+[Reproduction](OPERATIONS.md#redeem-fee-revenue-on-ckb) ·
+[Raw reports, failures and fingerprints](benchmarks/2026-11-25-stem-fee-funds.json.xz).
