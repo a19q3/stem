@@ -210,6 +210,27 @@ and reports the transaction hashes as it progresses. Use
 `--validators 4` for a smaller devnet run with the same proof checks.
 The fixture uses temporary test keys.
 
+After the funded fixture exits, replay its original signed epoch
+boundary and successor into two fresh CKB nodes.
+
+```sh
+python3 tools/jolteon_ckb_epoch_relay_localnet.py \
+  --l1 /path/to/ckb --stem-run /tmp/stem-wide-handoff \
+  --output /tmp/stem-wide-epoch-p2p \
+  --source-port 30200 --l1-port 30210 --relay-port 30220 \
+  --ckb-block-cycles 3500000000
+```
+
+Use the same block cycle budget as the funded fixture. The runner
+opens a copy of its stopped CKB devnet and independently imports
+the verified chain prefix into both fresh nodes through the old
+committee's checkpoint. That copy stays disconnected from the
+test peers. The runner sends the signed boundary and successor to
+the origin only. The receiving node accepts each over P2P before
+mining. The final report compares the original and new inclusion
+proofs, the committed transaction bytes, and the cycles recorded
+by both CKB peers.
+
 ### Run a sparse CKB checkpoint publisher
 
 Run one poll with `stem checkpoint publish --config publisher.json`. Schedule that

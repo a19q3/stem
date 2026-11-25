@@ -14,6 +14,48 @@ from localnet import write_json
 from native_bridge_localnet import wait_for
 
 
+def relay_checkpoint(origin, peer, signed):
+    txid = signed["hash"]
+    before = peer.call("get_transaction", txid)
+    assert not before or before["tx_status"]["status"] == "unknown", before
+    started = time.perf_counter()
+    assert origin.call("send_transaction", signed["json"], "passthrough") == txid
+    submission_seconds = time.perf_counter() - started
+
+    def seen_in_peer_pool():
+        status = peer.call("get_transaction", txid)
+        if not status:
+            return None
+        if status["tx_status"]["status"] == "rejected":
+            raise AssertionError(status)
+        return status if status["tx_status"]["status"] in ("pending", "proposed") else None
+
+    peer_pool = wait_for(seen_in_peer_pool, "native checkpoint arriving via CKB P2P", seconds=25)
+    relay_seconds = time.perf_counter() - started
+    pool_detail = peer.call("get_pool_tx_detail_info", txid)
+    for _ in range(12):
+        peer.call("generate_block")
+        status = peer.call("get_transaction", txid)["tx_status"]
+        if status["status"] == "committed":
+            break
+        if status["status"] == "rejected":
+            raise AssertionError(status)
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"receiving CKB peer did not include {txid}")
+    inclusion_seconds = time.perf_counter() - started
+    wait_for(lambda: origin.call("get_transaction", txid)["tx_status"]["status"] == "committed",
+             "origin seeing receiver's committed checkpoint", seconds=20)
+    origin_visibility_seconds = time.perf_counter() - started
+    peer_inclusion = peer.prove_committed(txid)
+    origin_inclusion = origin.prove_committed(txid)
+    assert origin_inclusion == peer_inclusion
+    return {"peer_before": before, "peer_pool": peer_pool, "relay_seconds": relay_seconds,
+            "peer_pool_detail": pool_detail, "peer_inclusion": peer_inclusion,
+            "origin_inclusion": origin_inclusion, "submission_seconds": submission_seconds,
+            "inclusion_seconds": inclusion_seconds, "origin_visibility_seconds": origin_visibility_seconds}
+
+
 def scenario(args, origin, peer):
     fixture = Fixtures(args)
     genesis = origin.call("get_block_by_number", "0x0")
@@ -44,37 +86,8 @@ def scenario(args, origin, peer):
     observed = {"verified_setup_blocks": tip_height, "setup_tip": tip}
 
     def submit(signed):
-        txid = signed["hash"]
-        before = peer.call("get_transaction", txid)
-        assert not before or before["tx_status"]["status"] == "unknown", before
-        started = time.perf_counter()
-        assert origin.call("send_transaction", signed["json"], "passthrough") == txid
-
-        def seen_in_peer_pool():
-            status = peer.call("get_transaction", txid)
-            if not status:
-                return None
-            if status["tx_status"]["status"] == "rejected":
-                raise AssertionError(status)
-            return status if status["tx_status"]["status"] in ("pending", "proposed") else None
-
-        observed["peer_pool"] = wait_for(seen_in_peer_pool, "native checkpoint arriving via CKB P2P", seconds=25)
-        observed["relay_seconds"] = time.perf_counter() - started
-        observed["peer_pool_detail"] = peer.call("get_pool_tx_detail_info", txid)
-        for _ in range(12):
-            peer.call("generate_block")
-            status = peer.call("get_transaction", txid)["tx_status"]
-            if status["status"] == "committed":
-                break
-            time.sleep(0.1)
-        else:
-            raise AssertionError(f"receiving CKB peer did not include {txid}")
-        wait_for(lambda: origin.call("get_transaction", txid)["tx_status"]["status"] == "committed",
-                 "origin seeing receiver's committed checkpoint", seconds=20)
-        observed["peer_inclusion"] = peer.prove_committed(txid)
-        observed["origin_inclusion"] = origin.prove_committed(txid)
-        assert observed["origin_inclusion"] == observed["peer_inclusion"]
-        return txid
+        observed.update(relay_checkpoint(origin, peer, signed))
+        return signed["hash"]
 
     relay = Relay(args, origin, fixture, data, args.stem_run / f"node{len(members) - 1}" / "db", network_spec, members, None)
     relay.advance(height, secp, proof_file=args.stem_run / "two-chain.json", submit=submit)

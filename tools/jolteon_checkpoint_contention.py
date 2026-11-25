@@ -19,18 +19,22 @@ from native_bridge_localnet import start, wait_for
 from stake_localnet import witness
 
 
-def import_setup_blocks(origin, peer):
+def import_setup_blocks(origin, *receivers, through=None):
     # Import setup through normal CKB block verification before connecting.
     tip_height = int(origin.call("get_tip_block_number"), 16)
-    for height in range(1, tip_height + 1):
+    if through is None:
+        through = tip_height
+    assert 0 <= through <= tip_height, (through, tip_height)
+    for height in range(1, through + 1):
         block = origin.call("get_block_by_number", hex(height))
         block_hash = block["header"].pop("hash")
         for uncle in block["uncles"]:
             uncle["header"].pop("hash")
         for tx in block["transactions"]:
             tx.pop("hash")
-        assert peer.call("submit_block", "0", block) == block_hash
-    return tip_height
+        for receiver in receivers:
+            assert receiver.call("submit_block", "0", block) == block_hash
+    return through
 
 
 def connect(origin, peer, port):
