@@ -62,4 +62,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Prepaid bounded Keeper retries | [Report](../BENCHMARKS.md#prepaid-bounded-keeper-retries), [both replica rounds, failures and authenticated retry state](2026-11-26-stem-keeper-retry.json.xz) |
 
+| Sustained Keeper load and finalized admission expiry | [Report](../BENCHMARKS.md#sustained-keeper-load-and-admission-expiry), [4- and 16-replica traces, rejections and controls](2026-11-26-stem-keeper-load.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

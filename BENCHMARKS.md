@@ -2166,3 +2166,73 @@ outside these runs.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
 [Both replica rounds, failures and reproduction commands](benchmarks/2026-11-26-stem-keeper-retry.json.xz).
+
+## Sustained Keeper load and admission expiry
+
+Revision `92f173f` ran native Jolteon on one Intel i9-13900H host
+with 20 logical CPUs. Each replica used two VM workers, a 250 ms
+proposal interval, a 300-million-cycle block budget, and two slots
+each for exact-height and timed Keeper work. The mixed workload ran
+for 30 seconds and observed an additional 18 seconds of drain.
+It combined independent height bookings, one-shot time bookings and
+time bookings whose signed commands were designed to fail twice.
+Ordinary payments ran concurrently at 24 per second. The observer
+polled all replicas and used the minimum finalized height. The
+reported visibility latency includes the polling interval of about
+100 ms.
+
+| Replicas and offered bookings/s | Payments sent / admitted / visible | Bookings sent / admitted / visible | Visible payments/s and bookings/s during offer window | Applied / Retrying / Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| 4 at 6 | 720 / 720 / 720 | 180 / 180 / 180 | 23.67 and 5.93 | 135 / 45 / 45 |
+| 16 at 6 | 720 / 720 / 720 | 180 / 180 / 180 | 23.57 and 5.90 | 135 / 45 / 45 |
+| 4 at 12 | 720 / 720 / 720 | 360 / 271 / 271 | 23.60 and 8.90 | 209 / 62 / 62 |
+
+All offered requests reached the RPC endpoint. The pressure run
+reached the 32-entry timed agenda cap and rejected 89 bookings.
+The two matched runs peaked at 14 entries. Over the full 48-second
+observation window, payment and booking visibility rates were
+15.00 and 3.75/s in each matched run and 15.00 and 5.65/s under
+pressure. The successful Keeper attempts charged 3,870,418 cycles
+each. A retry or terminal skip reserved a 60-million-cycle share
+and charged zero execution fee. The test checked every Keeper
+receipt proof, a representative receipt on every replica, and
+the final common Header against the Jolteon proof.
+
+| Replicas and offered bookings/s | Payment visibility p50/p95/p99 | Booking visibility p50/p95/p99 | Booking submission to successful wake p50/p95/p99 |
+| --- | ---: | ---: | ---: |
+| 4 at 6 | 497 / 633 / 664 ms | 488 / 627 / 658 ms | 3,091 / 3,295 / 3,313 ms |
+| 16 at 6 | 508 / 651 / 679 ms | 522 / 672 / 697 ms | 3,133 / 3,339 / 3,361 ms |
+| 4 at 12 | 488 / 627 / 658 ms | 497 / 763 / 1,204 ms | 4,636 / 6,390 / 6,571 ms |
+
+| Replicas and offered bookings/s | Total replica CPU | Final replica RSS sum | Process write bytes | Peer transport bytes sent |
+| --- | ---: | ---: | ---: | ---: |
+| 4 at 6 | 7.04 s | 161.7 MiB | 165.05 MB | 3.02 MB |
+| 16 at 6 | 42.15 s | 662.4 MiB | 525.30 MB | 42.08 MB |
+| 4 at 12 | 8.54 s | 180.2 MiB | 171.23 MB | 3.41 MB |
+
+Process write bytes come from Linux process I/O accounting, and
+network counters measure application frames before TCP overhead.
+The replicas shared CPU, storage and loopback. These runs measure
+Keeper scheduling and slot pressure at the stated workload.
+
+A separate fixed-height contention pair offered 48 bookings for
+two slots while ordinary payments ran. Both admitted 13 bookings
+and executed two. With expiry disconnected, all four replicas
+retained 11 obsolete carriers, or 7,898 bytes per replica, after
+drain. With expiry connected, all four pools were empty. The
+paired control changed only the post-finality pruning call. The
+first smoke run failed because its node command passed an
+unsupported flag. The archive includes that run and the failing
+control alongside the corrected runs.
+
+The final binary passed 456 release workspace tests with 14 ignored,
+plus the Go proof suite and frozen CometBFT build check. Real CKB
+devnet regressions passed for bidirectional Intercell with 24
+expected rejections, CKB and xUDT payout, historical and live-at-anchor
+references, stake retirement and penalties, stake rewards, and all
+four fee fund payouts. The Intercell run published the exact outbox
+Header at height 21, recovered the canonical CKB inbox after the
+delivery reorg, and reached common Stem height 45 after restart.
+
+[Reproduction](OPERATIONS.md#wallet-and-proofs) ·
+[Raw RPC observations, proofs, controls and regressions](benchmarks/2026-11-26-stem-keeper-load.json.xz).

@@ -59,8 +59,8 @@ Each replica's admission pool indexes exclusive transaction height
 deadlines, Keeper registration heights and Keeper registration times.
 After a finalized commit it removes entries whose deadlines preclude
 inclusion in the next block. Uncertified proposals and temporary queue
-saturation leave entries eligible for later selection. Removing a
-carrier from the pool has no effect on committed reservations.
+saturation leave entries eligible for later selection. Committed
+reservations follow the Keeper state machine.
 
 ## CKB-VM host
 
