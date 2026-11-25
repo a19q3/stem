@@ -70,7 +70,8 @@ def evidence(args, relay, signer, epoch, sample_height, target):
     rank = (bitmap & ((1 << member) - 1)).bit_count()
     signature_at = 48 + bitmap_size + rank * 64
     point, signature = qc[:48], qc[signature_at:signature_at + 64]
-    binding = network + genesis_id + le(epoch, 8) + generation
+    timing = b"Stem Jolteon increasing execution time\0" + le(1_000, 8) + le(30_000, 8)
+    binding = timing + network + genesis_id + le(epoch, 8) + generation
     domain = b"Stem Jolteon vote\0" + binding
     assert ckb_hash(b"Stem Header\0" + network + header) == point[16:]
     signer.public_key().verify(signature, ckb_hash(domain + point))

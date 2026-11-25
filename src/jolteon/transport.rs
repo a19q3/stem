@@ -163,7 +163,7 @@ async fn receive(
             return Ok(());
         }
         ensure!(
-            matches!(frame.kind, wire::PROPOSAL..=wire::GET_HANDOFF),
+            matches!(frame.kind, wire::PROPOSAL..=wire::REPLAY),
             "unsupported peer frame"
         );
         incoming.send(Incoming { frame, reply: None }).await?;

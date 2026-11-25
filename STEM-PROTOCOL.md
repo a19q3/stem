@@ -118,6 +118,10 @@ Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_he
 
 CometBFT v0.38.26 首块使用 genesis 时间，之后从上一高度提交中按该高度的实际验证者权重计算时间戳的中位数。Stem 以截断到 Unix 毫秒的共识时间入账。候选 Header 的毫秒时间允许相同，禁止倒退。Stem 内核读取**前一已提交 Header**的时间作为时间锁参考。它省去额外滚动窗口，安全假设仍是 CometBFT 的验证者权重与诚实时钟假设。 [CometBFT v0.38.26 BFT Time 规范](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/consensus/bft-time.md) · [对应版本的时间实现](https://github.com/cometbft/cometbft/blob/v0.38.26/state/state.go#L234-L292)
 
+Jolteon 验证者只给严格推进父时间的执行 Header 投票。投票时，提案签名绑定的时间须处于验证者实时钟的过去 30 秒与未来 1 秒之间，策略绑定到共识签名域。历史重放使用已认证 Header 原有的时间，epoch 交接 seal 重复边界 Header。已提交时间的准确性依赖诚实投票权重及其时钟同步，Pacemaker 超时使用本地单调时钟。合约和时间锁继续使用父执行 Header，不读取本地实时钟。
+
+当已见的认证链超出 192 个候选块的重放范围，Jolteon 节点暂停投票，从首个缺失高度请求归档节点的最终性证明。每段执行以本地已提交头为起点，并使用当前委员会的两链证明或终结证明认证。节点使用同一执行与原子落盘流程逐段前进，保留同一 epoch 已签的投票、超时和锁定状态。遇到交接按正常规则切换委员会。归档需保留缺失段的载荷和证书。
+
 ```rust
 enum Since {
     AbsoluteHeight(u64),

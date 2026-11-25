@@ -198,12 +198,12 @@ def run_epochs(args, l1, scenario, fixture):
             raise AssertionError(f"node {ports[pub]} exited with code {code}")
         return rpc(ports[pub], kind, body)
 
-    def progress(key, height, epoch):
+    def progress(key, height, epoch, seconds=65):
         def reached():
             reply = request(key, STATUS)
             return reply if reply["height"] >= height and reply["epoch"] == epoch else None
 
-        return wait_for(reached, f"node {ports[public(key)]} epoch {epoch} height {height}", seconds=65)
+        return wait_for(reached, f"node {ports[public(key)]} epoch {epoch} height {height}", seconds=seconds)
 
     def header(key, height):
         return request(key, HEADER, struct.pack("<Q", height))
@@ -283,10 +283,16 @@ def run_epochs(args, l1, scenario, fixture):
         # The old process is now outside the certified roster. Restart it on the handed-off journal.
         processes[public(old)].kill()
         processes[public(old)].wait(timeout=8)
-        while_old_offline = progress(incoming, 24, 2)
+        while_old_offline = progress(incoming, 24 + args.observer_extra_lag, 2,
+                                     seconds=65 + args.observer_extra_lag * cadence / 1000)
+        write_json(args.output / "before-restart.json", {"observer": lag_start, "incoming": while_old_offline})
+        restart_started = time.perf_counter()
         launch(old, False)
         launch(observer, False)
-        caught_up = [progress(key, 25, 2) for key in (old, incoming, observer)]
+        caught_up = [progress(key, 25 + args.observer_extra_lag, 2) for key in (old, incoming, observer)]
+        recovery_seconds = time.perf_counter() - restart_started
+        if args.observer_extra_lag > 192:
+            assert caught_up[0]["replayed_blocks"] > 0 and caught_up[2]["replayed_blocks"] > 0, caught_up
         common_height = min(status["height"] for status in caught_up)
         agreed = header(incoming, common_height)
         assert all(header(key, common_height) == agreed for key in keys)
@@ -323,6 +329,7 @@ def run_epochs(args, l1, scenario, fixture):
                                 "exit_requested": retired, "increased_incoming": increased},
             "initial": initial, "observer_stopped": lag_start, "joined": joined, "committee_two": current,
             "after_retired_offline": while_old_offline, "caught_up": caught_up, "agreed": agreed,
+            "restart_to_visibility_seconds": recovery_seconds,
             "handoffs": handoffs, "post_handoff_header": verified, "missing_handoff_rejected": wrong_epoch.stderr,
             "altered_handoff_rejected": bad_handoff.stderr,
             "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report,
@@ -345,12 +352,15 @@ def main():
         parser.add_argument(f"--{arg}", type=lambda path: Path(path).resolve(), required=True)
     parser.add_argument("--port", type=int, default=22100)
     parser.add_argument("--l1-port", type=int, default=22110)
+    parser.add_argument("--observer-extra-lag", type=int, default=0, help="additional blocks before restarting both offline replicas")
     parser.add_argument("--replace", action="store_true", help="replace the entire first committee, then increase power")
     parser.add_argument("--publish-checkpoint", action="store_true", help="publish native Jolteon checkpoints on the CKB devnet")
     parser.add_argument("--retire", action="store_true", help="retire and unbond the outgoing stake using the native checkpoint")
     parser.add_argument("--slash", action="store_true", help="slash the outgoing fixture validator using native vote evidence")
     parser.add_argument("--active-slash", action="store_true", help="freeze while the outgoing validator is still active")
     args = parser.parse_args()
+    if args.observer_extra_lag < 0:
+        parser.error("--observer-extra-lag must be nonnegative")
     if args.active_slash and (not args.slash or args.replace):
         parser.error("--active-slash exercises the join fixture with --slash")
     if args.retire and not args.publish_checkpoint:

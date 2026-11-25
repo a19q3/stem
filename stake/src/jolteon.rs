@@ -17,6 +17,8 @@ use crate::{
 };
 
 pub const MAX_MEMBERS: usize = 128;
+pub const MAX_CLOCK_LEAD_MS: u64 = 1_000;
+pub const MAX_PROPOSAL_AGE_MS: u64 = 30_000;
 const LEADER_SLOTS: usize = 10_000;
 const MAX_PROOF_BYTES: usize = 32 * 1024;
 pub const COMMITTEE_RECORD: &[u8] = b"stake/announced";
@@ -418,6 +420,9 @@ impl Committee {
         digest(
             domain,
             &[
+                b"Stem Jolteon increasing execution time\0",
+                &MAX_CLOCK_LEAD_MS.to_le_bytes(),
+                &MAX_PROPOSAL_AGE_MS.to_le_bytes(),
                 &self.network,
                 &self.genesis,
                 &self.epoch.to_le_bytes(),
@@ -519,7 +524,7 @@ impl Committee {
             || native_id(&self.network, child_header) != child.point.header
             || child_header[16..48] != parent.point.header
             || native_height(parent_header).checked_add(1) != Some(native_height(child_header))
-            || timestamp(parent_header) > timestamp(child_header)
+            || timestamp(parent_header) >= timestamp(child_header)
         {
             return Err(Error::Sequence);
         }
@@ -839,6 +844,7 @@ mod tests {
         for height in 0u64..=8 {
             let mut header = [0; NATIVE_HEADER_BYTES];
             header[..8].copy_from_slice(&height.to_le_bytes());
+            header[8..16].copy_from_slice(&height.to_le_bytes());
             header[16..48].copy_from_slice(&last);
             header[144..176].copy_from_slice(&frontier.root());
             if height == 2 {
@@ -884,6 +890,30 @@ mod tests {
         certified
             .verify_extension(&checkpoint, &checkpoint_frontier, &suffix)
             .unwrap();
+        for stale_time in [6u64, 7] {
+            let mut stale = headers[8];
+            stale[8..16].copy_from_slice(&stale_time.to_le_bytes());
+            let point = Point {
+                view: 8,
+                parent_view: 7,
+                header: native_id(&network, &stale),
+            };
+            let digest = committee.vote_digest(point);
+            let votes = [0, 1, 3]
+                .into_iter()
+                .map(|i| (i, share(&keys, i, digest).signature))
+                .collect();
+            let stale_proof = FinalityProof {
+                parent_header: headers[7].to_vec(),
+                parent_qc: certify(7),
+                child_header: stale.to_vec(),
+                child_qc: committee.assemble_quorum(point, &votes).unwrap().encode(),
+            };
+            assert_eq!(
+                committee.verify_finality(&stale_proof.encode_to_vec()),
+                Err(Error::Sequence)
+            );
+        }
         checkpoint[80] ^= 1;
         assert_eq!(
             certified.verify_extension(&checkpoint, &checkpoint_frontier, &suffix),

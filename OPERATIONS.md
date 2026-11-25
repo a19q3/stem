@@ -57,6 +57,22 @@ target/release/stem jolteon-proof --genesis /tmp/stem-jolteon-16/genesis.json \
 
 The fixture checks consecutive failed Leaders, watches surviving weight finalize payments, restarts stopped replicas and checks the execution Header at a common height. It retains the public genesis, signed workload, execution proof and replica diagnostics. For the nominal scale sweep use `--offline 0 --transactions 32 --offered 16 --cadence 300 --timeout 2500` and separate output and port ranges for each size. The `tools/comet_matrix_localnet.py` comparator uses the same fixture against a pinned CometBFT application build. Its `--comet` argument takes the CometBFT executable.
 
+Use synchronized realtime clocks on validators. A Jolteon vote authenticates
+an execution timestamp within 30 seconds behind or 1 second ahead of the
+local clock. The `last_untimely_view` status field shows the latest rejection.
+Use `tools/jolteon_clock_localnet.py --binary <stem> --lock <stem-lock>
+--output <new-directory> --offset-seconds 120` to test a fast leader, then
+repeat with `--offset-seconds -120` and a new output directory. The Linux
+fixture perturbs realtime for the first leader and leaves the pacemaker clock
+running normally. Its `.so` is built from a local C fixture.
+
+Exercise long-gap replay with `tools/jolteon_localnet.py --offline 1
+--offline-blocks 220 --cadence 20 --timeout 250 --recovery-seconds 15`
+along with the binary, lock and output settings above. The restarted replica
+must report a positive `replayed_blocks` count and agree with the survivors
+on the execution Header. Recovery peers must have retained the missing
+payloads and finality certificates.
+
 To measure the portable verifier with the signed proofs captured in the matrix, build and run the two probes.
 
 ```sh

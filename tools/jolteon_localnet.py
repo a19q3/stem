@@ -186,7 +186,7 @@ def scenario(args):
             if args.offered:
                 time.sleep(max(0, started + admitted / args.offered - time.perf_counter()))
         def both_payments_and_timeouts():
-            active = observed(serving, before + 4, admitted)
+            active = observed(serving, before + args.offline_blocks, admitted)
             if not active or not offline:
                 return active
             tcs = {view for member in active for view in member["timeout_views"] if view >= before_view}
@@ -197,11 +197,16 @@ def scenario(args):
 
         active = wait_for(both_payments_and_timeouts, "payment finality with the failed leaders", seconds=75)
         elapsed = time.perf_counter() - started
+        write_json(args.output / "while-offline.json", active)
         phase = "replica restart"
+        restart_started = time.perf_counter()
         for i in offline:
             launch(i, False)
         resumed = wait_for(lambda: observed(everybody, min(v["height"] for v in active) + 2, admitted),
-                           "restarted replicas recovered certified payloads", seconds=45)
+                           "restarted replicas recovered certified payloads", seconds=args.recovery_seconds)
+        recovery_seconds = time.perf_counter() - restart_started
+        if args.offline_blocks > 192:
+            assert offline and all(resumed[i]["replayed_blocks"] > 0 for i in offline), resumed
         agreed_height = min(v["height"] for v in resumed)
         headers = [rpc(port, HEADER, struct.pack("<Q", agreed_height)) for port in peers]
         if any(value != headers[0] for value in headers) or "header" not in headers[0]:
@@ -215,6 +220,7 @@ def scenario(args):
             raise AssertionError("proof and committed Header disagree")
         report = {
             "validators": args.validators, "weights": weights, "offline": offline,
+            "minimum_offline_blocks": args.offline_blocks, "restart_to_visibility_seconds": recovery_seconds,
             "payments": admitted, "elapsed_until_active_replica_visibility": elapsed, "active_confirmed_tps": admitted / elapsed,
             "before": initial, "with_fault": active, "resumed": resumed, "agreement": headers[0], "two_chain_proof": proof["proof"], "proof_verification": checked,
             "processes": [process_resources(nodes[i].pid) for i in everybody],
@@ -252,12 +258,14 @@ def main():
     parser.add_argument("--validators", type=int, default=4)
     parser.add_argument("--transactions", type=int, default=32)
     parser.add_argument("--offline", type=int, default=0)
+    parser.add_argument("--offline-blocks", type=int, default=4)
+    parser.add_argument("--recovery-seconds", type=int, default=45)
     parser.add_argument("--port", type=int, default=22000)
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)
     parser.add_argument("--offered", type=float, default=16)
     args = parser.parse_args()
-    if not 1 <= args.validators <= 128 or args.transactions < 1:
+    if not 1 <= args.validators <= 128 or min(args.transactions, args.offline_blocks, args.recovery_seconds) < 1:
         parser.error("invalid fixture size")
     args.output.mkdir(mode=0o700, parents=True)
     result = scenario(args)

@@ -17,16 +17,18 @@ use stem_ledger::{Transaction, block::Header};
 use stem_stake::{
     Hash32, Member,
     jolteon::{
-        Committee, CommitteeChange, FinalityProof, HandoffProof, MAX_MEMBERS, Point, Quorum, Share,
-        TimeoutCertificate, TimeoutVote,
+        Committee, CommitteeChange, FinalityProof, HandoffProof, MAX_CLOCK_LEAD_MS, MAX_MEMBERS,
+        MAX_PROPOSAL_AGE_MS, Point, Quorum, Share, TimeoutCertificate, TimeoutVote,
     },
 };
 
 use crate::native_store::{Prepared, Store};
 
+mod recovery;
 mod transport;
 mod wire;
 
+use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
 const STATE: &[u8] = b"state";
@@ -151,6 +153,8 @@ struct Replica {
     mempool_bytes: usize,
     rejected: u64,
     timeout_views: VecDeque<u64>,
+    last_untimely_view: u64,
+    recovery: Recovery,
 }
 
 pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
@@ -338,6 +342,8 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 mempool_bytes: 0,
                 rejected: 0,
                 timeout_views: VecDeque::new(),
+                last_untimely_view: 0,
+                recovery: Recovery::default(),
             };
             replica.enter();
             let mut ticker = tokio::time::interval(Duration::from_millis(10));
@@ -498,6 +504,21 @@ impl Replica {
         if let Some(tc) = tc {
             self.learn_tc(tc)?;
         }
+        if self.recovery.active
+            && checked
+                .header
+                .context
+                .height
+                .saturating_sub(self.store.tip().context.height)
+                > MAX_BRANCH as u64
+            && point != self.high.point
+            && self
+                .handoff_tip
+                .as_ref()
+                .is_none_or(|seal| seal.point != point)
+        {
+            return Ok(());
+        }
         if !self.candidates.contains_key(&point) {
             if self.preferred.contains_key(&point.view)
                 && !self.requests.contains_key(&point)
@@ -546,9 +567,12 @@ impl Replica {
         let mut source = None;
         while point != self.finalized {
             ensure!(
-                point.view > self.finalized.view && branch.len() < MAX_BRANCH,
-                "candidate does not extend the committed branch horizon"
+                point.view > self.finalized.view,
+                "candidate diverges from local finality"
             );
+            if branch.len() == MAX_BRANCH {
+                return Err(BranchHorizon.into());
+            }
             if !self.candidates.contains_key(&point) {
                 if let Some(raw) = self
                     .store
@@ -609,6 +633,13 @@ impl Replica {
                     .is_none_or(|change| proposal.header.context.height < change.activation_height),
                 "outgoing committee cannot certify execution after its boundary"
             );
+            let parent = batches
+                .last()
+                .map_or(self.store.tip(), |batch| batch.header());
+            ensure!(
+                proposal.header.context.timestamp_ms > parent.context.timestamp_ms,
+                "execution timestamp must advance"
+            );
             if candidate.execution.is_none() {
                 let transactions = proposal
                     .wire
@@ -641,12 +672,20 @@ impl Replica {
     }
 
     fn finalize(&mut self) -> Result<()> {
-        let high = self.handoff_tip.as_ref().unwrap_or(&self.high).clone();
+        let Some(high) = self.finalization_head() else {
+            return Ok(());
+        };
         if high.point.view <= self.finalized.view {
             return Ok(());
         }
-        let Some(branch) = self.branch(high.point)? else {
-            return Ok(());
+        let branch = match self.branch(high.point) {
+            Ok(Some(branch)) => branch,
+            Ok(None) => return Ok(()),
+            Err(error) if error.is::<BranchHorizon>() => {
+                self.request_replay();
+                return Ok(());
+            }
+            Err(error) => return Err(error),
         };
         let child = &self.candidates[&high.point].proposal;
         let parent = child.parent.point;
@@ -764,6 +803,7 @@ impl Replica {
                 }
             }
         }
+        self.recovery.record_commit(high.point, commit_count);
         if let Some((change, committee)) = successor {
             self.net.broadcast_at(old_epoch, wire::HANDOFF, proof);
             self.routes = self.directory.routes(&change.members);
@@ -786,6 +826,8 @@ impl Replica {
             self.requests.clear();
             self.certificates.clear();
             self.timeout_views.clear();
+            self.last_untimely_view = 0;
+            self.recovery.reset();
             self.enter();
         } else {
             let view = self.finalized.view;
@@ -826,15 +868,27 @@ impl Replica {
         let Some(branch) = self.branch(point)? else {
             return Ok(());
         };
-        ensure!(
-            self.candidates[&point].proposal.header.context.timestamp_ms
-                <= now_ms()?.saturating_add(30_000),
-            "proposal timestamp is too far in the future"
-        );
+        let proposal = &self.candidates[&point].proposal;
+        let time = proposal.header.context.timestamp_ms;
+        let seal = proposal.wire.seal;
+        if !seal && !self.observe_time(point.view, time) {
+            return Ok(());
+        }
         self.execute(&branch)?;
+        if !seal && !self.observe_time(point.view, time) {
+            return Ok(());
+        }
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &self.candidates[&point].proposal.wire)))?;
         self.dispatch_vote(point)
+    }
+
+    fn observe_time(&mut self, view: u64, time: u64) -> bool {
+        let allowed = can_vote_at(time);
+        if !allowed {
+            self.last_untimely_view = view;
+        }
+        allowed
     }
 
     fn dispatch_vote(&mut self, point: Point) -> Result<()> {
@@ -1032,9 +1086,14 @@ impl Replica {
         let (header, transactions, execution) = if seal {
             (parent_header.clone(), Vec::new(), None)
         } else {
+            let Ok(at) = now_ms() else {
+                return Ok(());
+            };
+            if at <= parent_header.context.timestamp_ms {
+                return Ok(());
+            }
             let (transactions, execution) = self.workers.install(|| {
                 self.store.on_branch(&batches, |state| {
-                    let at = now_ms()?.max(state.tip().context.timestamp_ms);
                     let selected = state.select(
                         self.mempool.values().cloned().collect(),
                         at,
@@ -1044,6 +1103,9 @@ impl Replica {
                     Ok((selected, prepared))
                 })
             })?;
+            if !can_vote_at(at) {
+                return Ok(());
+            }
             (
                 execution.header().clone(),
                 transactions,
@@ -1086,7 +1148,7 @@ impl Replica {
 
     fn tick(&mut self) -> Result<()> {
         self.finalize()?;
-        if self.handoff_tip.is_some() {
+        if self.handoff_tip.is_some() || self.recovery.active {
             return Ok(());
         }
         if let Some(&point) = self.preferred.get(&self.view) {
@@ -1172,6 +1234,9 @@ impl Replica {
             }
             return Ok(());
         }
+        if frame.kind == wire::GET_REPLAY {
+            return self.serve_replay(frame.epoch, peer, &frame.body);
+        }
         if frame.epoch != epoch {
             if frame.epoch > epoch
                 && self
@@ -1194,6 +1259,7 @@ impl Replica {
                 }
             }
             wire::PROPOSAL => self.admit_proposal(wire::canonical(&frame.body)?, peer)?,
+            wire::REPLAY => self.accept_replay(peer, &frame.body)?,
             wire::VOTE => {
                 let (point, share) = frame
                     .body
@@ -1257,6 +1323,9 @@ impl Replica {
                 "committed_transactions": self.journal.committed_transactions,
                 "timeout_view": self.certificate.as_ref().map_or(0, |tc| tc.view),
                 "timeout_views": self.timeout_views,
+                "last_untimely_view": self.last_untimely_view,
+                "catching_up": self.recovery.active,
+                "replayed_blocks": self.recovery.blocks,
                 "sent_bytes": self.net.traffic.sent.load(Ordering::Relaxed),
                 "received_bytes": self.net.traffic.received.load(Ordering::Relaxed),
                 "transport_drops": self.net.traffic.dropped.load(Ordering::Relaxed),
@@ -1384,9 +1453,35 @@ fn finality_key(height: u64) -> Vec<u8> {
     [b"finality".as_slice(), &height.to_be_bytes()].concat()
 }
 
+fn can_vote_at(timestamp_ms: u64) -> bool {
+    now_ms().is_ok_and(|now| timely(timestamp_ms, now))
+}
+
+fn timely(timestamp_ms: u64, now: u64) -> bool {
+    (now.saturating_sub(MAX_PROPOSAL_AGE_MS)..=now.saturating_add(MAX_CLOCK_LEAD_MS))
+        .contains(&timestamp_ms)
+}
+
 fn now_ms() -> Result<u64> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_millis()
         .try_into()?)
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::timely;
+
+    #[test]
+    fn fresh_vote_window_is_bounded_in_both_directions() {
+        let now = 150_000;
+        assert!(timely(120_000, now));
+        assert!(timely(now, now));
+        assert!(timely(151_000, now));
+        assert!(!timely(119_999, now));
+        assert!(!timely(151_001, now));
+        assert!(timely(0, 0));
+        assert!(timely(u64::MAX, u64::MAX));
+    }
 }
