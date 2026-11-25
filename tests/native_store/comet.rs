@@ -372,10 +372,11 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     let mut fixture = spec(&genesis, &home)?;
     let benchmark = bench::Benchmark::prepare(&mut fixture, &home, &output)?;
     let scenarios = if benchmark.is_none() {
-        Some((
-            super::intent::Swap::fund(&mut fixture)?,
-            super::lineage::FixtureLineage::fund(&mut fixture)?,
-        ))
+        let swap = super::intent::Swap::fund(&mut fixture)?;
+        let lineage = super::lineage::FixtureLineage::fund(&mut fixture)?;
+        let dynamic =
+            super::lineage::DynamicLineage::fund_using(&mut fixture, &lineage, 3, 2, None)?;
+        Some((swap, lineage, dynamic))
     } else {
         None
     };
@@ -646,7 +647,7 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     println!(
         "native payment H={height}, two Type Groups H={composed_height} cycles={total_cycles}, four replicas share H+1 AppHash, restarted replica agrees at H={target}, remote snapshot H={restored}"
     );
-    let (swap, lineage) = scenarios.context("missing network scenarios")?;
+    let (swap, lineage, dynamic) = scenarios.context("missing network scenarios")?;
     let intent = swap.sign(&fixture, &spec_path, 500)?;
     let confirmed = nodes[2].rpc(
         &client,
@@ -733,13 +734,129 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
                 .then_some(()))
         },
     )?;
-    let mut proofs = Vec::new();
-    for node in nodes.iter().chain([&observer]) {
-        let payload = node.rpc(
+    let proofs = verify_lineage_heads(
+        &nodes,
+        &observer,
+        &client,
+        &fixture,
+        &lineage_id,
+        1,
+        &OutPoint::new(update.id(&fixture.spec.network), 0),
+        None,
+    )?;
+    fs::write(
+        output.join("lineage-lifecycle.json"),
+        serde_json::to_vec_pretty(&json!({
+            "lineage_id": hex::encode(lineage_id.as_slice()),
+            "transitions": lifecycle,
+            "proofs": proofs,
+        }))?,
+    )?;
+    use stem_ledger::{block::Receipt, lineage::Outcome};
+    let first = dynamic.signed(&fixture, 0, &[0], (0, 2), 2)?;
+    let second = dynamic.signed(&fixture, 1, &[0, 1], (0, 2), 3)?;
+    let rejected = dynamic.signed(&fixture, 2, &[0, 1], (0, 2), 0)?;
+    let mut commands = Vec::new();
+    let mut applied_height = 0;
+    for (tx, expected) in [
+        (dynamic.register(&fixture, 0)?, None),
+        (dynamic.register(&fixture, 1)?, None),
+        (first, Some(Outcome::Applied)),
+        (second.clone(), Some(Outcome::Applied)),
+        (rejected, Some(Outcome::Rejected)),
+    ] {
+        let confirmed = nodes[0].rpc(
             &client,
+            &format!("broadcast_tx_commit?tx=0x{}", hex::encode(tx.as_slice())),
+        )?;
+        ensure!(
+            confirmed["check_tx"]["code"].as_u64() == Some(0)
+                && confirmed["tx_result"]["code"].as_u64() == Some(0),
+            "Lineage command failed: {confirmed}"
+        );
+        if let Some(expected) = expected {
+            let data = STANDARD.decode(
+                confirmed["tx_result"]["data"]
+                    .as_str()
+                    .context("missing command receipt")?,
+            )?;
+            let receipt = Receipt::decode(&data)?;
+            assert_eq!(Outcome::decode(&receipt.protocol_result)?, expected);
+            assert_eq!(receipt.fee, FEE);
+            applied_height = confirmed["height"]
+                .as_str()
+                .context("command height")?
+                .parse()?;
+            commands.push(json!({ "result": confirmed, "cycles": receipt.cycles, "applied": expected == Outcome::Applied }));
+        }
+    }
+    poll(
+        "signed dynamic Lineage block on all replicas",
+        Duration::from_secs(15),
+        || {
+            let heights = nodes
+                .iter()
+                .chain([&observer])
+                .map(|node| node.signed_height(&client))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(heights
+                .into_iter()
+                .all(|height| height > applied_height)
+                .then_some(()))
+        },
+    )?;
+    let second_id = second.id(&fixture.spec.network);
+    let target_index = |id| {
+        1 + second
+            .lineage_command()
+            .unwrap()
+            .targets
+            .iter()
+            .position(|target| &target.id == id)
+            .unwrap() as u32
+    };
+    let mut dynamic_proofs = Vec::new();
+    for (index, version, value) in [(0, 2, 245u128), (1, 1, 243)] {
+        let id = &dynamic.ids[index];
+        dynamic_proofs.push(verify_lineage_heads(
+            &nodes,
+            &observer,
+            &client,
+            &fixture,
+            id,
+            version,
+            &OutPoint::new(second_id.clone(), target_index(id)),
+            Some(&value.to_le_bytes()),
+        )?);
+    }
+    fs::write(
+        output.join("lineage-commands.json"),
+        serde_json::to_vec_pretty(&json!({"commands": commands, "proofs": dynamic_proofs}))?,
+    )?;
+    println!(
+        "pre-signed Lineage commands and fee-only rollback verified on four validators and a snapshot observer"
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_lineage_heads(
+    nodes: &[Node],
+    observer: &Node,
+    client: &reqwest::blocking::Client,
+    fixture: &Fixture,
+    id: &ckb_types::packed::Byte32,
+    expected_version: u64,
+    expected_head: &OutPoint,
+    expected_data: Option<&[u8]>,
+) -> Result<Vec<Value>> {
+    let mut proofs = Vec::new();
+    for node in nodes.iter().chain([observer]) {
+        let payload = node.rpc(
+            client,
             &format!(
                 "abci_query?path=%22%2Fstem%2Flineage%22&prove=true&data=0x{}",
-                hex::encode(lineage_id.as_slice())
+                hex::encode(id.as_slice())
             ),
         )?;
         let response = &payload["response"];
@@ -761,13 +878,13 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         let cell_proof: ckb_jsonrpc_types::JsonBytes =
             serde_json::from_value(payload["cell_proof"].clone())?;
         let (out_point, cell) = record::decode_cell(cell.as_bytes())?;
-        assert_eq!(head.version, 1);
+        assert_eq!(head.version, expected_version);
         assert_eq!(out_point, head.out_point);
-        assert_eq!(
-            head.out_point,
-            OutPoint::new(update.id(&fixture.spec.network), 0)
-        );
-        let header = node.header(&client, height)?;
+        assert_eq!(&head.out_point, expected_head);
+        if let Some(expected) = expected_data {
+            assert_eq!(cell.cell.data().as_ref(), expected);
+        }
+        let header = node.header(client, height)?;
         let proof = stem::native_store::LineageProof {
             head: Some((
                 head,
@@ -780,7 +897,7 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
             proof.verify(
                 &fixture.spec.network,
                 &header,
-                &lineage_id,
+                id,
                 fixture
                     .spec
                     .lineage_type
@@ -791,9 +908,9 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         poll(
             "signed successor for Lineage proof",
             Duration::from_secs(10),
-            || Ok((node.signed_height(&client)? > height).then_some(())),
+            || Ok((node.signed_height(client)? > height).then_some(())),
         )?;
-        let signed = node.rpc(&client, &format!("commit?height={}", height + 1))?;
+        let signed = node.rpc(client, &format!("commit?height={}", height + 1))?;
         let app_hash = signed["signed_header"]["header"]["app_hash"]
             .as_str()
             .context("Lineage AppHash")?;
@@ -801,17 +918,14 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
             hex::decode(app_hash)?,
             header.app_hash(&fixture.spec.network).as_slice()
         );
-        proofs.push(json!({"height": height, "payload": payload, "signed_successor": signed}));
+        proofs.push(json!({
+            "height": height,
+            "app_hash": hex::encode(header.app_hash(&fixture.spec.network).as_slice()),
+            "payload": payload,
+            "signed_successor": signed
+        }));
     }
-    fs::write(
-        output.join("lineage-lifecycle.json"),
-        serde_json::to_vec_pretty(&json!({
-            "lineage_id": hex::encode(lineage_id.as_slice()),
-            "transitions": lifecycle,
-            "proofs": proofs,
-        }))?,
-    )?;
-    Ok(())
+    Ok(proofs)
 }
 
 fn configure_state_sync(path: &Path, height: u64, hash: &str, ports: [u16; 2]) -> Result<()> {

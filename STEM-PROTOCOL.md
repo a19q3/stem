@@ -67,7 +67,13 @@ CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约�
 
 注册版本为零。后继消费唯一当前 Head，版本加一，并运行旧 Lock 与输入输出派生的全部 Type Groups。更换 Executor 或控制 Lock 经过当前 Head 的授权。显式退休消费 Head 并移除活动记录，注册锚点已经消费，原身份无法重新生成。`/stem/lineage` 在同一可信 Header 下提供 SystemRoot 路径与 CellRoot 路径。普通网络可省略 `lineage_type` 配置。
 
-执行时解析、用户签署的动态命令、Executor Effects ABI 及失败后的费用结算仍待实现。这一路径需要在共识位置先解析声明的 LineageId 与约束，再运行固定 Executor 产生有界的候选输入输出，随后经过现有 Cell 解析、Lock、Type、容量与费用验证。所有业务 Effects 要作为一批提交，失败只允许签名已授权的独立、限额内费用结果。Keeper 的到期尝试应使用同一条执行路径。同一 Lineage 的写入按区块次序推进，不相交的写入可在保持相同结果的前提下并行。
+Lineage 命令是原生 Strand 交易的可选字段。命令包含 1 至 16 个严格按 LineageId 排序且互异的目标，每个目标有闭区间版本约束和最低后继 Capacity。交易签名还覆盖网络、固定 Executor 的 Data 哈希和直接 Cell Dep、完整依赖引用、唯一付款 OutPoint 及其 Cell 内容、排他的过期高度、应用载荷、确定费用和两项 cycles 上限。应用载荷最多 4 KiB。网络和签名域防止跨网重放，精确付款 Cell 防止同网重复提交。付款 Cell 只持有 CKB Capacity，扣除授权费用后的余额返回原 Lock。
+
+节点在交易的规范区块位置查找当前 Head。只有注册版本和 Executor 满足签名约束才开始执行。付款 Lock 先验证授权，Executor 在有界的 RISC-V V2 VM 中读取已声明目标、应用载荷、候选高度、上一提交区块时间和付款 Lock 哈希。Executor 为每个目标返回至多 16 KiB Data 及新 Capacity。内核保留原 Head 的 Lock 和完整 Type Script 集合，检查后继最低 Capacity、目标间总 Capacity 守恒以及存储抵押。生成的完整交易仍须通过原有 Lock 和所有输入、输出 Type Groups。权限变更和退休保持普通精确 OutPoint 授权。
+
+成功时原子消费付款 Cell 与所有 Head，在原命令交易 ID 下创建后继。输出 0 是付款余额，其余按目标顺序。Executor 拒绝、耗尽预算、给出不合规后继或后续 Script Group 拒绝时，已通过付款授权且覆盖预算的命令可以提交费用结果，全部 Head 保持原样。未认证、过期或签名匹配条件失效的命令没有费用结果。回执的协议结果单字节为 1（已应用）或 0（已拒绝业务）。已执行尝试的逻辑读取和 VM cycles 一并计费，失败阶段按签名上限计费。
+
+同一 Head 的访问冲突按区块顺序执行。不同命令只有在当前 Head、费用输入、预期输出及依赖访问互不冲突且保留完整预算时才并行解析和运行 Executor，最终检查和提交按原交易顺序。使用 Dep Group 的命令按串行路径执行。
 
 ## 3. 确定性执行与资源
 

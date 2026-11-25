@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -62,4 +63,57 @@ func TestNativeCommitSignatures(t *testing.T) {
 		}
 	}
 	t.Logf("verified four replicas' signed successor for native height %d", height)
+}
+
+// Verifies both dynamic Head proof bundles against the generated committee.
+// The Rust test authenticates the Patricia paths against the declared AppHash.
+func TestLineageCommandSignatures(t *testing.T) {
+	root := os.Getenv("STEM_NATIVE_EVIDENCE")
+	if root == "" {
+		t.Skip("set STEM_NATIVE_EVIDENCE to the four-node test output")
+	}
+	genesis, err := types.GenesisDocFromFile(filepath.Join(root, "net/node0/config/genesis.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	voters, err := genesisCommittee(genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := readLimited(filepath.Join(root, "lineage-commands.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		Proofs [][]struct {
+			Height  int64           `json:"height"`
+			AppHash string          `json:"app_hash"`
+			Commit  json.RawMessage `json:"signed_successor"`
+		} `json:"proofs"`
+	}
+	if err := json.Unmarshal(raw, &evidence); err != nil || len(evidence.Proofs) != 2 {
+		t.Fatalf("invalid dynamic Head evidence: %v", err)
+	}
+	for _, set := range evidence.Proofs {
+		if len(set) != 5 {
+			t.Fatal("missing proof replica")
+		}
+		for _, entry := range set {
+			expected, err := hex.DecodeString(entry.AppHash)
+			if err != nil || len(expected) != 32 {
+				t.Fatal("invalid dynamic Head AppHash")
+			}
+			var proof core.ResultCommit
+			if err := cmtjson.Unmarshal(entry.Commit, &proof); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyCommit(genesis.ChainID, proof.SignedHeader, voters); err != nil {
+				t.Fatal(err)
+			}
+			if proof.Height != entry.Height+1 || !bytes.Equal(proof.AppHash, expected) {
+				t.Fatalf("commit does not authenticate the Head proof at height %d", entry.Height)
+			}
+		}
+	}
+	t.Log("verified ten signed successors for dynamic Head proof replicas")
 }

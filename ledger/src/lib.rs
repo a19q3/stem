@@ -296,6 +296,7 @@ fn validate_script(script: &Script) -> Result<()> {
 #[derive(Clone, Debug)]
 pub struct Transaction {
     encoded: wire::Transaction,
+    lineage_command: Option<Arc<lineage::Command>>,
 }
 
 impl Transaction {
@@ -426,7 +427,16 @@ impl Transaction {
             raw.outputs().len(),
             encoded.witnesses().len(),
         )?;
-        let tx = Self { encoded };
+        let lineage_command = raw
+            .lineage_command()
+            .to_opt()
+            .map(lineage::Command::decode)
+            .transpose()?
+            .map(Arc::new);
+        let tx = Self {
+            encoded,
+            lineage_command,
+        };
         GroupMessage::validate_all(&tx.messages().collect::<Vec<_>>())?;
         ensure!(
             tx.valid_before_height() != Some(0),
@@ -464,6 +474,33 @@ impl Transaction {
                 }
             }
             _ => bail!("protocol operation and certificate must occur together"),
+        }
+        if let Some(command) = tx.lineage_command() {
+            ensure!(
+                raw.protocol().to_opt().is_none()
+                    && raw.inputs().len() == 1
+                    && tx.input(0).is_some_and(|input| input.since.is_none())
+                    && raw.outputs().is_empty()
+                    && raw.header_deps().is_empty()
+                    && raw.messages().is_empty()
+                    && tx.valid_before_height().is_some(),
+                "invalid Lineage command envelope"
+            );
+            ensure!(
+                tx.cell_deps().any(|dep| {
+                    dep.out_point() == command.executor_dep && dep.dep_type().as_slice() == [0]
+                }),
+                "Lineage Executor must be a direct Cell Dep"
+            );
+            ensure!(
+                tx.witnesses().len() <= 1
+                    && tx.witnesses().all(|witness| {
+                        witness.group_index == 0
+                            && witness.proof_data.is_empty()
+                            && witness.seal.len() == 65
+                    }),
+                "Lineage command requires one fee seal at index zero"
+            );
         }
         let mut previous = None;
         for witness in tx.witnesses() {
@@ -555,6 +592,56 @@ impl Transaction {
             )
             .build();
         Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
+    }
+
+    /// Construct a bounded operation whose exact head inputs are resolved at execution.
+    /// The single exact input pays the signed fee and prevents replay.
+    pub fn new_lineage_command(
+        cell_deps: Vec<CellDep>,
+        fee_input: OutPoint,
+        expires: u64,
+        command: lineage::Command,
+    ) -> Result<Self> {
+        command.validate()?;
+        let transaction = Self::new(
+            cell_deps,
+            vec![],
+            vec![CellInput::new(fee_input, None)],
+            vec![],
+            vec![],
+        )?
+        .with_valid_before_height(expires)?;
+        let raw = transaction
+            .encoded
+            .raw()
+            .as_builder()
+            .lineage_command(
+                wire::LineageCommandOpt::new_builder()
+                    .set(Some(command.encode()))
+                    .build(),
+            )
+            .build();
+        Self::from_entity(transaction.encoded.as_builder().raw(raw).build())
+    }
+
+    pub fn lineage_command(&self) -> Option<&lineage::Command> {
+        self.lineage_command.as_deref()
+    }
+
+    pub fn has_lineage_command(&self) -> bool {
+        self.lineage_command.is_some()
+    }
+
+    pub fn lineage_signing_digest(&self, network: &Byte32, fee_cell: &Cell) -> Result<Byte32> {
+        ensure!(self.has_lineage_command(), "expected a Lineage command");
+        Ok(hash(
+            b"Stem Lineage command authorization\0",
+            network,
+            &[
+                self.id(network).as_slice(),
+                fee_cell.hashes().content.as_slice(),
+            ],
+        ))
     }
 
     pub fn operation(&self) -> Option<Operation> {
@@ -786,6 +873,13 @@ pub struct LiveCell {
 }
 
 #[derive(Clone, Debug)]
+struct LineageAuthorization {
+    original: Transaction,
+    id: Byte32,
+    digest: Byte32,
+}
+
+#[derive(Clone, Debug)]
 pub struct ResolvedTransaction {
     network_id: Byte32,
     transaction: Transaction,
@@ -793,6 +887,7 @@ pub struct ResolvedTransaction {
     parent: Header,
     parent_id: Byte32,
     authorization: authorization::LockAuthorization,
+    lineage_authorization: Option<LineageAuthorization>,
     inputs: Vec<LiveCell>,
     outputs: Vec<Cell>,
     cell_deps: Vec<LiveCell>,
@@ -821,8 +916,8 @@ impl ResolvedTransaction {
         committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
         ensure!(
-            transaction.operation().is_none(),
-            "protocol transaction requires its authenticated execution path"
+            transaction.operation().is_none() && !transaction.has_lineage_command(),
+            "transaction requires its authenticated execution path"
         );
         Self::resolve_with_capacity(
             network_id,
@@ -1000,6 +1095,7 @@ impl ResolvedTransaction {
             parent: block.parent.clone(),
             parent_id: block.candidate.parent.clone(),
             authorization,
+            lineage_authorization: None,
             inputs,
             outputs,
             cell_deps,
@@ -1057,6 +1153,59 @@ impl ResolvedTransaction {
         self.authorization.intent_dependencies(&self.network_id)
     }
 
+    /// Bind a kernel-materialized transaction to its original signed command.
+    /// Input zero is the fee Cell and all subsequent inputs are resolved Lineage heads.
+    pub fn authorize_materialized_lineage(
+        mut self,
+        original: &Transaction,
+        fee_cell: &Cell,
+    ) -> Result<Self> {
+        ensure!(
+            self.inputs
+                .first()
+                .is_some_and(|input| input.cell.as_slice() == fee_cell.as_slice())
+                && original.input(0) == self.transaction.input(0),
+            "Lineage fee input mismatch"
+        );
+        self.lineage_authorization = Some(LineageAuthorization {
+            original: original.clone(),
+            id: original.id(&self.network_id),
+            digest: original.lineage_signing_digest(&self.network_id, fee_cell)?,
+        });
+        Ok(self)
+    }
+
+    pub fn execution_id(&self) -> Byte32 {
+        self.lineage_authorization.as_ref().map_or_else(
+            || self.transaction.id(&self.network_id),
+            |authorization| authorization.id.clone(),
+        )
+    }
+
+    pub fn original_lineage_command(&self) -> Option<&Transaction> {
+        self.lineage_authorization
+            .as_ref()
+            .map(|authorization| &authorization.original)
+    }
+
+    /// Role zero is the fee lock and role one covers only the resolved heads.
+    /// A mixed group receives no delegated authorization.
+    pub fn lineage_lock_context(&self, group: &ScriptGroup) -> Option<[u8; 33]> {
+        let authorization = self.lineage_authorization.as_ref()?;
+        if group.kind != ScriptGroupKind::Lock || group.inputs.is_empty() {
+            return None;
+        }
+        let role = match group.inputs.as_slice() {
+            [0] => 0,
+            [first, ..] if *first > 0 => 1,
+            _ => return None,
+        };
+        let mut bytes = [0; 33];
+        bytes[0] = role;
+        bytes[1..].copy_from_slice(authorization.digest.as_slice());
+        Some(bytes)
+    }
+
     pub fn parent_id(&self) -> &Byte32 {
         &self.parent_id
     }
@@ -1079,6 +1228,15 @@ impl ResolvedTransaction {
                 hash.update(&units.to_le_bytes());
             }
             hash.update(self.transaction.commitment(&self.network_id).as_slice());
+            if let Some(authorization) = &self.lineage_authorization {
+                hash.update(
+                    authorization
+                        .original
+                        .commitment(&self.network_id)
+                        .as_slice(),
+                );
+                hash.update(authorization.digest.as_slice());
+            }
             for header in &self.headers {
                 hash.update(&header.encode());
             }

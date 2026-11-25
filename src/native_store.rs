@@ -114,15 +114,13 @@ impl ResourceFees {
     fn cycle_budget(
         self,
         resolved: &ResolvedTransaction,
+        encoded_bytes: u64,
         reads: u64,
         read_bytes: u64,
         write_bytes: u64,
     ) -> Result<u64> {
         let fixed = [
-            (
-                self.encoded_byte,
-                resolved.transaction().as_slice().len() as u64,
-            ),
+            (self.encoded_byte, encoded_bytes),
             (self.cell_read, reads),
             (self.cell_read_byte, read_bytes),
             (self.cell_write_byte, write_bytes),
@@ -774,42 +772,61 @@ impl Store {
         } else {
             1
         };
-        for wave in transactions.chunks(width) {
-            let mut jobs = Vec::with_capacity(wave.len());
-            for tx in wave {
-                let position = receipts.len();
-                let receipt = self.stage(
-                    tx,
-                    &context,
-                    &origin,
-                    &mut budget,
-                    &mut overlay,
-                    |resolved, limit| {
-                        if width == 1 {
-                            self.cache.verify(resolved, limit, false)
-                        } else {
-                            jobs.push((position, resolved, limit));
-                            Ok(0)
-                        }
-                    },
-                )?;
-                fees = fees
-                    .checked_add(receipt.fee)
-                    .context("block fee overflow")?;
-                receipts.push(receipt);
-            }
+        // Account for previous validation before admitting a dynamic wave.
+        // Disjoint commands may materialize together when each has its full limit.
+        for segment in transactions
+            .chunk_by(|left, right| left.has_lineage_command() == right.has_lineage_command())
+        {
+            for wave in segment.chunks(width) {
+                let parallel_commands = wave.len() > 1
+                    && wave[0].has_lineage_command()
+                    && budget.cycles / wave.len() as u64 >= self.limits.transaction_cycles
+                    && lineage::independent(self, wave, &overlay.lineages)?;
+                let mut commands = if parallel_commands {
+                    wave.par_iter()
+                        .map(|tx| self.materialize_lineage(tx, &context, &overlay, budget))
+                        .collect::<Result<Vec<_>>>()?
+                        .into_iter()
+                } else {
+                    Vec::new().into_iter()
+                };
+                let mut jobs = Vec::with_capacity(wave.len());
+                for tx in wave {
+                    let position = receipts.len();
+                    let receipt = self.stage(
+                        tx,
+                        &context,
+                        &origin,
+                        &mut budget,
+                        &mut overlay,
+                        commands.next().flatten(),
+                        |resolved, limit| {
+                            if width == 1 {
+                                self.cache.verify(resolved, limit, false)
+                            } else {
+                                jobs.push((position, resolved, limit));
+                                Ok(0)
+                            }
+                        },
+                    )?;
+                    fees = fees
+                        .checked_add(receipt.fee)
+                        .context("block fee overflow")?;
+                    receipts.push(receipt);
+                }
 
-            let group_parallel = jobs.len() < width;
-            let completed: Vec<_> = jobs
-                .into_par_iter()
-                .map(|(position, resolved, limit)| {
-                    (position, self.cache.verify(resolved, limit, group_parallel))
-                })
-                .collect();
-            for (position, verified) in completed {
-                let cycles = verified?;
-                charge(&mut budget.cycles, cycles, "block VM cycles")?;
-                receipts[position].cycles = cycles;
+                let group_parallel = jobs.len() < width;
+                let completed: Vec<_> = jobs
+                    .into_par_iter()
+                    .map(|(position, resolved, limit)| {
+                        (position, self.cache.verify(resolved, limit, group_parallel))
+                    })
+                    .collect();
+                for (position, verified) in completed {
+                    let cycles = verified?;
+                    charge(&mut budget.cycles, cycles, "block VM cycles")?;
+                    receipts[position].cycles = cycles;
+                }
             }
         }
         let mut batch = Batch::default();
@@ -959,6 +976,7 @@ impl Store {
                     &origin,
                     &mut budget,
                     &mut overlay,
+                    None,
                     |resolved, limit| self.cache.verify(resolved, limit, true),
                 )
                 .is_ok()
@@ -983,6 +1001,7 @@ impl Store {
             &Origin::new(&self.network, &context),
             &mut Budget::new(self.limits),
             &mut self.overlay()?,
+            None,
             |resolved, limit| self.cache.verify(resolved, limit, false),
         )
     }
@@ -996,6 +1015,49 @@ impl Store {
         })
     }
 
+    fn resolve_live(
+        &self,
+        live: &BTreeMap<OutPoint, Option<LiveCell>>,
+        point: &OutPoint,
+    ) -> Result<LiveCell> {
+        match live.get(point) {
+            Some(staged) => staged.clone(),
+            None => self.live_cell(point)?,
+        }
+        .context("input or dependency is not a Live Cell")
+    }
+
+    fn materialize_lineage(
+        &self,
+        tx: &Transaction,
+        context: &HeaderContext,
+        overlay: &Overlay,
+        budget: Budget,
+    ) -> Result<Option<lineage::Materialized>> {
+        tx.lineage_command()
+            .map(|command| {
+                ensure!(
+                    context.height < tx.valid_before_height().expect("validated command expiry"),
+                    "Lineage command has expired"
+                );
+                let block = BlockContext {
+                    candidate: context,
+                    parent: &self.tip,
+                    capacity: self.capacity,
+                };
+                lineage::materialize(
+                    self,
+                    tx,
+                    command,
+                    block,
+                    &overlay.lineages,
+                    budget,
+                    |point| self.resolve_live(&overlay.live, point),
+                )
+            })
+            .transpose()
+    }
+
     fn stage(
         &self,
         tx: &Transaction,
@@ -1003,20 +1065,26 @@ impl Store {
         origin: &Origin,
         budget: &mut Budget,
         overlay: &mut Overlay,
+        staged_command: Option<lineage::Materialized>,
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
     ) -> Result<Receipt> {
-        let Overlay {
-            live,
-            stake,
-            bridge,
-            lineages,
-        } = overlay;
         let mut next = *budget;
         charge(
             &mut next.bytes,
             tx.as_slice().len() as u64,
             "block transaction bytes",
         )?;
+        let materialized = if staged_command.is_some() {
+            staged_command
+        } else {
+            self.materialize_lineage(tx, context, overlay, next)?
+        };
+        let Overlay {
+            live,
+            stake,
+            bridge,
+            lineages,
+        } = overlay;
         if matches!(tx.operation(), Some(Operation::StakeSnapshot(_))) {
             let (staking, stake) = self
                 .staking
@@ -1044,19 +1112,16 @@ impl Store {
             });
         }
 
-        let fresh = |point: &OutPoint| {
-            match live.get(point) {
-                Some(staged) => staged.clone(),
-                None => self.live_cell(point)?,
-            }
-            .context("input or dependency is not a Live Cell")
-        };
+        let fresh = |point: &OutPoint| self.resolve_live(live, point);
         let header = |hash: &Byte32| self.resolve_header(hash, context.height);
         let block = BlockContext {
             candidate: context,
             parent: &self.tip,
             capacity: self.capacity,
         };
+        let concrete = materialized
+            .as_ref()
+            .map_or(tx, |command| &command.transaction);
         let (resolved, changes) = if matches!(tx.operation(), Some(Operation::BridgeMint(_))) {
             let (bridge, stage) = self
                 .bridge
@@ -1077,14 +1142,23 @@ impl Store {
         } else {
             let resolved = ResolvedTransaction::resolve(
                 self.network.clone(),
-                tx.clone(),
+                concrete.clone(),
                 block,
                 fresh,
                 header,
             )?;
             let changes = match self.bridge.as_ref().zip(bridge.as_ref()) {
-                Some((bridge, stage)) => bridge.burn(self, stage, tx)?,
+                Some((bridge, stage)) => bridge.burn(self, stage, concrete)?,
                 None => BridgeChanges::default(),
+            };
+            let resolved = if let Some(command) = &materialized {
+                ensure!(
+                    changes.omit_outputs.is_empty(),
+                    "Lineage command cannot create a Bridge Burn"
+                );
+                resolved.authorize_materialized_lineage(tx, &command.fee_cell)?
+            } else {
+                resolved
             };
             (resolved, changes)
         };
@@ -1098,10 +1172,15 @@ impl Store {
             .transpose()?
             .unwrap_or_default();
         let lineage_reads = lineage_changes.len() as u64;
-        let reads = resolved.cell_reads() as u64 + lineage_reads;
+        let reads = resolved.cell_reads() as u64
+            + lineage_reads
+            + materialized.as_ref().map_or(0, |command| command.reads);
         let read_bytes = resolved.resolved_cell_bytes() as u64
             + lineage_reads
-                * (lineage::KEY_BYTES + stem_ledger::lineage::Head::MAX_ENCODED_BYTES as u64);
+                * (lineage::KEY_BYTES + stem_ledger::lineage::Head::MAX_ENCODED_BYTES as u64)
+            + materialized
+                .as_ref()
+                .map_or(0, |command| command.read_bytes);
         charge(&mut next.reads, reads, "block Cell reads")?;
         charge(&mut next.read_bytes, read_bytes, "block Cell read bytes")?;
         let outputs = resolved
@@ -1151,6 +1230,7 @@ impl Store {
         let cycle_limit = if tx.operation().is_none() {
             cycle_limit.min(self.fees.cycle_budget(
                 &resolved,
+                tx.as_slice().len() as u64,
                 reads,
                 read_bytes,
                 budget.write_bytes - next.write_bytes,
@@ -1158,13 +1238,57 @@ impl Store {
         } else {
             cycle_limit
         };
-        let cycles = verify(Arc::new(resolved), cycle_limit)?;
+        let cycles = if let Some(command) = &materialized {
+            let remaining = cycle_limit
+                .checked_sub(command.cycles)
+                .context("Lineage execution exceeds its resource budget")?;
+            let validation_cycles = if command.executed {
+                let validation_limit = command.validation_cycles;
+                ensure!(
+                    validation_limit <= remaining,
+                    "Lineage fee does not cover the signed validation budget"
+                );
+                match self
+                    .cache
+                    .verify(Arc::new(resolved), validation_limit, false)
+                {
+                    Ok(cycles) => cycles,
+                    Err(_) => {
+                        let reads_attempted = reads - command.reads;
+                        let bytes_attempted = read_bytes - command.read_bytes;
+                        let refund = materialized.expect("Lineage command").rollback(
+                            validation_limit,
+                            reads_attempted,
+                            bytes_attempted,
+                        )?;
+                        return self.stage(
+                            tx,
+                            context,
+                            origin,
+                            budget,
+                            overlay,
+                            Some(refund),
+                            verify,
+                        );
+                    }
+                }
+            } else {
+                // The materializer has already verified this exact fee-only transaction.
+                0
+            };
+            command.cycles + validation_cycles
+        } else {
+            verify(Arc::new(resolved), cycle_limit)?
+        };
         charge(&mut next.cycles, cycles, "block VM cycles")?;
 
-        live.extend(tx.inputs().map(|input| (input.previous_output, None)));
+        live.extend(concrete.inputs().map(|input| (input.previous_output, None)));
         live.extend(outputs);
         lineages.extend(lineage_changes);
-        let protocol_result = changes.protocol_result.clone();
+        let protocol_result = materialized.as_ref().map_or_else(
+            || changes.protocol_result.clone(),
+            |command| stem_ledger::lineage::Outcome::from_applied(command.executed).encode(),
+        );
         if let Some(bridge) = bridge.as_mut() {
             bridge.apply(changes);
         }

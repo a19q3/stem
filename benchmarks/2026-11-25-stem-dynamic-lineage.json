@@ -1,0 +1,1040 @@
+{
+  "baseline": "270a12f32ec9d22af33f06a14b98f895cf85f189",
+  "cometbft": "0.38.26",
+  "cometbft_sha256": "b0aadc1881f3f00f026683ce272f42ab552e2cdacec272bec3d195bc5f59e338",
+  "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+  "date": "2026-11-25",
+  "local_store": [
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 30963344,
+      "parallel_commit_us": [
+        136,
+        213,
+        230
+      ],
+      "parallel_prepare_us": [
+        5009,
+        7893,
+        8674
+      ],
+      "serial_prepare_us": [
+        5470,
+        5836,
+        6788
+      ],
+      "workload": "independent"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 30963344,
+      "parallel_commit_us": [
+        77,
+        93,
+        94
+      ],
+      "parallel_prepare_us": [
+        5197,
+        5405,
+        7717
+      ],
+      "serial_prepare_us": [
+        5156,
+        5296,
+        5315
+      ],
+      "workload": "single-hotspot"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 1,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 3960347,
+      "parallel_commit_us": [
+        51,
+        60,
+        64
+      ],
+      "parallel_prepare_us": [
+        1732,
+        1948,
+        2412
+      ],
+      "serial_prepare_us": [
+        1526,
+        1677,
+        1865
+      ],
+      "workload": "atomic"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 30963344,
+      "parallel_commit_us": [
+        93,
+        132,
+        164
+      ],
+      "parallel_prepare_us": [
+        5005,
+        5594,
+        10766
+      ],
+      "serial_prepare_us": [
+        4853,
+        5207,
+        5208
+      ],
+      "workload": "mixed"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        82,
+        98,
+        105
+      ],
+      "parallel_prepare_us": [
+        7734,
+        8315,
+        11561
+      ],
+      "serial_prepare_us": [
+        7446,
+        7927,
+        7937
+      ],
+      "workload": "hotspot-amm"
+    }
+  ],
+  "native_contract_sha256": {
+    "stem-lineage": "fcf7644985d86e956036a102a9adffbe71dbed4f995a1fe7c24e93d913a313b2",
+    "stem-lineage-counter": "601c740165148261fdcd695da654a1b166ebff0a1a1cf5414ea9642bc36ae4b2",
+    "stem-lineage-lock": "1ee4aa2df535fe3e22fda1536a55b0342417ffa59beddc3aaaeb63ca683bf431",
+    "stem-lineage-reserve-udt": "e029067c7f0686e1c75df88c9923d5e8fd1ec736803f8791206d895f381ca2af",
+    "stem-lineage-swap": "27db7850c72dd13b779d3132429c63519513ce630f195cbfd62e06a5775ff946"
+  },
+  "network": {
+    "commands": [
+      {
+        "applied": true,
+        "cycles": 3870418,
+        "result": {
+          "check_tx": {
+            "code": 0,
+            "codespace": "",
+            "data": null,
+            "events": [],
+            "gas_used": "0",
+            "gas_wanted": "3870418",
+            "info": "",
+            "log": ""
+          },
+          "hash": "3B7ABF9735A85A14E95D39440967917BD51873B91749CCD08FDF57D5EE8041CF",
+          "height": "28",
+          "tx_result": {
+            "code": 0,
+            "codespace": "",
+            "data": "AdAP0p3sAQEAAAAB",
+            "events": [],
+            "gas_used": "3870418",
+            "gas_wanted": "3870418",
+            "info": "",
+            "log": ""
+          }
+        }
+      },
+      {
+        "applied": true,
+        "cycles": 3883265,
+        "result": {
+          "check_tx": {
+            "code": 0,
+            "codespace": "",
+            "data": null,
+            "events": [],
+            "gas_used": "0",
+            "gas_wanted": "3883265",
+            "info": "",
+            "log": ""
+          },
+          "hash": "6F573CB44990CCEEBB81B7F2EF6E53C790F0B35092CD30AB801E137A1969E9CD",
+          "height": "29",
+          "tx_result": {
+            "code": 0,
+            "codespace": "",
+            "data": "AdAPgYLtAQEAAAAB",
+            "events": [],
+            "gas_used": "3883265",
+            "gas_wanted": "3883265",
+            "info": "",
+            "log": ""
+          }
+        }
+      },
+      {
+        "applied": false,
+        "cycles": 2021132,
+        "result": {
+          "check_tx": {
+            "code": 0,
+            "codespace": "",
+            "data": null,
+            "events": [],
+            "gas_used": "0",
+            "gas_wanted": "2021132",
+            "info": "",
+            "log": ""
+          },
+          "hash": "2B6BC35FD8734E25E7E5D24D64433224A1C8B489B8D4CD896C93AFEA2028F871",
+          "height": "30",
+          "tx_result": {
+            "code": 0,
+            "codespace": "",
+            "data": "AdAPjK57AQAAAAA=",
+            "events": [],
+            "gas_used": "2021132",
+            "gas_wanted": "2021132",
+            "info": "",
+            "log": ""
+          }
+        }
+      }
+    ],
+    "proofs": [
+      [
+        {
+          "app_hash": "56f899edafe0f1134adf337700d2a84692b95be8e2f34484dc79ebfdcd198392",
+          "height": 31,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7020000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a3914982180020000000962511fcad9abb498176861a8bc2085a486c8e5d3962c16fcff8c0216158791a10000000f5000000000000000000000000000000",
+            "cell_proof": "0x0700000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010100000000000000000000000000000000000000000000000000000000000000003f780c537e129ee42bc02f2b8e8b7a85bd9ed636be9a6c522e07ab1813139aeb20e3d78963e436659ce3e0c75e3e72809df94ba5a07e48ad42856e2436f18acf6200000001020000000000000000000000000000000000000000000000000000000000000000c273e985a3dd609401b7e0659865e91ed31baac652296a13ff9c9c8555c4be011d4e043060da9c789ccb552d61bc0a821bcd88f33e76a899565b988b05c361b66200000001032000000000000000000000000000000000000000000000000000000000000000fbd45fd6ef7c03f6ebc98283e932cee7f39c8781e7e6efb8f6d115ff74614198426f513461a867d7d4f9ba555b10a0ac8e3b8694888f610e099c8b42dd97c7776200000001053000000000000000000000000000000000000000000000000000000000000000d3bad93f523e247cdb76a40bcadf8be10c86bf221843b18124c2d49549a00176ec64927b393c9cbf65ce5b4c4f8663b4f1066bc448b3891fa167f2e644f5fad662000000010634000000000000000000000000000000000000000000000000000000000000005a57ccaaf4235dca6b9d7e5aa473bb15976c8d62edc22daacc598f79cb83dcdb78725f4a83e74d5ccc455279d69af19954a64a3df5126ad779e6dc582e79193641000000003493c2d6fe75f5c99fcc19318c507cfd00145d47d74830b53f607f8a9caa6dfb586079367b95dd055d8f561d31a7b06c539d037c978bee2200f2c601dcc63c6c",
+            "proof": "0x05000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c620000000101800000000000000000000000000000000000000000000000000000000000000039d5181325e0cf480f4842fa76e06f0ce26afaa3b7744a215c8074e3c4df2066654c34a7977802ad826c7fa6adcbcfe476c20bbc9eb03c43d3ad102f57a2b196620000000102c000000000000000000000000000000000000000000000000000000000000000c40d9f276b70af4b6af3556455873c8379ed1565512d2d2ebda00ef265633991f5d845db87e698753a5fd18a5ae3ee9d3bd43d1684c5ff184001f87c922d28d0620000000103e0000000000000000000000000000000000000000000000000000000000000002e81b9c94e684e757cefdbfe00fe063ffebefca32a92020e1740e4cc8cd4e74f8d92ac72f57632c210ae88176a74d2e49e8bb1fbd0f3c01dae4d1b0066f308ac4100000000eae98535deab13aa5065c355cae720c12910021c5dfda8494fe87f10c1c7369f4f78e8ea0d96f4e32d7efc6075eaef4e8509e0305bc7404b6b3459cad66c8659",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c702000000020142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "6822ECE46D766FEDE1E4418B3811FA07FB7CD39CB5583E0F426A9729BF49F9AA",
+                  "parts": {
+                    "hash": "3E7E54D302E99C2B6E2617A0C4ABAEF48C92F68366C901B6A83A3248931B62B7",
+                    "total": 1
+                  }
+                },
+                "height": "32",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "m7bdCHTDWx5rnzkJBi2whJjFUUTX/M6csXO+MjlyY/6frxzw9sO75Oc2oDJFIMUHg38FFEtMcBhoxa3+I0DNDw==",
+                    "timestamp": "2026-11-25T09:54:00.603351153Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "w0O5+hCkLNeEnCqmW9mL9VZFht6CSbgHfqrTQYHI2ijvb+NN9uZFB6MbGKEDDjCm4sK/5Nn5bbsn98+1UdxGCw==",
+                    "timestamp": "2026-11-25T09:54:00.603350363Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "s+8DmlcxE8ldERITzfE7iCw0S6bnMrubCQAQn5UJYAnMz2v5/sURx7Ng0jwMXz5M1aKTBQ8+gFfVvs3l0QbTDA==",
+                    "timestamp": "2026-11-25T09:54:00.603393341Z",
+                    "validator_address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58"
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "56F899EDAFE0F1134ADF337700D2A84692B95BE8E2F34484DC79EBFDCD198392",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "32",
+                "last_block_id": {
+                  "hash": "0AF2FE7C117671776C5A79A80440B0135B9E961F1777C1D815AABAE16C95C1A9",
+                  "parts": {
+                    "hash": "5C129056AB9AFD4B09E5EC2D7F40A0295FC2D7ACFA26B965A22FB53B5BA61FB4",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "815FB5B5332594A5B734C7A94CA2975BDF66DC2C0ACB50AA3020E8F3761DE959",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58",
+                "time": "2026-11-25T09:53:59.29277729Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "15cc6d995161b2c7f0873bafe04c0f3c2a324ee36b9ca4edc50aa2819c351b65",
+          "height": 32,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7020000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a3914982180020000000962511fcad9abb498176861a8bc2085a486c8e5d3962c16fcff8c0216158791a10000000f5000000000000000000000000000000",
+            "cell_proof": "0x0700000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010100000000000000000000000000000000000000000000000000000000000000003f780c537e129ee42bc02f2b8e8b7a85bd9ed636be9a6c522e07ab1813139aeb20e3d78963e436659ce3e0c75e3e72809df94ba5a07e48ad42856e2436f18acf6200000001020000000000000000000000000000000000000000000000000000000000000000c273e985a3dd609401b7e0659865e91ed31baac652296a13ff9c9c8555c4be011d4e043060da9c789ccb552d61bc0a821bcd88f33e76a899565b988b05c361b66200000001032000000000000000000000000000000000000000000000000000000000000000fbd45fd6ef7c03f6ebc98283e932cee7f39c8781e7e6efb8f6d115ff74614198426f513461a867d7d4f9ba555b10a0ac8e3b8694888f610e099c8b42dd97c7776200000001053000000000000000000000000000000000000000000000000000000000000000d3bad93f523e247cdb76a40bcadf8be10c86bf221843b18124c2d49549a00176ec64927b393c9cbf65ce5b4c4f8663b4f1066bc448b3891fa167f2e644f5fad662000000010634000000000000000000000000000000000000000000000000000000000000005a57ccaaf4235dca6b9d7e5aa473bb15976c8d62edc22daacc598f79cb83dcdb78725f4a83e74d5ccc455279d69af19954a64a3df5126ad779e6dc582e79193641000000003493c2d6fe75f5c99fcc19318c507cfd00145d47d74830b53f607f8a9caa6dfb586079367b95dd055d8f561d31a7b06c539d037c978bee2200f2c601dcc63c6c",
+            "proof": "0x05000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c620000000101800000000000000000000000000000000000000000000000000000000000000039d5181325e0cf480f4842fa76e06f0ce26afaa3b7744a215c8074e3c4df2066654c34a7977802ad826c7fa6adcbcfe476c20bbc9eb03c43d3ad102f57a2b196620000000102c000000000000000000000000000000000000000000000000000000000000000c40d9f276b70af4b6af3556455873c8379ed1565512d2d2ebda00ef265633991f5d845db87e698753a5fd18a5ae3ee9d3bd43d1684c5ff184001f87c922d28d0620000000103e0000000000000000000000000000000000000000000000000000000000000002e81b9c94e684e757cefdbfe00fe063ffebefca32a92020e1740e4cc8cd4e74f8d92ac72f57632c210ae88176a74d2e49e8bb1fbd0f3c01dae4d1b0066f308ac4100000000eae98535deab13aa5065c355cae720c12910021c5dfda8494fe87f10c1c7369f4f78e8ea0d96f4e32d7efc6075eaef4e8509e0305bc7404b6b3459cad66c8659",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c702000000020142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "1DDAE3CD3C86C919062B913B3DD9B7FF71F405ACB7C4C4D778150F571C6691F4",
+                  "parts": {
+                    "hash": "2542BEEC550F1E8F18AFBE538FBAD6FC4A20188F3BBB0CD4CC24C3FFFFCB318C",
+                    "total": 1
+                  }
+                },
+                "height": "33",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 2,
+                    "signature": "rxLFIdrt2f/5xExk6KE9CV9EzeEZ+GuRQUt+RJ5bKqgF4I0Tj1L4qwWOEHE2xYwIIWi4WWcJ2K+VOAkq3e3TAg==",
+                    "timestamp": "2026-11-25T09:54:01.911994112Z",
+                    "validator_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "Y1qBLnbf5I8L+G20fhy78duuMYNt8FxawAGMC6tT178Lg/e8YLEUOFkxTURvrk7vZXz8tskKUqJp8VTfe6juCA==",
+                    "timestamp": "2026-11-25T09:54:01.91199456Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "bxJ2VunuG00nVz1yl2TGhCRFi4rfiMnC/erN06eUC0b1cIHFHqbDK5L6XwqsNIEKglhXuWggjxp8IFlE/emTCQ==",
+                    "timestamp": "2026-11-25T09:54:01.910178075Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "15CC6D995161B2C7F0873BAFE04C0F3C2A324EE36B9CA4EDC50AA2819C351B65",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "33",
+                "last_block_id": {
+                  "hash": "6822ECE46D766FEDE1E4418B3811FA07FB7CD39CB5583E0F426A9729BF49F9AA",
+                  "parts": {
+                    "hash": "3E7E54D302E99C2B6E2617A0C4ABAEF48C92F68366C901B6A83A3248931B62B7",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "CD5F5A862D059A1844A34C8F93BB8A6E6CF43C1430FD1AD23C443498094DFBC0",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F",
+                "time": "2026-11-25T09:54:00.603351153Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "7f21cbebe41a4ddcb887042581c0ffa2935f670ed096b1a63f6069fc6c1eeaf4",
+          "height": 33,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7020000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a3914982180020000000962511fcad9abb498176861a8bc2085a486c8e5d3962c16fcff8c0216158791a10000000f5000000000000000000000000000000",
+            "cell_proof": "0x0700000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010100000000000000000000000000000000000000000000000000000000000000003f780c537e129ee42bc02f2b8e8b7a85bd9ed636be9a6c522e07ab1813139aeb20e3d78963e436659ce3e0c75e3e72809df94ba5a07e48ad42856e2436f18acf6200000001020000000000000000000000000000000000000000000000000000000000000000c273e985a3dd609401b7e0659865e91ed31baac652296a13ff9c9c8555c4be011d4e043060da9c789ccb552d61bc0a821bcd88f33e76a899565b988b05c361b66200000001032000000000000000000000000000000000000000000000000000000000000000fbd45fd6ef7c03f6ebc98283e932cee7f39c8781e7e6efb8f6d115ff74614198426f513461a867d7d4f9ba555b10a0ac8e3b8694888f610e099c8b42dd97c7776200000001053000000000000000000000000000000000000000000000000000000000000000d3bad93f523e247cdb76a40bcadf8be10c86bf221843b18124c2d49549a00176ec64927b393c9cbf65ce5b4c4f8663b4f1066bc448b3891fa167f2e644f5fad662000000010634000000000000000000000000000000000000000000000000000000000000005a57ccaaf4235dca6b9d7e5aa473bb15976c8d62edc22daacc598f79cb83dcdb78725f4a83e74d5ccc455279d69af19954a64a3df5126ad779e6dc582e79193641000000003493c2d6fe75f5c99fcc19318c507cfd00145d47d74830b53f607f8a9caa6dfb586079367b95dd055d8f561d31a7b06c539d037c978bee2200f2c601dcc63c6c",
+            "proof": "0x05000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c620000000101800000000000000000000000000000000000000000000000000000000000000039d5181325e0cf480f4842fa76e06f0ce26afaa3b7744a215c8074e3c4df2066654c34a7977802ad826c7fa6adcbcfe476c20bbc9eb03c43d3ad102f57a2b196620000000102c000000000000000000000000000000000000000000000000000000000000000c40d9f276b70af4b6af3556455873c8379ed1565512d2d2ebda00ef265633991f5d845db87e698753a5fd18a5ae3ee9d3bd43d1684c5ff184001f87c922d28d0620000000103e0000000000000000000000000000000000000000000000000000000000000002e81b9c94e684e757cefdbfe00fe063ffebefca32a92020e1740e4cc8cd4e74f8d92ac72f57632c210ae88176a74d2e49e8bb1fbd0f3c01dae4d1b0066f308ac4100000000eae98535deab13aa5065c355cae720c12910021c5dfda8494fe87f10c1c7369f4f78e8ea0d96f4e32d7efc6075eaef4e8509e0305bc7404b6b3459cad66c8659",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c702000000020142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "07255ADB624580B4F463817AE3D2CA6C99AE8B6201CD22C32D0003F7EFF6AE50",
+                  "parts": {
+                    "hash": "61F8D4F49D64D015842940A835F82D2AADD47E2A75642F830A0669B15BA116B9",
+                    "total": 1
+                  }
+                },
+                "height": "34",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 2,
+                    "signature": "aPPdWDzMd5S8c7cLZid4uwwttw9k2bWcpoLnQDyBefZpSrxo3wD+Bxu2bi+ZiTEHItBhOeDKND9CN9iiy0LBBA==",
+                    "timestamp": "2026-11-25T09:54:03.215716159Z",
+                    "validator_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "SAmufYxH8J08KomrZ/g9I9HxDd0wSf4Bx3ybTVcMdaP1+09zsxTAxWO5It5sZyt1O8LCRLpulkhuyH9j957RDA==",
+                    "timestamp": "2026-11-25T09:54:03.218140423Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "RYj5yzm9KmVqW7ZNnMS5vWMbnCBAnr8Xuxt4dICawrLeCmoqAhTn5wTx5ZcAOlcvM/tgfwQl3dx+wftVRQDGAQ==",
+                    "timestamp": "2026-11-25T09:54:03.218055124Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "7F21CBEBE41A4DDCB887042581C0FFA2935F670ED096B1A63F6069FC6C1EEAF4",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "34",
+                "last_block_id": {
+                  "hash": "1DDAE3CD3C86C919062B913B3DD9B7FF71F405ACB7C4C4D778150F571C6691F4",
+                  "parts": {
+                    "hash": "2542BEEC550F1E8F18AFBE538FBAD6FC4A20188F3BBB0CD4CC24C3FFFFCB318C",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "D94CE9F80F1F41380BFEC1ACA3008709C5CE295D6C375503A4DF64F360220E5E",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "14E4CEFD527C42273E787156B3428CC694816B96",
+                "time": "2026-11-25T09:54:01.910179423Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "1e7867dbd7c0e709b6d66e015c441e2767c429dfaa92392f485a221b176afe8f",
+          "height": 34,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7020000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a3914982180020000000962511fcad9abb498176861a8bc2085a486c8e5d3962c16fcff8c0216158791a10000000f5000000000000000000000000000000",
+            "cell_proof": "0x0700000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010100000000000000000000000000000000000000000000000000000000000000003f780c537e129ee42bc02f2b8e8b7a85bd9ed636be9a6c522e07ab1813139aeb20e3d78963e436659ce3e0c75e3e72809df94ba5a07e48ad42856e2436f18acf6200000001020000000000000000000000000000000000000000000000000000000000000000c273e985a3dd609401b7e0659865e91ed31baac652296a13ff9c9c8555c4be011d4e043060da9c789ccb552d61bc0a821bcd88f33e76a899565b988b05c361b66200000001032000000000000000000000000000000000000000000000000000000000000000fbd45fd6ef7c03f6ebc98283e932cee7f39c8781e7e6efb8f6d115ff74614198426f513461a867d7d4f9ba555b10a0ac8e3b8694888f610e099c8b42dd97c7776200000001053000000000000000000000000000000000000000000000000000000000000000d3bad93f523e247cdb76a40bcadf8be10c86bf221843b18124c2d49549a00176ec64927b393c9cbf65ce5b4c4f8663b4f1066bc448b3891fa167f2e644f5fad662000000010634000000000000000000000000000000000000000000000000000000000000005a57ccaaf4235dca6b9d7e5aa473bb15976c8d62edc22daacc598f79cb83dcdb78725f4a83e74d5ccc455279d69af19954a64a3df5126ad779e6dc582e79193641000000003493c2d6fe75f5c99fcc19318c507cfd00145d47d74830b53f607f8a9caa6dfb586079367b95dd055d8f561d31a7b06c539d037c978bee2200f2c601dcc63c6c",
+            "proof": "0x05000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c620000000101800000000000000000000000000000000000000000000000000000000000000039d5181325e0cf480f4842fa76e06f0ce26afaa3b7744a215c8074e3c4df2066654c34a7977802ad826c7fa6adcbcfe476c20bbc9eb03c43d3ad102f57a2b196620000000102c000000000000000000000000000000000000000000000000000000000000000c40d9f276b70af4b6af3556455873c8379ed1565512d2d2ebda00ef265633991f5d845db87e698753a5fd18a5ae3ee9d3bd43d1684c5ff184001f87c922d28d0620000000103e0000000000000000000000000000000000000000000000000000000000000002e81b9c94e684e757cefdbfe00fe063ffebefca32a92020e1740e4cc8cd4e74f8d92ac72f57632c210ae88176a74d2e49e8bb1fbd0f3c01dae4d1b0066f308ac4100000000eae98535deab13aa5065c355cae720c12910021c5dfda8494fe87f10c1c7369f4f78e8ea0d96f4e32d7efc6075eaef4e8509e0305bc7404b6b3459cad66c8659",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c702000000020142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "FE8AAB58238C5598D4E554C608C8C7664CA49D79A0D05B81C2B21E32D46EF3AD",
+                  "parts": {
+                    "hash": "385FCE5AEEC968E095301A79E4080CB015C2511C1E258D81462C9569799809BE",
+                    "total": 1
+                  }
+                },
+                "height": "35",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 2,
+                    "signature": "ykFAV5QOa//gr2amJWP+S6IOLdYnCzQ6ofo3zsefDG9FtdCMM/jw+4Acz9X5gwRqPoTDsX6UnpVJACL0IK6VBQ==",
+                    "timestamp": "2026-11-25T09:54:04.5232395Z",
+                    "validator_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "qTsI3BpA3/UDdoMe9uOrPagiIP+6ZAB8rM0hFoqPDoYpxypwTzTDlZ/nSAo+QUMGACzmzgE6rd8nxUUM9oTfCg==",
+                    "timestamp": "2026-11-25T09:54:04.52589888Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "oKJMmo2MmdpGxDv3jFd5Bf4SQAgvNbniluJ8nUSSXXzbU2voGKB+T1bv9uuffjau5vEGBAb/x91C3JP4+H/OAA==",
+                    "timestamp": "2026-11-25T09:54:04.525927243Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "1E7867DBD7C0E709B6D66E015C441E2767C429DFAA92392F485A221B176AFE8F",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "35",
+                "last_block_id": {
+                  "hash": "07255ADB624580B4F463817AE3D2CA6C99AE8B6201CD22C32D0003F7EFF6AE50",
+                  "parts": {
+                    "hash": "61F8D4F49D64D015842940A835F82D2AADD47E2A75642F830A0669B15BA116B9",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "9B53BDD530282C7CB81C060349D77045B2EF43021D30FA22E683BBDBB40AF3EE",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726",
+                "time": "2026-11-25T09:54:03.218055124Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "a954989976f0005114264f42cc976edad4cff1eb15df29ac732aa8abb59e56f2",
+          "height": 35,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7020000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a3914982180020000000962511fcad9abb498176861a8bc2085a486c8e5d3962c16fcff8c0216158791a10000000f5000000000000000000000000000000",
+            "cell_proof": "0x0700000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010100000000000000000000000000000000000000000000000000000000000000003f780c537e129ee42bc02f2b8e8b7a85bd9ed636be9a6c522e07ab1813139aeb20e3d78963e436659ce3e0c75e3e72809df94ba5a07e48ad42856e2436f18acf6200000001020000000000000000000000000000000000000000000000000000000000000000c273e985a3dd609401b7e0659865e91ed31baac652296a13ff9c9c8555c4be011d4e043060da9c789ccb552d61bc0a821bcd88f33e76a899565b988b05c361b66200000001032000000000000000000000000000000000000000000000000000000000000000fbd45fd6ef7c03f6ebc98283e932cee7f39c8781e7e6efb8f6d115ff74614198426f513461a867d7d4f9ba555b10a0ac8e3b8694888f610e099c8b42dd97c7776200000001053000000000000000000000000000000000000000000000000000000000000000d3bad93f523e247cdb76a40bcadf8be10c86bf221843b18124c2d49549a00176ec64927b393c9cbf65ce5b4c4f8663b4f1066bc448b3891fa167f2e644f5fad662000000010634000000000000000000000000000000000000000000000000000000000000005a57ccaaf4235dca6b9d7e5aa473bb15976c8d62edc22daacc598f79cb83dcdb78725f4a83e74d5ccc455279d69af19954a64a3df5126ad779e6dc582e79193641000000003493c2d6fe75f5c99fcc19318c507cfd00145d47d74830b53f607f8a9caa6dfb586079367b95dd055d8f561d31a7b06c539d037c978bee2200f2c601dcc63c6c",
+            "proof": "0x05000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c620000000101800000000000000000000000000000000000000000000000000000000000000039d5181325e0cf480f4842fa76e06f0ce26afaa3b7744a215c8074e3c4df2066654c34a7977802ad826c7fa6adcbcfe476c20bbc9eb03c43d3ad102f57a2b196620000000102c000000000000000000000000000000000000000000000000000000000000000c40d9f276b70af4b6af3556455873c8379ed1565512d2d2ebda00ef265633991f5d845db87e698753a5fd18a5ae3ee9d3bd43d1684c5ff184001f87c922d28d0620000000103e0000000000000000000000000000000000000000000000000000000000000002e81b9c94e684e757cefdbfe00fe063ffebefca32a92020e1740e4cc8cd4e74f8d92ac72f57632c210ae88176a74d2e49e8bb1fbd0f3c01dae4d1b0066f308ac4100000000eae98535deab13aa5065c355cae720c12910021c5dfda8494fe87f10c1c7369f4f78e8ea0d96f4e32d7efc6075eaef4e8509e0305bc7404b6b3459cad66c8659",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c702000000020142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "ED74838673E425C126BAA797B46F31CE62F3E203BEE69B457F124B828B4A4870",
+                  "parts": {
+                    "hash": "6727598E862C7366AE3FA2D0EDC9EBA0E5B25E1A23C04F669DA10146AAF518CE",
+                    "total": 1
+                  }
+                },
+                "height": "36",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "F5lRQTrltngjB9EpyObKqWe/KXPUb0v86e5SP38OUmzbrhK2QsGMYBfkp8TWfF4BC6goLE62vIttjMBQlNhcAw==",
+                    "timestamp": "2026-11-25T09:54:05.833294464Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "E+j6+BVXaxPLg0urDNTReqfwZQVupgjvA3xydbWXHp894U6urb+p97Exta4k+hKH5+ITHdCpNTFmnHB2PlV1Bw==",
+                    "timestamp": "2026-11-25T09:54:05.831596384Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "uzyZVG8i3uT4RKHsrA/OmmpGGIjHg6tohFMZLGxinx+UH6Z58Atdravss5dsIh4icxUvStAhLaCDbl4yc9YMDQ==",
+                    "timestamp": "2026-11-25T09:54:05.831595354Z",
+                    "validator_address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58"
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "A954989976F0005114264F42CC976EDAD4CFF1EB15DF29AC732AA8ABB59E56F2",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "36",
+                "last_block_id": {
+                  "hash": "FE8AAB58238C5598D4E554C608C8C7664CA49D79A0D05B81C2B21E32D46EF3AD",
+                  "parts": {
+                    "hash": "385FCE5AEEC968E095301A79E4080CB015C2511C1E258D81462C9569799809BE",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "54C0FED32C597B8089B27EF950BBB2F52C210551D0BF48A95749AF69837A82B9",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58",
+                "time": "2026-11-25T09:54:04.5232395Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        }
+      ],
+      [
+        {
+          "app_hash": "143527773927f2d77dde85b6b6df74acc88c4b89440350f94b1efa07a49ceeaf",
+          "height": 36,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7010000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a39149821800200000005d3fd5f000837687c829fa3a9152f6d9235f6de806f8fe97bbfff7207640178110000000f3000000000000000000000000000000",
+            "cell_proof": "0x0600000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010180000000000000000000000000000000000000000000000000000000000000000b3c50eb4b05a8b749727d09f475b220353c6bf49975ec2e31baa5a75b5566905ff9865a8657374f2d150e51da28b46a39b11a61da1b0171901f5dc8308d6a176200000001028000000000000000000000000000000000000000000000000000000000000000632163ecf6c7b042bb74e47598d5a412e925ea67326f5269c40141278de9f19f60410a782aee2fb9717a774c24c30243322c2980d9fde79da3a65b5e2b2121bb620000000105a8000000000000000000000000000000000000000000000000000000000000008562146bc33f1c0f8c54da454927523b3ed175bef390dfcf9efda25a99089b8908b4e93ccd747fa83bf839737e4d824aa08b738c739dde6ca098f11438e7fb02620000000106ac0000000000000000000000000000000000000000000000000000000000000067d8e0885b26bb288ad7f75da357117a4dfa7d8d222b0f00273dc8c7979e1604fe0018606933e1673d9e2f7866be24a243387a9b9d2efb389cd1a838843458694100000000af9a6a34949445312d54add325a0bd49ae1d5febbf4919f908306e14c13c8527eba2f4f4037d72d35846ea187f94a78b243d3c8185aa890b9db138a86fcada26",
+            "proof": "0x02000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c4100000000689e25af084932a8be4e5a66024696224875a7c2d5ccdfd067735bb3092e2e5813aebdb315792ca3a7ddab73c9323d5eadaaebcdcae45ad25dbce028f9a38810",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c701000000010142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "1F66FF5806EDDECE4B2015B1EC5A5519EE0A2709DF86018FCA1E8B0C01E72918",
+                  "parts": {
+                    "hash": "C2A86543614457507F2CA5A1FD6D28399E20D10E2972F734536DA09DC679B2A2",
+                    "total": 1
+                  }
+                },
+                "height": "37",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "XEfhPUqqU7mwumTRbjD1K2d4LObC6szj/gxy1R8CfZO/OEfUzvJwr/jIq49lQ/0XqjSqg76/vtBjj8qECskKBg==",
+                    "timestamp": "2026-11-25T09:54:07.137397526Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "GZFy3BTSOUSPAw72ZfSq1w4XBcKOFqujZ/bSf+yOo30NCH4oNafQrMcxQstVhPsopZAtFm2AKoH7HaMQ6/XQDA==",
+                    "timestamp": "2026-11-25T09:54:07.138053231Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "qOL0Nz+KN5/MUqugnh+kAhbdVyJzPx4kOjN26m/Jvn6eXRpj1iqPDfqKUoFLDV8uLINNpDty6LgctFAkgqI7DA==",
+                    "timestamp": "2026-11-25T09:54:07.138109103Z",
+                    "validator_address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58"
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "143527773927F2D77DDE85B6B6DF74ACC88C4B89440350F94B1EFA07A49CEEAF",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "37",
+                "last_block_id": {
+                  "hash": "ED74838673E425C126BAA797B46F31CE62F3E203BEE69B457F124B828B4A4870",
+                  "parts": {
+                    "hash": "6727598E862C7366AE3FA2D0EDC9EBA0E5B25E1A23C04F669DA10146AAF518CE",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "4757466A173053907F45F6B1CC8D2663AEEE0B8B63FBB51BA8EFDD78803AE9EC",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F",
+                "time": "2026-11-25T09:54:05.831596384Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "143527773927f2d77dde85b6b6df74acc88c4b89440350f94b1efa07a49ceeaf",
+          "height": 36,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7010000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a39149821800200000005d3fd5f000837687c829fa3a9152f6d9235f6de806f8fe97bbfff7207640178110000000f3000000000000000000000000000000",
+            "cell_proof": "0x0600000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010180000000000000000000000000000000000000000000000000000000000000000b3c50eb4b05a8b749727d09f475b220353c6bf49975ec2e31baa5a75b5566905ff9865a8657374f2d150e51da28b46a39b11a61da1b0171901f5dc8308d6a176200000001028000000000000000000000000000000000000000000000000000000000000000632163ecf6c7b042bb74e47598d5a412e925ea67326f5269c40141278de9f19f60410a782aee2fb9717a774c24c30243322c2980d9fde79da3a65b5e2b2121bb620000000105a8000000000000000000000000000000000000000000000000000000000000008562146bc33f1c0f8c54da454927523b3ed175bef390dfcf9efda25a99089b8908b4e93ccd747fa83bf839737e4d824aa08b738c739dde6ca098f11438e7fb02620000000106ac0000000000000000000000000000000000000000000000000000000000000067d8e0885b26bb288ad7f75da357117a4dfa7d8d222b0f00273dc8c7979e1604fe0018606933e1673d9e2f7866be24a243387a9b9d2efb389cd1a838843458694100000000af9a6a34949445312d54add325a0bd49ae1d5febbf4919f908306e14c13c8527eba2f4f4037d72d35846ea187f94a78b243d3c8185aa890b9db138a86fcada26",
+            "proof": "0x02000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c4100000000689e25af084932a8be4e5a66024696224875a7c2d5ccdfd067735bb3092e2e5813aebdb315792ca3a7ddab73c9323d5eadaaebcdcae45ad25dbce028f9a38810",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c701000000010142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "1F66FF5806EDDECE4B2015B1EC5A5519EE0A2709DF86018FCA1E8B0C01E72918",
+                  "parts": {
+                    "hash": "C2A86543614457507F2CA5A1FD6D28399E20D10E2972F734536DA09DC679B2A2",
+                    "total": 1
+                  }
+                },
+                "height": "37",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 2,
+                    "signature": "agO2EnjBqa3UdlOC7wWBK+3Aus/bqOvo8b0bMFO5U5ASrL3x7xWLmvxdkmewi9FLTD5CfYWRzC0eN+uANcx2CQ==",
+                    "timestamp": "2026-11-25T09:54:07.138053107Z",
+                    "validator_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "XEfhPUqqU7mwumTRbjD1K2d4LObC6szj/gxy1R8CfZO/OEfUzvJwr/jIq49lQ/0XqjSqg76/vtBjj8qECskKBg==",
+                    "timestamp": "2026-11-25T09:54:07.137397526Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "GZFy3BTSOUSPAw72ZfSq1w4XBcKOFqujZ/bSf+yOo30NCH4oNafQrMcxQstVhPsopZAtFm2AKoH7HaMQ6/XQDA==",
+                    "timestamp": "2026-11-25T09:54:07.138053231Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "143527773927F2D77DDE85B6B6DF74ACC88C4B89440350F94B1EFA07A49CEEAF",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "37",
+                "last_block_id": {
+                  "hash": "ED74838673E425C126BAA797B46F31CE62F3E203BEE69B457F124B828B4A4870",
+                  "parts": {
+                    "hash": "6727598E862C7366AE3FA2D0EDC9EBA0E5B25E1A23C04F669DA10146AAF518CE",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "4757466A173053907F45F6B1CC8D2663AEEE0B8B63FBB51BA8EFDD78803AE9EC",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F",
+                "time": "2026-11-25T09:54:05.831596384Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "143527773927f2d77dde85b6b6df74acc88c4b89440350f94b1efa07a49ceeaf",
+          "height": 36,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7010000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a39149821800200000005d3fd5f000837687c829fa3a9152f6d9235f6de806f8fe97bbfff7207640178110000000f3000000000000000000000000000000",
+            "cell_proof": "0x0600000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010180000000000000000000000000000000000000000000000000000000000000000b3c50eb4b05a8b749727d09f475b220353c6bf49975ec2e31baa5a75b5566905ff9865a8657374f2d150e51da28b46a39b11a61da1b0171901f5dc8308d6a176200000001028000000000000000000000000000000000000000000000000000000000000000632163ecf6c7b042bb74e47598d5a412e925ea67326f5269c40141278de9f19f60410a782aee2fb9717a774c24c30243322c2980d9fde79da3a65b5e2b2121bb620000000105a8000000000000000000000000000000000000000000000000000000000000008562146bc33f1c0f8c54da454927523b3ed175bef390dfcf9efda25a99089b8908b4e93ccd747fa83bf839737e4d824aa08b738c739dde6ca098f11438e7fb02620000000106ac0000000000000000000000000000000000000000000000000000000000000067d8e0885b26bb288ad7f75da357117a4dfa7d8d222b0f00273dc8c7979e1604fe0018606933e1673d9e2f7866be24a243387a9b9d2efb389cd1a838843458694100000000af9a6a34949445312d54add325a0bd49ae1d5febbf4919f908306e14c13c8527eba2f4f4037d72d35846ea187f94a78b243d3c8185aa890b9db138a86fcada26",
+            "proof": "0x02000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c4100000000689e25af084932a8be4e5a66024696224875a7c2d5ccdfd067735bb3092e2e5813aebdb315792ca3a7ddab73c9323d5eadaaebcdcae45ad25dbce028f9a38810",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c701000000010142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "1F66FF5806EDDECE4B2015B1EC5A5519EE0A2709DF86018FCA1E8B0C01E72918",
+                  "parts": {
+                    "hash": "C2A86543614457507F2CA5A1FD6D28399E20D10E2972F734536DA09DC679B2A2",
+                    "total": 1
+                  }
+                },
+                "height": "37",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 2,
+                    "signature": "agO2EnjBqa3UdlOC7wWBK+3Aus/bqOvo8b0bMFO5U5ASrL3x7xWLmvxdkmewi9FLTD5CfYWRzC0eN+uANcx2CQ==",
+                    "timestamp": "2026-11-25T09:54:07.138053107Z",
+                    "validator_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "XEfhPUqqU7mwumTRbjD1K2d4LObC6szj/gxy1R8CfZO/OEfUzvJwr/jIq49lQ/0XqjSqg76/vtBjj8qECskKBg==",
+                    "timestamp": "2026-11-25T09:54:07.137397526Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "GZFy3BTSOUSPAw72ZfSq1w4XBcKOFqujZ/bSf+yOo30NCH4oNafQrMcxQstVhPsopZAtFm2AKoH7HaMQ6/XQDA==",
+                    "timestamp": "2026-11-25T09:54:07.138053231Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "143527773927F2D77DDE85B6B6DF74ACC88C4B89440350F94B1EFA07A49CEEAF",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "37",
+                "last_block_id": {
+                  "hash": "ED74838673E425C126BAA797B46F31CE62F3E203BEE69B457F124B828B4A4870",
+                  "parts": {
+                    "hash": "6727598E862C7366AE3FA2D0EDC9EBA0E5B25E1A23C04F669DA10146AAF518CE",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "4757466A173053907F45F6B1CC8D2663AEEE0B8B63FBB51BA8EFDD78803AE9EC",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "13F1354A4F3530DE7FF644F42020DBECB806A23F",
+                "time": "2026-11-25T09:54:05.831596384Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "8f898eb660ff257426ac3ed4bcea796c42084e1f709949ce545d19943bb84f88",
+          "height": 37,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7010000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a39149821800200000005d3fd5f000837687c829fa3a9152f6d9235f6de806f8fe97bbfff7207640178110000000f3000000000000000000000000000000",
+            "cell_proof": "0x0600000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010180000000000000000000000000000000000000000000000000000000000000000b3c50eb4b05a8b749727d09f475b220353c6bf49975ec2e31baa5a75b5566905ff9865a8657374f2d150e51da28b46a39b11a61da1b0171901f5dc8308d6a176200000001028000000000000000000000000000000000000000000000000000000000000000632163ecf6c7b042bb74e47598d5a412e925ea67326f5269c40141278de9f19f60410a782aee2fb9717a774c24c30243322c2980d9fde79da3a65b5e2b2121bb620000000105a8000000000000000000000000000000000000000000000000000000000000008562146bc33f1c0f8c54da454927523b3ed175bef390dfcf9efda25a99089b8908b4e93ccd747fa83bf839737e4d824aa08b738c739dde6ca098f11438e7fb02620000000106ac0000000000000000000000000000000000000000000000000000000000000067d8e0885b26bb288ad7f75da357117a4dfa7d8d222b0f00273dc8c7979e1604fe0018606933e1673d9e2f7866be24a243387a9b9d2efb389cd1a838843458694100000000af9a6a34949445312d54add325a0bd49ae1d5febbf4919f908306e14c13c8527eba2f4f4037d72d35846ea187f94a78b243d3c8185aa890b9db138a86fcada26",
+            "proof": "0x02000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c4100000000689e25af084932a8be4e5a66024696224875a7c2d5ccdfd067735bb3092e2e5813aebdb315792ca3a7ddab73c9323d5eadaaebcdcae45ad25dbce028f9a38810",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c701000000010142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "89DBA9D33FF37D62241BCF37B002F6D009C706C3F493A4572CC0F6ECD072C76A",
+                  "parts": {
+                    "hash": "DD3B2549D31150B5BD0FCBCC8F5A007B46ADAC5CD9F2554C2C0B402A93B5168A",
+                    "total": 1
+                  }
+                },
+                "height": "38",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "2JdBkFscf32DV/oW606dY9PEvJSMSeIFB951ENEBQhy6juvr/j9ZrE6mWZF+Mn6WK/olGbe9jXs5QHk/5yXGCA==",
+                    "timestamp": "2026-11-25T09:54:08.450389311Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "MTkwPpw2solCB6PSh8tUWcVV0TTf2/IgoASmxhUycFoHngehDJkT9r5FKMRAOT9Xma9vlM5/DDcfJqtX1AXGBw==",
+                    "timestamp": "2026-11-25T09:54:08.450387057Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "+Cgy9huEYRMmRo/myBo1cZx8xM6zznAnc/+zZ0ec9qIXeVYBrjn/XUfb7PmcdnY404ZsdAQoLd5726hhml3wBQ==",
+                    "timestamp": "2026-11-25T09:54:08.450954561Z",
+                    "validator_address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58"
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "8F898EB660FF257426AC3ED4BCEA796C42084E1F709949CE545D19943BB84F88",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "38",
+                "last_block_id": {
+                  "hash": "1F66FF5806EDDECE4B2015B1EC5A5519EE0A2709DF86018FCA1E8B0C01E72918",
+                  "parts": {
+                    "hash": "C2A86543614457507F2CA5A1FD6D28399E20D10E2972F734536DA09DC679B2A2",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "8101D45D9607E6DBAFE1E367814AC0DEDD99BD093559C9C2A50F27824044E9D9",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "14E4CEFD527C42273E787156B3428CC694816B96",
+                "time": "2026-11-25T09:54:07.138053107Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        },
+        {
+          "app_hash": "8f898eb660ff257426ac3ed4bcea796c42084e1f709949ce545d19943bb84f88",
+          "height": 37,
+          "payload": {
+            "cell": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c7010000001d00000000000000a7482012a2010000454129b76154e8cd6e359e53d2395aa8f0fa5e7bbb3b1e3e8fa8c5d9be2a4f0b0130e0764817000000680765ef6eb77d05769623b09f1978b13dd7b346e235432b7b9508ed138a76b30015000000010bed9657e02cc2088e5fbb427f332f08447541b501000000ca1094108fad443616d033583fca871854d7e6c1ef792773962f59a39149821800200000005d3fd5f000837687c829fa3a9152f6d9235f6de806f8fe97bbfff7207640178110000000f3000000000000000000000000000000",
+            "cell_proof": "0x0600000062000000010000000000000000000000000000000000000000000000000000000000000000008a70b813e1438c96c3c226807ef2f49683f918be654e526ebd01402a27fe1d009fe9986725bbf624367819ead399e9c12b72d06528e0cab99151c7da5aeb679f62000000010180000000000000000000000000000000000000000000000000000000000000000b3c50eb4b05a8b749727d09f475b220353c6bf49975ec2e31baa5a75b5566905ff9865a8657374f2d150e51da28b46a39b11a61da1b0171901f5dc8308d6a176200000001028000000000000000000000000000000000000000000000000000000000000000632163ecf6c7b042bb74e47598d5a412e925ea67326f5269c40141278de9f19f60410a782aee2fb9717a774c24c30243322c2980d9fde79da3a65b5e2b2121bb620000000105a8000000000000000000000000000000000000000000000000000000000000008562146bc33f1c0f8c54da454927523b3ed175bef390dfcf9efda25a99089b8908b4e93ccd747fa83bf839737e4d824aa08b738c739dde6ca098f11438e7fb02620000000106ac0000000000000000000000000000000000000000000000000000000000000067d8e0885b26bb288ad7f75da357117a4dfa7d8d222b0f00273dc8c7979e1604fe0018606933e1673d9e2f7866be24a243387a9b9d2efb389cd1a838843458694100000000af9a6a34949445312d54add325a0bd49ae1d5febbf4919f908306e14c13c8527eba2f4f4037d72d35846ea187f94a78b243d3c8185aa890b9db138a86fcada26",
+            "proof": "0x02000000620000000100000000000000000000000000000000000000000000000000000000000000000052ef21b1c198e6186a54f945681512b84174f5e8b5438349a0e74d4dd5c0c5ac82156a788d3167b4929e714f24467cefd2b95ac342df3c2f23f1f8f51e6e456c4100000000689e25af084932a8be4e5a66024696224875a7c2d5ccdfd067735bb3092e2e5813aebdb315792ca3a7ddab73c9323d5eadaaebcdcae45ad25dbce028f9a38810",
+            "record": "0xc038a2783cb3bfb97364ce8b2fc4116d912c405b14e91fa03856269a59a648c701000000010142e1608eacf92a4ca6743eea4a57410cc5331c9f3d3fd89d8882602c625d1d"
+          },
+          "signed_successor": {
+            "canonical": false,
+            "signed_header": {
+              "commit": {
+                "block_id": {
+                  "hash": "89DBA9D33FF37D62241BCF37B002F6D009C706C3F493A4572CC0F6ECD072C76A",
+                  "parts": {
+                    "hash": "DD3B2549D31150B5BD0FCBCC8F5A007B46ADAC5CD9F2554C2C0B402A93B5168A",
+                    "total": 1
+                  }
+                },
+                "height": "38",
+                "round": 0,
+                "signatures": [
+                  {
+                    "block_id_flag": 1,
+                    "signature": null,
+                    "timestamp": "0001-01-01T00:00:00Z",
+                    "validator_address": ""
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "2JdBkFscf32DV/oW606dY9PEvJSMSeIFB951ENEBQhy6juvr/j9ZrE6mWZF+Mn6WK/olGbe9jXs5QHk/5yXGCA==",
+                    "timestamp": "2026-11-25T09:54:08.450389311Z",
+                    "validator_address": "14E4CEFD527C42273E787156B3428CC694816B96"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "MTkwPpw2solCB6PSh8tUWcVV0TTf2/IgoASmxhUycFoHngehDJkT9r5FKMRAOT9Xma9vlM5/DDcfJqtX1AXGBw==",
+                    "timestamp": "2026-11-25T09:54:08.450387057Z",
+                    "validator_address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726"
+                  },
+                  {
+                    "block_id_flag": 2,
+                    "signature": "+Cgy9huEYRMmRo/myBo1cZx8xM6zznAnc/+zZ0ec9qIXeVYBrjn/XUfb7PmcdnY404ZsdAQoLd5726hhml3wBQ==",
+                    "timestamp": "2026-11-25T09:54:08.450954561Z",
+                    "validator_address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58"
+                  }
+                ]
+              },
+              "header": {
+                "app_hash": "8F898EB660FF257426AC3ED4BCEA796C42084E1F709949CE545D19943BB84F88",
+                "chain_id": "stem-native-abci-test",
+                "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+                "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "height": "38",
+                "last_block_id": {
+                  "hash": "1F66FF5806EDDECE4B2015B1EC5A5519EE0A2709DF86018FCA1E8B0C01E72918",
+                  "parts": {
+                    "hash": "C2A86543614457507F2CA5A1FD6D28399E20D10E2972F734536DA09DC679B2A2",
+                    "total": 1
+                  }
+                },
+                "last_commit_hash": "8101D45D9607E6DBAFE1E367814AC0DEDD99BD093559C9C2A50F27824044E9D9",
+                "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                "next_validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "proposer_address": "14E4CEFD527C42273E787156B3428CC694816B96",
+                "time": "2026-11-25T09:54:07.138053107Z",
+                "validators_hash": "95103EACA70094B984BA590D2041CDB4FD7DB6DFCDC133E39D6BE53623B4AB64",
+                "version": {
+                  "app": "1",
+                  "block": "11"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ]
+  },
+  "network_genesis_public_committee": {
+    "chain_id": "stem-native-abci-test",
+    "validators": [
+      {
+        "address": "8D65F80C8F49EE7BCFA6C8FA0D9ECE8D96B56B58",
+        "name": "node0",
+        "power": "1",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "KF/CwaCGVbJ7z3RpW+ZeG3rEOvT5Lbi4vz0gtXmA20Q="
+        }
+      },
+      {
+        "address": "885F159E4BBD287EEF63FA52A9F3FD1E09719726",
+        "name": "node1",
+        "power": "1",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "rWpzLHPsSugeIBF3UZT9xS5H9gJs4A18sMd/UbRlkt8="
+        }
+      },
+      {
+        "address": "13F1354A4F3530DE7FF644F42020DBECB806A23F",
+        "name": "node2",
+        "power": "1",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "fkAPXyWSGGSjw79xdwTW6Ry3BAN0KoRw3Zbi6yhAEgQ="
+        }
+      },
+      {
+        "address": "14E4CEFD527C42273E787156B3428CC694816B96",
+        "name": "node3",
+        "power": "1",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "x33aAPas2hEQ8xUaIzddZv0sNWvl8zWu8dZJ1iy4egw="
+        }
+      }
+    ]
+  },
+  "network_id": "5317a4bbba21547f77a2ff03d77b060a868a10998260f86c61b00ce0a0f7ba12",
+  "percentile_order": [
+    50,
+    95,
+    99
+  ],
+  "rust": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "stem_sha256": "525bc0754b4b6c0362fc4d36b5996251e23b8f85e029153990493474ca4a9f79",
+  "verification": "Go proof verifier checked ten H+1 commits for two dynamic Heads across five replicas."
+}

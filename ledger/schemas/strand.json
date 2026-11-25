@@ -383,6 +383,39 @@
       "item": "Certificate"
     },
     {
+      "name": "LineageTarget",
+      "kind": "sequence",
+      "fields": [
+        { "name": "id", "type": "Byte32" },
+        { "name": "min_version", "type": "CompactUint64" },
+        { "name": "max_version", "type": "CompactUint64" },
+        { "name": "min_capacity", "type": "CompactUint64" }
+      ]
+    },
+    {
+      "name": "LineageTargetVec",
+      "kind": "dense_vector",
+      "item": "LineageTarget"
+    },
+    {
+      "name": "LineageCommand",
+      "kind": "sequence",
+      "fields": [
+        { "name": "targets", "type": "LineageTargetVec" },
+        { "name": "executor", "type": "Byte32" },
+        { "name": "executor_dep", "type": "OutPoint" },
+        { "name": "executor_cycles", "type": "CompactUint64" },
+        { "name": "validation_cycles", "type": "CompactUint64" },
+        { "name": "fee", "type": "CompactUint64" },
+        { "name": "payload", "type": "Bytes" }
+      ]
+    },
+    {
+      "name": "LineageCommandOpt",
+      "kind": "optional",
+      "item": "LineageCommand"
+    },
+    {
       "name": "RawTransaction",
       "kind": "flagged",
       "fields": [
@@ -417,6 +450,11 @@
           "name": "messages",
           "type": "GroupMessageVec",
           "bit": 3
+        },
+        {
+          "name": "lineage_command",
+          "type": "LineageCommandOpt",
+          "bit": 4
         }
       ],
       "flag_bytes": 1

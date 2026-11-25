@@ -229,6 +229,10 @@ impl Transaction {
             self.operation().is_none(),
             "control transactions use certificate authorization"
         );
+        ensure!(
+            !self.has_lineage_command(),
+            "Lineage commands use lineage_signing_digest"
+        );
         let resolved = resolve_cells(self, &mut ResolutionBudget::default(), false, cells)?;
         let locks: BTreeSet<_> = resolved
             .inputs

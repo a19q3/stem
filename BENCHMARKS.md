@@ -421,3 +421,47 @@ of its lower cycle total.
 cargo test --locked --release --test native_store \
   lineage::measure_explicit_lineage_updates -- --exact --ignored --nocapture
 ```
+
+## Dynamic Lineage commands
+
+Four local CometBFT 0.38.26 validators and a snapshot-restored observer
+verified two pre-signed counter commands and a rejected attempt. The
+second command resolved a Head advanced by the first command and
+updated two Heads atomically. The first and second commands charged
+3,870,418 and 3,883,265 cycles. The failed Executor charged 2,021,132
+cycles and committed only the fee refund. The Rust runner checked both
+Patricia paths per Head and the separate Go verifier checked ten H+1
+commits. The [raw record](benchmarks/2026-11-25-stem-dynamic-lineage.json)
+contains the outcomes, certificates, public genesis committee, measured
+local samples and binary fingerprints.
+
+The local release test used an Intel Core i9-13900H, 31 blocks per
+workload, two independent RocksDB instances, identical signed
+transactions and four Rayon workers. Preparation includes RISC-V
+execution, mandatory Script Groups and building the atomic batch.
+Synchronous commit is timed separately. The tests compare Header and
+Receipt equality for every block. Measurements are in microseconds.
+
+| Workload | Commands / Head updates per block | Serial prepare p50/p95/p99 | Four-worker prepare p50/p95/p99 | Four-worker commit p50/p95/p99 | Mean charged cycles/block |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Independent counters | 8 / 8 | 5470 / 5836 / 6788 | 5009 / 7893 / 8674 | 136 / 213 / 230 | 30,963,344 |
+| One contended counter | 8 / 8 | 5156 / 5296 / 5315 | 5197 / 5405 / 7717 | 77 / 93 / 94 | 30,963,344 |
+| One atomic eight-target command | 1 / 8 | 1526 / 1677 / 1865 | 1732 / 1948 / 2412 | 51 / 60 / 64 | 3,960,347 |
+| Mixed conflicting counters | 8 / 8 | 4853 / 5207 / 5208 | 5005 / 5594 / 10766 | 93 / 132 / 164 | 30,963,344 |
+| Constant-product AMM hotspot | 8 / 16 | 7446 / 7927 / 7937 | 7734 / 8315 / 11561 | 82 / 98 / 105 | 31,378,016 |
+
+Independent workers improved median prepare time by about 8% in this
+run, while tails increased. Conflicting writes still execute in order.
+The AMM uses two separate RISC-V asset groups with fixed development
+supplies. Each command updates the pool and the payer's reserve with a
+signed minimum amount, so the eight swaps share a common Head. The
+correctness test also covers slippage and the rejection of a payer
+that lacks the participant reserve's authorization. These are local
+block preparation and sync-write timings. Sustained replicated
+throughput, concurrent mempool admission and an independent AMM load
+generator remain unmeasured.
+
+```sh
+cargo test --locked --release --test native_store measure_dynamic_lineage_updates -- --ignored --nocapture
+cargo test --locked --release --test native_store measure_lineage_hotspot_amm -- --ignored --nocapture
+```

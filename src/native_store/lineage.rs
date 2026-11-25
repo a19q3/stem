@@ -7,13 +7,16 @@ use ckb_types::{
     prelude::*,
 };
 use stem_ledger::{
-    GroupMessage, LiveCell, ResolvedTransaction, ScriptGroupKind,
-    lineage::{Head, REGISTER, REPLACE_EXECUTOR, RETIRE, id},
+    BlockContext, Cell, CellInput, GroupMessage, LiveCell, ResolvedTransaction, ScriptGroupKind,
+    Transaction,
+    lineage::{Command, Head, MAX_DATA_BYTES, REGISTER, REPLACE_EXECUTOR, RETIRE, id},
     patricia::{Namespace, Patricia},
     record,
 };
 
-use super::{Header, Proof, Store};
+use stem_vm::executor;
+
+use super::{Budget, Header, Proof, Store};
 
 const PREFIX: &[u8] = b"lineage/head/";
 pub(super) const KEY_BYTES: u64 = (PREFIX.len() + 32) as u64;
@@ -101,14 +104,7 @@ pub(super) fn changes(
         } else {
             None
         };
-        let prior = match stage.get(&key) {
-            Some(value) => value.clone(),
-            None => store
-                .system_record(&record_key(&key))?
-                .as_deref()
-                .map(Head::decode)
-                .transpose()?,
-        };
+        let prior = current_head(store, stage, &key)?;
         let next = if let Some(index) = input {
             let mut prior = prior.context("Lineage input is not registered")?;
             ensure!(
@@ -180,6 +176,283 @@ fn executor(resolved: &ResolvedTransaction, data: &[u8]) -> Result<Byte32> {
         .program_index(&script)
         .context("Lineage Executor is absent from resolved dependencies")?;
     Ok(code)
+}
+
+fn current_head(store: &Store, stage: &Heads, id: &Byte32) -> Result<Option<Head>> {
+    match stage.get(id) {
+        Some(value) => Ok(value.clone()),
+        None => store
+            .system_record(&record_key(id))?
+            .as_deref()
+            .map(Head::decode)
+            .transpose(),
+    }
+}
+
+/// Conservative access analysis for one materialization wave. Commands using a
+/// Dep Group may expand to arbitrary OutPoints and use the serial path.
+pub(super) fn independent(store: &Store, wave: &[Transaction], heads: &Heads) -> Result<bool> {
+    let mut writes = BTreeSet::new();
+    let mut code_reads = BTreeSet::new();
+    for tx in wave {
+        let command = tx.lineage_command().expect("command wave");
+        let fee = tx.input(0).expect("validated fee input").previous_output;
+        if !writes.insert(fee) {
+            return Ok(false);
+        }
+        for target in &command.targets {
+            let Some(head) = current_head(store, heads, &target.id)? else {
+                return Ok(false);
+            };
+            if !writes.insert(head.out_point) {
+                return Ok(false);
+            }
+        }
+        let id = tx.id(store.network());
+        for index in 0..=command.targets.len() as u32 {
+            if !writes.insert(OutPoint::new(id.clone(), index)) {
+                return Ok(false);
+            }
+        }
+        for dep in tx.cell_deps() {
+            if dep.dep_type().as_slice() != [0] {
+                return Ok(false);
+            }
+            code_reads.insert(dep.out_point());
+        }
+    }
+    Ok(writes.is_disjoint(&code_reads))
+}
+
+pub(super) struct Materialized {
+    pub transaction: Transaction,
+    pub fee_cell: Cell,
+    pub cycles: u64,
+    pub reads: u64,
+    pub read_bytes: u64,
+    pub executed: bool,
+    pub validation_cycles: u64,
+    fallback: Option<Transaction>,
+}
+
+impl Materialized {
+    pub(super) fn rollback(
+        mut self,
+        spent: u64,
+        additional_reads: u64,
+        additional_bytes: u64,
+    ) -> Result<Self> {
+        self.transaction = self
+            .fallback
+            .take()
+            .context("missing verified Lineage refund")?;
+        self.executed = false;
+        self.cycles = self
+            .cycles
+            .checked_add(spent)
+            .context("Lineage cycles overflow")?;
+        self.reads = self
+            .reads
+            .checked_add(additional_reads)
+            .context("Lineage reads overflow")?;
+        self.read_bytes = self
+            .read_bytes
+            .checked_add(additional_bytes)
+            .context("Lineage read bytes overflow")?;
+        Ok(self)
+    }
+}
+
+pub(super) fn materialize(
+    store: &Store,
+    original: &Transaction,
+    command: &Command,
+    block: BlockContext<'_>,
+    heads: &Heads,
+    budget: Budget,
+    mut fresh: impl FnMut(&OutPoint) -> Result<LiveCell>,
+) -> Result<Materialized> {
+    let marker = store
+        .lineage
+        .as_ref()
+        .context("Lineages are not configured")?;
+    let fee_input = original.input(0).context("missing Lineage fee input")?;
+    let fee_cell = fresh(&fee_input.previous_output)?.cell;
+    ensure!(
+        fee_cell.data().is_empty() && fee_cell.type_scripts().len() == 0,
+        "Lineage fee input must hold only CKB Capacity"
+    );
+    let refund = Cell::new(
+        fee_cell
+            .capacity()
+            .checked_sub(command.fee)
+            .context("insufficient Lineage fee input")?,
+        fee_cell.lock(),
+        vec![],
+        Default::default(),
+    )?;
+
+    let witness = original.witness(0).context("missing Lineage fee seal")?;
+    let executor_code = fresh(&command.executor_dep)?.cell;
+    ensure!(
+        executor_code.data_hash() == &command.executor,
+        "Lineage Executor Cell does not match its signed data hash"
+    );
+    let mut inputs = Vec::with_capacity(command.targets.len());
+    let mut loaded = Vec::with_capacity(command.targets.len());
+    let mut read_bytes = (executor_code.as_slice().len() + fee_cell.as_slice().len()) as u64;
+    for target in &command.targets {
+        let head = current_head(store, heads, &target.id)?.context("Lineage has no live head")?;
+        ensure!(
+            head.executor == command.executor
+                && (target.min_version..=target.max_version).contains(&head.version),
+            "Lineage head is outside the signed version or Executor bounds"
+        );
+        let cell = fresh(&head.out_point)?;
+        ensure!(
+            matches_head(&cell, marker, &target.id) && cell.cell.data().len() <= MAX_DATA_BYTES,
+            "invalid Lineage Executor input"
+        );
+        ensure!(
+            cell.cell.lock() != fee_cell.lock(),
+            "Lineage head and fee Lock groups must be distinct"
+        );
+        read_bytes +=
+            KEY_BYTES + Head::MAX_ENCODED_BYTES as u64 + cell.cell.as_slice().len() as u64;
+        inputs.push(executor::Input {
+            id: target.id.clone(),
+            version: head.version,
+            capacity: cell.cell.capacity(),
+            data: cell.cell.data(),
+        });
+        loaded.push((head.out_point, cell.cell));
+    }
+    let reads = 2 + 2 * command.targets.len() as u64;
+    let initial_fee = Transaction::new(
+        original.cell_deps().collect(),
+        vec![],
+        vec![fee_input.clone()],
+        vec![refund.clone()],
+        vec![witness.clone()],
+    )?;
+    let preflight = ResolvedTransaction::resolve(
+        store.network.clone(),
+        initial_fee.clone(),
+        block,
+        &mut fresh,
+        |_| unreachable!("Lineage fee preflight has no Header Deps"),
+    )?
+    .authorize_materialized_lineage(original, &fee_cell)?;
+    let reads = reads + preflight.cell_reads() as u64;
+    let read_bytes = read_bytes + preflight.resolved_cell_bytes() as u64;
+    ensure!(
+        reads <= budget.reads && read_bytes <= budget.read_bytes,
+        "Lineage resolution exceeds the block read budget"
+    );
+    let cycle_limit = store.limits.transaction_cycles.min(budget.cycles);
+    let fee_cycles = store.cache.verify(
+        std::sync::Arc::new(preflight),
+        cycle_limit
+            .checked_sub(command.executor_cycles)
+            .and_then(|limit| limit.checked_sub(command.validation_cycles))
+            .context("signed Lineage budgets exceed remaining transaction cycles")?,
+        false,
+    )?;
+    let run = executor::run(
+        &executor_code.data(),
+        executor::ContextData {
+            height: block.candidate.height,
+            parent_time_ms: block.parent.context.timestamp_ms,
+            payer_lock: fee_cell.lock().calc_script_hash(),
+            payload: command.payload.clone(),
+            inputs,
+        },
+        command.executor_cycles,
+    );
+    let run = run.and_then(|(results, cycles)| {
+        let successors = successors(&loaded, &command.targets, results)?;
+        for cell in &successors {
+            block.capacity.verify(cell)?;
+        }
+        Ok((successors, cycles))
+    });
+    let (transaction, cycles, executed, fallback) = if let Ok((successors, cycles)) = run {
+        let fee_lock = fee_cell.lock().as_bytes();
+        let before_fee: BTreeSet<_> = loaded
+            .iter()
+            .map(|(_, cell)| cell.lock().as_bytes())
+            .filter(|key| key < &fee_lock)
+            .collect();
+        let mut witness = witness;
+        witness.group_index = u16::try_from(before_fee.len())?;
+        let tx = Transaction::new(
+            original.cell_deps().collect(),
+            vec![],
+            std::iter::once(fee_input)
+                .chain(
+                    loaded
+                        .into_iter()
+                        .map(|(point, _)| CellInput::new(point, None)),
+                )
+                .collect(),
+            std::iter::once(refund).chain(successors).collect(),
+            vec![witness],
+        )?;
+        (tx, cycles, true, Some(initial_fee))
+    } else {
+        // A guest trap, nonzero exit, exhausted budget or missing output cannot
+        // stage a head. Charge the signed Executor budget to the fee-only path.
+        (initial_fee, command.executor_cycles, false, None)
+    };
+    Ok(Materialized {
+        transaction,
+        fee_cell,
+        cycles: fee_cycles
+            .checked_add(cycles)
+            .context("Lineage cycles overflow")?,
+        reads,
+        read_bytes,
+        executed,
+        validation_cycles: command.validation_cycles,
+        fallback,
+    })
+}
+
+fn successors(
+    heads: &[(OutPoint, Cell)],
+    targets: &[stem_ledger::lineage::Target],
+    results: Vec<executor::Output>,
+) -> Result<Vec<Cell>> {
+    let mut before = 0u128;
+    let mut after = 0u128;
+    let successors = heads
+        .iter()
+        .zip(targets)
+        .zip(results)
+        .map(|(((_, cell), target), result)| {
+            ensure!(
+                result.capacity >= target.min_capacity,
+                "Lineage successor is below the signed Capacity floor"
+            );
+            before = before
+                .checked_add(u128::from(cell.capacity()))
+                .context("Lineage Capacity overflow")?;
+            after = after
+                .checked_add(u128::from(result.capacity))
+                .context("Lineage Capacity overflow")?;
+            Cell::new(
+                result.capacity,
+                cell.lock(),
+                cell.type_scripts().collect(),
+                result.data,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        before == after,
+        "Lineage Executor must conserve Head Capacity"
+    );
+    Ok(successors)
 }
 
 pub(super) fn record_key(id: &Byte32) -> Vec<u8> {

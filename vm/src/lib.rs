@@ -1,6 +1,7 @@
 //! CKB-VM host for Stem's native Strand ledger.
 
 mod crypto;
+pub mod executor;
 
 pub use crypto::{SECP256K1_RECOVER, SECP256K1_RECOVERY_CYCLES};
 
@@ -51,6 +52,8 @@ pub const LOAD_GROUP_MINTED_UNITS: u64 = 2120;
 pub const LOAD_BLOCK_CONTEXT: u64 = 2122;
 pub const LOAD_GROUP_MESSAGE: u64 = 2123;
 pub const LOAD_INTENT_CONTEXT: u64 = 2124;
+pub const LOAD_LINEAGE_AUTHORIZATION: u64 = 2125;
+pub const LOAD_LINEAGE_COMMAND: u64 = 2129;
 
 #[derive(Clone)]
 struct GroupContext {
@@ -166,7 +169,7 @@ fn verify_groups(
     estimates: &[Option<u64>],
     mut observe: impl FnMut(usize, u64),
 ) -> Result<u64> {
-    let transaction_id = tx.transaction().id(tx.network_id());
+    let transaction_id = tx.execution_id();
     let run = |group, limit| execute_group(Arc::clone(&tx), &transaction_id, group, limit);
     let mut total = 0;
     let group_count = tx.groups().len();
@@ -453,6 +456,25 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 value[32..40].copy_from_slice(&context.tx.fee().to_le_bytes());
                 value[40] = u8::from(tx.messages().len() != 0);
                 store_data(machine, &value)
+            }
+            LOAD_LINEAGE_AUTHORIZATION => {
+                if source != 0 || index != 0 {
+                    return Ok(status(machine, ITEM_MISSING));
+                }
+                let Some(data) = context.tx.lineage_lock_context(group) else {
+                    return Ok(status(machine, ITEM_MISSING));
+                };
+                store_data(machine, &data)
+            }
+            LOAD_LINEAGE_COMMAND => {
+                let Some(command) = context
+                    .tx
+                    .original_lineage_command()
+                    .filter(|_| source == 0 && index == 0)
+                else {
+                    return Ok(status(machine, ITEM_MISSING));
+                };
+                store_data(machine, command.as_slice())
             }
             LOAD_GROUP_SIGNING_DIGEST => {
                 if source != 0 || index != 0 || group.kind != ScriptGroupKind::Lock {
