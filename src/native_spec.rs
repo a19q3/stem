@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ckb_jsonrpc_types::{JsonBytes, OutPoint as JsonOutPoint, Script as JsonScript};
 use ckb_types::{H256, core::ScriptHashType, packed::Script, prelude::*};
-use fern::native_store::{BridgeGenesis, LaneGenesis, Limits, RecipientLock, Spec};
-use fern_ledger::{
+use stem::native_store::{BridgeGenesis, LaneGenesis, Limits, RecipientLock, Spec};
+use stem_ledger::{
     CapacityPolicy, Cell,
     protocol::{L1Anchor, Limits as ProtocolLimits},
 };
-use fern_stake::Member;
+use stem_stake::Member;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -112,7 +112,7 @@ impl From<OperationLimits> for ProtocolLimits {
 
 pub fn load(path: &Path) -> Result<Spec> {
     let config: Network = crate::bridge_cli::read_json_limited(path, 64 * 1024 * 1024)
-        .with_context(|| format!("load Fern genesis {}", path.display()))?;
+        .with_context(|| format!("load Stem genesis {}", path.display()))?;
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     let stake = config
         .stake
@@ -221,12 +221,12 @@ fn load_bridge(bridge: Bridge) -> Result<BridgeGenesis> {
 pub(crate) fn verify_comet_genesis(spec: &Spec, path: &Path) -> Result<ckb_types::packed::Byte32> {
     use anyhow::ensure;
     use base64::{Engine, engine::general_purpose::STANDARD};
-    use fern::native_store::{Retention, Store};
+    use stem::native_store::{Retention, Store};
 
     let genesis: serde_json::Value = crate::bridge_cli::read_json_limited(path, 2 * 1024 * 1024)?;
     let directory = tempfile::tempdir()?;
     let state = Store::open(directory.path(), spec, Retention::Archive)?;
-    let stated = genesis["app_state"]["fern_genesis"]
+    let stated = genesis["app_state"]["stem_genesis"]
         .as_str()
         .context("missing CometBFT application genesis")?;
     ensure!(

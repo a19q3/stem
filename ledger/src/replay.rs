@@ -29,7 +29,7 @@ impl Key {
                 l1_genesis,
                 deposit,
             } => hash(
-                b"Fern consumed CKB deposit\0",
+                b"Stem consumed CKB deposit\0",
                 network_id,
                 &[l1_genesis.as_slice(), deposit.as_slice()],
             ),
@@ -37,7 +37,7 @@ impl Key {
                 registry,
                 validator,
             } => hash(
-                b"Fern retired stake\0",
+                b"Stem retired stake\0",
                 network_id,
                 &[registry.as_slice(), validator.as_slice()],
             ),
@@ -83,7 +83,7 @@ impl InsertionBudget {
         value: u64,
         exists: impl FnOnce(&Byte32) -> Result<bool>,
     ) -> Result<()> {
-        ensure!(*network != Byte32::default(), "zero Fern network identity");
+        ensure!(*network != Byte32::default(), "zero Stem network identity");
         let id = key.commitment(network);
         ensure!(
             !self.writes.contains_key(&id) && !exists(&id)?,

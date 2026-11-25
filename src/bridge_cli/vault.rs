@@ -1,5 +1,5 @@
 use clap::Args;
-use fern_ledger::protocol::{BridgeSettlement, SettlementAction};
+use stem_ledger::protocol::{BridgeSettlement, SettlementAction};
 
 use super::*;
 

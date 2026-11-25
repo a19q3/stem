@@ -9,8 +9,8 @@ use crate::{
     hash,
 };
 
-const TX_ROOT: &[u8] = b"Fern transaction Merkle root\0";
-const RECEIPT_ROOT: &[u8] = b"Fern receipt Merkle root\0";
+const TX_ROOT: &[u8] = b"Stem transaction Merkle root\0";
+const RECEIPT_ROOT: &[u8] = b"Stem receipt Merkle root\0";
 
 pub struct Tree {
     network: Byte32,
@@ -154,12 +154,12 @@ impl InclusionProof {
 }
 
 fn receipt_hash(network: &Byte32, receipt: &Receipt) -> Byte32 {
-    hash(b"Fern execution receipt\0", network, &[&receipt.encode()])
+    hash(b"Stem execution receipt\0", network, &[&receipt.encode()])
 }
 
 fn merkle_root(network: &Byte32, leaves: &[Byte32]) -> Byte32 {
     match leaves {
-        [] => hash(b"Fern empty Merkle tree\0", network, &[]),
+        [] => hash(b"Stem empty Merkle tree\0", network, &[]),
         [leaf] => leaf.clone(),
         _ => {
             let (left, right) = leaves.split_at(split_point(leaves.len()));
@@ -178,7 +178,7 @@ fn split_point(count: usize) -> usize {
 
 fn merge(network: &Byte32, left: &Byte32, right: &Byte32) -> Byte32 {
     hash(
-        b"Fern Merkle node\0",
+        b"Stem Merkle node\0",
         network,
         &[left.as_slice(), right.as_slice()],
     )

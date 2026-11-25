@@ -17,9 +17,9 @@ import (
 // Verifies exported commits from tests/native_store/comet.rs against its
 // generated genesis committee and the native AppHash computed in Rust.
 func TestNativeCommitSignatures(t *testing.T) {
-	root := os.Getenv("FERN_NATIVE_EVIDENCE")
+	root := os.Getenv("STEM_NATIVE_EVIDENCE")
 	if root == "" {
-		t.Skip("set FERN_NATIVE_EVIDENCE to the four-node test output")
+		t.Skip("set STEM_NATIVE_EVIDENCE to the four-node test output")
 	}
 	genesis, err := types.GenesisDocFromFile(filepath.Join(root, "net/node0/config/genesis.json"))
 	if err != nil {

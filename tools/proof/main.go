@@ -1,4 +1,4 @@
-// Verifies a CometBFT signed successor for an authenticated native Fern AppHash.
+// Verifies a CometBFT signed successor for an authenticated native Stem AppHash.
 package main
 
 import (
@@ -131,11 +131,11 @@ func run() error {
 	genesis := flag.String("genesis", "", "trusted CometBFT genesis file")
 	commit := flag.String("commit", "", "signed CometBFT successor from the commit endpoint")
 	handoffs := flag.String("handoffs", "", "optional signed committee handoff history")
-	height := flag.Int64("height", 0, "native Fern application height")
+	height := flag.Int64("height", 0, "native Stem application height")
 	excluded := flag.String("excluded-validator", "", "require the specified Ed25519 key to be absent from the signed committee")
 	metadata := flag.Bool("metadata", false, "output authenticated checkpoint metadata as JSON")
-	fernGenesis := flag.String("fern-genesis", "", "expected Fern genesis Header ID")
-	appHashArg := flag.String("app-hash", "", "expected native Fern AppHash")
+	stemGenesis := flag.String("stem-genesis", "", "expected Stem genesis Header ID")
+	appHashArg := flag.String("app-hash", "", "expected native Stem AppHash")
 	flag.Parse()
 	appHash, err := hex.DecodeString(strings.TrimPrefix(*appHashArg, "0x"))
 	if err != nil || len(appHash) != 32 || *height < 1 || *height == math.MaxInt64 ||
@@ -146,15 +146,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if *fernGenesis != "" {
+	if *stemGenesis != "" {
 		var state struct {
-			FernGenesis string `json:"fern_genesis"`
+			StemGenesis string `json:"stem_genesis"`
 		}
 		if err := json.Unmarshal(trusted.AppState, &state); err != nil {
 			return err
 		}
-		if state.FernGenesis != *fernGenesis {
-			return errors.New("CometBFT app state does not match the expected Fern genesis")
+		if state.StemGenesis != *stemGenesis {
+			return errors.New("CometBFT app state does not match the expected Stem genesis")
 		}
 	}
 	raw, err := readLimited(*commit)
@@ -185,7 +185,7 @@ func run() error {
 		return err
 	}
 	if signed.Height != *height+1 || !bytes.Equal(signed.AppHash, appHash) {
-		return errors.New("commit does not authenticate this Fern height and AppHash")
+		return errors.New("commit does not authenticate this Stem height and AppHash")
 	}
 	if *excluded != "" {
 		key, err := hex.DecodeString(strings.TrimPrefix(*excluded, "0x"))

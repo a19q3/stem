@@ -6,7 +6,7 @@ use ckb_hash::blake2b_256;
 use ckb_jsonrpc_types::{CellDep, JsonBytes, OutPoint, Script};
 use ckb_types::{H256, bytes::Bytes, packed::Script as PackedScript, prelude::*};
 use clap::Subcommand;
-use fern_ledger::{Cell, CellInput, GroupWitness, Since, Transaction};
+use stem_ledger::{Cell, CellInput, GroupWitness, Since, Transaction};
 use serde::Deserialize;
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 
 #[derive(Subcommand)]
 pub enum Wallet {
-    /// Encode a native Fern transaction from a JSON request.
+    /// Encode a native Stem transaction from a JSON request.
     Build {
         #[arg(long)]
         request: PathBuf,
@@ -110,7 +110,7 @@ impl Wallet {
                 height,
                 limit,
             } => {
-                use fern::native_store::{ScriptQuery, find_cells};
+                use stem::native_store::{ScriptQuery, find_cells};
                 let query = match (lock_hash, type_hash) {
                     (Some(hash), None) => ScriptQuery::Lock(hash.pack()),
                     (None, Some(hash)) => ScriptQuery::Type(hash.pack()),

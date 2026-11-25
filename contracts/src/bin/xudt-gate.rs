@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use fern_bridge_wire::{self as wire, Gate};
+use stem_bridge_wire::{self as wire, Gate};
 use ckb_std::{
     ckb_constants::Source,
     ckb_types::{core::ScriptHashType, packed::Script, prelude::*},

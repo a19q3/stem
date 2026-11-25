@@ -4,15 +4,15 @@ use super::{HEADER, TIP, index_key};
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{DB, Options, ReadOnlyDB, WriteBatch, WriteOptions, prelude::*};
 use ckb_types::{packed::Byte32, prelude::*};
-use fern_ledger::block::Header;
-use fern_stake::{
+use stem_ledger::block::Header;
+use stem_stake::{
     Hash32,
     history::{self, Frontier},
 };
 use std::path::Path;
 
-const MARKER: &[u8] = b"fern/history-index";
-const PROGRESS: &[u8] = b"fern/history-progress";
+const MARKER: &[u8] = b"stem/history-index";
+const PROGRESS: &[u8] = b"stem/history-progress";
 
 pub struct HistoryIndex {
     archive: ReadOnlyDB,
@@ -57,7 +57,7 @@ impl HistoryIndex {
     fn load_header(archive: &ReadOnlyDB, height: u64) -> Result<Header> {
         let encoded = archive
             .get(index_key(HEADER, &height.to_be_bytes()))?
-            .with_context(|| format!("archive is missing the Fern Header at height {height}"))?;
+            .with_context(|| format!("archive is missing the Stem Header at height {height}"))?;
         let header = Header::decode(&encoded)?;
         ensure!(
             header.context.height == height,
@@ -110,7 +110,7 @@ impl HistoryIndex {
         let root: Hash32 = at_target.state.history_root.unpack();
         ensure!(
             self.frontier_at(target)?.root() == root,
-            "indexed history does not match the target Fern Header"
+            "indexed history does not match the target Stem Header"
         );
         Ok(())
     }

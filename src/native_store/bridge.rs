@@ -8,7 +8,7 @@ use ckb_types::{
     packed::{Byte32, CellOutput, OutPoint, Script},
     prelude::*,
 };
-use fern_ledger::{
+use stem_ledger::{
     Transaction,
     protocol::{
         BlockBudget, BridgeLedger, L1Anchor, Lane, Limits, PendingWithdrawal, SettlementChanges,
@@ -16,7 +16,7 @@ use fern_ledger::{
     },
     replay,
 };
-use fern_stake::{Authority, Member};
+use stem_stake::{Authority, Member};
 
 use super::Store;
 
@@ -69,7 +69,7 @@ pub(super) struct Bridge {
 
 struct Asset {
     l1: Option<Script>,
-    fern: Option<Script>,
+    stem: Option<Script>,
 }
 
 pub(super) type Records = BTreeMap<Vec<u8>, Option<Vec<u8>>>;
@@ -113,7 +113,7 @@ impl Bridge {
             spec.burn_code_hash != Byte32::default()
                 && spec.wrapped_code_hash != Byte32::default()
                 && spec.burn_code_hash != spec.wrapped_code_hash,
-            "invalid Fern bridge Script hashes"
+            "invalid Stem bridge Script hashes"
         );
         ensure!(
             !spec.lanes.is_empty() && !spec.recipient_locks.is_empty(),
@@ -177,7 +177,7 @@ impl Bridge {
                 name.clone(),
                 Asset {
                     l1: lane.l1_type.clone(),
-                    fern: wrapped,
+                    stem: wrapped,
                 },
             );
             let lane = Lane {
@@ -270,7 +270,7 @@ impl Bridge {
             .get(&observation.vault.lane)
             .context("unknown mint lane")?;
         ensure!(
-            asset.fern.is_some() == (observation.units > 0),
+            asset.stem.is_some() == (observation.units > 0),
             "mint asset differs from vault lane"
         );
         let mut units = 0u128;
@@ -283,10 +283,10 @@ impl Bridge {
                 if self
                     .lanes
                     .values()
-                    .any(|other| other.fern.as_ref() == Some(&script))
+                    .any(|other| other.stem.as_ref() == Some(&script))
                 {
                     ensure!(
-                        asset.fern.as_ref() == Some(&script),
+                        asset.stem.as_ref() == Some(&script),
                         "mint contains a foreign wrapped asset"
                     );
                     let amount = decode_units(&cell.data())?;
@@ -352,7 +352,7 @@ impl Bridge {
             .records
             .insert(DEPOSITS.to_vec(), Some(total.to_le_bytes().to_vec()));
         changes.protocol_result = observation.anchor.hash.as_bytes();
-        Ok((mint, asset.fern.clone(), changes))
+        Ok((mint, asset.stem.clone(), changes))
     }
 
     pub fn burn(
@@ -385,17 +385,17 @@ impl Bridge {
                 if self
                     .lanes
                     .values()
-                    .any(|asset| asset.fern.as_ref() == Some(&script))
+                    .any(|asset| asset.stem.as_ref() == Some(&script))
                 {
                     ensure!(
-                        asset.fern.as_ref() == Some(&script),
+                        asset.stem.as_ref() == Some(&script),
                         "Burn Cell uses a foreign wrapped asset"
                     );
                     units = decode_units(&cell.data())?;
                 }
             }
             ensure!(
-                asset.fern.is_some() == (units > 0),
+                asset.stem.is_some() == (units > 0),
                 "Burn Cell is missing required wrapped units"
             );
             let output = CellOutput::new_builder()
@@ -440,7 +440,7 @@ impl Bridge {
             receipt.extend_from_slice(&units.to_le_bytes());
             receipt.extend_from_slice(recipient.as_slice());
             let id = hash(
-                b"Fern withdrawal receipt\0",
+                b"Stem withdrawal receipt\0",
                 &[store.network().as_slice(), &receipt],
             );
             let mut pending = id.as_slice().to_vec();
@@ -596,7 +596,7 @@ impl BridgeLedger for View<'_> {
 pub fn lane_id(genesis: &Byte32, vault_type: &Byte32, asset: Option<&Byte32>) -> Byte32 {
     let tag = [u8::from(asset.is_some())];
     hash(
-        b"Fern bridge lane\0",
+        b"Stem bridge lane\0",
         &[
             genesis.as_slice(),
             vault_type.as_slice(),

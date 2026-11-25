@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, ensure};
 use ckb_types::{packed::Byte32, prelude::*};
-use fern_ledger::{
+use stem_ledger::{
     Transaction,
     block::Receipt,
     protocol::{BlockBudget, Limits, Operation, SnapshotContext, snapshot_body},
     replay::Key as ReplayKey,
 };
-use fern_stake::{
+use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, Member, Registry, RegistryAnchor,
     StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey, l1::guardian_generation,
 };
@@ -67,7 +67,7 @@ impl Staking {
         network: [u8; 32],
     ) -> Result<(Self, StakeState, Vec<u8>, Vec<u8>)> {
         ensure!(
-            genesis.statement.domain.fern_network_id == network,
+            genesis.statement.domain.stem_network_id == network,
             "genesis Stake Registry is for a different network"
         );
         ensure!(
@@ -205,7 +205,7 @@ impl Staking {
             }
         }
         ensure!(
-            retirements.len() <= fern_stake::MAX_RECORDS,
+            retirements.len() <= stem_stake::MAX_RECORDS,
             "block retirement record limit exceeded"
         );
         if let Some(committee) = verified.rotation {
@@ -352,7 +352,7 @@ fn encode_members(members: &[Member]) -> Vec<u8> {
 
 fn decode_members(bytes: &[u8]) -> Result<Vec<Member>> {
     ensure!(
-        bytes.len().is_multiple_of(40) && bytes.len() / 40 <= fern_stake::MAX_RECORDS,
+        bytes.len().is_multiple_of(40) && bytes.len() / 40 <= stem_stake::MAX_RECORDS,
         "invalid committee record"
     );
     bytes

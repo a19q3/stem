@@ -1,4 +1,4 @@
-//! CKB-VM host for Fern's native Molecule ledger.
+//! CKB-VM host for Stem's native Molecule ledger.
 
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +10,7 @@ use ckb_vm::{
     registers::{A0, A3, A4, A5, A7},
     snapshot2::DataSource,
 };
-use fern_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, block::Header};
+use stem_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, block::Header};
 use lru::LruCache;
 use rayon::prelude::*;
 

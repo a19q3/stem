@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use ckb_types::{packed::Byte32, prelude::*};
-use fern_stake::history::Frontier;
+use stem_stake::history::Frontier;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct History {
@@ -100,7 +100,7 @@ mod tests {
             })?;
         }
         let get = |start, level| -> Result<_> { Ok(nodes[&(start, level)]) };
-        let suffix = fern_stake::history::extension(3, 5, get)?
+        let suffix = stem_stake::history::extension(3, 5, get)?
             .into_iter()
             .map(|hash| hash.pack())
             .collect::<Vec<_>>();
@@ -109,7 +109,7 @@ mod tests {
         let rebuilt = Frontier::from_index(network.unpack(), 5, get)?;
         assert_eq!(rebuilt.root().pack(), history.root());
         for (height, hash) in ids.iter().enumerate() {
-            let path = fern_stake::history::inclusion(height as u64, 5, get)?
+            let path = stem_stake::history::inclusion(height as u64, 5, get)?
                 .into_iter()
                 .map(|hash| hash.pack())
                 .collect::<Vec<_>>();

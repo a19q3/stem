@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
-use fern_stake::Authority;
+use stem_stake::Authority;
 
 use super::{
     BlockBudget, BridgeMint, L1Anchor, Operation, VaultUpdate, byte32, hash32, number, uint64,
@@ -11,7 +11,7 @@ pub(super) const MAX_DEPOSITS: usize = 128;
 
 /// Authenticated increase in liquid backing at a specific CKB vault transition.
 /// Guardians verify every deposit in the committed CKB transaction and sign the
-/// exact Fern outputs, origins and amounts through the native transaction ID.
+/// exact Stem outputs, origins and amounts through the native transaction ID.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MintObservation {
     pub authority: Byte32,
@@ -70,7 +70,7 @@ pub fn mint_digest(
     observation: &MintObservation,
 ) -> Byte32 {
     hash(
-        b"Fern native Bridge Mint\0",
+        b"Stem native Bridge Mint\0",
         network,
         &[transaction_id.as_slice(), &observation.encode()],
     )

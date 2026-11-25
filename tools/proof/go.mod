@@ -1,4 +1,4 @@
-module fern-proof
+module stem-proof
 
 go 1.24.0
 

@@ -303,7 +303,7 @@ def init_network(args, bridge=None, governance_lock=None, observers=0, guardian_
     genesis = json.loads((nodes[0].home / "config" / "genesis.json").read_text())
     genesis_date = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
     genesis["genesis_time"] = genesis_date.isoformat().replace("+00:00", "Z")
-    genesis["chain_id"] = f"fern-bench-{secrets.token_hex(4)}"
+    genesis["chain_id"] = f"stem-bench-{secrets.token_hex(4)}"
     genesis["validators"] = [node.validator for node in replicas]
     genesis["consensus_params"]["block"]["max_bytes"] = str(5 * 1024 * 1024)
     spec = {

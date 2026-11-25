@@ -1,5 +1,5 @@
 //! Export and restore canonical state records using an externally authenticated
-//! Fern AppHash. The Patricia nodes are reconstructed at the destination.
+//! Stem AppHash. The Patricia nodes are reconstructed at the destination.
 
 use std::{
     io::{Read, Write},
@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{DB, Direction, IteratorMode, prelude::*};
 use ckb_types::{packed::Byte32, prelude::*};
-use fern_ledger::{
+use stem_ledger::{
     block::Header,
     history::History,
     patricia::{Key, Namespace},
@@ -283,7 +283,7 @@ impl StateSnapshot {
                 _ => anyhow::bail!("invalid snapshot state namespace"),
             };
             let key = prefix[1..].try_into()?;
-            let value = sized_read(&mut input, &mut remaining, fern_ledger::MAX_CELL_BYTES + 84)?;
+            let value = sized_read(&mut input, &mut remaining, stem_ledger::MAX_CELL_BYTES + 84)?;
             records.push((namespace, key, value));
         }
         ensure!(remaining == 0, "trailing snapshot data");

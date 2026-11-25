@@ -15,7 +15,7 @@ use ckb_std::{
     },
     type_id,
 };
-use fern_stake::{
+use stem_stake::{
     Attestation, DoubleVote, Hash32, MAX_RECORDS, Member, Registry, SignedVote, StakeData,
     l1::{Action, ChangeContext, GuardianProof, Policy, StakeCell, verify_rotation},
 };
@@ -42,12 +42,12 @@ impl From<SysError> for Error {
     }
 }
 
-impl From<fern_stake::Error> for Error {
-    fn from(error: fern_stake::Error) -> Self {
+impl From<stem_stake::Error> for Error {
+    fn from(error: stem_stake::Error) -> Self {
         match error {
-            fern_stake::Error::Authority
-            | fern_stake::Error::Signature
-            | fern_stake::Error::Quorum => Self::Signature,
+            stem_stake::Error::Authority
+            | stem_stake::Error::Signature
+            | stem_stake::Error::Quorum => Self::Signature,
             _ => Self::Stake,
         }
     }

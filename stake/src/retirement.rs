@@ -9,7 +9,7 @@ const DEPTH: usize = 256;
 const BITMAP: usize = DEPTH / 8;
 
 fn leaf(network: &Hash32, validator: &ValidatorKey) -> Hash32 {
-    digest(b"Fern CKB retired validator\0", &[network, validator])
+    digest(b"Stem CKB retired validator\0", &[network, validator])
 }
 
 fn join(network: &Hash32, level: usize, left: Hash32, right: Hash32) -> Hash32 {
@@ -17,7 +17,7 @@ fn join(network: &Hash32, level: usize, left: Hash32, right: Hash32) -> Hash32 {
         return EMPTY;
     }
     digest(
-        b"Fern CKB retirement node\0",
+        b"Stem CKB retirement node\0",
         &[network, &(level as u16).to_le_bytes(), &left, &right],
     )
 }

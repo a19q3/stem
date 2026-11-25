@@ -207,7 +207,7 @@ impl Registry {
     }
 
     pub fn commitment(&self) -> Hash32 {
-        digest(b"Fern Stake Registry\0", &[&self.encode()])
+        digest(b"Stem Stake Registry\0", &[&self.encode()])
     }
 }
 
@@ -219,7 +219,7 @@ pub struct Anchor {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StakeDomain {
-    pub fern_network_id: Hash32,
+    pub stem_network_id: Hash32,
     pub ckb_genesis: Hash32,
     pub registry_id: Hash32,
 }
@@ -251,7 +251,7 @@ pub struct StakeSnapshot {
 impl StakeSnapshot {
     pub fn encode(&self) -> Vec<u8> {
         let mut message = Vec::new();
-        message.extend_from_slice(&self.domain.fern_network_id);
+        message.extend_from_slice(&self.domain.stem_network_id);
         message.extend_from_slice(&self.domain.ckb_genesis);
         message.extend_from_slice(&self.domain.registry_id);
         message.extend_from_slice(&self.guardian_generation);
@@ -273,7 +273,7 @@ impl StakeSnapshot {
         };
         Ok(Self {
             domain: StakeDomain {
-                fern_network_id: fixed[..32].try_into().unwrap(),
+                stem_network_id: fixed[..32].try_into().unwrap(),
                 ckb_genesis: fixed[32..64].try_into().unwrap(),
                 registry_id: fixed[64..96].try_into().unwrap(),
             },
@@ -285,7 +285,7 @@ impl StakeSnapshot {
     }
 
     pub fn signing_digest(&self) -> Hash32 {
-        digest(b"Fern guardian Stake Snapshot\0", &[&self.encode()])
+        digest(b"Stem guardian Stake Snapshot\0", &[&self.encode()])
     }
 
     pub fn verify(
@@ -314,7 +314,7 @@ impl StakeSnapshot {
         if self.domain != *domain
             || domain.ckb_genesis == [0; 32]
             || domain.registry_id == [0; 32]
-            || domain.fern_network_id != registry.network_id
+            || domain.stem_network_id != registry.network_id
         {
             return Err(Error::Identity);
         }

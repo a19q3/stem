@@ -41,14 +41,14 @@ def stake_round(args, l1, scenario, fixture):
     def register(key, amount, epoch):
         pub = key.public_key().public_bytes_raw()
         signature = lambda before, after: key.sign(signable(
-            b"Fern CKB Stake registration\0", scenario.network, scenario.genesis, scenario.registry_id, before, after))
+            b"Stem CKB Stake registration\0", scenario.network, scenario.genesis, scenario.registry_id, before, after))
         return scenario.change(f"register-{epoch}", 0, pub,
                                mk_record(pub, amount, epoch, None, owner + bytes(48)), signature)
 
     def activate(pub, amount, epoch):
         metadata = owner + le(1 + epoch * 10, 8) + le(0, 8) + EMPTY
         scenario.change(f"activate-{epoch}", 3, pub, mk_record(pub, amount, epoch, None, metadata),
-                        certificate(b"Fern CKB Stake activation\0"))
+                        certificate(b"Stem CKB Stake activation\0"))
         return metadata
 
     registered = register(old, low, 0)
@@ -77,13 +77,13 @@ def stake_round(args, l1, scenario, fixture):
         for home in homes:
             config_value(home / "config/config.toml", "timeout_commit", '"3s"')
             config_value(home / "config/config.toml", "skip_timeout_commit", "false")
-    spec_path = args.output / "fern-genesis.json"
+    spec_path = args.output / "stem-genesis.json"
     write_json(spec_path, spec)
     id_ = json.loads(run(args.binary, "genesis-hash", "--genesis", spec_path))
     comet = json.loads((homes[0] / "config/genesis.json").read_text())
     comet["chain_id"], comet["genesis_time"] = spec["chain_id"], "2025-01-01T00:00:00Z"
     comet["validators"][0]["power"] = "250"
-    comet["app_state"] = {"fern_genesis": id_.removeprefix("0x")}
+    comet["app_state"] = {"stem_genesis": id_.removeprefix("0x")}
     for home in homes:
         write_json(home / "config/genesis.json", comet)
     nodes = []
@@ -93,8 +93,8 @@ def stake_round(args, l1, scenario, fixture):
     try:
         for n, home in enumerate(homes):
             app = args.output / f"app-{n}"
-            nodes.append(start(args, [args.binary, "run", "--home", app, "--genesis", spec_path, "--archive"], f"fern-{n}.log"))
-            wait_for(lambda: (app / "abci.sock").is_socket(), f"Fern node {n}")
+            nodes.append(start(args, [args.binary, "run", "--home", app, "--genesis", spec_path, "--archive"], f"stem-{n}.log"))
+            wait_for(lambda: (app / "abci.sock").is_socket(), f"Stem node {n}")
             nodes.append(start(args, [args.comet, "start", "--home", home, "--proxy_app", f"unix://{app / 'abci.sock'}",
                 "--rpc.laddr", f"tcp://127.0.0.1:{args.comet_port + n}",
                 "--p2p.laddr", f"tcp://127.0.0.1:{args.comet_port + 2 + n}",
@@ -106,7 +106,7 @@ def stake_round(args, l1, scenario, fixture):
                      f"both replicas at H{height}", seconds=45 if vault else 20)
 
         def header(rpc, height):
-            reply = rpc.call("abci_query", path=json.dumps("/fern/header"), height=height)["response"]
+            reply = rpc.call("abci_query", path=json.dumps("/stem/header"), height=height)["response"]
             if reply["code"] != 0:
                 raise AssertionError(reply)
             return base64.b64decode(reply["value"])
@@ -116,7 +116,7 @@ def stake_round(args, l1, scenario, fixture):
             signing = activation - 6
             progress(signing)
             raw = header(clients[0], signing)
-            anchor = hex_bytes(ckb_hash(b"Fern Header\0" + scenario.network + raw))
+            anchor = hex_bytes(ckb_hash(b"Stem Header\0" + scenario.network + raw))
             votes = scenario.observe(f"epoch-{epoch}", epoch, parent, count=3, signing_anchor=anchor,
                                      rotation=rotation)
             attestations = args.output / f"epoch-{epoch}-votes.json"
@@ -126,14 +126,14 @@ def stake_round(args, l1, scenario, fixture):
                     args.binary, "stake", "observe", "--request", args.output / "epoch-1-observe.json",
                     "--l1-rpc", l1.url, "--journal", args.output / "stake-journal-0",
                     "--key-file", args.output / "stake-observer-0.key",
-                    "--fern-signing-anchor", hex_bytes(bytes([19]) * 32),
+                    "--stem-signing-anchor", hex_bytes(bytes([19]) * 32),
                 )
             if rotation:
                 for subset in (votes[:3], votes[3:]):
                     write_json(attestations, subset)
                     tx = json.loads(run(args.binary, "stake", "snapshot", "--observations", attestations))
                     if clients[0].call("broadcast_tx_sync", tx=tx)["code"] == 0:
-                        raise AssertionError("Fern accepted guardian rotation with a single quorum")
+                        raise AssertionError("Stem accepted guardian rotation with a single quorum")
             write_json(attestations, votes)
             tx = json.loads(run(args.binary, "stake", "snapshot", "--observations", attestations))
             result = clients[0].call("broadcast_tx_commit", tx=tx)
@@ -163,7 +163,7 @@ def stake_round(args, l1, scenario, fixture):
         exit_requested = scenario.change("request-live-exit", 2, old_key, mk_record(old_key, low, 0, 2, original))
         departing, arriving = scenario.authority, guardian_group(23)
         def rotate(before, next_):
-            message = signable(b"Fern CKB Stake authority rotation\0", scenario.network,
+            message = signable(b"Stem CKB Stake authority rotation\0", scenario.network,
                                scenario.genesis, scenario.registry_id, before, next_)
             return proof(departing, message) + proof(arriving, message)
         rotation_tx = scenario.change("rotate-active-guardians", 7, None, certificate=rotate, next_authority=arriving)
@@ -184,12 +184,12 @@ def stake_round(args, l1, scenario, fixture):
         projected = header(clients[0], 21)
         if projected != header(clients[1], 21):
             raise AssertionError("replicas disagree on the native retirement state")
-        app_hash = ckb_hash(b"Fern AppHash\0" + scenario.network + le(21, 8)
-                           + ckb_hash(b"Fern Header\0" + scenario.network + projected))
+        app_hash = ckb_hash(b"Stem AppHash\0" + scenario.network + le(21, 8)
+                           + ckb_hash(b"Stem Header\0" + scenario.network + projected))
         validated = run(args.proof_verifier, "-genesis", homes[0] / "config/genesis.json", "-handoffs", handoffs,
                         "-commit", final, "-height", "21", "-app-hash", app_hash.hex())
         retirement_proof = clients[0].call(
-            "abci_query", path=json.dumps("/fern/stake-retirement"), data=hex_bytes(old_key),
+            "abci_query", path=json.dumps("/stem/stake-retirement"), data=hex_bytes(old_key),
             prove="true",
         )["response"]
         if retirement_proof["code"] != 0:
@@ -243,7 +243,7 @@ def stake_round(args, l1, scenario, fixture):
                     corrupt = args.output / "retirement-invalid-proof.json"
                     write_json(corrupt, {"height": marker_height, "validator": hex_bytes(old_key),
                                          **marker, "nodes": []})
-                    reject_cli("invalid Fern retirement marker proof", *command[:-1], corrupt)
+                    reject_cli("invalid Stem retirement marker proof", *command[:-1], corrupt)
                 approved = json.loads(run(*command))
                 if binary(approved["registry_data"]) != candidate or approved["guardian"] != idx:
                     raise AssertionError("guardian authorized different CKB Registry data")
@@ -298,7 +298,7 @@ def main():
         write_json(args.output / "native-stake-report.json", result)
         print(result["committee_proof"], f"unbonded {result['unbonded_shannons']} shannons")
         if result["checkpoint"]:
-            print(f"published CKB checkpoints at Fern heights {[item['height'] for item in result['checkpoint']['publications']]}")
+            print(f"published CKB checkpoints at Stem heights {[item['height'] for item in result['checkpoint']['publications']]}")
         if result["load"]:
             print(json.dumps(result["load"], indent=2))
     finally:

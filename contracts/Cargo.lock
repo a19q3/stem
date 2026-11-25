@@ -246,22 +246,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "fern-bridge-wire"
+name = "stem-bridge-wire"
 version = "0.1.0"
 
 [[package]]
-name = "fern-contracts"
+name = "stem-contracts"
 version = "0.1.0"
 dependencies = [
  "ckb-hash",
  "ckb-std",
- "fern-bridge-wire",
- "fern-stake",
+ "stem-bridge-wire",
+ "stem-stake",
  "k256",
 ]
 
 [[package]]
-name = "fern-stake"
+name = "stem-stake"
 version = "0.1.0"
 dependencies = [
  "ckb-hash",

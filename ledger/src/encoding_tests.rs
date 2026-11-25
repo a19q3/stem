@@ -80,8 +80,8 @@ fn measure_canonical_payment_and_combined_output_bytes() -> Result<()> {
     let l1_len = l1.data().as_slice().len();
     let native_len = native.as_slice().len();
     let separated_len = separated.as_slice().len() + data.as_slice().len();
-    println!("payment ckb={l1_len} fern={native_len} bytes");
-    println!("output vectors ckb={separated_len} fern={combined} bytes");
+    println!("payment ckb={l1_len} stem={native_len} bytes");
+    println!("output vectors ckb={separated_len} stem={combined} bytes");
     assert_eq!(l1_len, 460);
     assert_eq!(native_len, 467);
     assert_eq!(separated_len, 590);

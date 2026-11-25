@@ -1,5 +1,5 @@
 use ed25519_dalek::{Signer, SigningKey};
-use fern_stake::*;
+use stem_stake::*;
 
 fn bytes<const N: usize>(value: &str) -> [u8; N] {
     assert_eq!(value.len(), N * 2);
@@ -9,14 +9,14 @@ fn bytes<const N: usize>(value: &str) -> [u8; N] {
 #[test]
 fn verifies_real_cometbft_vote_sign_bytes() -> Result<()> {
     // Generated using CometBFT 0.38.26 types.VoteSignBytes and its Ed25519 signer.
-    let chain_id = "fern-stake-fixture";
-    let validator = bytes("8b143b3cd645c965157b8ace56bcf2605a087d1195db38010b745976ce63724a");
+    let chain_id = "stem-stake-fixture";
+    let validator = bytes("fbf590e7a87e2f4453ed292b83ab5746fd445dc7d93dfbe62cff374c742e8674");
     let signatures = [
         bytes(
-            "3591fefa13b2ed821b48ad848eb506a2a6c157b7fa6b374dff53dbc71f104a458f744c417177e93bc6ca9ca83ff9b43b7c595dd77dd0873ae4c9014892f2f70d",
+            "52a6ab0715103ac281a41a6d43ade2fe9133f91474dbabc40cc95c00453f67979441aa8fd2255022c8a2ed1a4e2485ef8a3b12b7c365e8b29c76eaee6c13280d",
         ),
         bytes(
-            "577942d5ad51fce0149f6be35f5b8ffbe7ee95bf2f63b32417833831e80b1bcd481b670d78ab0d5f969bbc50e7a211757f1c9b045c27ec759267ee1ceef0d508",
+            "c0e4198ece6bdcb89cb29a0c76a1d380a0a4d525ed177b1b2d683f914dfb22185e3c7ec638cf6882e4cc201897d760561857a9ee6810a782f1c677430a147a0d",
         ),
     ];
     let vote = |index: usize| SignedVote {
@@ -42,7 +42,7 @@ fn verifies_real_cometbft_vote_sign_bytes() -> Result<()> {
         first_inactive_height: Some(43),
     };
     let expected: [u8; 116] = bytes(
-        "730802112a0000000000000022480a20010101010101010101010101010101010101010101010101010101010101010112240802122005050505050505050505050505050505050505050505050505050505050505052a080880e2cfaa06100d32126665726e2d7374616b652d66697874757265",
+        "730802112a0000000000000022480a20010101010101010101010101010101010101010101010101010101010101010112240802122005050505050505050505050505050505050505050505050505050505050505052a080880e2cfaa06100d32127374656d2d7374616b652d66697874757265",
     );
     assert_eq!(evidence.first.sign_bytes(chain_id)?, expected);
     let key = evidence.verify(&[5; 32], chain_id, &liability)?;
@@ -83,7 +83,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         })
         .collect();
     let domain = StakeDomain {
-        fern_network_id: [11; 32],
+        stem_network_id: [11; 32],
         ckb_genesis: [12; 32],
         registry_id: [13; 32],
     };
@@ -110,7 +110,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         })
         .collect();
     let registry = Registry::new(
-        domain.fern_network_id,
+        domain.stem_network_id,
         0,
         [14; 32],
         [0; 32],
@@ -120,7 +120,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
     let mut duplicate = records.clone();
     duplicate[1] = duplicate[0];
     assert_eq!(
-        Registry::new(domain.fern_network_id, 0, [14; 32], [0; 32], duplicate),
+        Registry::new(domain.stem_network_id, 0, [14; 32], [0; 32], duplicate),
         Err(Error::Encoding)
     );
     let mut not_eligible = records.clone();
@@ -128,7 +128,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
     not_eligible[1].first_active_height = 11;
     not_eligible[2].exit_epoch = Some(1);
     not_eligible[2].first_inactive_height = 11;
-    let limited = Registry::new(domain.fern_network_id, 0, [14; 32], [0; 32], not_eligible)?;
+    let limited = Registry::new(domain.stem_network_id, 0, [14; 32], [0; 32], not_eligible)?;
     assert_eq!(config.select(&limited, 0), Err(Error::Committee));
     assert_eq!(config.select(&limited, 1), Err(Error::Committee));
     let snapshot = StakeSnapshot {
@@ -160,7 +160,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         Err(Error::Quorum)
     );
     let omitted = Registry::new(
-        domain.fern_network_id,
+        domain.stem_network_id,
         0,
         [14; 32],
         [0; 32],
@@ -230,7 +230,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
 
 #[test]
 fn retirement_commitment_keeps_registry_slots_reusable() -> Result<()> {
-    use fern_stake::retirement::{EMPTY, RetirementTree, insert};
+    use stem_stake::retirement::{EMPTY, RetirementTree, insert};
 
     let network = [7; 32];
     let first = [12; 32];

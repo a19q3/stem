@@ -1,8 +1,8 @@
 [Unit]
-Description=Fern CometBFT at %f
-BindsTo=fern-app@%i.service
-After=fern-app@%i.service
-PartOf=fern@%i.target
+Description=Stem CometBFT at %f
+BindsTo=stem-app@%i.service
+After=stem-app@%i.service
+PartOf=stem@%i.target
 StartLimitIntervalSec=60s
 StartLimitBurst=6
 

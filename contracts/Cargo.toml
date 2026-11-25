@@ -1,7 +1,7 @@
 [workspace]
 
 [package]
-name = "fern-contracts"
+name = "stem-contracts"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95.0"
@@ -10,8 +10,8 @@ publish = false
 
 [dependencies]
 ckb-hash = { version = "=1.1.1", default-features = false, features = ["ckb-contract"] }
-fern-bridge-wire = { path = "../bridge-wire" }
-fern-stake = { path = "../stake" }
+stem-bridge-wire = { path = "../bridge-wire" }
+stem-stake = { path = "../stake" }
 k256 = { version = "=0.13.4", default-features = false, features = ["ecdsa"] }
 ckb-std = { version = "=1.1.0", default-features = false, features = ["allocator", "calc-hash", "type-id"] }
 

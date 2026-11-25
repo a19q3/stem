@@ -1,0 +1,7 @@
+[Unit]
+Description=Stem replica at %f
+Wants=stem-comet@%i.service
+After=stem-comet@%i.service
+
+[Install]
+WantedBy=default.target

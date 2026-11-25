@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise Fern's native peg-in against a locally deployed CKB vault."""
+"""Exercise Stem's native peg-in against a locally deployed CKB vault."""
 
 import argparse
 import base64
@@ -31,10 +31,10 @@ def cell(capacity, lock, data=b"", types=()):
     return hex_bytes(table(le(capacity, 8), packed_script(lock), table(*scripts), le(len(data), 4) + data))
 
 
-def fern_id(network, tx):
+def stem_id(network, tx):
     raw = binary(tx)
     a, b = (int.from_bytes(raw[offset:offset + 4], "little") for offset in (4, 8))
-    return hex_bytes(ckb_hash(b"Fern transaction ID\0" + binary(network) + raw[a:b]))
+    return hex_bytes(ckb_hash(b"Stem transaction ID\0" + binary(network) + raw[a:b]))
 
 
 def start(args, command, file):
@@ -104,9 +104,9 @@ def native_spec(args, l1, fixture, vault, token):
     run(args.comet, "init", "--home", comet)
     comet_config = comet / "config/genesis.json"
     config = json.loads(comet_config.read_text())
-    config["chain_id"] = "fern-native-ckb-local"
+    config["chain_id"] = "stem-native-ckb-local"
     config["genesis_time"] = "2025-01-01T00:00:00Z"
-    network = hex_bytes(ckb_hash(b"Fern CKB bridge fixture\0" + secrets.token_bytes(32)))
+    network = hex_bytes(ckb_hash(b"Stem CKB bridge fixture\0" + secrets.token_bytes(32)))
     bridge, lane = bridge_configuration(args, l1, fixture, vault, token, network)
     spec = {
         "chain_id": config["chain_id"], "network_id": network, "genesis_time_ms": 1_735_689_600_000,
@@ -121,25 +121,25 @@ def native_spec(args, l1, fixture, vault, token):
         ],
         "bridge": bridge,
     }
-    spec_path = args.output / "fern.json"
+    spec_path = args.output / "stem.json"
     write_json(spec_path, spec)
     latest = json.loads(run(args.binary, "genesis-hash", "--genesis", spec_path))
-    config["app_state"] = {"fern_genesis": latest.removeprefix("0x")}
+    config["app_state"] = {"stem_genesis": latest.removeprefix("0x")}
     write_json(comet_config, config)
     return comet, spec, spec_path, lane
 
 
 def bridge_configuration(args, l1, fixture, vault, token, network):
-    lane = hex_bytes(ckb_hash(b"Fern bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"]) + b"\0"))
+    lane = hex_bytes(ckb_hash(b"Stem bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"]) + b"\0"))
     pinned = int(l1.call("get_tip_block_number"), 16)
     block = l1.call("get_block_hash", hex(pinned))
     members = sorted(fixture.guardians, key=lambda member: member["ed25519"])
-    burn = hex_bytes(ckb_hash(b"Fern native test Burn Lock\0"))
+    burn = hex_bytes(ckb_hash(b"Stem native test Burn Lock\0"))
     wrapped = hex_bytes(ckb_hash(args.wrapped.read_bytes()))
     maximum = {"operations": 8, "bytes": 2 * 1024 * 1024, "signatures": 32}
     bridge = {
         "l1_genesis": vault["genesis"], "confirmations": 2, "anchor_height": pinned,
-        "anchor_hash": block, "guardian_generation": hex_bytes(ckb_hash(b"Fern CKB bridge fixtures" + binary(network))),
+        "anchor_hash": block, "guardian_generation": hex_bytes(ckb_hash(b"Stem CKB bridge fixtures" + binary(network))),
         "guardians": members, "wrapped_code_hash": wrapped, "burn_code_hash": burn,
         "lanes": [{"vault_type_hash": vault["vault_hash"], "vault": point(vault["vault"], 0)}],
         "recipient_locks": [{"example": fixture.friend_lock}],
@@ -185,8 +185,8 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
         spec["bridge"]["anchor_height"], spec["bridge"]["anchor_hash"], [],
     )
     # The confirmed L1 funds back both minted Cells, including the native Lock Code Cell.
-    mint_id = fern_id(spec["network_id"], encoded)
-    query = comet_rpc.call("abci_query", path=json.dumps("/fern/cell"),
+    mint_id = stem_id(spec["network_id"], encoded)
+    query = comet_rpc.call("abci_query", path=json.dumps("/stem/cell"),
                            data=hex_bytes(binary(mint_id) + le(1, 4)), prove="true")["response"]
     if query["code"] != 0:
         raise AssertionError(query)
@@ -217,7 +217,7 @@ def attain_mint(args, l1, fixture, vault, spec_path, lane, consolidated, comet_r
     minority = json.loads(run(args.binary, "bridge", "mint", "--observations", approval_file))
     rejected = comet_rpc.call("broadcast_tx_sync", tx=minority)
     if rejected["code"] == 0:
-        raise AssertionError("Fern accepted a minority mint certificate")
+        raise AssertionError("Stem accepted a minority mint certificate")
     write_json(approval_file, approvals[:3])
     encoded = json.loads(run(args.binary, "bridge", "mint", "--observations", approval_file))
     minted = comet_rpc.call("broadcast_tx_commit", tx=encoded)
@@ -236,7 +236,7 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     capacity = mint["payment_capacity"] - FEE
     types = [typed["wrapped"]] if typed else []
     units = le(typed["amount"], 16) if typed else b""
-    deps = [dependency(mint["lock_dep"])] + ([dependency(typed["fern_dep"])] if typed else [])
+    deps = [dependency(mint["lock_dep"])] + ([dependency(typed["stem_dep"])] if typed else [])
     build = args.output / f"{name}-burn.json"
     write_json(build, {"inputs": [{"out_point": mint["payment"]}],
                        "outputs": [cell(capacity, burn_lock, units, types)],
@@ -256,7 +256,7 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
                            "burn transaction index")
     index = int(tx_location["index"])
     wait_for(lambda: int(comet_rpc.call("status")["sync_info"]["latest_block_height"]) > height,
-             "Fern successor block")
+             "Stem successor block")
 
     def query(path, **params):
         response = comet_rpc.call("abci_query", path=json.dumps(path), height=height, **params)["response"]
@@ -264,14 +264,14 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
             raise AssertionError(response)
         return base64.b64decode(response["value"])
 
-    header = query("/fern/header")
-    proof = json.loads(query("/fern/execution", data=hex_bytes(le(index, 4)), prove="true"))
+    header = query("/stem/header")
+    proof = json.loads(query("/stem/execution", data=hex_bytes(le(index, 4)), prove="true"))
     proof["transaction"] = hex_bytes(bytes.fromhex(proof["transaction"]))
     proof["receipt"] = hex_bytes(bytes.fromhex(proof["receipt"]))
     commit = args.output / f"{name}-burn-successor.json"
     write_json(commit, comet_rpc.call("commit", height=height + 1))
-    app_hash = ckb_hash(b"Fern AppHash\0" + binary(spec["network_id"]) + le(height, 8)
-                       + ckb_hash(b"Fern Header\0" + binary(spec["network_id"]) + header))
+    app_hash = ckb_hash(b"Stem AppHash\0" + binary(spec["network_id"]) + le(height, 8)
+                       + ckb_hash(b"Stem Header\0" + binary(spec["network_id"]) + header))
     verification = run(args.proof_verifier, "-genesis", comet / "config/genesis.json",
                        "-commit", commit, "-height", str(height), "-app-hash", app_hash.hex())
     input_vault = point(mint["l1_consolidation"], 0)
@@ -359,7 +359,7 @@ def deploy_token(args, l1, fixture, vault):
 
 
 def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, prior, comet_rpc):
-    lane = hex_bytes(ckb_hash(b"Fern bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"])
+    lane = hex_bytes(ckb_hash(b"Stem bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"])
                               + b"\1" + script_hash(vault["l1_type"])))
     native = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())), fixture.key(fixture.owner)["blake160"], "data")
     gate_args = binary(vault["vault_hash"]) + b"\0" + binary(spec["network_id"]) + packed_script(native)
@@ -379,18 +379,18 @@ def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, 
                                 [vault["vault_code"], vault["gate_dep"], vault["token_dep"], vault["multisig"], vault["secp"]])
     groups = [wallet_group(0, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)), wallet_group(3, [fixture.faucet])]
     consolidated = l1.send(fixture.sign("xudt-consolidate", consolidation, groups))
-    fern_dep = point(baseline["mint_id"], 2)
+    stem_dep = point(baseline["mint_id"], 2)
     encoded, minted, votes, rejected = attain_mint(args, l1, fixture, vault, spec_path, lane, consolidated, comet_rpc,
                                                    "xudt", prior["confirmed_height"], prior["confirmed_hash"],
-                                                   [dependency(fern_dep)])
-    tx_id = fern_id(spec["network_id"], encoded)
+                                                   [dependency(stem_dep)])
+    tx_id = stem_id(spec["network_id"], encoded)
     mint = {"l1_consolidation": consolidated, "l1_proof": l1.prove_committed(consolidated), "mint": minted,
             "mint_id": tx_id, "capacity": capacity, "payment_capacity": capacity,
             "payment": point(tx_id, 0), "lock_dep": baseline["lock_dep"], "minority_rejected": rejected,
             "confirmed_height": votes[0]["mint"]["confirmed_height"], "confirmed_hash": votes[0]["mint"]["confirmed_hash"]}
     wrapped = script(spec["bridge"]["wrapped_code_hash"], hex_bytes(script_hash(vault["l1_type"])), "data")
     payout = withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, mint, comet_rpc,
-                                 typed={"wrapped": wrapped, "amount": amount, "fern_dep": fern_dep})
+                                 typed={"wrapped": wrapped, "amount": amount, "stem_dep": stem_dep})
     return {"mint": mint, "withdrawal": payout, "units": amount, "lane": lane}
 
 
@@ -496,9 +496,9 @@ def main():
         vault = deploy(args, l1, fixture)
         token = deploy_token(args, l1, fixture, vault) if args.xudt else None
         comet, spec, spec_path, lane = native_spec(args, l1, fixture, vault, token)
-        home = args.output / "fern"
-        children.append(start(args, [args.binary, "run", "--home", home, "--genesis", spec_path], "fern.log"))
-        wait_for(lambda: (home / "abci.sock").is_socket(), "Fern ABCI socket")
+        home = args.output / "stem"
+        children.append(start(args, [args.binary, "run", "--home", home, "--genesis", spec_path], "stem.log"))
+        wait_for(lambda: (home / "abci.sock").is_socket(), "Stem ABCI socket")
         children.append(start(args, [args.comet, "start", "--home", comet,
             "--proxy_app", f"unix://{home / 'abci.sock'}", "--rpc.laddr", f"tcp://127.0.0.1:{args.comet_port}",
             "--p2p.laddr", f"tcp://127.0.0.1:{args.comet_port + 1}"], "comet.log"))
@@ -514,7 +514,7 @@ def main():
             print(f"CKB xUDT payout {report['xudt']['withdrawal']['l1_payout']} for {report['xudt']['units']} units")
         write_json(args.output / "native-bridge-report.json", report)
         print(f"CKB payout {payout['l1_payout']} for {payout['capacity']} shannons, native settlement height {payout['settlement']['height']}")
-        print(f"CKB consolidation {result['l1_consolidation']}, native Fern mint {result['mint_id']}, height {result['mint']['height']}")
+        print(f"CKB consolidation {result['l1_consolidation']}, native Stem mint {result['mint_id']}, height {result['mint']['height']}")
     finally:
         comet_rpc.close()
         for child in reversed(children):

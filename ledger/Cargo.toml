@@ -1,5 +1,5 @@
 [package]
-name = "fern-ledger"
+name = "stem-ledger"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95.0"
@@ -11,7 +11,7 @@ anyhow.workspace = true
 ckb-hash.workspace = true
 ckb-types.workspace = true
 molecule.workspace = true
-fern-stake = { path = "../stake" }
+stem-stake = { path = "../stake" }
 
 [build-dependencies]
 molecule-codegen = "=0.9.2"

@@ -13,7 +13,7 @@ pub const ZERO_OUT_POINT: [u8; 36] = [0; 36];
 const FIXED_BYTES: usize = 8 + 7 * 32 + 2 * 68;
 
 pub fn stake_snapshot_commitment(network: &Hash32, snapshot: &[u8]) -> Hash32 {
-    digest(b"Fern checkpoint Stake Snapshot\0", &[network, snapshot])
+    digest(b"Stem checkpoint Stake Snapshot\0", &[network, snapshot])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,7 +95,7 @@ impl Checkpoint {
 
     pub fn app_hash(&self, network: &Hash32) -> Hash32 {
         digest(
-            b"Fern AppHash\0",
+            b"Stem AppHash\0",
             &[network, &self.height().to_le_bytes(), &self.header],
         )
     }
@@ -118,7 +118,7 @@ impl Checkpoint {
 
     pub fn commitment(&self, domain: &Domain) -> Hash32 {
         digest(
-            b"Fern CKB Checkpoint Cell\0",
+            b"Stem CKB Checkpoint Cell\0",
             &[
                 &domain.network,
                 &domain.ckb_genesis,
@@ -130,7 +130,7 @@ impl Checkpoint {
 
     pub fn signing_message(&self, domain: &Domain, predecessor: &[u8; 36]) -> Hash32 {
         digest(
-            b"Fern CKB Checkpoint publication\0",
+            b"Stem CKB Checkpoint publication\0",
             &[predecessor, &self.commitment(domain)],
         )
     }
@@ -186,7 +186,7 @@ impl Certificate {
             raw.extend_from_slice(&member.key);
             raw.extend_from_slice(&member.power.to_le_bytes());
         }
-        Ok(digest(b"Fern CKB Checkpoint authority\0", &[&raw]))
+        Ok(digest(b"Stem CKB Checkpoint authority\0", &[&raw]))
     }
 
     pub fn encode(&self, bytes: &mut Vec<u8>) -> Result<()> {

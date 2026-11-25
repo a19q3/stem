@@ -3,12 +3,12 @@ use std::path::Path;
 use anyhow::{Context, ensure};
 use ckb_types::packed::Byte32;
 use ed25519_dalek::{Signer, SigningKey};
-use fern::native_store::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
-use fern_ledger::protocol::{
+use stem::native_store::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
+use stem_ledger::protocol::{
     BridgeMint, BridgeSettlement, Certificate, L1Anchor, Limits as ProtocolLimits, MintObservation,
     Operation, SettlementAction, VaultUpdate, settlement_digest,
 };
-use fern_stake::{Attestation, Member};
+use stem_stake::{Attestation, Member};
 
 use super::*;
 

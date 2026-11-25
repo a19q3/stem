@@ -11,8 +11,8 @@ use ckb_types::{
 };
 use clap::{Args, Subcommand};
 use ed25519_dalek::Signer;
-use fern_ledger::protocol::ARRIVING_GUARDIAN;
-use fern_stake::{
+use stem_ledger::protocol::ARRIVING_GUARDIAN;
+use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, MAX_RECORDS, Member, Registry,
     RegistryAnchor, StakeConfig, StakeDomain, StakeSnapshot,
     l1::{GuardianProof, Policy, StakeCell, guardian_generation},
@@ -40,7 +40,7 @@ pub enum StakeCommand {
     Observe(Observe),
     /// Authenticate a threshold-certified snapshot against a pinned network and guardian set.
     Verify(Verify),
-    /// Verify finalized Fern exclusion and authorize CKB Stake Cell retirement.
+    /// Verify finalized Stem exclusion and authorize CKB Stake Cell retirement.
     AuthorizeRetirement(Box<retirement::AuthorizeRetirement>),
     /// Build the compact absence proof for a registration or withdrawal.
     RetirementProof {
@@ -68,11 +68,11 @@ pub struct Observe {
     journal: PathBuf,
     #[arg(long)]
     key_file: PathBuf,
-    /// Raw Fern Header ID at the scheduled signing height.
+    /// Raw Stem Header ID at the scheduled signing height.
     #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
-    fern_signing_anchor: Option<H256>,
+    stem_signing_anchor: Option<H256>,
     /// Sign a confirmed rotation as a member of the departing authority.
-    #[arg(long, requires = "fern_signing_anchor")]
+    #[arg(long, requires = "stem_signing_anchor")]
     departing: bool,
 }
 
@@ -87,7 +87,7 @@ pub struct Verify {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Trust {
-    fern_network_id: H256,
+    stem_network_id: H256,
     ckb_genesis: H256,
     registry_id: H256,
     target_epoch: u64,
@@ -117,7 +117,7 @@ struct Signature {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Observation {
-    fern_network_id: H256,
+    stem_network_id: H256,
     ckb_genesis: H256,
     registry_id: H256,
     registry: ObservedRegistry,
@@ -141,7 +141,7 @@ struct NativeVote {
 impl Observation {
     fn snapshot(&self) -> StakeSnapshot {
         StakeSnapshot {
-            domain: domain(&self.fern_network_id, &self.ckb_genesis, &self.registry_id),
+            domain: domain(&self.stem_network_id, &self.ckb_genesis, &self.registry_id),
             registry: (&self.registry).into(),
             parent: self.parent.as_ref().map(Into::into),
             target_epoch: self.target_epoch,
@@ -154,9 +154,9 @@ impl Observation {
     }
 }
 
-fn domain(fern_network_id: &H256, ckb_genesis: &H256, registry_id: &H256) -> StakeDomain {
+fn domain(stem_network_id: &H256, ckb_genesis: &H256, registry_id: &H256) -> StakeDomain {
     StakeDomain {
-        fern_network_id: fern_network_id.as_bytes().try_into().expect("Hash32"),
+        stem_network_id: stem_network_id.as_bytes().try_into().expect("Hash32"),
         ckb_genesis: ckb_genesis.as_bytes().try_into().expect("Hash32"),
         registry_id: registry_id.as_bytes().try_into().expect("Hash32"),
     }
@@ -165,7 +165,7 @@ fn domain(fern_network_id: &H256, ckb_genesis: &H256, registry_id: &H256) -> Sta
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
-    fern_network_id: H256,
+    stem_network_id: H256,
     ckb_genesis: H256,
     registry_type: JsonScript,
     registry: OutPoint,
@@ -228,7 +228,7 @@ impl StakeCommand {
                 validator,
                 retired,
             } => {
-                use fern_stake::retirement::{RetirementTree, insert};
+                use stem_stake::retirement::{RetirementTree, insert};
                 let network = network.as_bytes().try_into()?;
                 let validator = validator.as_bytes().try_into()?;
                 let mut tree = RetirementTree::new(network);
@@ -295,7 +295,7 @@ impl Verify {
         });
         let (accepted, validators) = snapshot.verify(
             &domain(
-                &trust.fern_network_id,
+                &trust.stem_network_id,
                 &trust.ckb_genesis,
                 &trust.registry_id,
             ),
@@ -334,7 +334,7 @@ impl Observe {
         let args = registry_type.args().raw_data();
         let policy = Policy::decode(registry_id, &args)?;
         ensure!(
-            policy.network_id.as_slice() == request.fern_network_id.as_bytes()
+            policy.network_id.as_slice() == request.stem_network_id.as_bytes()
                 && policy.ckb_genesis.as_slice() == request.ckb_genesis.as_bytes(),
             "Stake Registry names a different network"
         );
@@ -345,7 +345,7 @@ impl Observe {
         );
 
         let mut hasher = new_blake2b();
-        hasher.update(b"Fern guardian Stake Journal\0");
+        hasher.update(b"Stem guardian Stake Journal\0");
         hasher.update(&policy.network_id);
         hasher.update(&registry_id);
         let mut id = [0; 32];
@@ -448,7 +448,7 @@ impl Observe {
         Authority::new(generation, &guardians)?;
         let leaving = if let Some(rotation) = &request.rotation {
             ensure!(
-                self.fern_signing_anchor.is_some() && request.target_epoch != 0,
+                self.stem_signing_anchor.is_some() && request.target_epoch != 0,
                 "guardian rotation requires a native Stake Snapshot"
             );
             let parent = parent
@@ -506,7 +506,7 @@ impl Observe {
         };
         let snapshot = StakeSnapshot {
             domain: StakeDomain {
-                fern_network_id: policy.network_id,
+                stem_network_id: policy.network_id,
                 ckb_genesis: policy.ckb_genesis,
                 registry_id,
             },
@@ -525,20 +525,20 @@ impl Observe {
 
         let signature = key.sign(&snapshot.signing_digest()).to_bytes();
         let native = self
-            .fern_signing_anchor
+            .stem_signing_anchor
             .map(|anchor| {
                 ensure!(
                     snapshot.target_epoch != 0 && anchor != H256::default(),
                     "invalid native signing anchor"
                 );
-                let network = request.fern_network_id.pack();
-                let body = fern_ledger::protocol::snapshot_body(&snapshot, &registry, arriving)?;
-                let statement = fern_ledger::protocol::StakeSnapshot {
+                let network = request.stem_network_id.pack();
+                let body = stem_ledger::protocol::snapshot_body(&snapshot, &registry, arriving)?;
+                let statement = stem_ledger::protocol::StakeSnapshot {
                     epoch: snapshot.target_epoch,
                     signing_anchor: anchor.pack(),
-                    commitment: fern_ledger::protocol::snapshot_commitment(&network, &body),
+                    commitment: stem_ledger::protocol::snapshot_commitment(&network, &body),
                 };
-                let digest = fern_ledger::protocol::snapshot_digest(&network, &statement);
+                let digest = stem_ledger::protocol::snapshot_digest(&network, &statement);
                 journal.pin_stake_snapshot(
                     &l1,
                     height,
@@ -562,7 +562,7 @@ impl Observe {
             journal.pin(&l1, height, &block_hash)?;
         }
         print_json(&json!({
-            "fern_network_id": request.fern_network_id,
+            "stem_network_id": request.stem_network_id,
             "ckb_genesis": request.ckb_genesis,
             "registry_id": H256::from(registry_id),
             "registry": ObservedRegistry::from(snapshot.registry),
@@ -624,8 +624,8 @@ pub(crate) fn native_genesis(
     trust_path: &std::path::Path,
     observations_path: &std::path::Path,
     signing_window: u64,
-    limits: fern_ledger::protocol::Limits,
-) -> Result<fern::native_store::StakeGenesis> {
+    limits: stem_ledger::protocol::Limits,
+) -> Result<stem::native_store::StakeGenesis> {
     let trust: Trust = read_json_limited(trust_path, 256 * 1024)?;
     let votes: Vec<Observation> = read_json_limited(observations_path, 16 * 1024 * 1024)?;
     ensure!(
@@ -639,7 +639,7 @@ pub(crate) fn native_genesis(
     ensure!(
         statement.domain
             == domain(
-                &trust.fern_network_id,
+                &trust.stem_network_id,
                 &trust.ckb_genesis,
                 &trust.registry_id
             )
@@ -676,7 +676,7 @@ pub(crate) fn native_genesis(
         })
         .collect::<Result<Vec<_>>>()?;
     signatures.sort_unstable_by_key(|signature| signature.guardian);
-    Ok(fern::native_store::StakeGenesis {
+    Ok(stem::native_store::StakeGenesis {
         config: StakeConfig {
             minimum_bond: trust.minimum_bond,
             shannons_per_power: trust.shannons_per_power,
@@ -694,7 +694,7 @@ pub(crate) fn native_genesis(
 }
 
 fn build_native_snapshot(observations: &std::path::Path) -> Result<()> {
-    use fern_ledger::{
+    use stem_ledger::{
         Transaction,
         protocol::{Certificate, Operation, snapshot_body, snapshot_commitment},
     };
@@ -718,8 +718,8 @@ fn build_native_snapshot(observations: &std::path::Path) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     let registry = Registry::decode(first.registry_data.as_bytes())?;
     let body = snapshot_body(&snapshot, &registry, &arriving)?;
-    let network = first.fern_network_id.pack();
-    let statement = fern_ledger::protocol::StakeSnapshot {
+    let network = first.stem_network_id.pack();
+    let statement = stem_ledger::protocol::StakeSnapshot {
         epoch: snapshot.target_epoch,
         signing_anchor: anchor.pack(),
         commitment: snapshot_commitment(&network, &body),

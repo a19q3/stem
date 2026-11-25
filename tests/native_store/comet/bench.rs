@@ -24,16 +24,16 @@ impl Benchmark {
         home: &Path,
         evidence: &Path,
     ) -> Result<Option<Self>> {
-        let Some(path) = env::var_os("FERN_TEST_LOADGEN") else {
+        let Some(path) = env::var_os("STEM_TEST_LOADGEN") else {
             return Ok(None);
         };
-        let rate = env::var("FERN_TEST_LOAD_RATE")
+        let rate = env::var("STEM_TEST_LOAD_RATE")
             .unwrap_or_else(|_| "64".into())
             .parse::<u32>()?;
-        let count = env::var("FERN_TEST_LOAD_COUNT")
+        let count = env::var("STEM_TEST_LOAD_COUNT")
             .unwrap_or_else(|_| "512".into())
             .parse::<u32>()?;
-        let workload = env::var("FERN_TEST_LOAD_KIND").unwrap_or_else(|_| "payment".into());
+        let workload = env::var("STEM_TEST_LOAD_KIND").unwrap_or_else(|_| "payment".into());
         ensure!(
             (1..=10_000).contains(&count) && (1..=5_000).contains(&rate),
             "unsupported test load"

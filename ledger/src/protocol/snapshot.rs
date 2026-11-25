@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
-use fern_stake::{
+use stem_stake::{
     AcceptedSnapshot, Attestation, Authority, MAX_RECORDS, Member, Registry, StakeConfig,
     StakeDomain, StakeSnapshot as RegistrySnapshot, ValidatorKey, l1::guardian_generation,
 };
@@ -41,13 +41,13 @@ fn take_count(data: &[u8]) -> Result<(usize, &[u8])> {
 }
 
 pub fn snapshot_commitment(network_id: &Byte32, body: &[u8]) -> Byte32 {
-    hash(b"Fern Stake Snapshot body\0", network_id, &[body])
+    hash(b"Stem Stake Snapshot body\0", network_id, &[body])
 }
 
 pub fn snapshot_digest(network_id: &Byte32, statement: &StakeSnapshot) -> Byte32 {
     let operation = Operation::StakeSnapshot(statement.clone()).encode();
     hash(
-        b"Fern native Stake Snapshot\0",
+        b"Stem native Stake Snapshot\0",
         network_id,
         &[operation.as_slice()],
     )
@@ -103,7 +103,7 @@ impl SnapshotContext<'_> {
             .certificate()
             .context("missing Stake Snapshot certificate")?;
         let body = cert.body();
-        let network_id: Byte32 = self.domain.fern_network_id.pack();
+        let network_id: Byte32 = self.domain.stem_network_id.pack();
         ensure!(
             network_id != Byte32::default()
                 && snapshot_commitment(&network_id, &body) == statement.commitment,

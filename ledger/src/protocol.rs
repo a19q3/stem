@@ -6,7 +6,7 @@ use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
 };
-use fern_stake::{Attestation, Authority, MAX_RECORDS};
+use stem_stake::{Attestation, Authority, MAX_RECORDS};
 
 use crate::{Transaction, hash, wire};
 
@@ -509,7 +509,7 @@ impl BlockBudget {
 pub fn settlement_digest(network_id: &Byte32, statement: &BridgeSettlement) -> Byte32 {
     let operation = Operation::BridgeSettlement(statement.clone()).encode();
     hash(
-        b"Fern Bridge Settlement\0",
+        b"Stem Bridge Settlement\0",
         network_id,
         &[operation.as_slice()],
     )
@@ -523,7 +523,7 @@ fn verify_settlement(
 ) -> Result<()> {
     ensure!(
         *network_id != Byte32::default(),
-        "zero Fern network identity"
+        "zero Stem network identity"
     );
     ensure!(
         statement.authority.as_slice() == authority.generation(),

@@ -9,7 +9,7 @@ use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
 };
-use fern_ledger::{
+use stem_ledger::{
     BlockContext, CapacityPolicy, Cell, LiveCell, Origin, ResolvedTransaction, Transaction,
     block::{Header, HeaderContext, Receipt, StateCommitment},
     history::History,
@@ -18,7 +18,7 @@ use fern_ledger::{
     protocol::Operation,
     record,
 };
-use fern_vm::VerificationCache;
+use stem_vm::VerificationCache;
 use rayon::prelude::*;
 
 mod bridge;
@@ -35,9 +35,9 @@ pub use staking::StakeGenesis;
 use staking::{StagedStake, Staking};
 pub use state_snapshot::{SnapshotReader, StateSnapshot};
 
-const MARKER: &[u8] = b"fern/native-spec";
-const TIP: &[u8] = b"fern/tip";
-const HISTORY: &[u8] = b"fern/history";
+const MARKER: &[u8] = b"\0stem/native-spec";
+const TIP: &[u8] = b"\0stem/tip";
+const HISTORY: &[u8] = b"\0stem/history";
 const EXECUTION: u8 = b'e';
 const HEADER: u8 = b'h';
 const HEADER_ID: u8 = b'i';
@@ -119,7 +119,7 @@ pub struct Prepared {
     next: Header,
     history: History,
     receipts: Vec<Receipt>,
-    validator_updates: Vec<fern_stake::Member>,
+    validator_updates: Vec<stem_stake::Member>,
     batch: Batch,
 }
 
@@ -131,7 +131,7 @@ impl Prepared {
     pub fn receipts(&self) -> &[Receipt] {
         &self.receipts
     }
-    pub fn validator_updates(&self) -> &[fern_stake::Member] {
+    pub fn validator_updates(&self) -> &[stem_stake::Member] {
         &self.validator_updates
     }
 }
@@ -140,7 +140,7 @@ impl Store {
     pub fn open(path: &Path, spec: &Spec, retention: Retention) -> Result<Self> {
         ensure!(
             spec.network != Byte32::default(),
-            "zero Fern network identity"
+            "zero Stem network identity"
         );
         ensure!(
             spec.limits.transaction_cycles <= spec.limits.block_cycles,
@@ -159,7 +159,7 @@ impl Store {
         }
         ensure!(
             !spec.chain_id.is_empty() && spec.chain_id.len() <= 50,
-            "invalid Fern chain ID"
+            "invalid Stem chain ID"
         );
         let configured_staking = spec
             .stake
@@ -305,10 +305,10 @@ impl Store {
                 marker.as_ref() == genesis_id.as_slice(),
                 "database network or genesis differs"
             );
-            let tip = Header::decode(&db.get(TIP)?.context("missing Fern tip")?)?;
+            let tip = Header::decode(&db.get(TIP)?.context("missing Stem tip")?)?;
             history = History::decode(
                 network.clone(),
-                &db.get(HISTORY)?.context("missing Fern history frontier")?,
+                &db.get(HISTORY)?.context("missing Stem history frontier")?,
             )?;
             ensure!(
                 history.count() == tip.context.height && history.root() == tip.state.history_root,

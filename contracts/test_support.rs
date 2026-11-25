@@ -6,12 +6,12 @@ use anyhow::{Context, Result, ensure};
 use ckb_types::bytes::Bytes;
 
 pub fn native_lock(workspace: &Path) -> Result<Bytes> {
-    native_contract(workspace, "fern-lock")
+    native_contract(workspace, "stem-lock")
 }
 
 pub fn native_contract(workspace: &Path, name: &str) -> Result<Bytes> {
     static BUILD: OnceLock<Result<(), String>> = OnceLock::new();
-    let target = workspace.join("target/fern-contracts");
+    let target = workspace.join("target/stem-contracts");
     BUILD
         .get_or_init(|| build(workspace, &target).map_err(|error| format!("{error:#}")))
         .clone()
@@ -33,7 +33,7 @@ fn build(workspace: &Path, target: &Path) -> Result<()> {
             "--target",
             "riscv64imac-unknown-none-elf",
             "--bin",
-            "fern-lock",
+            "stem-lock",
             "--bin",
             "bridge-udt",
         ])

@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{Options, ReadOnlyDB, prelude::*};
 use ckb_types::packed::{Byte32, OutPoint};
-use fern_ledger::{
+use stem_ledger::{
     LiveCell,
     block::Header,
     patricia::{Key, Namespace},
@@ -41,11 +41,11 @@ pub fn find_cells(
         "Cell pagination requires the prior page height"
     );
     let db = ReadOnlyDB::open(&Options::default(), database)?;
-    let tip = db.get(TIP)?.context("missing Fern database tip")?;
+    let tip = db.get(TIP)?.context("missing Stem database tip")?;
     let tip = Header::decode(&tip)?;
     ensure!(
         height.is_none_or(|height| height == tip.context.height),
-        "the Fern view advanced during Cell pagination"
+        "the Stem view advanced during Cell pagination"
     );
 
     let mut iterator = db.get_raw_iter(&Default::default());

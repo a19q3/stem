@@ -63,7 +63,7 @@ impl Snapshots {
         let archive = Arc::clone(&published);
         let target = directory.to_owned();
         thread::Builder::new()
-            .name("fern-snapshot".into())
+            .name("stem-snapshot".into())
             .spawn(move || {
                 if let Err(error) = discover(&target, &archive, maximum) {
                     eprintln!("level=warn event=snapshot_discovery_failed error={error:#}");
@@ -235,7 +235,7 @@ fn extent(index: u32, size: u64) -> Result<(u64, usize)> {
 fn file_hash(file: &mut File) -> Result<[u8; 32]> {
     file.seek(SeekFrom::Start(0))?;
     let mut hash = ckb_hash::new_blake2b();
-    hash.update(b"Fern state snapshot\0");
+    hash.update(b"Stem state snapshot\0");
     let mut chunk = vec![0; CHUNK as usize];
     loop {
         let read = file.read(&mut chunk)?;

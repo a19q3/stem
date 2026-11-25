@@ -56,7 +56,7 @@ def guest_root(args):
         if command is None:
             raise RuntimeError(f"Missing host command {name}")
         install_binary(command, root / "bin" / name, root)
-    install_binary(args.binary, root / "bin/fern", root)
+    install_binary(args.binary, root / "bin/stem", root)
     install_binary(args.comet, root / "bin/cometbft", root)
     modules = ["virtio_net"]
     if impaired:
@@ -126,7 +126,7 @@ ip link set eth1 up
 {configure_p2p}
 uname -r
 ip -br addr
-fern run --home /app --genesis /app-state.json --workers {args.vm_workers} \\
+stem run --home /app --genesis /app-state.json --workers {args.vm_workers} \\
   --admission-workers {args.admission_workers}{queue} --compact-transaction-history --retain-consensus-blocks 96 &
 app_pid=$!
 until [[ -S /app/abci.sock ]]; do

@@ -16,8 +16,8 @@ from bridge_localnet import (
 from localnet import run, write_json
 
 EMPTY = bytes(32)
-DOMAIN = b"Fern Stake Registry\0"
-CHAIN = b"fern-stake-fixture"
+DOMAIN = b"Stem Stake Registry\0"
+CHAIN = b"stem-stake-fixture"
 BOND = 200 * CKB
 DELAY = 20
 
@@ -39,7 +39,7 @@ def committee(guardians):
 
 
 def generation(guardians):
-    return ckb_hash(b"Fern CKB Stake authority\0" + committee(guardians))
+    return ckb_hash(b"Stem CKB Stake authority\0" + committee(guardians))
 
 
 def proof(guardians, message, limit=3):
@@ -67,7 +67,7 @@ def vote(i, validator):
 
 
 def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False):
-    commitment = EMPTY if withdrawn else ckb_hash(b"Fern CKB Stake Cell\0" + meta)
+    commitment = EMPTY if withdrawn else ckb_hash(b"Stem CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
     return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + bytes([frozen]) + meta[32:48] + commitment,
             fields + meta)
@@ -88,7 +88,7 @@ class Scenario:
     def deploy(self):
         block = self.l1.call("get_block_by_number", "0x0")
         self.genesis = binary(block["header"]["hash"])
-        self.network = ckb_hash(b"Fern L1 stake local test" + self.genesis)
+        self.network = ckb_hash(b"Stem L1 stake local test" + self.genesis)
         faucet, groups = block["transactions"][:2]
         index, funds = next((idx, out) for idx, out in enumerate(faucet["outputs"])
                             if out["lock"]["args"] == FAUCET_ARG)
@@ -223,7 +223,7 @@ class Scenario:
         self.l1.mine(2)
         path = self.args.output / f"{label}-observe.json"
         request = {
-            "fern_network_id": hex_bytes(self.network), "ckb_genesis": hex_bytes(self.genesis),
+            "stem_network_id": hex_bytes(self.network), "ckb_genesis": hex_bytes(self.genesis),
             "registry_type": self.registry_type, "registry": point(self.registry_tx, 0),
             "stake_cells": [self.stake_points[key][0] for key in sorted(self.stake_points)] if not missing else [],
             "confirmations": 2, "anchor_height": int(self.l1.call("get_tip_block_number"), 16) - 2,
@@ -264,7 +264,7 @@ class Scenario:
                 "--journal", self.args.output / f"stake-journal-{index}", "--key-file", key_path,
             ]
             if signing_anchor:
-                command.extend(["--fern-signing-anchor", signing_anchor])
+                command.extend(["--stem-signing-anchor", signing_anchor])
             if leaving:
                 command.append("--departing")
             if missing:
@@ -273,7 +273,7 @@ class Scenario:
             if binary(result["registry_data"]) != self.state:
                 raise RuntimeError("Guardian signed a different Registry")
             message = ckb_hash(
-                b"Fern guardian Stake Snapshot\0" + self.network + self.genesis + self.registry_id
+                b"Stem guardian Stake Snapshot\0" + self.network + self.genesis + self.registry_id
                 + generation(self.authority) + le(target_epoch, 8) + anchor(result["registry"])
                 + bytes([parent is not None]) + (anchor(parent) if parent else b"")
             )
@@ -284,7 +284,7 @@ class Scenario:
     def verify_genesis_snapshot(self, votes):
         trust = self.args.output / "snapshot-trust.json"
         write_json(trust, {
-            "fern_network_id": hex_bytes(self.network), "ckb_genesis": hex_bytes(self.genesis),
+            "stem_network_id": hex_bytes(self.network), "ckb_genesis": hex_bytes(self.genesis),
             "registry_id": hex_bytes(self.registry_id), "target_epoch": 0, "previous": None,
             "minimum_bond": 100 * CKB, "shannons_per_power": CKB,
             "max_validators": 4, "max_total_power": 1000, "blocks_per_epoch": 10,
@@ -302,9 +302,9 @@ class Scenario:
 
     def report(self):
         validator = Ed25519PrivateKey.from_private_bytes(
-            hashlib.sha256(b"fern staking evidence fixture").digest())
+            hashlib.sha256(b"stem staking evidence fixture").digest())
         key = validator.public_key().public_bytes_raw()
-        assert key.hex() == "8b143b3cd645c965157b8ace56bcf2605a087d1195db38010b745976ce63724a"
+        assert key.hex() == "fbf590e7a87e2f4453ed292b83ab5746fd445dc7d93dfbe62cff374c742e8674"
         owner = script_hash(self.fixture.standard)
         zero = owner + bytes(48)
         registered = mk_record(key, BOND, 0, None, zero)
@@ -313,7 +313,7 @@ class Scenario:
             return signable(domain, self.network, self.genesis, self.registry_id, old, new)
 
         def register_signature(old, new):
-            return validator.sign(message(b"Fern CKB Stake registration\0", old, new))
+            return validator.sign(message(b"Stem CKB Stake registration\0", old, new))
 
         results = {"l1_genesis": hex_bytes(self.genesis), "registry_type": self.registry_type,
                    "registry_hash": hex_bytes(self.registry_id), "registry_creation": self.registry_tx}
@@ -333,7 +333,7 @@ class Scenario:
         active = owner + le(1, 8) + le(0, 8) + EMPTY
         results["activated"] = self.change(
             "activate", 3, key, mk_record(key, amount, 0, None, active),
-            certify(b"Fern CKB Stake activation\0"))
+            certify(b"Stem CKB Stake activation\0"))
         results["incomplete_snapshot_rejected"] = self.observe("omitted", 0, missing=True)
         votes = self.observe("activated", 0, count=3)
         results["snapshot_at_activation"] = votes[0]
@@ -347,7 +347,7 @@ class Scenario:
         results["exit_without_retirement_rejected"] = self.change(
             "withdraw-without-retirement", 5, key, mk_record(key, 0, 0, 6, active, True),
             since=(1 << 63), expected="ValidationFailure")
-        penalty = ckb_hash(b"Fern CometBFT double vote\0" + self.network
+        penalty = ckb_hash(b"Stem CometBFT double vote\0" + self.network
                            + le(len(CHAIN), 4) + CHAIN + key + le(42, 8) + le(0, 4) + bytes([2]))
         frozen = owner + le(1, 8) + le(0, 8) + penalty
         votes = vote(0, validator) + vote(1, validator)
@@ -368,9 +368,9 @@ class Scenario:
         retired_record = mk_record(key, amount, 0, 6, retired, frozen=True)
         results["minority_retirement_rejected"] = self.change(
             "minority-retirement", 4, key, retired_record,
-            certify(b"Fern CKB Stake retirement\0", 2), expected="ValidationFailure")
+            certify(b"Stem CKB Stake retirement\0", 2), expected="ValidationFailure")
         results["retired"] = self.change(
-            "retire", 4, key, retired_record, certify(b"Fern CKB Stake retirement\0"))
+            "retire", 4, key, retired_record, certify(b"Stem CKB Stake retirement\0"))
         results["pending_penalty_withdrawal_rejected"] = self.change(
             "withdraw-before-slash", 5, key, mk_record(key, 0, 0, 6, retired, True, frozen=True),
             expected="ValidationFailure")
@@ -392,7 +392,7 @@ class Scenario:
         next_authority = guardian_group(11)
 
         def rotation(old, new):
-            digest = message(b"Fern CKB Stake authority rotation\0", old, new)
+            digest = message(b"Stem CKB Stake authority rotation\0", old, new)
             return proof(self.authority, digest) + proof(next_authority, digest)
 
         results["authority_rotated"] = self.change(
@@ -402,18 +402,18 @@ class Scenario:
         key = second.public_key().public_bytes_raw()
         results["second_registration"] = self.change(
             "register-second", 0, key, mk_record(key, BOND, 7, None, zero),
-            lambda old, new: second.sign(message(b"Fern CKB Stake registration\0", old, new)))
+            lambda old, new: second.sign(message(b"Stem CKB Stake registration\0", old, new)))
         activated = owner + le(71, 8) + le(0, 8) + EMPTY
         results["departed_guardians_rejected"] = self.change(
             "departed-guardians", 3, key, mk_record(key, BOND, 7, None, activated),
-            lambda old, new: proof(old_authority, message(b"Fern CKB Stake activation\0", old, new)),
+            lambda old, new: proof(old_authority, message(b"Stem CKB Stake activation\0", old, new)),
             expected="ValidationFailure")
         self.change("activate-second", 3, key, mk_record(key, BOND, 7, None, activated),
-                    certify(b"Fern CKB Stake activation\0"))
+                    certify(b"Stem CKB Stake activation\0"))
         self.change("exit-second", 2, key, mk_record(key, BOND, 7, 8, activated))
         retired = owner + le(71, 8) + le(81, 8) + EMPTY
         self.change("retire-second", 4, key, mk_record(key, BOND, 7, 8, retired),
-                    certify(b"Fern CKB Stake retirement\0"))
+                    certify(b"Stem CKB Stake retirement\0"))
         self.l1.mine(DELAY)
         before = self.fee_capacity
         _, stake_capacity = self.stake_points[key]

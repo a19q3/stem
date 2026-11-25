@@ -38,7 +38,7 @@ async function main() {
   const funding = ccc.OutPoint.from(config.funding);
   const input = await client.getCellLiveNoCache(funding, true);
   assert(input);
-  const content = ccc.hexFrom(Buffer.from("Fern Spore"));
+  const content = ccc.hexFrom(Buffer.from("Stem Spore"));
   const { tx: mint, id } = await spore.createSpore({
     signer: owner,
     scriptInfo,

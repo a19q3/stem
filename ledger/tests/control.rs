@@ -7,7 +7,7 @@ use ckb_types::{
     prelude::*,
 };
 use ed25519_dalek::{Signer, SigningKey};
-use fern_ledger::{
+use stem_ledger::{
     BlockContext, GroupWitness, ResolvedTransaction, Transaction,
     block::HeaderContext,
     protocol::{
@@ -17,7 +17,7 @@ use fern_ledger::{
     },
     replay::{InsertionBudget, Key},
 };
-use fern_stake::{Attestation, Authority, Member};
+use stem_stake::{Attestation, Authority, Member};
 
 fn hash(byte: u8) -> Byte32 {
     [byte; 32].pack()
@@ -390,7 +390,7 @@ fn permanent_replay_keys_are_distinct_and_budgeted() -> Result<()> {
     block.reserve(&network, &retire, 40_005, |_| Ok(false))?;
     let (total, state) = block.into_writes();
     assert_eq!(total, 2);
-    assert_eq!(fern_ledger::replay::logical_bytes(total)?, 80);
+    assert_eq!(stem_ledger::replay::logical_bytes(total)?, 80);
     assert_eq!(
         state[&deposit.commitment(&network)],
         40_000u64.to_le_bytes()
@@ -419,16 +419,16 @@ fn permanent_replay_keys_are_distinct_and_budgeted() -> Result<()> {
     let (total, writes) = restored.into_writes();
     assert_eq!(total, 3);
     assert_eq!(writes.len(), 1);
-    assert!(fern_ledger::replay::logical_bytes(u64::MAX).is_err());
+    assert!(stem_ledger::replay::logical_bytes(u64::MAX).is_err());
     Ok(())
 }
 
 #[test]
 fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
-    use fern_ledger::protocol::{
+    use stem_ledger::protocol::{
         SnapshotContext, snapshot_body, snapshot_commitment, snapshot_digest,
     };
-    use fern_stake::{
+    use stem_stake::{
         AcceptedSnapshot, Anchor, Registry, RegistryAnchor, StakeConfig, StakeData, StakeDomain,
         StakeSnapshot as RegistrySnapshot,
     };
@@ -436,7 +436,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
     let network = hash(1);
     let generation = [7u8; 32];
     let domain = StakeDomain {
-        fern_network_id: network.unpack(),
+        stem_network_id: network.unpack(),
         ckb_genesis: [2; 32],
         registry_id: [3; 32],
     };
@@ -462,7 +462,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         first_inactive_height: 0,
         stake_cell_hash: [6; 32],
     };
-    let registry = Registry::new(domain.fern_network_id, 1, generation, [0; 32], vec![record])?;
+    let registry = Registry::new(domain.stem_network_id, 1, generation, [0; 32], vec![record])?;
     let previous = AcceptedSnapshot {
         epoch: 0,
         anchor: RegistryAnchor {
@@ -585,7 +585,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
 #[test]
 fn native_mint_authenticates_exact_capacity_and_outputs() -> Result<()> {
     use ckb_types::{core::ScriptHashType, packed::Script};
-    use fern_ledger::{
+    use stem_ledger::{
         Cell,
         protocol::{BridgeMint, MintObservation, VerifiedMint},
     };

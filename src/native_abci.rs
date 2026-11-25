@@ -21,7 +21,7 @@ use crate::{
     native_store::{Prepared, Store},
     socket::Handler,
 };
-use fern_ledger::Transaction;
+use stem_ledger::Transaction;
 
 mod snapshots;
 
@@ -65,7 +65,7 @@ impl App {
             )?,
             workers: rayon::ThreadPoolBuilder::new()
                 .num_threads(workers)
-                .thread_name(|index| format!("fern-vm-{index}"))
+                .thread_name(|index| format!("stem-vm-{index}"))
                 .build()?,
             store: RwLock::new(store),
             candidate: Mutex::new(None),
@@ -76,7 +76,7 @@ impl App {
     fn info(&self) -> abci::ResponseInfo {
         let store = self.store.read().expect("state lock");
         abci::ResponseInfo {
-            data: "Fern native ledger".into(),
+            data: "Stem native ledger".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             app_version: 1,
             last_block_height: store
@@ -93,7 +93,7 @@ impl App {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct AppState {
-            fern_genesis: String,
+            stem_genesis: String,
         }
 
         let store = self.store.read().expect("state lock");
@@ -102,12 +102,12 @@ impl App {
                 && store.tip().context.height == 0
                 && request.chain_id == store.chain_id()
                 && timestamp(request.time)? == store.tip().context.timestamp_ms,
-            "CometBFT genesis does not match Fern genesis"
+            "CometBFT genesis does not match Stem genesis"
         );
         let app_state: AppState = serde_json::from_slice(&request.app_state_bytes)?;
         ensure!(
-            hex::decode(&app_state.fern_genesis)?.as_slice() == store.genesis_id().as_slice(),
-            "CometBFT app_state does not commit to this Fern genesis"
+            hex::decode(&app_state.stem_genesis)?.as_slice() == store.genesis_id().as_slice(),
+            "CometBFT app_state does not commit to this Stem genesis"
         );
         let mut validators = request
             .validators
@@ -122,7 +122,7 @@ impl App {
         validators.sort_unstable();
         ensure!(
             validators == store.genesis_validators(),
-            "CometBFT genesis committee differs from Fern genesis"
+            "CometBFT genesis committee differs from Stem genesis"
         );
         Ok(abci::ResponseInitChain {
             app_hash: store.tip().app_hash(store.network()).as_bytes(),
@@ -252,7 +252,7 @@ impl App {
 
     fn query(&self, request: abci::RequestQuery) -> Result<abci::ResponseQuery> {
         use ckb_types::packed::OutPoint;
-        use fern_ledger::{proof::Tree, record};
+        use stem_ledger::{proof::Tree, record};
         let store = self.store.read().expect("state lock");
         let tip = store.tip().context.height;
         let requested = if request.height == 0 {
@@ -261,11 +261,11 @@ impl App {
             request.height.try_into()?
         };
         let value = match request.path.as_str() {
-            "/fern/header" if !request.prove => store
+            "/stem/header" if !request.prove => store
                 .header(requested)?
                 .context("Header outside local retention window")?
                 .encode(),
-            "/fern/stake-retirement" if request.prove => {
+            "/stem/stake-retirement" if request.prove => {
                 ensure!(
                     requested == tip,
                     "Stake retirement queries require the current height"
@@ -278,7 +278,7 @@ impl App {
                 }))?
                 .into()
             }
-            "/fern/stake-snapshot" if request.prove && request.data.is_empty() => {
+            "/stem/stake-snapshot" if request.prove && request.data.is_empty() => {
                 ensure!(
                     requested == tip,
                     "Stake Snapshot queries require the current height"
@@ -290,7 +290,7 @@ impl App {
                 }))?
                 .into()
             }
-            "/fern/cell" => {
+            "/stem/cell" => {
                 ensure!(
                     requested == tip,
                     "Live Cell queries require the current height"
@@ -305,7 +305,7 @@ impl App {
                     .then(|| proof.nodes.iter().map(hex::encode).collect::<Vec<_>>());
                 serde_json::to_vec(&serde_json::json!({"cell": cell, "nodes": nodes}))?.into()
             }
-            "/fern/execution" => {
+            "/stem/execution" => {
                 let index = u32::from_le_bytes(request.data.as_ref().try_into()?);
                 let (transactions, receipts) = store
                     .execution(requested)?

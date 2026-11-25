@@ -7,8 +7,8 @@ use ckb_types::{
     packed::{CellDep, OutPoint, Script},
     prelude::*,
 };
-use fern::native_store::{Limits, Retention, Spec, Store};
-use fern_ledger::{
+use stem::native_store::{Limits, Retention, Spec, Store};
+use stem_ledger::{
     CapacityPolicy, Cell, CellInput, GroupWitness, Since, Transaction,
     patricia::{Namespace, Patricia},
     proof::Tree,
@@ -60,7 +60,7 @@ impl Fixture {
         ));
         Ok(Self {
             spec: Spec {
-                chain_id: "fern-native-storage-test".into(),
+                chain_id: "stem-native-storage-test".into(),
                 development_validators: vec![],
                 stake: None,
                 bridge: None,
@@ -125,7 +125,7 @@ impl Fixture {
 
 #[test]
 fn wallet_finds_cells_by_complete_script_identity() -> Result<()> {
-    use fern::native_store::{ScriptQuery, find_cells};
+    use stem::native_store::{ScriptQuery, find_cells};
 
     let mut fixture = Fixture::new()?;
     let script = fixture

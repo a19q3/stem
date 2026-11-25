@@ -83,7 +83,7 @@ impl StakeCell {
     }
 
     pub fn commitment(self) -> Hash32 {
-        digest(b"Fern CKB Stake Cell\0", &[&self.encode()])
+        digest(b"Stem CKB Stake Cell\0", &[&self.encode()])
     }
 }
 
@@ -147,7 +147,7 @@ pub fn guardian_generation(members: &[Member]) -> Hash32 {
         bytes.extend_from_slice(&member.key);
         bytes.extend_from_slice(&member.power.to_le_bytes());
     }
-    digest(b"Fern CKB Stake authority\0", &[&bytes])
+    digest(b"Stem CKB Stake authority\0", &[&bytes])
 }
 
 pub struct GuardianProof<'a> {
@@ -251,7 +251,7 @@ impl ChangeContext<'_> {
                 public_key(&self.validator)?
                     .verify_strict(
                         &transition_digest(
-                            b"Fern CKB Stake registration\0",
+                            b"Stem CKB Stake registration\0",
                             self.policy,
                             self.old_registry,
                             self.new_registry,
@@ -306,7 +306,7 @@ impl ChangeContext<'_> {
                     return Err(Error::Epoch);
                 }
                 self.verify_cell_update(before, new_cell)?;
-                self.certify(b"Fern CKB Stake activation\0", &proof)
+                self.certify(b"Stem CKB Stake activation\0", &proof)
             }
             Action::Retire(proof) => {
                 let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
@@ -433,7 +433,7 @@ pub fn retirement_cell(
 }
 
 pub fn retirement_digest(policy: &Policy<'_>, old: &Registry, new: &Registry) -> Hash32 {
-    transition_digest(b"Fern CKB Stake retirement\0", policy, old, new)
+    transition_digest(b"Stem CKB Stake retirement\0", policy, old, new)
 }
 
 fn matches_cell(record: Option<StakeData>, cell: Option<(StakeData, StakeCell)>) -> bool {
@@ -469,7 +469,7 @@ pub fn verify_rotation(
     {
         return Err(Error::Authority);
     }
-    let message = transition_digest(b"Fern CKB Stake authority rotation\0", policy, old, new);
+    let message = transition_digest(b"Stem CKB Stake authority rotation\0", policy, old, new);
     departing.verify(old.guardian_generation, &message)?;
     arriving.verify(new.guardian_generation, &message)
 }

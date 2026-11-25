@@ -3,12 +3,12 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, ensure};
 use ckb_types::packed::Byte32;
 use ed25519_dalek::{Signer, SigningKey};
-use fern::native_store::StakeGenesis;
-use fern_ledger::protocol::{
+use stem::native_store::StakeGenesis;
+use stem_ledger::protocol::{
     self, ARRIVING_GUARDIAN, Certificate, Operation, snapshot_body, snapshot_commitment,
     snapshot_digest,
 };
-use fern_stake::{
+use stem_stake::{
     Anchor, Attestation, Member, Registry, RegistryAnchor, StakeConfig, StakeData, StakeDomain,
     StakeSnapshot, l1::guardian_generation,
 };
@@ -39,7 +39,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     }];
     let next_generation = guardian_generation(&arriving);
     let domain = StakeDomain {
-        fern_network_id: fixture.spec.network.unpack(),
+        stem_network_id: fixture.spec.network.unpack(),
         ckb_genesis: [50; 32],
         registry_id: [51; 32],
     };
@@ -54,7 +54,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         stake_cell_hash: validator_pubkey,
     };
     let registry = Registry::new(
-        domain.fern_network_id,
+        domain.stem_network_id,
         1,
         generation,
         [0; 32],
@@ -103,7 +103,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         make_stake(second, 20, 1, None),
     ];
     stakes.sort_unstable_by_key(|stake| stake.validator_pubkey);
-    let next = Registry::new(domain.fern_network_id, 2, next_generation, [0; 32], stakes)?;
+    let next = Registry::new(domain.stem_network_id, 2, next_generation, [0; 32], stakes)?;
     let new = StakeSnapshot {
         domain,
         guardian_generation: next_generation,
@@ -219,7 +219,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         .unwrap()
         .exit_epoch = None;
     let revived = Registry::new(
-        domain.fern_network_id,
+        domain.stem_network_id,
         3,
         next_generation,
         [0; 32],
@@ -269,14 +269,14 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
 #[ignore = "uses actual CKB observations from tools/stake_localnet.py"]
 fn opens_native_genesis_from_ckb_guardian_observations() -> Result<()> {
     let evidence =
-        PathBuf::from(std::env::var_os("FERN_TEST_L1_STAKE").context("stake evidence directory")?);
+        PathBuf::from(std::env::var_os("STEM_TEST_L1_STAKE").context("stake evidence directory")?);
     let trust: Value = serde_json::from_slice(&fs::read(evidence.join("snapshot-trust.json"))?)?;
     let observations: Value =
         serde_json::from_slice(&fs::read(evidence.join("genesis-observations.json"))?)?;
     let observations = observations.as_array().context("validator observations")?;
     let observation = observations.first().context("validator observation")?;
     let domain = StakeDomain {
-        fern_network_id: hex_value(&trust["fern_network_id"])?
+        stem_network_id: hex_value(&trust["stem_network_id"])?
             .try_into()
             .ok()
             .context("network ID")?,
@@ -348,7 +348,7 @@ fn opens_native_genesis_from_ckb_guardian_observations() -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     let mut fixture = Fixture::new()?;
     fixture.spec.development_cells.clear();
-    fixture.spec.network = domain.fern_network_id.pack();
+    fixture.spec.network = domain.stem_network_id.pack();
     fixture.spec.stake = Some(StakeGenesis {
         config: StakeConfig {
             minimum_bond: number(&trust["minimum_bond"])?,

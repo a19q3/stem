@@ -1,4 +1,4 @@
-"""Exercise the Checkpoint Type ID Cell with live Fern and CKB test nodes."""
+"""Exercise the Checkpoint Type ID Cell with live Stem and CKB test nodes."""
 
 import base64
 import json
@@ -10,7 +10,7 @@ from stake_localnet import committee, guardian_group, proof, witness
 
 def capture(args, rpc, progress, minimum):
     progress(minimum)
-    response = rpc.call("abci_query", path=json.dumps("/fern/stake-snapshot"), prove="true")["response"]
+    response = rpc.call("abci_query", path=json.dumps("/stem/stake-snapshot"), prove="true")["response"]
     if response["code"] != 0:
         raise AssertionError(response)
     height = int(response["height"])
@@ -48,7 +48,7 @@ def publish(args, scenario, spec, comet_genesis, handoffs, first, second, fundin
     old_keys, new_keys = guardian_group(11), guardian_group(31)
 
     def generation(keys):
-        return ckb_hash(b"Fern CKB Checkpoint authority\0" + committee(keys))
+        return ckb_hash(b"Stem CKB Checkpoint authority\0" + committee(keys))
 
     initial = generation(old_keys)
     policy = type_id + scenario.network + scenario.genesis + initial

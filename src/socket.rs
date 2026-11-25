@@ -54,7 +54,7 @@ pub fn serve(path: &Path, app: impl Handler, workers: usize, response_queue: usi
     let admission = Arc::new(
         ThreadPoolBuilder::new()
             .num_threads(workers)
-            .thread_name(|id| format!("fern-admit-{id}"))
+            .thread_name(|id| format!("stem-admit-{id}"))
             .build()?,
     );
     let active = Arc::new(AtomicUsize::new(0));
@@ -74,7 +74,7 @@ pub fn serve(path: &Path, app: impl Handler, workers: usize, response_queue: usi
         let app = Arc::clone(&app);
         let admission = Arc::clone(&admission);
         thread::Builder::new()
-            .name("fern-abci".into())
+            .name("stem-abci".into())
             .spawn(move || {
                 let _guard = Connection(connections);
                 if let Err(error) = handle(stream, app, &admission, response_queue) {

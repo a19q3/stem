@@ -1,0 +1,18 @@
+[Unit]
+Description=Stem application at %f
+PartOf=stem@%i.target
+Upholds=stem-comet@%i.service
+StartLimitIntervalSec=60s
+StartLimitBurst=6
+
+[Service]
+Type=notify
+NotifyAccess=main
+EnvironmentFile=%f/node.env
+ExecStart=/usr/bin/env ${STEM_BINARY} run --home ${APP_HOME} --genesis ${STEM_GENESIS} --workers ${VM_WORKERS} --history-window ${HISTORY_WINDOW} --snapshot-interval ${SNAPSHOT_INTERVAL} $ADMISSION_ARGS $ROLE_ARGS
+UMask=0077
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=5min
+TimeoutStopSec=30s

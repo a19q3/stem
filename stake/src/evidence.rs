@@ -147,7 +147,7 @@ impl DoubleVote {
                 .map_err(|_| Error::Signature)?;
         }
         Ok(digest(
-            b"Fern CometBFT double vote\0",
+            b"Stem CometBFT double vote\0",
             &[
                 network_id,
                 &(chain_id.len() as u32).to_le_bytes(),

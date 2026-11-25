@@ -15,13 +15,13 @@ use ckb_types::{
 };
 use clap::Subcommand;
 use ed25519_dalek::{Signer, SigningKey};
-use fern::native_store::{BridgeGenesis, LaneGenesis, lane_id};
-use fern_bridge_wire::{Gate, NATIVE_VAULT_SIZE, XUDT_VAULT_SIZE};
-use fern_ledger::{
+use stem::native_store::{BridgeGenesis, LaneGenesis, lane_id};
+use stem_bridge_wire::{Gate, NATIVE_VAULT_SIZE, XUDT_VAULT_SIZE};
+use stem_ledger::{
     Cell, Transaction,
     protocol::{BridgeMint, Certificate, L1Anchor, MintObservation, VaultUpdate},
 };
-use fern_stake::Attestation;
+use stem_stake::Attestation;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 
@@ -33,7 +33,7 @@ use crate::{
 mod payout;
 mod vault;
 
-const DEPOSIT_MEMO: &[u8] = b"FERN-PIN";
+const DEPOSIT_MEMO: &[u8] = b"STEM-PIN";
 
 #[derive(Subcommand)]
 pub enum BridgeCommand {
@@ -45,7 +45,7 @@ pub enum BridgeCommand {
         l1_rpc: String,
         #[arg(long, value_parser = parse_hash)]
         lane: H256,
-        /// JSON string containing the canonical destination Fern Cell bytes.
+        /// JSON string containing the canonical destination Stem Cell bytes.
         #[arg(long)]
         cell: PathBuf,
     },
@@ -67,7 +67,7 @@ pub enum BridgeCommand {
         #[arg(long)]
         observations: PathBuf,
     },
-    /// Verify a Fern execution proof and confirmed CKB payout before signing.
+    /// Verify a Stem execution proof and confirmed CKB payout before signing.
     AttestPayout(payout::AttestPayout),
     /// Observe a confirmed L1 vault rotation or two-vault reserve adjustment.
     AttestVault(vault::AttestVault),
@@ -279,7 +279,7 @@ impl BridgeCommand {
 
 fn observe(
     rpc: &Rpc,
-    spec: &fern::native_store::Spec,
+    spec: &stem::native_store::Spec,
     bridge: &BridgeGenesis,
     request: Request,
 ) -> Result<MintBody> {
@@ -318,7 +318,7 @@ fn observe(
     let expected = deposit_lock(&lane.vault_type_hash, &vault_data)?;
     let gate = match &lane.l1_type {
         Some(token) => {
-            let asset = fern_bridge_wire::vault_asset(&vault_data)
+            let asset = stem_bridge_wire::vault_asset(&vault_data)
                 .context("vault has no xUDT configuration")?;
             ensure!(
                 asset.type_hash.as_slice() == token.calc_script_hash().as_slice(),
@@ -365,7 +365,7 @@ fn observe(
             && lock.hash_type() == ScriptHashType::Data1.into()
         {
             let args = lock.args().raw_data();
-            let (vault, role) = fern_bridge_wire::gate(&args).context("invalid xUDT gate")?;
+            let (vault, role) = stem_bridge_wire::gate(&args).context("invalid xUDT gate")?;
             if vault.as_slice() != lane.vault_type_hash.as_slice() || role == Gate::Escrow {
                 continue;
             }
@@ -376,9 +376,9 @@ fn observe(
             ensure!(
                 chain.as_slice() == spec.network.as_slice()
                     && output.type_().to_opt().as_ref() == Some(token),
-                "xUDT deposit identifies a different Fern network or asset"
+                "xUDT deposit identifies a different Stem network or asset"
             );
-            let units_in = fern_bridge_wire::amount(&data)
+            let units_in = stem_bridge_wire::amount(&data)
                 .filter(|&amount| amount != 0)
                 .context("invalid xUDT amount")?;
             units = units

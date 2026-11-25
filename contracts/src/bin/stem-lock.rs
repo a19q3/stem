@@ -17,7 +17,7 @@ fn load_exact<const N: usize>(number: u64) -> Option<[u8; N]> {
     let mut data = [0; N];
     let mut length = N as u64;
     let mut result = data.as_mut_ptr() as u64;
-    // Fern buffer ABI, with a4=0 selecting the current Script Group.
+    // Stem buffer ABI, with a4=0 selecting the current Script Group.
     unsafe {
         asm!(
             "ecall",

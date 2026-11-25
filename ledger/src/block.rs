@@ -76,7 +76,7 @@ impl HeaderContext {
 
     pub fn id(&self, network: &Byte32) -> Byte32 {
         hash(
-            b"Fern block context\0",
+            b"Stem block context\0",
             network,
             &[self.encode().as_slice()],
         )
@@ -149,12 +149,12 @@ impl Header {
     }
 
     pub fn id(&self, network: &Byte32) -> Byte32 {
-        hash(b"Fern Header\0", network, &[&self.encode()])
+        hash(b"Stem Header\0", network, &[&self.encode()])
     }
 
     pub fn app_hash(&self, network: &Byte32) -> Byte32 {
         hash(
-            b"Fern AppHash\0",
+            b"Stem AppHash\0",
             network,
             &[
                 &self.context.height.to_le_bytes(),

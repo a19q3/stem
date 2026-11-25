@@ -1324,78 +1324,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
-name = "fern"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.21.7",
- "bytes",
- "ckb-crypto",
- "ckb-db",
- "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
- "ckb-jsonrpc-types",
- "ckb-types",
- "clap",
- "ed25519-dalek",
- "fern-bridge-wire",
- "fern-ledger",
- "fern-stake",
- "fern-vm",
- "hex",
- "prost",
- "rayon",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tendermint-proto",
-]
-
-[[package]]
-name = "fern-bridge-wire"
-version = "0.1.0"
-
-[[package]]
-name = "fern-ledger"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
- "ckb-types",
- "ed25519-dalek",
- "fern-stake",
- "molecule",
- "molecule-codegen",
-]
-
-[[package]]
-name = "fern-stake"
-version = "0.1.0"
-dependencies = [
- "ckb-hash 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "ed25519-dalek",
- "prost",
- "tendermint-proto",
-]
-
-[[package]]
-name = "fern-vm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ckb-crypto",
- "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
- "ckb-script",
- "ckb-types",
- "ckb-vm",
- "fern-ledger",
- "lru",
- "rayon",
- "tempfile",
-]
-
-[[package]]
 name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3593,6 +3521,78 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "stem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.21.7",
+ "bytes",
+ "ckb-crypto",
+ "ckb-db",
+ "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
+ "ckb-jsonrpc-types",
+ "ckb-types",
+ "clap",
+ "ed25519-dalek",
+ "hex",
+ "prost",
+ "rayon",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "stem-bridge-wire",
+ "stem-ledger",
+ "stem-stake",
+ "stem-vm",
+ "tempfile",
+ "tendermint-proto",
+]
+
+[[package]]
+name = "stem-bridge-wire"
+version = "0.1.0"
+
+[[package]]
+name = "stem-ledger"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
+ "ckb-types",
+ "ed25519-dalek",
+ "molecule",
+ "molecule-codegen",
+ "stem-stake",
+]
+
+[[package]]
+name = "stem-stake"
+version = "0.1.0"
+dependencies = [
+ "ckb-hash 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ed25519-dalek",
+ "prost",
+ "tendermint-proto",
+]
+
+[[package]]
+name = "stem-vm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ckb-crypto",
+ "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
+ "ckb-script",
+ "ckb-types",
+ "ckb-vm",
+ "lru",
+ "rayon",
+ "stem-ledger",
+ "tempfile",
 ]
 
 [[package]]

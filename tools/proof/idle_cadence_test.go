@@ -66,7 +66,7 @@ func startIdleNode(t *testing.T, changing bool) (*node.Node, *types.GenesisDoc) 
 		t.Fatal(err)
 	}
 	genesis := &types.GenesisDoc{
-		ChainID:     "fern-idle-proof-fixture",
+		ChainID:     "stem-idle-proof-fixture",
 		GenesisTime: time.Now().UTC().Add(-time.Second),
 		Validators:  []types.GenesisValidator{{PubKey: publicKey, Power: 1}},
 	}

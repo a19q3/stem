@@ -3,8 +3,8 @@ use std::{path::PathBuf, process::Command};
 use anyhow::{Context, Result, ensure};
 use ckb_types::bytes::Bytes;
 use clap::Args;
-use fern::native_store::Spec;
-use fern_ledger::{
+use stem::native_store::Spec;
+use stem_ledger::{
     block::{Header, Receipt},
     proof::InclusionProof,
     protocol::{BridgeSettlement, Operation, SettlementAction, settlement_digest},
@@ -165,7 +165,7 @@ impl AttestPayout {
         verifier
             .arg("-genesis")
             .arg(&self.comet_genesis)
-            .arg("-fern-genesis")
+            .arg("-stem-genesis")
             .arg(hex::encode(genesis.as_slice()))
             .arg("-commit")
             .arg(directory.join(&request.commit))
@@ -179,7 +179,7 @@ impl AttestPayout {
         let verification = verifier.output()?;
         ensure!(
             verification.status.success(),
-            "Fern signed successor: {}",
+            "Stem signed successor: {}",
             String::from_utf8_lossy(&verification.stderr)
         );
         let raw = Transaction::from_slice(request.transaction.as_bytes())?;
@@ -205,7 +205,7 @@ impl AttestPayout {
                 &receipt_proof,
                 &receipt
             ),
-            "Fern receipt is outside the authenticated execution roots"
+            "Stem receipt is outside the authenticated execution roots"
         );
         ensure!(
             raw.operation().is_none(),
@@ -236,7 +236,7 @@ impl AttestPayout {
             let units = u128::from_le_bytes(item[84..100].try_into()?);
             let recipient = Script::from_slice(&item[100..])?;
             let mut hash = ckb_hash::new_blake2b();
-            hash.update(b"Fern withdrawal receipt\0");
+            hash.update(b"Stem withdrawal receipt\0");
             hash.update(spec.network.as_slice());
             hash.update(item);
             let mut id = [0; 32];
@@ -288,10 +288,10 @@ fn inspect_payout(
         paid.lock() == ticket.recipient
             && u64::from(paid.capacity()) == ticket.capacity
             && paid.type_().to_opt().as_ref() == lane.l1_type.as_ref(),
-        "L1 recipient differs from the authenticated Fern withdrawal"
+        "L1 recipient differs from the authenticated Stem withdrawal"
     );
     let actual_units = if lane.l1_type.is_some() {
-        fern_bridge_wire::amount(&data).context("invalid L1 payout units")?
+        stem_bridge_wire::amount(&data).context("invalid L1 payout units")?
     } else {
         ensure!(
             data.is_empty(),
@@ -301,7 +301,7 @@ fn inspect_payout(
     };
     ensure!(
         actual_units == ticket.units,
-        "L1 payout units differ from the authenticated Fern withdrawal"
+        "L1 payout units differ from the authenticated Stem withdrawal"
     );
 
     let mut successors = tx

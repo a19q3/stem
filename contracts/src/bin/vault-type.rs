@@ -13,7 +13,7 @@ use ckb_std::{
     },
     syscalls, type_id,
 };
-use fern_bridge_wire::{self as wire, Asset, Gate};
+use stem_bridge_wire::{self as wire, Asset, Gate};
 
 entry!(main);
 default_alloc!();

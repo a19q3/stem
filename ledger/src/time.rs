@@ -49,7 +49,7 @@ impl CellInput {
             (2, delay) if delay != 0 => Some(Since::RelativeBlocks(delay)),
             (3, time) => Some(Since::AbsoluteTime(time)),
             (4, delay) if delay != 0 => Some(Since::RelativeTime(delay)),
-            _ => bail!("noncanonical Fern Since"),
+            _ => bail!("noncanonical Stem Since"),
         };
         Ok(Self {
             previous_output: OutPoint::new_unchecked(input.previous_output().as_bytes()),

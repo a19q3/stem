@@ -1,4 +1,4 @@
-"""Load a stake-backed Fern network using only confirmed CKB bridge funding."""
+"""Load a stake-backed Stem network using only confirmed CKB bridge funding."""
 
 import base64
 import concurrent.futures
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bridge_localnet import CKB, FEE, ckb_hash, dependency, hex_bytes, point, script
 from localnet import Rpc, process_resources, run, write_json
-from native_bridge_localnet import cell, deposit_and_mint, fern_id
+from native_bridge_localnet import cell, deposit_and_mint, stem_id
 
 COUNT = 384
 RATE = 8
@@ -45,7 +45,7 @@ def prepare(args, l1, fixture, vault, spec, spec_path, lane, client):
         accepted = client.call("broadcast_tx_commit", tx=split)
         if accepted["check_tx"]["code"] != 0 or accepted.get("tx_result", {}).get("code") != 0:
             raise AssertionError(accepted)
-        parent = fern_id(spec["network_id"], split)
+        parent = stem_id(spec["network_id"], split)
 
         def payment(index):
             return sign(index, point(parent, index), [cell(output - FEE, lock)])

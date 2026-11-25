@@ -9,11 +9,11 @@ use ckb_types::{
     packed::{Byte32, CellDep, OutPoint, Script},
     prelude::*,
 };
-use fern_ledger::{
+use stem_ledger::{
     BlockContext, Cell, CellInput, GroupWitness, LiveCell, Origin, ResolvedTransaction,
     ScriptGroupKind, Transaction, block::HeaderContext,
 };
-use fern_vm::{VerificationCache, verify};
+use stem_vm::{VerificationCache, verify};
 
 #[path = "../../contracts/test_support.rs"]
 mod contract;
@@ -133,7 +133,7 @@ fn script(code: &[u8], args: &[u8]) -> Script {
 fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
     let tmp = tempfile::tempdir()?;
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/examples/type_rules.c");
-    let compiler = std::env::var_os("FERN_RISCV_CC").unwrap_or_else(|| "clang".into());
+    let compiler = std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into());
     let mut programs = Vec::new();
     for rule in 1..=10 {
         let path = tmp.path().join(format!("rule-{rule}"));
@@ -155,7 +155,7 @@ fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
             .arg("-o")
             .arg(&path)
             .output()
-            .context("compile the Fern examples with clang and lld")?;
+            .context("compile the Stem examples with clang and lld")?;
         ensure!(
             output.status.success(),
             "RISC-V compile failed: {}",

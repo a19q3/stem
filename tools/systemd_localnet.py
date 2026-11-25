@@ -32,7 +32,7 @@ def service_units(node, rpc_index):
     config_value(node.config, "create_empty_blocks", "false")
     config_value(node.config, "create_empty_blocks_interval", json.dumps(node.args.idle_interval))
     environment = {
-        "FERN_BINARY": node.args.binary,
+        "STEM_BINARY": node.args.binary,
         "COMETBFT_BINARY": node.args.comet,
         "APP_HOME": node.app,
         "APP_STATE": node.args.output / "app-state.json",
@@ -52,7 +52,7 @@ def service_units(node, rpc_index):
     (node.directory / "node.env").write_text("".join(
         f'{name}="{value(name)}"\n' for name in environment))
     return [run("systemd-escape", "--path", f"--template={template}", node.directory) for template in
-            ("fern@.target", "fern-app@.service", "fern-comet@.service")]
+            ("stem@.target", "stem-app@.service", "stem-comet@.service")]
 
 
 def pid(unit):
@@ -61,7 +61,7 @@ def pid(unit):
 
 def admission_workers(process):
     tasks = Path(f"/proc/{process}/task")
-    return sum(path.read_text().startswith("fern-admit-") for path in tasks.glob("*/comm"))
+    return sum(path.read_text().startswith("stem-admit-") for path in tasks.glob("*/comm"))
 
 
 def wait_pids(units, check, error):

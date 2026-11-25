@@ -1,7 +1,0 @@
-[Unit]
-Description=Fern replica at %f
-Wants=fern-comet@%i.service
-After=fern-comet@%i.service
-
-[Install]
-WantedBy=default.target

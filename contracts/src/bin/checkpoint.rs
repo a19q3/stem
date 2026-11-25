@@ -12,7 +12,7 @@ use ckb_std::{
     },
     type_id,
 };
-use fern_stake::{
+use stem_stake::{
     Hash32,
     checkpoint::{Checkpoint, Domain, Update, ZERO_OUT_POINT},
 };
@@ -35,13 +35,13 @@ impl From<SysError> for Error {
     }
 }
 
-impl From<fern_stake::Error> for Error {
-    fn from(error: fern_stake::Error) -> Self {
+impl From<stem_stake::Error> for Error {
+    fn from(error: stem_stake::Error) -> Self {
         match error {
-            fern_stake::Error::Anchor | fern_stake::Error::Sequence => Self::History,
-            fern_stake::Error::Authority
-            | fern_stake::Error::Quorum
-            | fern_stake::Error::Signature => Self::Quorum,
+            stem_stake::Error::Anchor | stem_stake::Error::Sequence => Self::History,
+            stem_stake::Error::Authority
+            | stem_stake::Error::Quorum
+            | stem_stake::Error::Signature => Self::Quorum,
             _ => Self::Encoding,
         }
     }

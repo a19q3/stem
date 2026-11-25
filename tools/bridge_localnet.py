@@ -100,7 +100,7 @@ class L1(CkbRpc):
         self.process = None
         run(args.l1, "init", "-C", self.home, "--chain", "dev",
             "--rpc-port", str(args.l1_port), "--p2p-port", str(args.l1_port + 1),
-            "--ba-arg", FAUCET_ARG, "--genesis-message", "fern-local-bridge")
+            "--ba-arg", FAUCET_ARG, "--genesis-message", "stem-local-bridge")
         config = self.home / "ckb.toml"
         config.write_text(re.sub(r"(?m)^modules = \[(.*)\]",
                                  r'modules = [\1, "IntegrationTest"]', config.read_text(), count=1))

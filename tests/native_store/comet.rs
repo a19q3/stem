@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use fern_ledger::block::Header;
+use stem_ledger::block::Header;
 use serde_json::{Value, json};
 
 use super::*;
@@ -18,11 +18,11 @@ use super::*;
 mod bench;
 
 fn vm_workers() -> String {
-    std::env::var("FERN_TEST_VM_WORKERS").unwrap_or_else(|_| "2".into())
+    std::env::var("STEM_TEST_VM_WORKERS").unwrap_or_else(|_| "2".into())
 }
 
 fn history_window() -> String {
-    std::env::var("FERN_TEST_HISTORY_WINDOW").unwrap_or_else(|_| "256".into())
+    std::env::var("STEM_TEST_HISTORY_WINDOW").unwrap_or_else(|_| "256".into())
 }
 
 const GENESIS_TIME: &str = "2025-01-01T00:00:00Z";
@@ -46,7 +46,7 @@ fn spec(genesis: &Value, home: &Path) -> Result<Fixture> {
         })
         .collect::<Result<_>>()?;
     let mut fingerprint = ckb_hash::new_blake2b();
-    fingerprint.update(b"Fern four-node fixture network\0");
+    fingerprint.update(b"Stem four-node fixture network\0");
     fingerprint.update(fixture.spec.chain_id.as_bytes());
     for (key, power) in &fixture.spec.development_validators {
         fingerprint.update(key);
@@ -128,7 +128,7 @@ impl Asset {
 fn compile_types(home: &Path) -> Result<()> {
     for rule in [1, 2, 3, 6] {
         let output =
-            Command::new(std::env::var_os("FERN_RISCV_CC").unwrap_or_else(|| "clang".into()))
+            Command::new(std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into()))
                 .args([
                     "--target=riscv64-unknown-elf",
                     "-march=rv64im",
@@ -218,7 +218,7 @@ struct Node {
 
 impl Node {
     fn start(&mut self, comet: &Path, peers: &str) -> Result<()> {
-        let app_home = self.dir.join("fern");
+        let app_home = self.dir.join("stem");
         let path = app_home.join("abci.sock");
         if path.exists() {
             fs::remove_file(&path)?;
@@ -227,9 +227,9 @@ impl Node {
             .dir
             .parent()
             .context("network directory")?
-            .join("fern-genesis.json");
+            .join("stem-genesis.json");
         self.app = Some(Process::spawn(
-            Command::new(env!("CARGO_BIN_EXE_fern"))
+            Command::new(env!("CARGO_BIN_EXE_stem"))
                 .args(["run", "--home"])
                 .arg(app_home)
                 .arg("--genesis")
@@ -244,7 +244,7 @@ impl Node {
                     "--history-window",
                     &history_window(),
                 ]),
-            &self.dir.join("fern.log"),
+            &self.dir.join("stem.log"),
         )?);
         poll("native ABCI socket", Duration::from_secs(10), || {
             Ok(path.exists().then_some(()))
@@ -298,7 +298,7 @@ impl Node {
     fn header(&self, client: &reqwest::blocking::Client, height: u64) -> Result<Header> {
         let value = self.rpc(
             client,
-            &format!("abci_query?path=%22%2Ffern%2Fheader%22&height={height}"),
+            &format!("abci_query?path=%22%2Fstem%2Fheader%22&height={height}"),
         )?;
         let response = &value["response"];
         ensure!(
@@ -331,23 +331,23 @@ fn poll<T>(
 }
 
 #[test]
-#[ignore = "runs four real CometBFT binaries; set FERN_TEST_COMET"]
+#[ignore = "runs four real CometBFT binaries; set STEM_TEST_COMET"]
 fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
-    let validators = std::env::var("FERN_TEST_VALIDATORS")
+    let validators = std::env::var("STEM_TEST_VALIDATORS")
         .unwrap_or_else(|_| "4".into())
         .parse::<usize>()?;
     ensure!(
         (4..=32).contains(&validators)
-            && (validators == 4 || std::env::var_os("FERN_TEST_LOADGEN").is_some()),
+            && (validators == 4 || std::env::var_os("STEM_TEST_LOADGEN").is_some()),
         "a replica count outside the four-node correctness fixture requires benchmark mode (maximum 32)"
     );
     let directories = validators + 1;
     let comet =
-        PathBuf::from(std::env::var_os("FERN_TEST_COMET").context("path to CometBFT binary")?)
+        PathBuf::from(std::env::var_os("STEM_TEST_COMET").context("path to CometBFT binary")?)
             .canonicalize()?;
     let mut temporary = tempfile::Builder::new();
-    temporary.prefix("fernn-");
-    let output = if let Some(root) = std::env::var_os("FERN_TEST_EVIDENCE_ROOT") {
+    temporary.prefix("stem-");
+    let output = if let Some(root) = std::env::var_os("STEM_TEST_EVIDENCE_ROOT") {
         fs::create_dir_all(&root)?;
         temporary.tempdir_in(PathBuf::from(root).canonicalize()?)?
     } else {
@@ -366,23 +366,23 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     );
     let mut genesis = read_json(&home.join("node0/config/genesis.json"))?;
     genesis["genesis_time"] = json!(GENESIS_TIME);
-    genesis["chain_id"] = json!("fern-native-abci-test");
+    genesis["chain_id"] = json!("stem-native-abci-test");
     compile_types(&home)?;
     let mut fixture = spec(&genesis, &home)?;
     let benchmark = bench::Benchmark::prepare(&mut fixture, &home, &output)?;
-    let spec_path = home.join("fern-genesis.json");
+    let spec_path = home.join("stem-genesis.json");
     write_spec(&spec_path, &fixture.spec)?;
-    let identity = Command::new(env!("CARGO_BIN_EXE_fern"))
+    let identity = Command::new(env!("CARGO_BIN_EXE_stem"))
         .args(["genesis-hash", "--genesis"])
         .arg(&spec_path)
         .output()?;
     ensure!(
         identity.status.success(),
-        "Fern genesis-hash: {}",
+        "Stem genesis-hash: {}",
         String::from_utf8_lossy(&identity.stderr)
     );
     let id: String = serde_json::from_slice(&identity.stdout)?;
-    genesis["app_state"] = json!({ "fern_genesis": id.trim_start_matches("0x") });
+    genesis["app_state"] = json!({ "stem_genesis": id.trim_start_matches("0x") });
 
     let ports = (0..2 * directories)
         .map(|_| TcpListener::bind("127.0.0.1:0"))
@@ -562,7 +562,7 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         "native remote state snapshot",
         Duration::from_secs(40),
         || {
-            let log = fs::read_to_string(observer.dir.join("fern.log"))?;
+            let log = fs::read_to_string(observer.dir.join("stem.log"))?;
             let installed = log
                 .lines()
                 .find_map(|line| line.split_once("event=snapshot_installed height="))

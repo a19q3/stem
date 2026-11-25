@@ -305,7 +305,7 @@ impl Transaction {
             raw.as_slice().len() <= MAX_TRANSACTION_BYTES,
             "mint exceeds transaction size limit"
         );
-        let id = hash(b"Fern transaction ID\0", network, &[raw.as_slice()]);
+        let id = hash(b"Stem transaction ID\0", network, &[raw.as_slice()]);
         Ok(protocol::mint_digest(network, &id, observation))
     }
 
@@ -489,7 +489,7 @@ impl Transaction {
 
     pub fn id(&self, network_id: &Byte32) -> Byte32 {
         hash(
-            b"Fern transaction ID\0",
+            b"Stem transaction ID\0",
             network_id,
             &[self.encoded.raw().as_slice()],
         )
@@ -497,7 +497,7 @@ impl Transaction {
 
     pub fn commitment(&self, network_id: &Byte32) -> Byte32 {
         hash(
-            b"Fern transaction commitment\0",
+            b"Stem transaction commitment\0",
             network_id,
             &[self.as_slice()],
         )
@@ -615,7 +615,7 @@ impl Transaction {
     /// all proof data. Seals can be collected independently by multiple signers.
     pub fn lock_digest(&self, network_id: &Byte32, lock: &Script) -> Byte32 {
         let mut proof = new_blake2b();
-        proof.update(b"Fern group proofs\0");
+        proof.update(b"Stem group proofs\0");
         for witness in self
             .witnesses()
             .filter(|witness| !witness.proof_data.is_empty())
@@ -627,7 +627,7 @@ impl Transaction {
         let mut proof_root = [0; 32];
         proof.finalize(&mut proof_root);
         hash(
-            b"Fern group lock authorization\0",
+            b"Stem group lock authorization\0",
             network_id,
             &[
                 self.id(network_id).as_slice(),
@@ -843,7 +843,7 @@ impl ResolvedTransaction {
     ) -> Result<Self> {
         ensure!(
             network_id != Byte32::default(),
-            "zero Fern network identity"
+            "zero Stem network identity"
         );
         ensure!(
             transaction
@@ -1015,7 +1015,7 @@ impl ResolvedTransaction {
     pub fn script_cache_key(&self) -> &Byte32 {
         self.cache_key.get_or_init(|| {
             let mut hash = new_blake2b();
-            hash.update(b"Fern VM execution context\0");
+            hash.update(b"Stem VM execution context\0");
             hash.update(self.network_id.as_slice());
             hash.update(&self.capacity.bond_per_byte.to_le_bytes());
             hash.update(&self.capacity.state_overhead.to_le_bytes());

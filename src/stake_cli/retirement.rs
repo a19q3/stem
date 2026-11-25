@@ -5,9 +5,9 @@ use ckb_jsonrpc_types::{JsonBytes, OutPoint, Script as JsonScript};
 use ckb_types::{H256, packed::Script, prelude::*};
 use clap::Args;
 use ed25519_dalek::Signer;
-use fern::native_store::Store;
-use fern_ledger::{block::Header, patricia::Proof};
-use fern_stake::{
+use stem::native_store::Store;
+use stem_ledger::{block::Header, patricia::Proof};
+use stem_stake::{
     Authority, Registry,
     l1::{Policy, StakeCell, guardian_generation, retirement_cell, retirement_digest},
 };
@@ -70,7 +70,7 @@ impl AuthorizeRetirement {
         let genesis = spec
             .stake
             .as_ref()
-            .context("Fern genesis has no Stake Registry")?;
+            .context("Stem genesis has no Stake Registry")?;
         let domain = genesis.statement.domain;
         let registry_type: Script = request.registry_type.into();
         let registry_id = registry_type.calc_script_hash().unpack();
@@ -79,9 +79,9 @@ impl AuthorizeRetirement {
         ensure!(
             domain.registry_id == registry_id
                 && domain.ckb_genesis == policy.ckb_genesis
-                && domain.fern_network_id == policy.network_id
+                && domain.stem_network_id == policy.network_id
                 && spec.chain_id == policy.chain_id,
-            "requested CKB Stake Registry differs from the trusted Fern configuration"
+            "requested CKB Stake Registry differs from the trusted Stem configuration"
         );
 
         let raw: JsonBytes = read_json_limited(&self.header, 4096)?;
@@ -110,14 +110,14 @@ impl AuthorizeRetirement {
                 marker.effective_height,
                 &Proof { nodes }
             ),
-            "invalid Fern retirement marker proof"
+            "invalid Stem retirement marker proof"
         );
 
         let genesis = native_spec::verify_comet_genesis(&spec, &self.comet_genesis)?;
         let result = Command::new(&self.proof_verifier)
             .arg("-genesis")
             .arg(&self.comet_genesis)
-            .arg("-fern-genesis")
+            .arg("-stem-genesis")
             .arg(hex::encode(genesis.as_slice()))
             .arg("-commit")
             .arg(&self.signed_successor)
@@ -132,7 +132,7 @@ impl AuthorizeRetirement {
             .output()?;
         ensure!(
             result.status.success(),
-            "Fern retirement signed successor: {}",
+            "Stem retirement signed successor: {}",
             String::from_utf8_lossy(&result.stderr)
         );
 
@@ -226,8 +226,8 @@ impl AuthorizeRetirement {
             .context("signing key is outside the current guardian authority")?;
         let journal_key = ckb_hash::blake2b_256(
             [
-                b"Fern guardian Stake Retirement Journal\0".as_slice(),
-                &domain.fern_network_id,
+                b"Stem guardian Stake Retirement Journal\0".as_slice(),
+                &domain.stem_network_id,
                 &registry_id,
             ]
             .concat(),

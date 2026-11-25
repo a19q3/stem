@@ -107,7 +107,7 @@ pub struct Patricia {
 impl Patricia {
     pub fn new(network: Byte32, namespace: Namespace) -> Self {
         let empty = key(hash(
-            b"Fern empty Patricia tree\0",
+            b"Stem empty Patricia tree\0",
             &network,
             &[&[namespace.tag()]],
         )
@@ -125,7 +125,7 @@ impl Patricia {
 
     fn node_hash(&self, encoded: &[u8]) -> Key {
         key(hash(
-            b"Fern Patricia node\0",
+            b"Stem Patricia node\0",
             &self.network,
             &[&[self.namespace.tag()], encoded],
         )
@@ -134,7 +134,7 @@ impl Patricia {
 
     pub fn value_hash(&self, bytes: &[u8]) -> Key {
         key(hash(
-            b"Fern state record\0",
+            b"Stem state record\0",
             &self.network,
             &[&[self.namespace.tag()], bytes],
         )
@@ -143,7 +143,7 @@ impl Patricia {
 
     pub fn record_key(&self, name: &[u8]) -> Key {
         key(hash(
-            b"Fern state key\0",
+            b"Stem state key\0",
             &self.network,
             &[&[self.namespace.tag()], name],
         )

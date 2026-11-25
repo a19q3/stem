@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use ckb_types::packed::{Byte32, OutPoint};
-use fern_stake::Authority;
+use stem_stake::Authority;
 
 use super::{BlockBudget, L1Anchor, Operation, SettlementAction, VaultUpdate, verify_settlement};
 use crate::Transaction;

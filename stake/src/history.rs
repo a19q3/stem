@@ -1,4 +1,4 @@
-//! The shared native Header accumulator used by Fern and L1 checkpoints.
+//! The shared native Header accumulator used by Stem and L1 checkpoints.
 
 use alloc::vec::Vec;
 
@@ -50,7 +50,7 @@ impl Frontier {
     }
 
     pub fn root(&self) -> Hash32 {
-        digest(b"Fern history root\0", &[&self.network, &self.encode()])
+        digest(b"Stem history root\0", &[&self.network, &self.encode()])
     }
 
     pub fn append(&mut self, height: u64, header: &Hash32) -> Result<()> {
@@ -184,13 +184,13 @@ fn peak(count: u64, height: u64) -> Option<(usize, u64, u32)> {
 
 pub fn leaf(network: &Hash32, height: u64, header: &Hash32) -> Hash32 {
     digest(
-        b"Fern history Header\0",
+        b"Stem history Header\0",
         &[network, &height.to_le_bytes(), header],
     )
 }
 
 pub fn merge(network: &Hash32, left: &Hash32, right: &Hash32) -> Hash32 {
-    digest(b"Fern history node\0", &[network, left, right])
+    digest(b"Stem history node\0", &[network, left, right])
 }
 
 /// Read the minimal sibling path from an archive index.

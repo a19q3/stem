@@ -3,9 +3,9 @@ use std::{path::PathBuf, process::Command};
 use anyhow::{Context, Result, ensure};
 use ckb_types::{packed::Byte32, prelude::*};
 use clap::{Args, Subcommand};
-use fern::{native_store::HistoryIndex, native_store::Store};
-use fern_ledger::patricia::Proof;
-use fern_stake::{
+use stem::{native_store::HistoryIndex, native_store::Store};
+use stem_ledger::patricia::Proof;
+use stem_stake::{
     BlockId,
     checkpoint::{Checkpoint, Domain, Update, ZERO_OUT_POINT, stake_snapshot_commitment},
 };
@@ -19,7 +19,7 @@ use crate::{
 
 #[derive(Subcommand)]
 pub enum CheckpointCommand {
-    /// Prepare a checkpoint from authenticated Fern state and a signed successor.
+    /// Prepare a checkpoint from authenticated Stem state and a signed successor.
     Prepare(Box<Prepare>),
     /// Verify the canonical publication certificate before embedding it in a CKB witness.
     Verify(Box<Verify>),
@@ -34,7 +34,7 @@ pub enum CheckpointCommand {
 
 #[derive(Args)]
 pub struct Archive {
-    /// Path to the archive Fern node's application database.
+    /// Path to the archive Stem node's application database.
     #[arg(long)]
     archive_db: PathBuf,
     /// Path to a separate, rebuildable RocksDB proof index.
@@ -200,12 +200,12 @@ impl Prepare {
         let spec = native_spec::load(&self.genesis)?;
         ensure!(
             spec.network == network,
-            "archive network differs from trusted Fern genesis"
+            "archive network differs from trusted Stem genesis"
         );
         let genesis = native_spec::verify_comet_genesis(&spec, &self.comet_genesis)?;
         ensure!(
             index.header(0)?.id(&network) == genesis,
-            "archive belongs to a different Fern genesis"
+            "archive belongs to a different Stem genesis"
         );
         let header = index.header(self.archive.height)?;
         let stake_snapshot = if let Some(stake) = spec.stake {
@@ -247,7 +247,7 @@ impl Prepare {
         verifier
             .arg("-genesis")
             .arg(&self.comet_genesis)
-            .arg("-fern-genesis")
+            .arg("-stem-genesis")
             .arg(hex::encode(genesis.as_slice()))
             .arg("-commit")
             .arg(&self.signed_successor)
@@ -352,11 +352,11 @@ impl Verify {
         )?;
         let update: String = read_json_limited(
             &self.update,
-            2 * fern_stake::checkpoint::MAX_UPDATE_BYTES + 16,
+            2 * stem_stake::checkpoint::MAX_UPDATE_BYTES + 16,
         )?;
         let update = Update::decode(&restricted_bytes(
             &update,
-            fern_stake::checkpoint::MAX_UPDATE_BYTES,
+            stem_stake::checkpoint::MAX_UPDATE_BYTES,
         )?)?;
         let suffix = proposal
             .suffix

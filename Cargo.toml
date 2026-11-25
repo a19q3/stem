@@ -1,11 +1,11 @@
 [package]
-name = "fern"
+name = "stem"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95.0"
 license = "MIT"
-description = "Fern, a CKB-native sidechain"
-repository = "https://github.com/a19q3/fern"
+description = "Stem, a CKB-native sidechain"
+repository = "https://github.com/a19q3/stem"
 publish = false
 
 [dependencies]
@@ -16,10 +16,10 @@ ckb-crypto.workspace = true
 ckb-db.workspace = true
 ckb-hash.workspace = true
 ckb-jsonrpc-types.workspace = true
-fern-bridge-wire = { path = "bridge-wire" }
-fern-ledger = { path = "ledger" }
-fern-stake = { path = "stake" }
-fern-vm = { path = "vm" }
+stem-bridge-wire = { path = "bridge-wire" }
+stem-ledger = { path = "ledger" }
+stem-stake = { path = "stake" }
+stem-vm = { path = "vm" }
 ckb-types.workspace = true
 ed25519-dalek.workspace = true
 clap = { workspace = true, features = ["derive"] }

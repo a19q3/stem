@@ -11,7 +11,7 @@ mod native_spec;
 #[cfg(unix)]
 mod native_wallet;
 #[cfg(unix)]
-use fern::socket;
+use stem::socket;
 #[cfg(unix)]
 mod stake_cli;
 
@@ -38,7 +38,7 @@ struct Cli {
 #[cfg(unix)]
 #[derive(Subcommand)]
 enum Command {
-    /// Build and sign native Fern transactions.
+    /// Build and sign native Stem transactions.
     Wallet {
         #[command(subcommand)]
         command: native_wallet::Wallet,
@@ -63,7 +63,7 @@ enum Command {
         #[command(subcommand)]
         command: checkpoint_cli::CheckpointCommand,
     },
-    /// Validate native application genesis and print its Fern Header ID.
+    /// Validate native application genesis and print its Stem Header ID.
     GenesisHash {
         #[arg(long)]
         genesis: PathBuf,
@@ -108,10 +108,10 @@ fn main() -> Result<()> {
             use ckb_types::prelude::Entity;
             let spec = native_spec::load(&genesis)?;
             let directory = tempfile::tempdir()?;
-            let store = fern::native_store::Store::open(
+            let store = stem::native_store::Store::open(
                 directory.path(),
                 &spec,
-                fern::native_store::Retention::Archive,
+                stem::native_store::Retention::Archive,
             )?;
             bridge_cli::print_json(&format!("0x{}", hex::encode(store.genesis_id().as_slice())))
         }
@@ -152,12 +152,12 @@ fn main() -> Result<()> {
                 "application home must be a private directory with mode 0700"
             );
             let retention = if archive {
-                fern::native_store::Retention::Archive
+                stem::native_store::Retention::Archive
             } else {
-                fern::native_store::Retention::Recent(history_window)
+                stem::native_store::Retention::Recent(history_window)
             };
-            let store = fern::native_store::Store::open(&home.join("db"), &spec, retention)?;
-            let app = fern::native_abci::App::new(
+            let store = stem::native_store::Store::open(&home.join("db"), &spec, retention)?;
+            let app = stem::native_abci::App::new(
                 store,
                 workers,
                 &home.join("snapshots"),
@@ -176,6 +176,6 @@ fn main() -> Result<()> {
 
 #[cfg(not(unix))]
 fn main() -> std::process::ExitCode {
-    eprintln!("fern requires Unix-domain sockets");
+    eprintln!("stem requires Unix-domain sockets");
     std::process::ExitCode::FAILURE
 }
