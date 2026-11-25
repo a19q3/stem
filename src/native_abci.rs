@@ -296,14 +296,16 @@ impl App {
                     "Live Cell queries require the current height"
                 );
                 let point = OutPoint::from_slice(&request.data)?;
-                let (cell, proof) = store.prove_cell(&point)?;
+                let (cell, proof) = if request.prove {
+                    let (cell, proof) = store.prove_cell(&point)?;
+                    (cell, Some(format!("0x{}", hex::encode(proof.encode()?))))
+                } else {
+                    (store.live_cell(&point)?, None)
+                };
                 let cell = cell
                     .as_ref()
                     .map(|cell| hex::encode(record::encode_cell(&point, cell)));
-                let nodes = request
-                    .prove
-                    .then(|| proof.nodes.iter().map(hex::encode).collect::<Vec<_>>());
-                serde_json::to_vec(&serde_json::json!({"cell": cell, "nodes": nodes}))?.into()
+                serde_json::to_vec(&serde_json::json!({"cell": cell, "proof": proof}))?.into()
             }
             "/stem/execution" => {
                 let index = u32::from_le_bytes(request.data.as_ref().try_into()?);
@@ -321,11 +323,10 @@ impl App {
                         Tree::transactions(store.network().clone(), &transactions)?.prove(index)?;
                     let receipt =
                         Tree::receipts(store.network().clone(), &receipts)?.prove(index)?;
-                    Some(serde_json::json!({
-                        "index": index, "count": tx.count,
-                        "transaction_siblings": tx.siblings.iter().map(|hash| hex::encode(hash.as_slice())).collect::<Vec<_>>(),
-                        "receipt_siblings": receipt.siblings.iter().map(|hash| hex::encode(hash.as_slice())).collect::<Vec<_>>(),
-                    }))
+                    Some(format!(
+                        "0x{}",
+                        hex::encode(tx.encode_execution_pair(&receipt)?)
+                    ))
                 } else {
                     None
                 };

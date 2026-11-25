@@ -66,7 +66,11 @@ The benchmark uses the same four-node harness. Set `STEM_TEST_LOADGEN`, `STEM_TE
 
 `stem wallet build --request request.json` encodes inputs, outputs, dependencies and optional ordered `messages` and `proofs`. `stem wallet sign` needs the native genesis, complete requested Lock Script, group index and `--context` file. Its `cells` array contains `{"out_point": ..., "cell": "0x..."}` records for all inputs, explicit dependencies and expanded Dep Group members. Its optional `headers` array contains canonical encoded Header Deps. Obtain and authenticate these records against the expected chain state before signing. `stem wallet id --network HASH` reads the JSON hex transaction from stdin. `stem ckb-wallet` uses the CKB-native encoding for L1 signing.
 
+A separate payer can sign its Lock Group with `--sponsor-max-debit SHANNONS` after the participants fix the full transaction. The wallet requires plain Capacity inputs and change for that group. It checks that the payer's net debit fits the supplied cap and the actual total transaction fee. Each signer authorizes the same transaction and can add its seal independently.
+
 `stem wallet find` discovers by complete Lock or Type Script hash in a local, read-only application database. Repeat the returned height and cursor for a consistent page sequence. Query selected OutPoints through ABCI for corresponding authenticated proofs.
+
+With `prove=true`, `/stem/cell` returns a hex Telegraph `PatriciaPath` in its `proof` field. `/stem/execution` returns a hex Telegraph `ExecutionProof` with one position and count for both Merkle paths. Verify each proof against the corresponding root in the authenticated Stem Header.
 
 CometBFT serves ABCI queries at `/stem/header`, `/stem/cell` and `/stem/execution`. A Live Cell query uses the packed OutPoint. An execution query uses a little-endian `u32` transaction index and a block height. Use `prove=true` for the Patricia path or the matching transaction and receipt Merkle paths. To authenticate header height H, verify the CometBFT commit at H+1 against the native AppHash. Supply signed handoff certificates when validator sets have changed.
 

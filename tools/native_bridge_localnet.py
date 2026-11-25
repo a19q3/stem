@@ -200,7 +200,7 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
     if query["code"] != 0:
         raise AssertionError(query)
     proof = json.loads(base64.b64decode(query["value"]))
-    if not proof["cell"] or not proof["nodes"]:
+    if not proof["cell"] or not proof["proof"]:
         raise AssertionError("native mint did not create the funded Live Cell and proof")
     return {"l1_consolidation": consolidated, "l1_proof": l1.prove_committed(consolidated),
             "l1_deposits": deposited, "mint": minted, "mint_id": mint_id, "capacity": total,

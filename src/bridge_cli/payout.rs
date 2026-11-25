@@ -42,28 +42,9 @@ struct PayoutRequest {
     header: JsonBytes,
     transaction: JsonBytes,
     receipt: JsonBytes,
-    proof: Paths,
+    proof: JsonBytes,
     commit: PathBuf,
     handoffs: Option<PathBuf>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Paths {
-    index: u32,
-    count: u32,
-    transaction_siblings: Vec<HexHash>,
-    receipt_siblings: Vec<HexHash>,
-}
-
-#[derive(Deserialize)]
-#[serde(transparent)]
-struct HexHash(String);
-
-impl HexHash {
-    fn decode(&self) -> Result<Byte32> {
-        Ok(parse_hash(&self.0)?.pack())
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -184,19 +165,8 @@ impl AttestPayout {
         );
         let raw = Transaction::from_slice(request.transaction.as_bytes())?;
         let receipt = Receipt::decode(request.receipt.as_bytes())?;
-        let inclusion = |siblings: &[HexHash]| -> Result<InclusionProof> {
-            ensure!(siblings.len() <= 32, "oversized Merkle proof");
-            Ok(InclusionProof {
-                position: request.proof.index,
-                count: request.proof.count,
-                siblings: siblings
-                    .iter()
-                    .map(HexHash::decode)
-                    .collect::<Result<_>>()?,
-            })
-        };
-        let tx_proof = inclusion(&request.proof.transaction_siblings)?;
-        let receipt_proof = inclusion(&request.proof.receipt_siblings)?;
+        let (tx_proof, receipt_proof) =
+            InclusionProof::decode_execution_pair(request.proof.as_bytes())?;
         ensure!(
             tx_proof.verify_execution(
                 &spec.network,

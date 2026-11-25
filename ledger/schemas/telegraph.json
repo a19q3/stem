@@ -698,6 +698,38 @@
       "name": "GroupMessageVec",
       "kind": "dense_vector",
       "item": "GroupMessage"
+    },
+    {
+      "name": "CompactUint32",
+      "kind": "uleb",
+      "bits": 32
+    },
+    {
+      "name": "ExecutionProof",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "position",
+          "type": "CompactUint32"
+        },
+        {
+          "name": "count",
+          "type": "CompactUint32"
+        },
+        {
+          "name": "transaction_siblings",
+          "type": "Byte32Vec"
+        },
+        {
+          "name": "receipt_siblings",
+          "type": "Byte32Vec"
+        }
+      ]
+    },
+    {
+      "name": "PatriciaPath",
+      "kind": "dense_vector",
+      "item": "Bytes"
     }
   ]
 }

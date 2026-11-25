@@ -61,6 +61,9 @@ pub enum Wallet {
         lock: PathBuf,
         #[arg(long)]
         key_file: PathBuf,
+        /// Authorize a fee-only contribution of at most this many shannons from this Lock Group.
+        #[arg(long)]
+        sponsor_max_debit: Option<u64>,
     },
 }
 
@@ -256,6 +259,7 @@ impl Wallet {
                 group_index,
                 lock,
                 key_file,
+                sponsor_max_debit,
             } => {
                 let network = native_spec::load(&genesis)?.network;
                 let transaction: JsonBytes = read_json_limited(&transaction, 2 * 1024 * 1024)?;
@@ -293,25 +297,23 @@ impl Wallet {
                         "duplicate Header in signing context"
                     );
                 }
-                let digest = tx.signing_digest(
-                    &network,
-                    group_index,
-                    &lock,
-                    |point| {
-                        Cell::from_slice(
-                            cells
-                                .get(point)
-                                .context("signing context is missing a Cell")?
-                                .as_bytes(),
-                        )
-                    },
-                    |id| {
-                        headers
-                            .get(id)
-                            .cloned()
-                            .context("signing context is missing a Header")
-                    },
-                )?;
+                let get_cell = |point: &packed::OutPoint| {
+                    Cell::from_slice(
+                        cells
+                            .get(point)
+                            .context("signing context is missing a Cell")?
+                            .as_bytes(),
+                    )
+                };
+                if let Some(max_debit) = sponsor_max_debit {
+                    check_sponsor(&tx, &lock, max_debit, get_cell)?;
+                }
+                let digest = tx.signing_digest(&network, group_index, &lock, get_cell, |id| {
+                    headers
+                        .get(id)
+                        .cloned()
+                        .context("signing context is missing a Header")
+                })?;
                 let signature = key.sign_recoverable(&digest.unpack())?;
                 let mut witnesses = tx
                     .witnesses()
@@ -335,6 +337,50 @@ impl Wallet {
     }
 }
 
+fn check_sponsor(
+    tx: &Transaction,
+    lock: &PackedScript,
+    max_debit: u64,
+    mut load: impl FnMut(&packed::OutPoint) -> Result<Cell>,
+) -> Result<()> {
+    fn capacity(
+        mut cells: impl Iterator<Item = Result<Cell>>,
+        sponsor_lock: &PackedScript,
+    ) -> Result<(u64, u64)> {
+        cells.try_fold((0u64, 0u64), |(total, sponsored), item| {
+            let cell = item?;
+            let total = total
+                .checked_add(cell.capacity())
+                .context("Capacity overflow")?;
+            if cell.lock() != *sponsor_lock {
+                return Ok((total, sponsored));
+            }
+            ensure!(
+                cell.type_scripts().len() == 0 && cell.data().is_empty(),
+                "sponsor inputs and change must be plain Capacity Cells"
+            );
+            Ok((
+                total,
+                sponsored
+                    .checked_add(cell.capacity())
+                    .context("sponsor Capacity overflow")?,
+            ))
+        })
+    }
+    let (inputs, provided) = capacity(tx.inputs().map(|input| load(&input.previous_output)), lock)?;
+    let (outputs, change) = capacity(tx.outputs().map(Ok), lock)?;
+    let fee = inputs
+        .checked_sub(outputs)
+        .context("transaction creates Capacity")?;
+    ensure!(provided > 0, "no sponsor inputs");
+    let debit = provided.saturating_sub(change);
+    ensure!(
+        debit <= max_debit && debit <= fee,
+        "sponsor debit exceeds authorized fee contribution"
+    );
+    Ok(())
+}
+
 fn key(path: &std::path::Path) -> Result<Privkey> {
     use std::{fs::File, io::Read, os::unix::fs::PermissionsExt};
     let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
@@ -347,4 +393,47 @@ fn key(path: &std::path::Path) -> Result<Privkey> {
     file.take(33).read_to_end(&mut bytes)?;
     ensure!(bytes.len() == 32, "wallet key must be 32 raw bytes");
     Ok(Privkey::from_slice(&bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fee_only_sponsor_checks_the_net_debit_and_the_actual_fee() -> Result<()> {
+        let sponsor = PackedScript::default();
+        let trader = PackedScript::new_builder()
+            .args(Bytes::from_static(b"trader"))
+            .build();
+        let input = packed::OutPoint::new([1; 32].pack(), 0);
+        let own = packed::OutPoint::new([2; 32].pack(), 0);
+        let trade = Cell::new(100, trader.clone(), vec![], Bytes::new())?;
+        let paid = Cell::new(30, sponsor.clone(), vec![], Bytes::new())?;
+        let load = |point: &packed::OutPoint| {
+            Ok(if point == &input {
+                trade.clone()
+            } else {
+                paid.clone()
+            })
+        };
+        let draft = |seller| -> Result<Transaction> {
+            Transaction::new(
+                vec![],
+                vec![],
+                vec![
+                    CellInput::new(input.clone(), None),
+                    CellInput::new(own.clone(), None),
+                ],
+                vec![
+                    Cell::new(seller, trader.clone(), vec![], Bytes::new())?,
+                    Cell::new(20, sponsor.clone(), vec![], Bytes::new())?,
+                ],
+                vec![],
+            )
+        };
+        check_sponsor(&draft(100)?, &sponsor, 10, load)?;
+        assert!(check_sponsor(&draft(100)?, &sponsor, 9, load).is_err());
+        assert!(check_sponsor(&draft(101)?, &sponsor, 10, load).is_err());
+        Ok(())
+    }
 }

@@ -3,9 +3,13 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail, ensure};
-use ckb_types::{packed::Byte32, prelude::Entity};
+use ckb_types::{bytes::Bytes, packed::Byte32, prelude::Entity};
 
-use crate::hash;
+use crate::{
+    hash,
+    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    wire,
+};
 
 pub type Key = [u8; 32];
 
@@ -213,6 +217,42 @@ impl Patricia {
 pub struct Proof {
     /// The path from the root to the matching leaf or the point of divergence.
     pub nodes: Vec<Vec<u8>>,
+}
+
+impl Proof {
+    pub fn encode(&self) -> Result<Bytes> {
+        ensure!(self.nodes.len() <= 257, "oversized Patricia path");
+        let nodes = self
+            .nodes
+            .iter()
+            .map(|node| {
+                Node::decode(node)?;
+                Ok(wire::Bytes::from_raw_data(node)?)
+            })
+            .collect::<Result<_>>()?;
+        Ok(wire::PatriciaPath::new_builder()
+            .set(nodes)
+            .build()
+            .as_bytes())
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() <= 4 + 257 * (4 + 98),
+            "oversized Patricia proof"
+        );
+        let encoded = wire::PatriciaPath::from_slice(bytes)?;
+        ensure!(encoded.len() <= 257, "oversized Patricia path");
+        let nodes = encoded
+            .into_iter()
+            .map(|node| {
+                let raw = node.raw_data();
+                Node::decode(&raw)?;
+                Ok(raw.to_vec())
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self { nodes })
+    }
 }
 
 pub struct Edit<'tree, Read> {

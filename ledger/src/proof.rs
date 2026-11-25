@@ -1,12 +1,14 @@
 //! Ordered Merkle trees for witnessed transactions and execution receipts.
 
 use anyhow::{Result, ensure};
-use ckb_types::{packed::Byte32, prelude::Entity};
+use ckb_types::{bytes::Bytes, packed::Byte32, prelude::Entity};
 
 use crate::{
     Transaction,
     block::{ExecutionCommitment, Receipt},
     hash,
+    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    wire,
 };
 
 const TX_ROOT: &[u8] = b"Stem transaction Merkle root\0";
@@ -98,6 +100,71 @@ pub struct InclusionProof {
 }
 
 impl InclusionProof {
+    pub fn encode_execution_pair(&self, receipt: &Self) -> Result<Bytes> {
+        ensure!(
+            self.position == receipt.position && self.count == receipt.count,
+            "execution proof positions differ"
+        );
+        let (_, depth) = proof_path(self.position, self.count)
+            .ok_or_else(|| anyhow::anyhow!("invalid proof position"))?;
+        ensure!(
+            self.siblings.len() == depth && receipt.siblings.len() == depth,
+            "invalid execution proof depth"
+        );
+        let siblings = |items: &[Byte32]| {
+            wire::Byte32Vec::new_builder()
+                .set(
+                    items
+                        .iter()
+                        .map(|hash| wire::Byte32::new_unchecked(hash.as_bytes()))
+                        .collect(),
+                )
+                .build()
+        };
+        Ok(wire::ExecutionProof::new_builder()
+            .position(
+                wire::CompactUint32::new_builder()
+                    .set(self.position.into())
+                    .build(),
+            )
+            .count(
+                wire::CompactUint32::new_builder()
+                    .set(self.count.into())
+                    .build(),
+            )
+            .transaction_siblings(siblings(&self.siblings))
+            .receipt_siblings(siblings(&receipt.siblings))
+            .build()
+            .as_bytes())
+    }
+
+    pub fn decode_execution_pair(bytes: &[u8]) -> Result<(Self, Self)> {
+        ensure!(
+            bytes.len() <= 2 * 5 + 2 * (4 + 32 * 32),
+            "oversized execution proof"
+        );
+        let proof = wire::ExecutionProof::from_slice(bytes)?;
+        let position = proof.position().as_reader().value().try_into()?;
+        let count = proof.count().as_reader().value().try_into()?;
+        let (_, depth) =
+            proof_path(position, count).ok_or_else(|| anyhow::anyhow!("invalid proof position"))?;
+        let decode = |siblings: wire::Byte32Vec| -> Result<Self> {
+            ensure!(siblings.len() == depth, "invalid execution proof depth");
+            Ok(Self {
+                position,
+                count,
+                siblings: siblings
+                    .into_iter()
+                    .map(|item| Byte32::new_unchecked(item.as_bytes()))
+                    .collect(),
+            })
+        };
+        Ok((
+            decode(proof.transaction_siblings())?,
+            decode(proof.receipt_siblings())?,
+        ))
+    }
+
     pub fn verify_transaction(&self, network: &Byte32, root: &Byte32, tx: &Transaction) -> bool {
         self.verify(TX_ROOT, network, root, tx.commitment(network))
     }
@@ -122,28 +189,14 @@ impl InclusionProof {
     }
 
     fn verify(&self, domain: &[u8], network: &Byte32, root: &Byte32, mut leaf: Byte32) -> bool {
-        if self.position >= self.count || self.siblings.len() > 32 {
+        let Some((directions, depth)) = proof_path(self.position, self.count) else {
+            return false;
+        };
+        if depth != self.siblings.len() {
             return false;
         }
-        let mut position = self.position as usize;
-        let mut count = self.count as usize;
-        let mut right_branches = Vec::new();
-        while count > 1 {
-            let split = split_point(count);
-            let right = position >= split;
-            right_branches.push(right);
-            if right {
-                position -= split;
-                count -= split;
-            } else {
-                count = split;
-            }
-        }
-        if right_branches.len() != self.siblings.len() {
-            return false;
-        }
-        for (right, sibling) in right_branches.into_iter().zip(&self.siblings).rev() {
-            leaf = if right {
+        for (step, sibling) in self.siblings.iter().enumerate().rev() {
+            leaf = if directions & (1 << step) != 0 {
                 merge(network, sibling, &leaf)
             } else {
                 merge(network, &leaf, sibling)
@@ -151,6 +204,27 @@ impl InclusionProof {
         }
         bind_root(domain, network, self.count, &leaf) == *root
     }
+}
+
+fn proof_path(position: u32, count: u32) -> Option<(u32, usize)> {
+    if position >= count {
+        return None;
+    }
+    let (mut position, mut count) = (position as usize, count as usize);
+    let mut directions = 0;
+    let mut depth = 0;
+    while count > 1 {
+        let split = split_point(count);
+        if position >= split {
+            directions |= 1 << depth;
+            position -= split;
+            count -= split;
+        } else {
+            count = split;
+        }
+        depth += 1;
+    }
+    Some((directions, depth))
 }
 
 fn receipt_hash(network: &Byte32, receipt: &Receipt) -> Byte32 {

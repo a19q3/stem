@@ -108,3 +108,41 @@ RocksDB compaction still require measurement.
 cargo test --locked --release --test native_store \
   measure_commit_with_fixed_changes_and_varying_state_and_history -- --ignored --nocapture
 ```
+
+
+## Additional native workloads
+
+The same four-local-validator harness offered 600 payments at 120/s in each
+Type Script workload. The burst offered 1,800 payments at 1,000/s. These
+are short windows with drain and unchanged limits. All offered transactions
+were admitted and confirmed on all replicas in these runs. Client drops
+were zero.
+
+| Workload | Offered / admitted TPS | Confirmed TPS | Visible p50 / p95 / p99 (s) | CPU (s) | Peak RSS (MiB) | Process writes (MiB) | P2P sent / received (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Single | 120 / 120 | 96.05 | 1.211 / 1.811 / 1.921 | 3.22 | 335.2 | 25.4 | 3.53 / 3.53 |
+| Double | 120 / 120 | 99.92 | 1.146 / 1.703 / 1.813 | 3.30 | 339.0 | 27.4 | 4.30 / 4.30 |
+| Multi | 120 / 120 | 95.07 | 1.386 / 1.985 / 2.097 | 3.70 | 342.3 | 30.1 | 4.90 / 4.85 |
+| Settlement | 120 / 120 | 100.93 | 1.168 / 1.753 / 1.835 | 4.20 | 377.1 | 42.9 | 8.21 / 8.20 |
+| Payment burst | 1000 / 1000 | 118.66 | 6.391 / 13.370 / 13.442 | 18.54 | 410.9 | 66.6 | 7.88 / 7.87 |
+
+The 1,000/s payment burst accumulated a confirmation queue under the fixed
+cycle limit. The individual Type Script rows use different contracts and
+are single runs, so their differences do not isolate a marginal Type
+Script cost. The full per-run counters, parser measurements and storage
+samples are in the [raw measurement archive](benchmarks/2026-11-25-stem-native.json.xz).
+
+## Funded payments during L1 stake handoff
+
+Two local Stem replicas used a real CKB devnet vault deposit to fund the
+payments. The run offered and admitted 384 payments at 8.00 TPS, and all
+384 became visible on both replicas at 7.57 confirmed TPS. Visibility
+p50, p95 and p99 were 1.919 s, 3.445 s and 3.733 s. Client drops were
+zero. The sampled window recorded 6.57 CPU seconds, 182,784,000 peak RSS
+bytes, 29,601,792 process write bytes and 244,743 / 243,133 P2P bytes
+sent / received.
+
+The run applied validator updates at heights 9 and 19, authenticated their
+successors and unbonded 250 CKB. The Checkpoint Type ID contract accepted
+publications for Stem heights 11 and 24. The [native stake runner](OPERATIONS.md#exercise-the-ckb-stake-registry)
+reproduces this workload with its optional funding and load-generator flags.

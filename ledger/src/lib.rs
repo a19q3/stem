@@ -1270,6 +1270,9 @@ mod tests {
         let mut edit = tree.edit(tree.empty_root(), |_| Ok(None));
         edit.set(key, Some(record::cell_value(&tree, &point, &record)))?;
         let (_, proof) = edit.prove(&key)?;
+        let encoded_path = proof.encode()?;
+        let proof = patricia::Proof::decode(&encoded_path)?;
+        assert!(patricia::Proof::decode(&encoded_path[..encoded_path.len() - 1]).is_err());
         assert!(record::verify_cell(
             &tree,
             &edit.root(),
@@ -1294,6 +1297,40 @@ mod tests {
         assert!(!proof.verify_transaction(&network, &transactions.root(), &raw));
         assert!(!proof.verify_transaction(&[7; 32].pack(), &transactions.root(), &tx));
         assert!(transactions.prove(2).is_err());
+        let receipts = vec![
+            block::Receipt {
+                fee: 0,
+                cycles: 1,
+                protocol_result: Bytes::new(),
+            },
+            block::Receipt {
+                fee: 1,
+                cycles: 2,
+                protocol_result: Bytes::new(),
+            },
+        ];
+        let receipt_tree = proof::Tree::receipts(network.clone(), &receipts)?;
+        assert!(
+            proof
+                .encode_execution_pair(&receipt_tree.prove(0)?)
+                .is_err()
+        );
+        let execution = proof.encode_execution_pair(&receipt_tree.prove(1)?)?;
+        let (transaction, receipt) = proof::InclusionProof::decode_execution_pair(&execution)?;
+        assert!(transaction.verify_execution(
+            &network,
+            &block::ExecutionCommitment {
+                transaction_root: transactions.root(),
+                receipt_root: receipt_tree.root(),
+            },
+            &tx,
+            &receipt,
+            &receipts[1],
+        ));
+        assert!(
+            proof::InclusionProof::decode_execution_pair(&execution[..execution.len() - 1])
+                .is_err()
+        );
         Ok(())
     }
 

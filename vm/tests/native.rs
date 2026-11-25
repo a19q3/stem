@@ -342,6 +342,64 @@ fn complete_authorization_binds_input_data_and_dep_group_members() -> Result<()>
 }
 
 #[test]
+fn separate_lock_groups_collect_seals_independently() -> Result<()> {
+    let mut network = Network::new()?;
+    let sponsor = Privkey::from_slice(&[60; 32]);
+    let key_hash = blake2b_256(sponsor.pubkey()?.serialize());
+    let sponsor_lock = network
+        .lock
+        .clone()
+        .as_builder()
+        .args(Bytes::copy_from_slice(&key_hash[..20]))
+        .build();
+    let paid = Cell::new(CAPACITY, sponsor_lock.clone(), vec![], Bytes::new())?;
+    let transfer = network.output(vec![], Bytes::new())?;
+    let inputs = vec![network.add_input(transfer.clone()), network.add_input(paid)];
+    let change = Cell::new(CAPACITY - 10, sponsor_lock.clone(), vec![], Bytes::new())?;
+    let draft = Transaction::new(
+        network.deps.clone(),
+        vec![],
+        inputs,
+        vec![transfer, change],
+        vec![],
+    )?;
+    let mut signers = [(&network.lock, &network.key), (&sponsor_lock, &sponsor)];
+    signers.sort_by(|left, right| left.0.as_slice().cmp(right.0.as_slice()));
+    let digest = |tx: &Transaction, group, lock: &Script| {
+        tx.signing_digest(
+            &network.id,
+            group,
+            lock,
+            |point| network.cells.get(point).cloned().context("missing Cell"),
+            |_| anyhow::bail!("unexpected Header Dep"),
+        )
+    };
+    assert!(digest(&draft, 1, signers[0].0).is_err());
+    let seal = |group, hash: Byte32, key: &Privkey| -> Result<GroupWitness> {
+        Ok(GroupWitness {
+            group_index: group,
+            proof_data: Bytes::new(),
+            seal: Bytes::from(key.sign_recoverable(&hash.unpack())?.serialize()),
+        })
+    };
+    let first = seal(0, digest(&draft, 0, signers[0].0)?, signers[0].1)?;
+    let with_first = draft.with_witnesses(vec![first.clone()])?;
+    let second_digest = digest(&draft, 1, signers[1].0)?;
+    assert_eq!(second_digest, digest(&with_first, 1, signers[1].0)?);
+    assert!(
+        verify(
+            network.resolve(&network.id, with_first)?,
+            CYCLE_LIMIT,
+            false
+        )
+        .is_err()
+    );
+    let signed = draft.with_witnesses(vec![first, seal(1, second_digest, signers[1].1)?])?;
+    verify(network.resolve(&network.id, signed)?, CYCLE_LIMIT, true)?;
+    Ok(())
+}
+
+#[test]
 fn multi_asset_settlement_runs_every_group_with_real_signature() -> Result<()> {
     let mut network = Network::new()?;
     let binaries = build_contracts(&mut network)?;
