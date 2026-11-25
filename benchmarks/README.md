@@ -19,6 +19,6 @@ available. Published network evidence contains public genesis and proof data.
 | Repeated native signature recovery | [Report](../BENCHMARKS.md#repeated-native-signature-recovery), [evidence](2026-11-25-stem-secp-reuse.json) |
 | Native Keeper | [Report](../BENCHMARKS.md#native-keeper), [evidence](2026-11-25-stem-keeper.json.xz) |
 | Independent bilateral Lineage authorization and Keeper settlement | [Report](../BENCHMARKS.md#sponsored-bilateral-lineage-settlement), [evidence](2026-11-25-stem-sponsored-lineage.json.xz) |
-| Direct CKB finality and scaled committee verification | [Report](../BENCHMARKS.md#direct-ckb-finality), [evidence](2026-11-25-stem-direct-finality.json.xz) |
+| Direct CKB finality and scaled committee verification | [Report](../BENCHMARKS.md#direct-ckb-finality), [initial rounds](2026-11-25-stem-direct-finality.json.xz), [pagination rerun](2026-11-25-stem-direct-finality-pagination.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
