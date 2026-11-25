@@ -291,7 +291,7 @@ With `prove=true`, `/stem/cell` returns a hex Strand `PatriciaPath` in its `proo
 
 Query `/stem/extinguished-fees` with `prove=true` and empty data to audit the cumulative fee tally at the current application height. The response contains `extinguished_shannons` as a hex u64 or `null` for an absent record, and a Strand Patricia proof. Authenticate the Header at the returned height through its signed successor, then verify against its SystemRoot using `Store::verify_extinguished_fees`. A verified absent record represents zero fees. The tally measures extinguished Capacity and can include fees from development allocations.
 
-On a bridged network, `/stem/bridge-backing` with `prove=true` and empty data returns a Strand `record` and `proof`, plus `liquid_shannons`, `circulating_shannons`, `pending_shannons` and `unallocated_shannons` as hex u64 values. Decode the record with `stem_ledger::protocol::BridgeBacking::decode` and the proof with `stem_ledger::patricia::Proof::decode`. Verify the record using `Store::verify_bridge_backing` with the trusted network identity and Header at the returned height. Use the verified record for numerical values. CKB vault liveness and confirmations follow the guardian observation model.
+On a bridged network, `/stem/bridge-backing` with `prove=true` and empty data returns a Strand `record` and `proof`. It includes liquid reserve, circulating Capacity, pending withdrawal liability, accrued stake rewards and unallocated reserve as hex u64 values in shannons. Decode the record with `stem_ledger::protocol::BridgeBacking::decode` and the path with `stem_ledger::patricia::Proof::decode`. Verify the record using `Store::verify_bridge_backing` with the trusted network identity and Header at the returned height. CKB vault liveness and confirmations follow the guardian observation model.
 
 Query `/stem/bridge-lane` with `prove=true` and the 32-byte lane ID as data. Decode its record with `stem_ledger::protocol::Lane::decode`, and check the lane ID, Header and record with `Store::verify_bridge_lane`. The returned counter alongside the Lane is the next request nonce. The Lane's `next_nonce` identifies the next withdrawal eligible for settlement.
 
@@ -455,13 +455,17 @@ Query `/stem/stake-reward-epoch` with `prove=true` and the eight-byte little-end
 stem stake reward-quote --network "$STEM_NETWORK" --header header.json --request reward.json
 ```
 
-The response gives the CKB recipient Lock hash, share, commission and stable position ID with its role. Build a claim with integer `amount` in shannons, `recipient` as the complete CKB JSON Lock, and an `epochs` list. Each entry contains `epoch`, the historical `registry` and `committee` bytes and `subjects` in the same shape as the quote request. All subject hashes must match the provided Lock, which must be supported by the network's withdrawal policy. A claim can combine up to eight epochs and 32 positions. Use the sum of their complete unpaid shares and ensure it meets the Lock's CKB occupied Capacity.
+The response gives the CKB recipient Lock hash, share, commission and stable position ID with its role. Build a claim with integer `payout` in shannons, `recipient` as the complete CKB JSON Lock, and an `epochs` list. Each entry contains `epoch`, the historical `registry` and `committee` bytes and `subjects` in the same shape as the quote request. All subject hashes must match the provided Lock, which must be supported by the network's withdrawal policy. A claim can combine up to eight epochs and 32 positions.
+
+Use `payout: 0` with new positions to accrue earnings without allocating a withdrawal nonce. To redeem only an accrued balance, set `payout` to the full balance and provide `epochs: []`. A claim may also add new earnings and redeem the full resulting balance in the same operation. Redemption requires the Lock's CKB occupied Capacity and sufficient unreserved capacity in the native vault.
 
 ```sh
 stem stake claim-rewards --request claim.json
 ```
 
-Broadcast the resulting transaction. Relay the pending receipt through the ordinary [checkpoint and fund payout flow](#redeem-fee-revenue-on-ckb). For guardian reconciliation following a committee change, supply the epoch handoff proofs along with the finalized execution proof. Query `/stem/stake-reward-claim` with `prove=true` and concatenate the little-endian eight-byte epoch, one-byte role and 32-byte position ID. A present record holds the 32-byte transaction ID and the little-endian u64 amount. Authenticate the result with `Store::verify_stake_reward_claim`. The record proves the claim was queued. The corresponding L1 payment and Stem settlement can be audited by its native lane nonce.
+Broadcast the resulting transaction. Query `/stem/stake-reward-balance` with `prove=true` and the 32-byte recipient Lock hash. Verify the response against its authenticated finalized Header using `stem stake verify-reward-balance --network NETWORK --owner LOCK_HASH --header header.json --proof balance.json`. If the transaction requests a payout, relay the pending receipt through the ordinary checkpoint and fund payout flow. For guardian reconciliation following a committee change, supply the epoch handoff proofs along with the finalized execution proof.
+
+To check one position, query `/stem/stake-reward-claim` with `prove=true` and concatenate the little-endian eight-byte epoch, one-byte role and 32-byte position ID. A present record holds the 32-byte accrual transaction ID and the little-endian u64 amount. Authenticate it with `Store::verify_stake_reward_claim`. Audit actual L1 payment and Stem settlement by the native lane nonce. [Redeem fee revenue on CKB](#redeem-fee-revenue-on-ckb)
 
 To exercise the complete verification path on devnet, use the same command and contract paths as the delegation exercise, with a fresh output directory and these additional options.
 
@@ -471,7 +475,7 @@ To exercise the complete verification path on devnet, use the same command and c
   --native-lock "$native_dir/stem-lock" --wrapped "$native_dir/bridge-udt"
 ```
 
-The runner bridges actual CKB, pays the experimental 800 CKB fee, verifies the closed epoch and validates each historical entitlement. It combines two small awards for a delegation beneficiary, redeems two native CKB withdrawals and reconciles the reserve. It rejects a forged historical principal and verifies that a following epoch with no paid fees adds no new budget.
+The runner bridges actual CKB, pays the experimental 800 CKB fee, verifies the closed epoch and validates each historical entitlement. It accrues two awards for a delegation beneficiary in separate transactions, restarts the active archive replica and verifies the recovered balance before redeeming it without repeating the historical proofs. It rejects a forged principal, a tampered balance proof and a payout calculated from a stale balance. Use a fresh development home for the genesis that commits accrued stake liabilities.
 
 ## Exercise CKB Checkpoint publication
 

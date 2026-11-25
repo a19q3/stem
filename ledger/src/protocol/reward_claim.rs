@@ -19,7 +19,8 @@ const MAX_POSITION_PROOF: usize = 32 + 256 * 32;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RewardClaim {
-    pub amount: u64,
+    /// Zero accrues the proved shares. A positive payout redeems the full resulting balance.
+    pub payout: u64,
     pub recipient: Script,
     pub epochs: Vec<RewardEpochProof>,
 }
@@ -130,7 +131,7 @@ impl RewardPosition {
 impl RewardClaim {
     pub(super) fn encode(&self) -> wire::RewardClaim {
         wire::RewardClaim::new_builder()
-            .amount(compact64(self.amount))
+            .payout(compact64(self.payout))
             .recipient(bytes(self.recipient.as_bytes()))
             .epochs(
                 wire::RewardEpochProofVec::new_builder()
@@ -164,13 +165,12 @@ impl RewardClaim {
 
     pub(super) fn decode(raw: &[u8]) -> Result<Self> {
         let value = wire::RewardClaim::from_slice(raw)?;
-        let amount = value.amount().as_reader().value().try_into()?;
+        let payout = value.payout().as_reader().value().try_into()?;
         let recipient = value.recipient().raw_data();
         let epochs = value.epochs();
-        ensure!(amount != 0, "reward claim amount must be positive");
         ensure!(
-            (1..=MAX_EPOCHS).contains(&epochs.len()),
-            "invalid reward epoch count"
+            epochs.len() <= MAX_EPOCHS && (payout != 0 || !epochs.is_empty()),
+            "reward claim requires positions or a payout"
         );
         let mut remaining = MAX_POSITIONS;
         let epochs = epochs
@@ -203,7 +203,7 @@ impl RewardClaim {
             "reward epochs must be ordered and unique"
         );
         Ok(Self {
-            amount,
+            payout,
             recipient: Script::from_slice(&recipient)?,
             epochs,
         })
@@ -219,6 +219,10 @@ pub fn reward_claim_key(epoch: u64, kind: u8, id: &Hash32) -> Vec<u8> {
         id,
     ]
     .concat()
+}
+
+pub fn reward_balance_key(owner: &Hash32) -> Vec<u8> {
+    [b"fees/stake-balances/".as_slice(), owner].concat()
 }
 
 #[cfg(test)]
@@ -250,7 +254,7 @@ mod tests {
             positions: vec![validator.clone(), delegation.clone()],
         };
         let claim = RewardClaim {
-            amount: 100,
+            payout: 100,
             recipient,
             epochs: vec![epoch.clone()],
         };
@@ -259,6 +263,13 @@ mod tests {
             Transaction::from_slice(transaction.as_slice())?.operation(),
             Some(Operation::RewardClaim(claim.clone())),
         );
+        let mut credit = claim.clone();
+        credit.payout = 0;
+        assert!(Transaction::reward_claim(credit.clone()).is_ok());
+        credit.epochs.clear();
+        assert!(Transaction::reward_claim(credit.clone()).is_err());
+        credit.payout = 100;
+        assert!(Transaction::reward_claim(credit).is_ok());
 
         let mut invalid = claim.clone();
         invalid.epochs[0].positions.reverse();

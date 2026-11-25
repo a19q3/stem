@@ -367,7 +367,7 @@
       "name": "RewardClaim",
       "kind": "sequence",
       "fields": [
-        { "name": "amount", "type": "CompactUint64" },
+        { "name": "payout", "type": "CompactUint64" },
         { "name": "recipient", "type": "Bytes" },
         { "name": "epochs", "type": "RewardEpochProofVec" }
       ]
@@ -879,7 +879,8 @@
       "fields": [
         { "name": "liquid", "type": "CompactUint64" },
         { "name": "circulating", "type": "CompactUint64" },
-        { "name": "pending", "type": "CompactUint64" }
+        { "name": "pending", "type": "CompactUint64" },
+        { "name": "accrued_stake_rewards", "type": "CompactUint64" }
       ]
     },
     {

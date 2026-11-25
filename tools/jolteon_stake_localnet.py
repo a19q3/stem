@@ -108,7 +108,7 @@ def reward_quotes(args, scenario, client, verify, genesis, committee, key, metad
             "inflated_or_altered_principal_rejected": bad.stderr}
 
 
-def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, relay, rewards):
+def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, relay, verify, recover, rewards):
     quotes = rewards["quotes"]
     mint = rewards["mint"]
 
@@ -116,11 +116,13 @@ def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, rela
         reply = client.query(path, data=data, prove=True)
         return json.loads(bytes.fromhex(reply["value"]))
 
-    def request(recipient, positions):
+    def request(recipient, positions, payout=None):
+        if payout is None:
+            payout = sum(quote["shannons"] for _, quote in positions)
         entries = [json.loads((args.output / f"reward-{name}.json").read_text()) for name, _ in positions]
-        return {"amount": sum(quote["shannons"] for _, quote in positions), "recipient": recipient,
-                "epochs": [{"epoch": 0, "registry": entries[0]["registry"], "committee": entries[0]["committee"],
-                            "subjects": [entry["subject"] for entry in entries]}]}
+        epochs = [{"epoch": 0, "registry": entries[0]["registry"], "committee": entries[0]["committee"],
+                   "subjects": [entry["subject"] for entry in entries]}] if entries else []
+        return {"payout": payout, "recipient": recipient, "epochs": epochs}
 
     def build_claim(name, claims):
         draft = args.output / f"reward-{name}-claim.json"
@@ -132,6 +134,31 @@ def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, rela
         assert reply["code"] == 1 and message in reply["log"], reply
         return reply["log"]
 
+    def accepted(name, draft):
+        tx = build_claim(name, draft)
+        sent = client.call("broadcast_tx_commit", tx=tx)
+        assert sent["check_tx"]["code"] == 0, sent
+        return sent, len(binary(tx))
+
+    def authenticate_balance(label, recipient):
+        owner = hex_bytes(script_hash(recipient))
+        response = client.query("/stem/stake-reward-balance", data=owner, prove=True)
+        checked_height = response["height"]
+        finality = client.finality(checked_height)
+        header = verify(finality["proof"], f"reward-{label}-balance-finality",
+                        range(finality["epoch"]), terminal=finality["handoff"])
+        assert header == client.header(checked_height)
+        path = args.output / f"reward-{label}-balance-header.json"
+        write_json(path, "0x" + header["header"])
+        record = json.loads(bytes.fromhex(response["value"]))
+        proof = args.output / f"reward-{label}-balance-proof.json"
+        write_json(proof, record)
+        command = [args.binary, "stake", "verify-reward-balance", "--network", spec["network_id"],
+                   "--owner", owner, "--header", path]
+        checked = json.loads(run(*command, "--proof", proof))
+        assert checked["balance_shannons"] == int(record["balance_shannons"], 16)
+        return record, command
+
     validator = [("operator", quotes["operator"])]
     delegation = [(f"delegate-{index}", quote) for index, quote in enumerate(quotes["delegates"])]
     operator_claim = request(fixture.standard, validator)
@@ -141,8 +168,8 @@ def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, rela
             "--amount", str(520 * CKB), "--claimed-before", "0")), "requires individual reward proofs"),
         "wrong_recipient": rejected(build_claim("wrong-recipient", dict(delegation_claim, recipient=fixture.standard)),
                                     "reward recipient does not own the position"),
-        "wrong_amount": rejected(build_claim("wrong-amount", dict(delegation_claim, amount=delegation_claim["amount"] + 1)),
-                                 "differs from the authenticated earnings"),
+        "wrong_amount": rejected(build_claim("wrong-amount", dict(delegation_claim, payout=delegation_claim["payout"] + 1)),
+                                 "differs from the authenticated balance"),
         "dust": rejected(build_claim("dust", request(fixture.friend_lock, delegation[:1])),
                          "below L1 occupied Capacity"),
     }
@@ -152,29 +179,70 @@ def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, rela
         build_claim("altered-principal", dict(delegation_claim, epochs=[
             dict(groups[0], subjects=[forged, groups[0]["subjects"][1]])
         ])), "Sequence")
+    credits = []
+    accrued = 0
+    for index, position in enumerate(delegation):
+        credit = request(fixture.friend_lock, [position], payout=0)
+        result, size = accepted(f"accrue-{index}", credit)
+        accrued += position[1]["shannons"]
+        receipt, verify_balance = authenticate_balance(f"accrued-{index}", fixture.friend_lock)
+        backing = proved("/stem/bridge-backing")
+        funds = proved("/stem/fee-funds")["accounts"][0]
+        assert int(receipt["balance_shannons"], 16) == accrued
+        assert int(backing["accrued_stake_rewards_shannons"], 16) == accrued
+        assert int(backing["unallocated_shannons"], 16) == 800 * CKB - accrued
+        assert int(backing["liquid_shannons"], 16) == mint["capacity"]
+        assert int(backing["pending_shannons"], 16) == 0
+        assert int(funds["accrued_shannons"], 16) == accrued
+        assert int(funds["queued_shannons"], 16) == 0
+        pending = proved("/stem/bridge-withdrawal", hex_bytes(binary(lane) + le(0, 8)))
+        assert pending["record"] is None
+        credits.append({"transaction": result, "balance": receipt, "backing": backing, "fund": funds,
+                        "position": position[1], "transaction_bytes": size})
+        permissions[f"accrual_{index}_replay"] = rejected(
+            build_claim(f"accrue-{index}-replay", dict(credit, payout=accrued)), "already claimed")
+        if index == 0:
+            invalid = args.output / "reward-tampered-balance-proof.json"
+            write_json(invalid, dict(receipt, balance_shannons=hex(accrued + 1)))
+            tampered = subprocess.run([*verify_balance, "--proof", invalid], capture_output=True, text=True)
+            assert tampered.returncode and "not authenticated" in tampered.stderr, tampered
+            permissions["altered_balance_proof"] = tampered.stderr
+            permissions["premature_payout"] = rejected(
+                build_claim("premature-payout", request(fixture.friend_lock, [], payout=accrued)),
+                "below L1 occupied Capacity")
+    recovery = recover()
+    restarted_balance, _ = authenticate_balance("after-restart", fixture.friend_lock)
+    assert int(restarted_balance["balance_shannons"], 16) == accrued
+    assert int(proved("/stem/bridge-backing")["accrued_stake_rewards_shannons"], 16) == accrued
+    permissions["stale_balance"] = rejected(
+        build_claim("stale-balance", request(fixture.friend_lock, [], payout=delegation[0][1]["shannons"])),
+        "differs from the authenticated balance")
+    delegation_claim = request(fixture.friend_lock, [], payout=accrued)
     payouts = []
     input_vault, fee_input = point(mint["l1_consolidation"], 0), point(mint["l1_consolidation"], 1)
     previous = mint
     for nonce, (label, claim, positions) in enumerate((("validator", operator_claim, validator),
                                                        ("delegator", delegation_claim, delegation))):
-        tx = build_claim(label, claim)
-        sent = client.call("broadcast_tx_commit", tx=tx)
-        assert sent["check_tx"]["code"] == 0, sent
-        alternate = build_claim(f"{label}-replay", dict(claim, amount=claim["amount"] + 1))
-        permissions[f"{label}_replay"] = rejected(alternate, "already claimed")
+        sent, size = accepted(label, claim)
+        alternate = build_claim(f"{label}-replay", dict(claim, payout=claim["payout"] + 1))
+        expected = "already claimed" if label == "validator" else "differs from the authenticated balance"
+        permissions[f"{label}_replay"] = rejected(alternate, expected)
         # The permanent claim marker survives the L1 settlement.
         payout = redeem_withdrawal(args, l1, fixture, vault, spec, spec_path, lane, client, relay,
-            name=f"reward-{label}", burned=sent, recipient=claim["recipient"], capacity=claim["amount"],
+            name=f"reward-{label}", burned=sent, recipient=claim["recipient"], capacity=claim["payout"],
             units=b"", nonce=nonce, input_vault=input_vault, fee_input=fee_input, previous_anchor=previous)
         output = l1.call("get_transaction", payout["l1_payout"])["transaction"]["outputs"][0]
-        assert output["lock"] == claim["recipient"] and int(output["capacity"], 16) == claim["amount"]
+        assert output["lock"] == claim["recipient"] and int(output["capacity"], 16) == claim["payout"]
+        leftover, _ = authenticate_balance(f"after-{label}", fixture.friend_lock)
+        assert int(leftover["balance_shannons"], 16) == (accrued if label == "validator" else 0)
         marks = []
-        for _, quote in positions:
+        for index, (_, quote) in enumerate(positions):
             key = hex_bytes(le(quote["epoch"], 8) + bytes([quote["kind"]]) + binary(quote["position_id"]))
             mark = proved("/stem/stake-reward-claim", key)
-            assert mark["record"] == hex_bytes(binary(sent["hash"]) + le(quote["shannons"], 8))
+            source = sent if label == "validator" else credits[index]["transaction"]
+            assert mark["record"] == hex_bytes(binary(source["hash"]) + le(quote["shannons"], 8))
             marks.append(mark)
-        payouts.append({"payout": payout, "positions": marks, "transaction_bytes": len(binary(tx))})
+        payouts.append({"payout": payout, "positions": marks, "transaction_bytes": size, "delegator_balance": leftover})
         input_vault, fee_input = point(payout["l1_payout"], 1), point(payout["l1_payout"], 2)
         previous = payout
     permissions["rebundled_after_l1_payment"] = rejected(
@@ -186,8 +254,10 @@ def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, rela
     assert int(backing["liquid_shannons"], 16) == mint["capacity"] - allocated
     assert int(backing["circulating_shannons"], 16) == mint["capacity"] - 800 * CKB
     assert int(backing["pending_shannons"], 16) == 0
+    assert int(backing["accrued_stake_rewards_shannons"], 16) == 0
     assert int(backing["unallocated_shannons"], 16) == 280 * CKB + 1
-    return {"payouts": payouts, "rejections": permissions, "funds": funds, "backing": backing,
+    return {"credits": credits, "recovery": recovery, "balance_after_restart": restarted_balance,
+            "payouts": payouts, "rejections": permissions, "funds": funds, "backing": backing,
             "bridge_checkpoints": relay.report()}
 
 
@@ -698,8 +768,17 @@ def run_epochs(args, l1, scenario, fixture):
             checkpoints, exit_report = publish_checkpoints(args, l1, scenario, relay, spec,
                 stake_client, verified["height"], exit_case, active_freeze)
         if rewards:
+            def restart_archive():
+                before = request(incoming, STATUS)
+                processes[public(incoming)].kill()
+                processes[public(incoming)].wait(timeout=8)
+                started = time.perf_counter()
+                launch(incoming, False)
+                after = progress(incoming, before["height"], before["epoch"])
+                return {"before": before, "after": after, "restart_seconds": time.perf_counter() - started}
+
             rewards["payments"] = reward_payouts(args, l1, fixture, vault, network_spec, spec, lane,
-                stake_client, relay, rewards)
+                stake_client, relay, verify, restart_archive, rewards)
             paid_height = max(int(item["payout"]["settlement"]["height"]) for item in rewards["payments"]["payouts"])
             for key in keys:
                 progress(key, paid_height, 2)

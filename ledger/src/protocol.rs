@@ -20,7 +20,9 @@ mod snapshot;
 pub use backing::BridgeBacking;
 pub use fees::{FeeClaim, FeeFund, FeeFundDestination, FeeFundPolicy, FeePayout, FeePayouts};
 pub use mint::{MintObservation, VerifiedMint, mint_digest};
-pub use reward_claim::{RewardClaim, RewardEpochProof, RewardPosition, reward_claim_key};
+pub use reward_claim::{
+    RewardClaim, RewardEpochProof, RewardPosition, reward_balance_key, reward_claim_key,
+};
 pub use settlement::{BridgeLedger, Lane, PendingWithdrawal, SettlementChanges};
 pub use snapshot::{
     ARRIVING_GUARDIAN, SnapshotContext, VerifiedSnapshot, snapshot_body, snapshot_commitment,

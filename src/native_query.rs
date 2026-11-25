@@ -130,6 +130,18 @@ pub(crate) fn query(
             }))?
             .into()
         }
+        "/stem/stake-reward-balance" if prove && data.len() == 32 => {
+            ensure!(
+                requested == tip,
+                "reward balance proof requires the current height"
+            );
+            let (balance, proof) = store.prove_stake_reward_balance(data.try_into()?)?;
+            serde_json::to_vec(&serde_json::json!({
+                "balance_shannons": ckb_jsonrpc_types::Uint64::from(balance),
+                "proof": format!("0x{}", hex::encode(proof.encode()?)),
+            }))?
+            .into()
+        }
         "/stem/stake-snapshot" if prove && data.is_empty() => {
             ensure!(
                 requested == tip,
@@ -164,6 +176,7 @@ pub(crate) fn query(
             let policy = store.fee_fund_policy().context("fee funds are disabled")?;
             let (fees, fee_proof) = store.prove_extinguished_fees()?;
             let (payouts, payout_proof) = store.prove_fee_payouts()?;
+            let (backing, backing_proof) = store.prove_bridge_backing()?;
             let accounts = FeeFund::ALL
                 .iter()
                 .map(|&fund| {
@@ -171,10 +184,16 @@ pub(crate) fn query(
 
                     let destination = &policy.funds[fund as usize];
                     let payout = payouts.fund(fund);
+                    let accrued = if fund == FeeFund::Validators {
+                        backing.accrued_stake_rewards()
+                    } else {
+                        0
+                    };
                     let allocated =
                         FeeFund::allocation(fees.unwrap_or_default(), destination.basis_points)?;
                     let available = allocated
                         .checked_sub(payout.queued)
+                        .and_then(|remaining| remaining.checked_sub(accrued))
                         .context("fee fund is overallocated")?;
                     Ok(serde_json::json!({
                         "id": fund as u8,
@@ -183,6 +202,7 @@ pub(crate) fn query(
                         "recipient": ckb_jsonrpc_types::Script::from(destination.recipient.clone()),
                         "allocated_shannons": Uint64::from(allocated),
                         "available_shannons": Uint64::from(available),
+                        "accrued_shannons": Uint64::from(accrued),
                         "queued_shannons": Uint64::from(payout.queued),
                         "paid_shannons": Uint64::from(payout.paid),
                     }))
@@ -197,6 +217,8 @@ pub(crate) fn query(
                 "policy_proof": format!("0x{}", hex::encode(store.prove_fee_fund_policy()?.encode()?)),
                 "payout_record": format!("0x{}", hex::encode(payouts.encode())),
                 "payout_proof": format!("0x{}", hex::encode(payout_proof.encode()?)),
+                "backing_record": format!("0x{}", hex::encode(backing.encode())),
+                "backing_proof": format!("0x{}", hex::encode(backing_proof.encode()?)),
             }))?.into()
         }
         "/stem/bridge-backing" if prove && data.is_empty() => {
@@ -211,6 +233,7 @@ pub(crate) fn query(
                 "liquid_shannons": ckb_jsonrpc_types::Uint64::from(backing.liquid()),
                 "circulating_shannons": ckb_jsonrpc_types::Uint64::from(backing.circulating()),
                 "pending_shannons": ckb_jsonrpc_types::Uint64::from(backing.pending()),
+                "accrued_stake_rewards_shannons": ckb_jsonrpc_types::Uint64::from(backing.accrued_stake_rewards()),
                 "unallocated_shannons": ckb_jsonrpc_types::Uint64::from(backing.unallocated()),
             }))?
             .into()

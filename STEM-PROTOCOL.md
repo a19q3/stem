@@ -192,7 +192,7 @@ stake assets ∩ bridge reserve = ∅
 
 在可兑付网络，认证的真实存款才能增加净 CKB 兑付能力，每一笔 L1 入账只可使用一次。储备盈余不得直接用于生成新的 Stem CKB。普通交易容量守恒，手续费和抵押都通过已存在的 Capacity 核算。质押、冻结罚没款、金库底仓以及不可及时支出的资产均排除在可兑付储备之外。首轮金库使用能按提款流程及时支出的 L1 Cells，储备不投入 Nervos DAO。Stem 不提供增发、固定质押收益或 DAO 补偿。
 
-手续费扣减流通负债，相应的 L1 资金留在桥储备。桥接网络在 SystemRoot 下保存 Strand `BridgeBacking`，包括认证观察到的可兑付 CKB、流通 Capacity、待兑 Capacity。铸造增加前两项，普通提款申请把流通转为待兑，经认证的 L1 兑付同时减少储备与待兑。调拨与金库轮换保持总量。已确认储备扣除流通与待兑的差额等于累计冲销手续费减去累计入队的基金提款。`/stem/bridge-backing` 提供聚合记录与 Patricia 证明，`/stem/bridge-lane` 认证指定通道的金额、金库和 nonce。CKB 观察依赖配置的 guardian 法定人数。
+手续费扣减流通负债，相应的 L1 资金留在桥储备。桥接网络在 SystemRoot 下保存 Strand `BridgeBacking`，包括认证观察到的可兑付 CKB、流通 Capacity、待兑 Capacity 和已累积质押收益。铸造增加储备和流通，普通提款申请把流通转为待兑，经认证的 L1 兑付同时减少储备与待兑。调拨与金库轮换保持总量。已确认储备扣除流通、待兑及已累积收益后的余额，等于累计冲销手续费扣除累计入队的基金提款与已累积收益。`/stem/bridge-backing` 提供聚合记录与 Patricia 证明，`/stem/bridge-lane` 认证指定通道的金额、金库和 nonce。CKB 观察依赖配置的 guardian 法定人数。
 
 `bridge.fee_funds` 可在创世固定验证者与委托人、DevFund、Ecosystem Fund、PoW Security Fund 四个账户的 CKB 收款 Lock 和份额，正整数基点合计 10,000。65/15/10/10 仅用于实验。各账户累计分配额为 `floor(累计冲销的 shannons × 该账户基点 / 10_000)`；累计取整最多留出 3 shannons，随费用累积可进入分配额。`/stem/fee-funds` 提供份额、收款 Lock、累计入队及确认出账并附 SystemRoot 证明。每笔原始交易的确认费用可从执行回执认证。
 
@@ -206,9 +206,9 @@ stake assets ∩ bridge reserve = ∅
 
 `/stem/stake-reward-epoch` 提供已关闭记录与 Patricia 路径。验证时使用认证的 Header、该任期 Registry 和委员会，委托人另提供头寸本金的成员证明。收益记录与四个基金引用同一笔收入。
 
-中继者可提交 Strand `RewardClaim`，按任期和头寸排序，一笔最多包含 8 个任期、32 个收益头寸。每个任期附对应的 Registry、委员会和各头寸的必要证明。整笔收益支付到一个 CKB Lock。每个头寸的认证收款哈希必须等于该 Lock 的哈希，且 Lock 必须符合网络提款规则。按同一 Lock 合并小额收益后，付款容量仍须满足 CKB 要求。申领额等于所列全部份额之和。任期取整余量留在储备盈余。
+中继者可提交 Strand `RewardClaim`，按任期和头寸排序，一笔最多包含 8 个任期、32 个收益头寸。每个任期附对应的 Registry、委员会和必要的头寸证明。各头寸的认证收款哈希必须等于交易指定的 CKB Lock 哈希，且 Lock 必须符合网络提款规则。所列份额累积到该 Lock 的已认证余额。`payout` 为零时须提供至少一笔未领份额，操作只累积收益，无须达到 CKB 输出最低容量，也不分配提款 nonce。`payout` 为正时须等于既有余额加本笔新增份额的全额，可以提交空头寸集合。兑付清除该 Lock 的余额并创建普通待兑记录，继续检查 CKB 最低容量与原生金库未预留余额。任期取整余量留在储备盈余。
 
-验证者与委托人共用每块一个申领名额。原子入队时为每个 `(epoch, kind, position_id)` 记录交易 ID 和已分配金额。后续改变申领总额、重组头寸组合或结清 L1 提款后，这些记录仍会拒绝再次申领。按该键可从 `/stem/stake-reward-claim` 认证是否已入队，实际 L1 付款通过通道 nonce 和结算证明核对。
+验证者与委托人共用每块一个申领名额。份额累积时为每个 `(epoch, kind, position_id)` 记录交易 ID 和已分配金额。后续改变申领总额、重组头寸组合或结清 L1 提款后，这些记录仍会拒绝再次申领。已累积余额全额计入桥负债，并与累计入队合计受验证者基金分配额约束。兑付把该负债转为待兑，无须再次扣减盈余。`/stem/stake-reward-claim` 认证某一个头寸份额是否已领取，`/stem/stake-reward-balance` 认证指定 Lock 当前余额。实际 L1 付款通过通道 nonce 和结算证明核对。
 
 各通道独立核算储备，缺少可用原生 CKB 时经过认证调拨。质押本金、用户的流通与待兑负债以及金库底仓均排除在收益之外。安全域收入和 PoW 基金运营支出认证仍待实现。
 

@@ -98,17 +98,28 @@ pub enum StakeCommand {
         #[arg(long)]
         request: PathBuf,
     },
-    /// Assemble a permissionless payout to the proved CKB beneficiary.
+    /// Assemble an accrual or payout for the proved CKB beneficiary.
     ClaimRewards {
         #[arg(long)]
         request: PathBuf,
+    },
+    /// Authenticate an accrued balance or its absence against a finalized Header.
+    VerifyRewardBalance {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        network: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        owner: H256,
+        #[arg(long)]
+        header: PathBuf,
+        #[arg(long)]
+        proof: PathBuf,
     },
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RewardClaimRequest {
-    amount: u64,
+    payout: u64,
     recipient: JsonScript,
     epochs: Vec<ClaimEpoch>,
 }
@@ -120,6 +131,13 @@ struct ClaimEpoch {
     registry: JsonBytes,
     committee: JsonBytes,
     subjects: Vec<RewardQuoteSubject>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RewardBalanceProof {
+    balance_shannons: Uint64,
+    proof: JsonBytes,
 }
 
 #[derive(Deserialize)]
@@ -369,6 +387,29 @@ impl StakeCommand {
                                   "proof": JsonBytes::from_vec(proof)}))
             }
             Self::Snapshot { observations } => build_native_snapshot(&observations),
+            Self::VerifyRewardBalance {
+                network,
+                owner,
+                header,
+                proof,
+            } => {
+                let header: JsonBytes = read_json_limited(&header, 4096)?;
+                let header = Header::decode(header.as_bytes())?;
+                let record: RewardBalanceProof = read_json_limited(&proof, 128 * 1024)?;
+                let proof = Proof::decode(record.proof.as_bytes())?;
+                let balance = u64::from(record.balance_shannons);
+                ensure!(
+                    Store::verify_stake_reward_balance(
+                        &network.pack(),
+                        &header,
+                        &owner.as_bytes().try_into()?,
+                        balance,
+                        &proof
+                    ),
+                    "reward balance is not authenticated by the supplied Header"
+                );
+                print_json(&json!({"balance_shannons": balance}))
+            }
             Self::ClaimRewards { request } => {
                 let request: RewardClaimRequest = read_json_limited(&request, 2 * 1024 * 1024)?;
                 let mut epochs = request
@@ -391,7 +432,7 @@ impl StakeCommand {
                     .collect::<Result<Vec<_>>>()?;
                 epochs.sort_by_key(|epoch| epoch.epoch);
                 let claim = stem_ledger::Transaction::reward_claim(RewardClaim {
-                    amount: request.amount,
+                    payout: request.payout,
                     recipient: request.recipient.into(),
                     epochs,
                 })?;

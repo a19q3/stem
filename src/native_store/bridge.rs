@@ -12,7 +12,7 @@ use stem_ledger::{
     protocol::{
         BlockBudget, BridgeBacking, BridgeLedger, FeeClaim, FeeFund, FeeFundDestination,
         FeeFundPolicy, FeePayouts, L1Anchor, Lane, Limits, PendingWithdrawal, RewardClaim,
-        SettlementChanges, VerifiedMint, reward_claim_key,
+        SettlementChanges, VerifiedMint, reward_balance_key, reward_claim_key,
     },
     replay,
 };
@@ -126,6 +126,7 @@ impl StagedBridge {
             let expected = if store.fee_fund_policy().is_some() {
                 total
                     .checked_sub(view.fee_payouts()?.total_queued()?)
+                    .and_then(|remaining| remaining.checked_sub(backing.accrued_stake_rewards()))
                     .context("fund claims exceed total fees")?
             } else {
                 total
@@ -527,12 +528,13 @@ impl Bridge {
             "the stake-backed validator fund requires individual reward proofs"
         );
         let policy = self.fee_funds.as_ref().context("fee funds are disabled")?;
+        let view = fee_view(store, state, claim.fund)?;
         self.queue_fee_payout(
-            store,
-            state,
+            &view,
             tx,
             claim,
             &policy.funds[claim.fund as usize].recipient,
+            None,
         )
     }
 
@@ -544,18 +546,18 @@ impl Bridge {
         claim: RewardClaim,
     ) -> Result<BridgeChanges> {
         ensure!(store.staking.is_some(), "CKB staking is disabled");
-        ensure!(self.fee_funds.is_some(), "fee funds are disabled");
+        let policy = self.fee_funds.as_ref().context("fee funds are disabled")?;
         let fund = FeeFund::Validators;
-        ensure!(
-            state.claimed_funds & (1 << fund as u8) == 0,
-            "fee fund already claimed in this block"
-        );
+        let view = fee_view(store, state, fund)?;
         self.check_recipient(&claim.recipient)?;
         let owner = claim.recipient.calc_script_hash();
-        let view = View {
-            store,
-            staged: &state.records,
-        };
+        let balance_key = reward_balance_key(&owner.unpack());
+        let previous_balance = view
+            .read(&balance_key)?
+            .as_deref()
+            .map(decode_reward_balance)
+            .transpose()?
+            .unwrap_or(0);
         let network = store.network().unpack();
         let mut unclaimed = Vec::new();
         let mut total = 0u64;
@@ -586,16 +588,50 @@ impl Bridge {
                 unclaimed.push((key, quote.amount));
             }
         }
+        let balance = previous_balance
+            .checked_add(total)
+            .context("recipient stake reward balance overflow")?;
+        let backing = view.backing()?.accrue_stake_rewards(total)?;
+        let queued = view.fee_payouts()?.fund(fund).queued;
+        let allocation = FeeFund::allocation(
+            store.fee_surplus()?,
+            policy.funds[fund as usize].basis_points,
+        )?;
         ensure!(
-            total == claim.amount,
-            "reward claim amount differs from the authenticated earnings"
+            queued
+                .checked_add(backing.accrued_stake_rewards())
+                .is_some_and(|earned| earned <= allocation),
+            "accrued rewards exceed fund allocation"
         );
-        let debit = FeeClaim {
-            fund,
-            amount: total,
-            claimed_before: view.fee_payouts()?.fund(fund).queued,
+        let mut changes = if claim.payout == 0 {
+            let mut changes = BridgeChanges {
+                claimed_funds: 1 << fund as u8,
+                ..Default::default()
+            };
+            changes
+                .records
+                .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
+            changes
+                .records
+                .insert(balance_key, Some(balance.to_le_bytes().to_vec()));
+            changes
+        } else {
+            ensure!(
+                claim.payout == balance,
+                "reward payout differs from the authenticated balance"
+            );
+            let debit = FeeClaim {
+                fund,
+                amount: balance,
+                claimed_before: queued,
+            };
+            let mut changes =
+                self.queue_fee_payout(&view, tx, debit, &claim.recipient, Some(backing))?;
+            if previous_balance != 0 {
+                changes.records.insert(balance_key, None);
+            }
+            changes
         };
-        let mut changes = self.queue_fee_payout(store, state, tx, debit, &claim.recipient)?;
         let tx_id = tx.id(store.network());
         for (key, amount) in unclaimed {
             let mut record = tx_id.as_slice().to_vec();
@@ -607,22 +643,13 @@ impl Bridge {
 
     fn queue_fee_payout(
         &self,
-        store: &Store,
-        state: &StagedBridge,
+        view: &View<'_>,
         tx: &Transaction,
         claim: FeeClaim,
         recipient: &Script,
+        accrued: Option<BridgeBacking>,
     ) -> Result<BridgeChanges> {
         let policy = self.fee_funds.as_ref().context("fee funds are disabled")?;
-        let bit = 1 << claim.fund as u8;
-        ensure!(
-            state.claimed_funds & bit == 0,
-            "fee fund already claimed in this block"
-        );
-        let view = View {
-            store,
-            staged: &state.records,
-        };
         let destination = &policy.funds[claim.fund as usize];
         let output = CellOutput::new_builder()
             .capacity(claim.amount)
@@ -633,18 +660,21 @@ impl Bridge {
             "fee claim is below L1 occupied Capacity"
         );
         let mut payouts = view.fee_payouts()?;
-        let allocation = FeeFund::allocation(store.fee_surplus()?, destination.basis_points)?;
+        let allocation = FeeFund::allocation(view.store.fee_surplus()?, destination.basis_points)?;
         payouts.queue(claim, allocation)?;
-        let backing = view.backing()?.reserve_fee_payout(claim.amount)?;
+        let backing = match accrued {
+            Some(backing) => backing.reserve_stake_payout(claim.amount)?,
+            None => view.backing()?.reserve_fee_payout(claim.amount)?,
+        };
         let mut changes = BridgeChanges {
-            claimed_funds: bit,
+            claimed_funds: 1 << claim.fund as u8,
             ..Default::default()
         };
         let (nonce, receipt) = view.queue_withdrawal(
             &mut changes.records,
             Withdrawal {
                 lane: &policy.lane,
-                tx_id: &tx.id(store.network()),
+                tx_id: &tx.id(view.store.network()),
                 index: 0,
                 capacity: claim.amount,
                 units: 0,
@@ -754,6 +784,33 @@ impl Bridge {
 }
 
 impl Store {
+    pub fn prove_stake_reward_balance(&self, owner: &[u8; 32]) -> Result<(u64, super::Proof)> {
+        let (record, proof) = self.prove_system(&reward_balance_key(owner))?;
+        let balance = record
+            .as_deref()
+            .map(decode_reward_balance)
+            .transpose()?
+            .unwrap_or(0);
+        Ok((balance, proof))
+    }
+
+    pub fn verify_stake_reward_balance(
+        network: &Byte32,
+        header: &super::Header,
+        owner: &[u8; 32],
+        balance: u64,
+        proof: &super::Proof,
+    ) -> bool {
+        let value = (balance != 0).then(|| balance.to_le_bytes());
+        Self::verify_system_record(
+            network,
+            header,
+            &reward_balance_key(owner),
+            value.as_ref().map(|bytes| bytes.as_slice()),
+            proof,
+        )
+    }
+
     pub fn fee_fund_policy(&self) -> Option<&FeeFundPolicy> {
         self.bridge.as_ref()?.fee_funds.as_ref()
     }
@@ -876,6 +933,23 @@ impl Store {
 struct View<'a> {
     store: &'a Store,
     staged: &'a Records,
+}
+
+fn fee_view<'a>(store: &'a Store, state: &'a StagedBridge, fund: FeeFund) -> Result<View<'a>> {
+    ensure!(
+        state.claimed_funds & (1 << fund as u8) == 0,
+        "fee fund already claimed in this block"
+    );
+    Ok(View {
+        store,
+        staged: &state.records,
+    })
+}
+
+fn decode_reward_balance(raw: &[u8]) -> Result<u64> {
+    let balance = u64::from_le_bytes(raw.try_into()?);
+    ensure!(balance != 0, "empty stake reward balance record");
+    Ok(balance)
 }
 
 struct Withdrawal<'a> {

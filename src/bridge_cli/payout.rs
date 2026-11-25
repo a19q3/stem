@@ -232,7 +232,11 @@ impl AttestPayout {
             }
             Some(stem_ledger::protocol::Operation::RewardClaim(claim)) => {
                 ensure!(spec.stake.is_some(), "CKB staking is disabled");
-                Some((claim.amount, claim.recipient))
+                ensure!(
+                    claim.payout != 0,
+                    "reward accrual did not request a withdrawal"
+                );
+                Some((claim.payout, claim.recipient))
             }
             Some(_) => anyhow::bail!("this protocol operation cannot issue a withdrawal ticket"),
         };
