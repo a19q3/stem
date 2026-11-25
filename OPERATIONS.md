@@ -165,6 +165,51 @@ handoff files in chronological order. Use `--terminal` for a boundary
 proof. `stem checkpoint jolteon-bundle` reads an archive and constructs a
 CKB witness with the previous frontier, history suffix and finality proof.
 
+### Run a sparse CKB checkpoint publisher
+
+Run one poll with `stem checkpoint publish --config publisher.json`. Schedule that
+command under a timer. It publishes at most one CKB transaction per poll, and
+prints `idle`, `submitted`, `in_pool`, `awaiting_confirmations` or `confirmed`
+as JSON. Keep polling through confirmation. Use `--at-least-height H` while
+a withdrawal, Intercell delivery or retirement needs a more recent checkpoint.
+The publisher targets H exactly if H is finalized and ahead of the last
+published checkpoint. Missing handoffs through the chosen target are relayed
+first, one at a time, with the incumbent roster and their exact boundary
+Headers. The first poll can initialize the checkpoint as soon as a valid
+finalized Header or the first handoff exists.
+
+The configuration uses the following fields.
+
+| Field | Value |
+| --- | --- |
+| `l1`, `replica` | CKB RPC URL with Chain, Pool and Experiment methods enabled, and Stem archive replica socket address |
+| `archive_db`, `index` | Stem archive RocksDB path and a separate path for the rebuildable proof index |
+| `journal` | Exclusive, private RocksDB directory owned by the publisher |
+| `policy`, `initial_roster` | Hex Type Script arguments and path to a JSON hex string containing the genesis committee record |
+| `checkpoint_code`, `checkpoint_code_hash` | CKB code OutPoint and its pinned Data2 code hash |
+| `seed`, `fee_dep_group` | The CKB seed OutPoint pinned by the Type ID and the CKB secp256k1 Sighash dep-group OutPoint |
+| `fee_key` | Path to the seed owner's private CKB Sighash key, stored in a private 32-byte file |
+| `checkpoint_capacity`, `fee` | Checkpoint capacity and fee per publication in shannons |
+| `interval_seconds`, `confirmations` | Routine interval in finalized Stem seconds and the number of CKB blocks required after inclusion |
+
+Each OutPoint uses CKB RPC JSON with `tx_hash` and a hex `index`. The
+seed must be a plain CKB funding Cell. Each publication retains the
+same checkpoint capacity and returns fee change to that key. Budget
+the seed for the initial checkpoint, change occupied capacity, and
+planned fees. Keep the journal across process restarts. A shallow fork
+can retry the same signed transaction. A reorganized confirmed
+checkpoint, a spent publisher input, or a rejected journaled transaction
+requires operator reconciliation before another publication. The publisher
+currently follows the checkpoint chain it bootstraps. Coordinated
+adoption of a competing relayer's successor and automatic wallet
+refunding are separate operations.
+
+Use the stake runner from the preceding example with `--exercise-publisher
+--replace` in place of `--publish-checkpoint --replace` and with a new
+output directory. It uses actual CKB blocks and records each fresh CLI
+invocation, canonical witness inclusion proofs and the response to both
+shallow and confirmed-anchor reorganizations.
+
 To test permissionless payouts and stake liability, build the CKB consumers
 for the native checkpoint. The default contract build selects Jolteon checkpoint verification. A new deployment pins the corresponding CKB code hash and Type ID.
 
@@ -377,6 +422,8 @@ python3 tools/jolteon_bridge_localnet.py \
   --intercell-mailbox "$CARGO_TARGET_DIR/riscv64imac-unknown-none-elf/release/intercell-mailbox" \
   --output /tmp/stem-intercell-devnet
 ```
+
+Add `--exercise-publisher` to drive the fixture through the sparse publisher. Generate the Intercell outbox proof first. Submit its exact Header height as the publication request so the CKB checkpoint matches the proof.
 
 Use `stem intercell encode --request message.json`. The request fields are `source`, `destination`, `sender`, `receiver`, `nonce` and hex `payload`. The result contains the hex message `record` and stable `id`. Include the record as a Group Action with kind 65280 for sending or 65281 for receiving. Sign the assigned consuming Lock group only after attaching any required historical CKB observation. For a receive, use `attest-reference` with `live_at_anchor: false` against the currently accepted anchor, then collect and attach the certificates with `attach-references`. A historical reference can prove an outgoing mailbox record after its output is spent.
 

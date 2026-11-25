@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, point, script_hash, write_key
 from jolteon_bridge_localnet import Client, fee_payment
-from jolteon_checkpoint_localnet import Relay
+from jolteon_checkpoint_localnet import Relay, exercise_publisher
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, STATUS, SUBMIT, rpc, write_configuration
 from jolteon_slash_localnet import evidence as slash_evidence
 from localnet import run, write_json
@@ -676,7 +676,7 @@ def run_epochs(args, l1, scenario, fixture):
         increased = None
         stake_client = Client(args, ports[public(incoming)], hex_bytes(scenario.network))
         archive = args.output / f"node-{ports[public(incoming)]}" / "db"
-        relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint else None
+        relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint or args.exercise_publisher else None
         if delegation:
             delegation["activation"] = confirm_positions(args, scenario, relay, public(old), genesis[0]["registry"], original)
         if rewards:
@@ -799,6 +799,8 @@ def run_epochs(args, l1, scenario, fixture):
             exit_case = (old, old_meta, low, 11 if args.replace else 21, early) if args.retire else None
             checkpoints, exit_report = publish_checkpoints(args, l1, scenario, relay, spec,
                 stake_client, verified["height"], exit_case, active_freeze)
+        if args.exercise_publisher:
+            checkpoints = exercise_publisher(args, l1, fixture, relay, scenario.secp, common_height)
         if rewards:
             def restart_archive():
                 before = request(incoming, STATUS)
@@ -895,6 +897,7 @@ def main():
     parser.add_argument("--snapshot-restore", action="store_true", help="rebuild a fresh observer from a confirmed CKB checkpoint")
     parser.add_argument("--replace", action="store_true", help="replace the entire first committee, then increase power")
     parser.add_argument("--publish-checkpoint", action="store_true", help="publish native Jolteon checkpoints on the CKB devnet")
+    parser.add_argument("--exercise-publisher", action="store_true", help="exercise durable sparse publication on a disposable CKB devnet")
     parser.add_argument("--retire", action="store_true", help="retire and unbond the outgoing stake using the native checkpoint")
     parser.add_argument("--slash", action="store_true", help="slash the outgoing fixture validator using native vote evidence")
     parser.add_argument("--active-slash", action="store_true", help="freeze while the outgoing validator is still active")
@@ -907,6 +910,8 @@ def main():
     for optional in ("vault", "deposit-lock", "native-lock", "wrapped"):
         parser.add_argument(f"--{optional}", type=lambda path: Path(path).resolve())
     args = parser.parse_args()
+    if args.exercise_publisher and (args.publish_checkpoint or args.delegation or args.slash):
+        parser.error("--exercise-publisher uses its own isolated checkpoint and CKB reorg scenario")
     if args.observer_extra_lag < 0:
         parser.error("--observer-extra-lag must be nonnegative")
     if args.active_slash and (not args.slash or args.replace):

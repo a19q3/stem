@@ -15,7 +15,7 @@ MESSAGE_SEND = 0xff00
 MESSAGE_RECEIVE = 0xff01
 
 
-def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay, commands, children):
+def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay, commands, children, *, publisher=None):
     client = clients[0]
     network, genesis = client.network, vault["genesis"]
     native_lock = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())),
@@ -145,7 +145,12 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     proof_height = proofs[0][0]
     for i, (_, proof) in enumerate(proofs):
         assert proof["record"] == outgoing[i]["record"]
-    checkpoint = relay.advance(proof_height, secp, probe=True)
+    if publisher is None:
+        checkpoint = relay.advance(proof_height, secp, probe=True)
+    else:
+        published = publisher.publish("anchor-intercell-outbox", proof_height)
+        assert published["stem_height"] == proof_height, published
+        checkpoint = dependency(point(published["transaction"], 0))
     header = args.output / "intercell-outbox-header.json"
     write_json(header, hex_bytes(relay.header(proof_height)))
     seen = []

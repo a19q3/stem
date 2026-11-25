@@ -15,6 +15,8 @@ use stem_stake::{
     jolteon::{HandoffProof, checkpoint as jolteon},
 };
 
+mod publisher;
+
 use crate::{
     bridge_cli::{print_json, read_json_limited},
     native_spec,
@@ -30,6 +32,8 @@ pub enum CheckpointCommand {
     VerifyDirect(Box<VerifyDirect>),
     /// Build a permissionless CKB checkpoint witness from Jolteon finality.
     JolteonBundle(Box<JolteonBundle>),
+    /// Publish or resume one permissionless, sparse CKB checkpoint update.
+    Publish(Box<publisher::Publish>),
     /// Rebuild the archive index as needed and produce a historical Header proof.
     History {
         #[command(flatten)]
@@ -254,6 +258,7 @@ impl CheckpointCommand {
             Self::Verify(args) => args.run(),
             Self::VerifyDirect(args) => args.run(),
             Self::JolteonBundle(args) => args.run(),
+            Self::Publish(args) => args.run(),
             Self::History { archive, header } => {
                 let (network, index) = archive.open()?;
                 let historical = index.header(header)?;
@@ -283,52 +288,81 @@ impl JolteonBundle {
             policy.network.as_slice() == network.as_slice(),
             "checkpoint network differs from archive"
         );
-        let read_hex = |path: &PathBuf| -> Result<Vec<u8>> {
-            let value: String = read_json_limited(path, 128 * 1024)?;
-            Ok(hex::decode(value.strip_prefix("0x").unwrap_or(&value))?)
-        };
         let previous = self
             .previous_tip
             .as_ref()
             .map(|path| Ok::<_, anyhow::Error>(jolteon::Tip::decode(&read_hex(path)?)?))
             .transpose()?;
-        let start = previous.as_ref().map_or(0, jolteon::Tip::height);
-        ensure!(
-            start < self.archive.height,
-            "checkpoint height must advance"
-        );
-        let advance = jolteon::Advance {
-            roster: read_hex(&self.roster)?,
-            genesis_header: if previous.is_none() {
-                index.header(0)?.encode().to_vec()
-            } else {
-                Vec::new()
-            },
-            previous_frontier: index.frontier_at(start)?.encode(),
-            suffix: index
-                .extension(start + 1, self.archive.height)?
-                .into_iter()
-                .flatten()
-                .collect(),
-            proof: read_hex(&self.proof)?,
-            terminal: self.terminal,
-        };
-        let witness = advance.encode_to_vec();
-        let proved = jolteon::verify(&policy, previous.as_ref(), &witness)?;
-        ensure!(
-            proved.height() == self.archive.height,
-            "proof certifies a different checkpoint height"
-        );
-        let next = if self.terminal {
-            HandoffProof::decode(advance.proof.as_slice())?.announcement
-        } else {
-            advance.roster
-        };
+        let bundle = build_jolteon_bundle(
+            &index,
+            &policy,
+            self.archive.height,
+            previous.as_ref(),
+            read_hex(&self.roster)?,
+            read_hex(&self.proof)?,
+            self.terminal,
+        )?;
         print_json(
-            &json!({"height": proved.height(), "witness": encode(witness),
-            "tip": encode(proved.encode()), "next_roster": encode(next)}),
+            &json!({"height": bundle.tip.height(), "witness": encode(bundle.witness),
+            "tip": encode(bundle.tip.encode()), "next_roster": encode(bundle.next_roster)}),
         )
     }
+}
+
+fn read_hex(path: &std::path::Path) -> Result<Vec<u8>> {
+    let value: String = read_json_limited(path, 128 * 1024)?;
+    Ok(hex::decode(value.strip_prefix("0x").unwrap_or(&value))?)
+}
+
+struct Bundle {
+    witness: Vec<u8>,
+    tip: jolteon::Tip,
+    next_roster: Vec<u8>,
+}
+
+fn build_jolteon_bundle(
+    index: &HistoryIndex,
+    policy: &jolteon::Policy,
+    height: u64,
+    previous: Option<&jolteon::Tip>,
+    roster: Vec<u8>,
+    proof: Vec<u8>,
+    terminal: bool,
+) -> Result<Bundle> {
+    let start = previous.map_or(0, jolteon::Tip::height);
+    ensure!(start < height, "checkpoint height must advance");
+    let advance = jolteon::Advance {
+        roster,
+        genesis_header: if previous.is_none() {
+            index.header(0)?.encode().to_vec()
+        } else {
+            Vec::new()
+        },
+        previous_frontier: index.frontier_at(start)?.encode(),
+        suffix: index
+            .extension(start + 1, height)?
+            .into_iter()
+            .flatten()
+            .collect(),
+        proof,
+        terminal,
+    };
+    let witness = advance.encode_to_vec();
+    let tip = jolteon::verify(policy, previous, &witness)?;
+    ensure!(
+        tip.height() == height && tip.header.as_slice() == index.header(height)?.encode().as_ref(),
+        "proof certifies a different checkpoint Header"
+    );
+    let next_roster = if terminal {
+        HandoffProof::decode(advance.proof.as_slice())?.announcement
+    } else {
+        advance.roster
+    };
+    Ok(Bundle {
+        witness,
+        tip,
+        next_roster,
+    })
 }
 
 impl Prepare {

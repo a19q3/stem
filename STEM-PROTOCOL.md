@@ -180,7 +180,7 @@ fee_required = p_b × B + p_c × C + p_r × R + p_d × D + p_w × W + p_x × X
 
 普通支付的初始定价实验以同类 CKB 交易的最低中继费基准为参照，目标约为 30%。460 字节 CKB 交易计入 4 字节区块序列化开销，在 1,000 shannons/KB 的参考费率下为 464 shannons，按 30% 向上取整为 140 shannons。这个实验目标供校准 Stem 的多维费率。复杂交易继续按自身的带宽、执行和状态资源消耗计价。CKB 主网实际费率和 Stem 长期安全预算需用运营数据另行评估。[CKB 缺省交易池配置](https://github.com/nervosnetwork/ckb/blob/119598b0a1146a569068ac80bdba7eb5f6292fd3/resource/ckb.toml#L204-L211)
 
-可用已对账的可分配手续费收入的 10% 模拟 PoW Security Fund，用于支付真实 CKB 检查点、证明、质押及结算交易。普通支付与合约执行可共享低频锚。提款可合并触发更新，退休与处罚需要足够新的检查点，每次实际签名 epoch 交接仍需验证。按 4 小时一笔、每笔 0.01 CKB 的场景，365 天定期认证费用为 21.9 CKB。每笔 140 shannons、按 10% 划拨时，单靠该项开支的成本平衡约为 4.96 TPS。这个预算只包括定期认证，交接、提款、质押、验证者和基础设施开销需单独计入。自动发布仍待实现。
+可用已对账的可分配手续费收入的 10% 模拟 PoW Security Fund，用于支付真实 CKB 检查点、证明、质押及结算交易。普通支付与合约执行可共享低频锚。提款可合并触发更新，退休与处罚需要足够新的检查点，每次实际签名 epoch 交接仍需验证。按 4 小时一笔、每笔 0.01 CKB 的场景，365 天定期认证费用为 21.9 CKB。每笔 140 shannons、按 10% 划拨时，单靠该项开支的成本平衡约为 4.96 TPS。这个预算只包括定期认证，交接、提款、质押、验证者和基础设施开销需单独计入。发布器可按固定间隔或最低目标高度请求更新，并优先提交尚未发布的签名 epoch 交接。实际费用由独立 CKB 资金 Cell 支付。
 
 ```text
 Stem native issuance = 0
@@ -470,7 +470,7 @@ AppHash(H)     = H("Stem AppHash", network_id, H, HeaderID(H))
 
 ### CKB PoW 检查点锚定
 
-部署独立的 CKB Checkpoint Type ID Cell。检查点更新消费上一 Checkpoint Cell，并验证唯一继任者、严格递增的 Stem 高度、有效的两链或交接证明和 MMR 扩展。输出保留固定的网络绑定、当前 epoch 锚、委员会承诺和完整执行 Header。普通更新可跨越同一 epoch 多个区块，交接更新推进委员会承诺。自动发布策略仍待部署。
+部署独立的 CKB Checkpoint Type ID Cell。检查点更新消费上一 Checkpoint Cell，并验证唯一继任者、严格递增的 Stem 高度、有效的两链或交接证明和 MMR 扩展。输出保留固定的网络绑定、当前 epoch 锚、委员会承诺和完整执行 Header。普通更新可跨越同一 epoch 多个区块，交接更新推进委员会承诺。发布器从创世种子创建检查点，按已认证的 Stem 时间间隔或目标高度推进，并按顺序提交必需的交接。发布前同步保存已签 CKB 交易，确认深度达到配置值后原子更新本地锚点和委员会。已确认锚点被重组时停止发布。
 
 创世配置包含每条通道的完整金库 Type Script 和质押 Registry 的完整 Type Script。Registry 脚本哈希必须等于创世认证签名覆盖的 Registry ID。创世校验要求所有金库与质押 Registry 绑定同一检查点代码哈希及 Type ID，同时核对 CKB genesis 和 Stem 网络。Registry 同时绑定 Stem chain ID、最低自押和任期长度。这样，已解锁的旧委员会无法利用另一条落后检查点提交交接之前的提款。验证还依赖部署者固定正确的已审查 L1 程序，以及客户端和守护者核对已确认的 CKB 实例。
 

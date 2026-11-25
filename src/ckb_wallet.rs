@@ -81,11 +81,10 @@ impl CkbWallet {
                     let public = read_key(&key_file)?.verifying_key().to_bytes();
                     return print_json(&json!({"ed25519": JsonBytes::from_vec(public.to_vec())}));
                 }
-                let pubkey = secret_key(&key_file)?.pubkey()?.serialize();
-                let hash = blake2b_256(&pubkey);
+                let (pubkey, args) = public_key(&key_file)?;
                 print_json(&json!({
                     "public_key": JsonBytes::from_vec(pubkey),
-                    "blake160": JsonBytes::from_vec(hash[..20].to_vec()),
+                    "blake160": JsonBytes::from_vec(args.to_vec()),
                 }))
             }
             Self::Sign {
@@ -133,6 +132,23 @@ impl CkbWallet {
             }
         }
     }
+}
+
+pub fn public_key(key: &Path) -> Result<(Vec<u8>, [u8; 20])> {
+    let pubkey = secret_key(key)?.pubkey()?.serialize();
+    let hash = blake2b_256(&pubkey);
+    Ok((pubkey, hash[..20].try_into()?))
+}
+
+pub fn sign_single(tx: &TransactionView, input: usize, key: &Path) -> Result<TransactionView> {
+    sign(
+        tx,
+        &[Group {
+            inputs: vec![input],
+            keys: vec![key.to_path_buf()],
+            lock_prefix: JsonBytes::default(),
+        }],
+    )
 }
 
 fn sign(tx: &TransactionView, groups: &[Group]) -> Result<TransactionView> {

@@ -36,13 +36,28 @@ impl Journal {
         let metadata = fs::symlink_metadata(path)?;
         ensure!(
             metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
-            "guardian journal directory must be private"
+            "L1 journal directory must be private"
         );
         let mut options = Options::default();
         options.create_if_missing(true);
         options.set_write_buffer_size(1024 * 1024);
         let db = DB::open(&options, path)?;
         Ok(Self { db, key })
+    }
+
+    pub fn read_record<T: DeserializeOwned>(&self) -> Result<Option<T>> {
+        self.db
+            .get(self.key.as_slice())?
+            .map(|record| Ok(serde_json::from_slice(&record)?))
+            .transpose()
+    }
+
+    pub fn write_record(&self, record: &impl serde::Serialize) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        batch.put(self.key.as_slice(), serde_json::to_vec(record)?)?;
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        Ok(self.db.write_opt(&batch, &options)?)
     }
 
     pub fn validate(&self, node: &Rpc) -> Result<Option<u64>> {

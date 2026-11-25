@@ -10,7 +10,7 @@ import struct
 import subprocess
 
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, script, write_key
-from jolteon_checkpoint_localnet import Relay
+from jolteon_checkpoint_localnet import PublisherFixture, Relay
 from intercell_localnet import intercell_round
 from asset_export_localnet import asset_round
 from spore_settlement_localnet import spore_round
@@ -399,7 +399,12 @@ def bridge_round(args, l1, fixture, children):
     client = clients[0]
     wait_for(lambda: all(peer.status()["height"] >= 2 for peer in clients), "native bridge replicas")
     relay = Relay(args, l1, fixture, vault["anchor"], homes[0] / "db", spec_path, members, client)
-    relay.advance(1, vault["secp"], probe=True)
+    publisher = None
+    if args.exercise_publisher:
+        publisher = PublisherFixture(args, l1, fixture, relay, vault["secp"])
+        publisher.publish("bootstrap-checkpoint", 1)
+    else:
+        relay.advance(1, vault["secp"], probe=True)
     mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client)
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
@@ -412,7 +417,7 @@ def bridge_round(args, l1, fixture, children):
                                               mint, clients, relay)
     elif args.intercell_mailbox:
         report["intercell"] = intercell_round(args, l1, fixture, vault, spec, spec_path,
-                                              mint, clients, relay, commands, children)
+                                              mint, clients, relay, commands, children, publisher=publisher)
     elif args.reference_script:
         report["references"] = reference_round(args, l1, fixture, spec, spec_path, lane, mint, client)
     elif args.fee_funds:
@@ -425,7 +430,7 @@ def bridge_round(args, l1, fixture, children):
         report["xudt"] = xudt_round_trip(args, l1, fixture, token, spec, spec_path, mint, payout, client, relay)
         report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                      report["xudt"], spec_path, client)
-    report["checkpoint"] = relay.report()
+    report["checkpoint"] = (publisher or relay).report()
     if not (args.fee_funds or args.reference_script or args.intercell_mailbox):
         report["backing"] = reconcile_backing(client, report)
         report["authenticated_ckb_outputs"] = verify_l1_output(args, l1, payout, token is not None)
@@ -458,6 +463,7 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
+    parser.add_argument("--exercise-publisher", action="store_true", help="use the sparse publisher for Intercell checkpoints")
     parser.add_argument("--reference-script", type=lambda path: Path(path).resolve())
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
@@ -473,6 +479,8 @@ def main():
             not all((args.stem_native_object, args.object_policy, args.ckb_stem_object, args.intercell_mailbox))
             or args.export_udt or args.stem_spore):
         parser.error("Native object settlement requires its three binaries and the Intercell mailbox")
+    if args.exercise_publisher and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
+        parser.error("--exercise-publisher uses the generic Intercell mailbox fixture")
     if args.full_udt_return and not args.export_udt:
         parser.error("--full-udt-return requires the UDT settlement fixture")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):

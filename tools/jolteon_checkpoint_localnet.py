@@ -1,6 +1,8 @@
 """Publish sparse Jolteon checkpoint proofs on a disposable CKB chain."""
 
 import json
+import subprocess
+import time
 
 from bridge_localnet import CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output, point, script, script_hash, transaction, wallet_group
 from localnet import run, write_json
@@ -120,3 +122,127 @@ class Relay:
     def report(self):
         return {"checkpoint_type": hex_bytes(script_hash(self.type)), "publications": self.publications,
                 "rejections": self.rejections}
+
+
+class PublisherFixture:
+    """Drive the real publisher CLI with a fresh process on each poll."""
+
+    def __init__(self, args, l1, fixture, relay, fee_dep):
+        self.args, self.l1, self.relay = args, l1, relay
+        root = relay.root
+        self.path = root / "publisher.json"
+        self.config = {
+            "l1": l1.url, "replica": f"127.0.0.1:{relay.client.port}",
+            "archive_db": str(relay.archive), "index": str(root / "publisher-index"),
+            "journal": str(root / "journal"), "policy": relay.policy, "initial_roster": str(relay.roster),
+            "checkpoint_code": relay.anchor["code"]["out_point"], "checkpoint_code_hash": relay.anchor["hash"],
+            "seed": relay.anchor["seed"], "fee_dep_group": fee_dep["out_point"],
+            "fee_key": str(fixture.faucet), "checkpoint_capacity": 1000 * CKB,
+            "fee": FEE, "interval_seconds": 4 * 3600, "confirmations": 2,
+        }
+        self.events, self.publications = [], []
+
+    def tick(self, label, requested=None, error=None):
+        write_json(self.path, self.config)
+        command = [self.args.binary, "checkpoint", "publish", "--config", self.path]
+        if requested is not None:
+            command += ["--at-least-height", str(requested)]
+        result = subprocess.run(command, text=True, capture_output=True, timeout=30)
+        event = {"label": label, "command": list(map(str, command)), "configuration": dict(self.config),
+                 "stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}
+        self.events.append(event)
+        write_json(self.relay.root / "publisher-events.json", self.events)
+        if error is not None:
+            assert result.returncode and error in result.stderr, event
+            return event
+        assert result.returncode == 0, event
+        return json.loads(result.stdout)
+
+    def mine_inclusion(self, transaction):
+        for _ in range(20):
+            state = self.l1.call("get_transaction", transaction)["tx_status"]
+            if state["status"] == "committed":
+                return state
+            assert state["status"] != "rejected", state
+            self.l1.mine(1)
+        raise AssertionError(f"checkpoint {transaction} was not mined")
+
+    def confirm(self, label, submission):
+        self.l1.mine(self.config["confirmations"])
+        final = self.tick(label)
+        assert final["status"] == "confirmed" and final["transaction"] == submission["transaction"], final
+        final["proof"] = self.l1.prove_committed(final["transaction"])
+        final["signed"] = self.l1.call("get_transaction", final["transaction"], "0x0", True)["transaction"]
+        self.publications.append(final)
+        return final
+
+    def publish(self, label, height):
+        submission = self.tick(label, height)
+        assert submission["status"] == "submitted" and submission["stem_height"] >= height, submission
+        self.mine_inclusion(submission["transaction"])
+        return self.confirm(f"confirm-{label}", submission)
+
+    def report(self):
+        return {"checkpoint_type": hex_bytes(script_hash(self.relay.type)),
+                "publications": self.publications, "events": self.events}
+
+
+def exercise_publisher(args, l1, fixture, relay, fee_dep, agreed):
+    publisher = PublisherFixture(args, l1, fixture, relay, fee_dep)
+    config, tick = publisher.config, publisher.tick
+    mine_inclusion, confirm = publisher.mine_inclusion, publisher.confirm
+    first = tick("publish-first-handoff")
+    assert (first["status"], first["stem_height"], first["next_epoch"]) == ("submitted", 10, 1), first
+    first_tx = first["transaction"]
+    restarted = tick("restart-before-inclusion")
+    assert restarted["transaction"] == first_tx and restarted["status"] in ("in_pool", "submitted"), restarted
+    original = mine_inclusion(first_tx)
+    shallow = tick("restart-before-confirmations")
+    assert shallow["status"] == "awaiting_confirmations" and shallow["depth"] == 0, shallow
+    l1.call("truncate", l1.call("get_block_hash", hex(int(original["block_number"], 16) - 1)))
+    recovered = tick("resume-after-unconfirmed-reorg")
+    assert recovered["transaction"] == first_tx and recovered["status"] in ("in_pool", "submitted"), recovered
+    included = mine_inclusion(first_tx)
+    assert included["block_hash"] != original["block_hash"], (original, included)
+    confirm("confirm-first-handoff", first)
+
+    second = tick("publish-second-handoff")
+    assert (second["status"], second["stem_height"], second["next_epoch"]) == ("submitted", 20, 2), second
+    mine_inclusion(second["transaction"])
+    confirm("confirm-second-handoff", second)
+
+    idle = tick("respect-regular-interval")
+    assert idle["status"] == "idle" and idle["stem_height"] == 20 and idle["latest_finalized"] >= agreed, idle
+    future = tick("request-unfinalized-height", idle["latest_finalized"] + 1000)
+    assert future["status"] == "idle", future
+    demand = tick("publish-on-demand", agreed)
+    assert demand["status"] == "submitted" and demand["stem_height"] == agreed, demand
+    mine_inclusion(demand["transaction"])
+    confirm("confirm-on-demand", demand)
+    repeat = tick("repeat-satisfied-request", agreed)
+    assert repeat["status"] == "idle" and repeat["stem_height"] == demand["stem_height"], repeat
+
+    config["interval_seconds"] = 1
+    previous = int.from_bytes(relay.header(demand["stem_height"])[8:16], "little")
+    for _ in range(40):
+        height = relay.client.status()["height"]
+        if int.from_bytes(relay.header(height)[8:16], "little") >= previous + 1000:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("Stem finalized time did not advance by the regular publication interval")
+    routine = tick("publish-by-interval")
+    assert routine["status"] == "submitted" and routine["stem_height"] > demand["stem_height"], routine
+    mine_inclusion(routine["transaction"])
+    anchor = confirm("confirm-regular", routine)
+
+    config["confirmations"] = 1
+    tick("reject-different-journal-configuration", error="journal belongs to a different checkpoint")
+    config["confirmations"] = 2
+    height = anchor["l1_height"]
+    l1.call("truncate", l1.call("get_block_hash", hex(height - 1)))
+    l1.mine(1)
+    assert l1.call("get_block_hash", hex(height)) != anchor["l1_block"]
+    halted = tick("halt-after-confirmed-reorg", error="confirmed checkpoint anchor was reorganized")
+    return {**publisher.report(), "first_inclusion": original, "replacement_inclusion": included,
+            "rejected_confirmed_reorg": halted}

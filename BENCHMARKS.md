@@ -1754,3 +1754,47 @@ ignored. The Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#exercise-stem-native-object-settlement) ·
 [Full runs, signed rejections, and build fingerprints](benchmarks/2026-11-26-stem-object-settlement.json.xz).
+
+## Sparse CKB checkpoint publication
+
+The stake fixture ran two CKB-backed committee changes on three Stem
+replicas and CKB 0.210.0. A fresh publisher process opened the same journal
+on each poll. It published the two required handoffs, honored the routine
+interval while idle, anchored a requested Header at its exact height, and
+later published by interval alone. A CKB reorganization detached the first
+checkpoint before confirmation. The publisher resubmitted the same signed
+transaction and confirmed it on the replacement branch. Reorganizing a
+confirmed checkpoint halted further publication.
+
+| Fixture and publication | Stem height | Signed CKB bytes | CKB estimated cycles |
+| --- | ---: | ---: | ---: |
+| Stake, first handoff | 10 | 2,396 | 6,210,846 |
+| Stake, second handoff | 20 | 2,284 | 6,196,365 |
+| Stake, on-demand | 25 | 1,951 | 6,104,412 |
+| Stake, scheduled | 28 | 1,919 | 6,048,835 |
+| Four-replica Intercell, creation | 1 | 2,311 | 14,414,374 |
+| Four-replica Intercell, outbox proof | 20 | 2,331 | 14,311,201 |
+
+All recorded publications were mined on the disposable CKB chain and
+reached two further canonical blocks before the journal advanced. In
+the Intercell fixture, the published Header authenticated both saved
+outbox proofs. The mailbox consumed both messages. Stem authenticated
+the CKB return message, rejected replay after restart and rejected the
+message sourced from an orphaned CKB block. The four replicas agreed
+at Stem height 41. The fixture exercised 20 rejection cases.
+
+An earlier Intercell run advanced to the latest Header on demand.
+CKB confirmed that checkpoint, but the saved Patricia proof was for an
+earlier Header. Stem no longer served the needed historical state path
+when asked after CKB confirmation. The exact-height publication test
+uses the proof collected before publication. The archive retains that
+failed run, two initial replica port collisions, signed transactions,
+canonical inclusion proofs and reproduction commands.
+
+CKB and xUDT payouts, delegated staking and reward redemption, and
+historical and live-at-anchor Cell references passed their devnet
+regressions. The Rust workspace passed 448 tests with 12 ignored. The Go
+proof suite passed.
+
+[Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
+[All runs, signed transactions and build fingerprints](benchmarks/2026-11-26-stem-checkpoint-publisher.json.xz).
