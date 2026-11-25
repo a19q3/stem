@@ -17,7 +17,15 @@ fn main() -> i8 {
 }
 
 fn verify() -> Option<()> {
-    let [network, genesis, members, proof, expected_header] = argv() else {
+    let [
+        network,
+        genesis,
+        members,
+        proof,
+        expected_header,
+        handoffs @ ..,
+    ] = argv()
+    else {
         return None;
     };
     let network = unhex(network.to_bytes())?.try_into().ok()?;
@@ -34,8 +42,24 @@ fn verify() -> Option<()> {
             power: u64::from_le_bytes(raw[32..].try_into().unwrap()),
         })
         .collect::<Vec<_>>();
-    let committee = Committee::new(network, genesis, 0, &members).ok()?;
-    let finalized = committee.verify_finality(&unhex(proof.to_bytes())?).ok()?;
+    let mut committee = Committee::new(network, genesis, 0, &members).ok()?;
+    for handoff in handoffs {
+        let (change, boundary, _) = committee.verify_handoff(&unhex(handoff.to_bytes())?).ok()?;
+        committee = Committee::at_anchor(
+            network,
+            genesis,
+            change.epoch,
+            boundary.id(),
+            &change.members,
+        )
+        .ok()?;
+    }
+    let proof = proof.to_bytes();
+    let finalized = if let Some(raw) = proof.strip_prefix(b"!") {
+        committee.verify_handoff(&unhex(raw)?).ok()?.1
+    } else {
+        committee.verify_finality(&unhex(proof)?).ok()?
+    };
     (finalized.as_bytes().as_slice() == unhex(expected_header.to_bytes())?).then_some(())
 }
 

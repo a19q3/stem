@@ -16,7 +16,10 @@ use serde_json::json;
 use stem_ledger::{Transaction, block::Header};
 use stem_stake::{
     Hash32, Member,
-    jolteon::{Committee, FinalityProof, Point, Quorum, Share, TimeoutCertificate, TimeoutVote},
+    jolteon::{
+        Committee, CommitteeChange, FinalityProof, HandoffProof, MAX_MEMBERS, Point, Quorum, Share,
+        TimeoutCertificate, TimeoutVote,
+    },
 };
 
 use crate::native_store::{Prepared, Store};
@@ -35,12 +38,41 @@ const MAX_PROPOSAL_BYTES: u64 = 16 * 1024 * 1024;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Peer addresses in the public-key order of the genesis committee.
-    pub peers: Vec<SocketAddr>,
+    /// Static peer directory in ascending Ed25519 public-key order.
+    pub peers: Vec<Peer>,
     pub view_timeout_ms: u64,
     pub proposal_interval_ms: u64,
     #[serde(default = "worker_count")]
     pub vm_workers: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Peer {
+    key: String,
+    address: SocketAddr,
+}
+
+struct Directory {
+    keys: Vec<Hash32>,
+    own: u16,
+}
+
+impl Directory {
+    fn id(&self, key: &Hash32) -> Option<u16> {
+        self.keys.binary_search(key).ok().map(|index| index as u16)
+    }
+
+    fn routes(&self, members: &[Member]) -> Vec<Option<u16>> {
+        members.iter().map(|member| self.id(&member.key)).collect()
+    }
+
+    fn member(&self, members: &[Member]) -> Option<u16> {
+        members
+            .binary_search_by_key(&self.keys[usize::from(self.own)], |member| member.key)
+            .ok()
+            .map(|index| index as u16)
+    }
 }
 
 fn worker_count() -> usize {
@@ -70,10 +102,17 @@ struct Candidate {
     source: u16,
 }
 
+struct BranchExecution {
+    batches: Vec<Arc<Prepared>>,
+    pending: Option<CommitteeChange>,
+}
+
 struct Replica {
     store: Store,
     committee: Committee,
-    member: u16,
+    member: Option<u16>,
+    directory: Directory,
+    routes: Vec<Option<u16>>,
     key: SigningKey,
     net: Network,
     workers: rayon::ThreadPool,
@@ -87,6 +126,9 @@ struct Replica {
     proposal_interval: Duration,
     backoff: u32,
     announced: Instant,
+    handoff_requested: Option<Instant>,
+    handoff_tip: Option<Quorum>,
+    pending: Option<CommitteeChange>,
     candidates: BTreeMap<Point, Candidate>,
     preferred: BTreeMap<u64, Point>,
     votes: BTreeMap<Point, BTreeMap<u16, [u8; 64]>>,
@@ -101,24 +143,46 @@ struct Replica {
 }
 
 pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
-    let members = members(&store)?;
-    let committee = Committee::new(
+    let genesis_members = members(&store)?;
+    let genesis_committee = Committee::new(
         store.network().unpack(),
         store.genesis_id().unpack(),
         0,
-        &members,
-    )?;
-    let public = key.verifying_key().to_bytes();
-    let member = u16::try_from(
-        members
-            .binary_search_by_key(&public, |m| m.key)
-            .ok()
-            .context("signing key is outside the genesis committee")?,
+        &genesis_members,
     )?;
     ensure!(
-        config.peers.len() == committee.size()
-            && config.peers.iter().collect::<HashSet<_>>().len() == committee.size(),
-        "peer list must name every validator exactly once"
+        store
+            .stake_committee_limit()
+            .is_none_or(|limit| limit <= MAX_MEMBERS),
+        "Stake Registry committee limit exceeds Jolteon capacity"
+    );
+    let public = key.verifying_key().to_bytes();
+    let keys = config
+        .peers
+        .iter()
+        .map(|peer| -> Result<Hash32> {
+            let key = hex::decode(peer.key.strip_prefix("0x").unwrap_or(&peer.key))?;
+            key.try_into()
+                .map_err(|_| anyhow::anyhow!("peer key must be 32 bytes"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let addresses: Vec<_> = config.peers.iter().map(|peer| peer.address).collect();
+    ensure!(
+        (1..=512).contains(&keys.len())
+            && keys.windows(2).all(|pair| pair[0] < pair[1])
+            && addresses.iter().collect::<HashSet<_>>().len() == addresses.len(),
+        "peer directory must contain distinct keys and addresses in key order"
+    );
+    let own = keys
+        .binary_search(&public)
+        .map_err(|_| anyhow::anyhow!("local key is outside the peer directory"))?
+        as u16;
+    let directory = Directory { keys, own };
+    ensure!(
+        genesis_members
+            .iter()
+            .all(|member| directory.id(&member.key).is_some()),
+        "peer directory is missing a genesis voter"
     );
     ensure!(
         (200..=60_000).contains(&config.view_timeout_ms)
@@ -127,7 +191,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         "invalid replica timing or VM worker configuration"
     );
 
-    let identity = committee.proposal_digest(Point {
+    let identity = genesis_committee.proposal_digest(Point {
         view: 0,
         parent_view: 0,
         header: public,
@@ -147,7 +211,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 initialize && store.tip().context.height == 0,
                 "missing validator journal"
             );
-            let genesis = committee.genesis_quorum();
+            let genesis = genesis_committee.genesis_quorum();
             let journal = wire::Journal {
                 identity: identity.to_vec(),
                 high: genesis.encode(),
@@ -158,6 +222,38 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
             journal
         }
     };
+    let (committee, active) = if journal.committee.is_empty() {
+        ensure!(journal.anchor.is_empty(), "unexpected genesis epoch anchor");
+        (genesis_committee, genesis_members)
+    } else {
+        let change = CommitteeChange::decode(&journal.committee)?;
+        ensure!(change.epoch > 0, "unexpected persisted genesis committee");
+        let boundary = store
+            .header(change.activation_height - 1)?
+            .context("missing epoch boundary")?;
+        let anchor = boundary.id(store.network());
+        ensure!(
+            anchor.as_slice() == journal.anchor,
+            "persisted epoch anchor disagrees with execution"
+        );
+        let committee = Committee::at_anchor(
+            store.network().unpack(),
+            store.genesis_id().unpack(),
+            change.epoch,
+            anchor.unpack(),
+            &change.members,
+        )?;
+        (committee, change.members)
+    };
+    let handoff_tip = store
+        .consensus_record(&known_handoff_key(committee.epoch()))?
+        .map(|raw| committee.verify_handoff(&raw).map(|(_, _, seal)| seal))
+        .transpose()?;
+    let routes = directory.routes(&active);
+    let member = directory.member(&active);
+    let pending = store
+        .announced_committee()?
+        .filter(|change| change.epoch > committee.epoch());
     let high = Quorum::decode(&journal.high, committee.size())?;
     committee.verify_quorum(&high)?;
     let finalized = Point::decode(&journal.finalized)?;
@@ -182,7 +278,10 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         let qc = Quorum::decode(&timeout.high, committee.size())?;
         committee.verify_quorum(&qc)?;
         let vote = Share::decode(&timeout.vote)?;
-        ensure!(vote.member == member, "wrong persisted timeout signer");
+        ensure!(
+            Some(vote.member) == member,
+            "wrong persisted timeout signer"
+        );
         committee.verify_share(&committee.timeout_digest(timeout.view, qc.point), vote)?;
     }
 
@@ -191,11 +290,14 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         .enable_all()
         .build()?
         .block_on(async {
-            let (net, mut incoming) = Network::listen(member, &config.peers).await?;
+            let (net, mut incoming) =
+                Network::listen(directory.own, &addresses, committee.epoch()).await?;
             let mut replica = Replica {
                 store,
                 committee,
                 member,
+                directory,
+                routes,
                 key,
                 net,
                 journal,
@@ -205,6 +307,9 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 view: 0,
                 since: Instant::now(),
                 announced: Instant::now(),
+                handoff_requested: None,
+                handoff_tip,
+                pending,
                 timeout: Duration::from_millis(config.view_timeout_ms),
                 proposal_interval: Duration::from_millis(config.proposal_interval_ms),
                 backoff: 0,
@@ -247,7 +352,10 @@ impl Replica {
     fn save(&self, proposal: Option<(Point, &wire::Proposal)>) -> Result<()> {
         let mut records = vec![(STATE.to_vec(), self.journal.encode_to_vec())];
         if let Some((point, proposal)) = proposal {
-            records.push((proposal_key(point), proposal.encode_to_vec()));
+            records.push((
+                proposal_key(self.committee.epoch(), point),
+                proposal.encode_to_vec(),
+            ));
         }
         self.store.persist_consensus(&records).context(StorageFault)
     }
@@ -324,14 +432,26 @@ impl Replica {
             "noncanonical execution Header"
         );
         let parent = self.qc(&proposal.parent)?;
-        ensure!(
-            header.context.parent.as_slice() == parent.point.header,
-            "proposal does not extend its certified Header"
-        );
+        let header_id: Hash32 = header.id(self.store.network()).unpack();
+        let hash = if proposal.seal {
+            let seal = self.committee.seal_header(header_id);
+            ensure!(
+                proposal.transactions.is_empty()
+                    && (parent.point.header == header_id || parent.point.header == seal),
+                "epoch seal must extend its certified boundary"
+            );
+            seal
+        } else {
+            ensure!(
+                header.context.parent.as_slice() == parent.point.header,
+                "proposal does not extend its certified Header"
+            );
+            header_id
+        };
         let point = Point {
             view: proposal.view,
             parent_view: parent.point.view,
-            header: header.id(self.store.network()).unpack(),
+            header: hash,
         };
         Point::decode(&point.encode())?;
         let tc = (!proposal.timeout.is_empty())
@@ -403,7 +523,7 @@ impl Replica {
             self.requests.clear();
         }
         let repeated = self.requests.insert(point, Instant::now()).is_some();
-        if let Some(peer) = peer.filter(|&peer| peer != self.member && !repeated) {
+        if let Some(peer) = peer.filter(|&peer| peer != self.directory.own && !repeated) {
             self.net.send(peer, wire::GET, point.encode().to_vec());
         } else {
             self.net.broadcast(wire::GET, point.encode().to_vec());
@@ -421,7 +541,7 @@ impl Replica {
             if !self.candidates.contains_key(&point) {
                 if let Some(raw) = self
                     .store
-                    .consensus_record(&proposal_key(point))
+                    .consensus_record(&proposal_key(self.committee.epoch(), point))
                     .context(StorageFault)?
                 {
                     let proposal = wire::canonical(&raw)?;
@@ -432,7 +552,7 @@ impl Replica {
                         Candidate {
                             proposal: checked,
                             execution: None,
-                            source: self.member,
+                            source: self.directory.own,
                         },
                     );
                 } else {
@@ -449,14 +569,35 @@ impl Replica {
         Ok(Some(branch))
     }
 
-    fn execute(&mut self, branch: &[Point]) -> Result<Vec<Arc<Prepared>>> {
-        let mut batches = Vec::with_capacity(branch.len());
+    fn execute(&mut self, branch: &[Point]) -> Result<BranchExecution> {
+        let mut batches: Vec<Arc<Prepared>> = Vec::with_capacity(branch.len());
+        let mut pending = self.pending.clone();
         for point in branch {
             let candidate = self
                 .candidates
                 .get_mut(point)
                 .context("candidate missing from branch")?;
             let proposal = &candidate.proposal;
+            if proposal.wire.seal {
+                let tip = batches
+                    .last()
+                    .map_or(self.store.tip(), |batch| batch.header());
+                ensure!(
+                    pending
+                        .as_ref()
+                        .is_some_and(|change| tip.context.height.checked_add(1)
+                            == Some(change.activation_height))
+                        && &proposal.header == tip,
+                    "epoch seal does not close an announced boundary"
+                );
+                continue;
+            }
+            ensure!(
+                pending
+                    .as_ref()
+                    .is_none_or(|change| proposal.header.context.height < change.activation_height),
+                "outgoing committee cannot certify execution after its boundary"
+            );
             if candidate.execution.is_none() {
                 let transactions = proposal
                     .wire
@@ -473,19 +614,23 @@ impl Replica {
                     prepared.header() == &proposal.header,
                     "candidate execution differs from the signed Header"
                 );
-                ensure!(
-                    prepared.validator_updates().is_empty(),
-                    "committee handoff is not enabled in this replica"
-                );
                 candidate.execution = Some(Arc::new(prepared));
             }
-            batches.push(candidate.execution.clone().expect("prepared candidate"));
+            let prepared = candidate.execution.clone().expect("prepared candidate");
+            if let Some(change) = prepared.committee_change() {
+                ensure!(
+                    pending.is_none() && change.epoch > self.committee.epoch(),
+                    "overlapping committee announcements"
+                );
+                pending = Some(change.clone());
+            }
+            batches.push(prepared);
         }
-        Ok(batches)
+        Ok(BranchExecution { batches, pending })
     }
 
     fn finalize(&mut self) -> Result<()> {
-        let high = self.high.clone();
+        let high = self.handoff_tip.as_ref().unwrap_or(&self.high).clone();
         if high.point.view <= self.finalized.view {
             return Ok(());
         }
@@ -501,20 +646,65 @@ impl Replica {
             branch.len() >= 2 && branch[branch.len() - 2] == parent,
             "invalid two-chain certificate"
         );
-        let proof = FinalityProof {
-            parent_header: self.candidates[&parent].proposal.wire.header.clone(),
-            parent_qc: child.parent.encode(),
-            child_header: child.wire.header.clone(),
-            child_qc: high.encode(),
-        }
-        .encode_to_vec();
-        let batches = self.execute(&branch)?;
-        // Keep the child available before committing any certified ancestors.
-        self.save(Some((
-            high.point,
-            &self.candidates[&high.point].proposal.wire,
-        )))?;
-        for (point, prepared) in branch.iter().zip(batches).take(branch.len() - 1) {
+        let BranchExecution { batches, pending } = self.execute(&branch)?;
+        let child = &self.candidates[&high.point].proposal;
+        let old_epoch = self.committee.epoch();
+        let mut successor = None;
+        let mut durable = vec![(STATE.to_vec(), self.journal.encode_to_vec())];
+        let commit_count = batches.len() - usize::from(!child.wire.seal);
+        let proof = if child.wire.seal {
+            let change = pending.context("terminal execution has no successor")?;
+            let (announcement, path) = self
+                .store
+                .on_branch(&batches, Store::prove_announced_committee)?;
+            let handoff = HandoffProof {
+                boundary_header: child.wire.header.clone(),
+                parent_qc: child.parent.encode(),
+                seal_qc: high.encode(),
+                announcement,
+                path: path.encode()?.to_vec(),
+            }
+            .encode_to_vec();
+            let (verified, _, _) = self.committee.verify_handoff(&handoff)?;
+            ensure!(
+                verified == change && commit_count != 0,
+                "handoff disagrees with execution"
+            );
+            let committee = Committee::at_anchor(
+                self.store.network().unpack(),
+                self.store.genesis_id().unpack(),
+                change.epoch,
+                child.header.id(self.store.network()).unpack(),
+                &change.members,
+            )?;
+            successor = Some((change, committee));
+            // A lagging replica can fetch every certified terminal proposal after the switch.
+            for point in &branch[commit_count..] {
+                durable.push((
+                    proposal_key(old_epoch, *point),
+                    self.candidates[point].proposal.wire.encode_to_vec(),
+                ));
+            }
+            handoff
+        } else {
+            durable.push((
+                proposal_key(old_epoch, high.point),
+                child.wire.encode_to_vec(),
+            ));
+            FinalityProof {
+                parent_header: self.candidates[&parent].proposal.wire.header.clone(),
+                parent_qc: child.parent.encode(),
+                child_header: child.wire.header.clone(),
+                child_qc: high.encode(),
+            }
+            .encode_to_vec()
+        };
+        self.store
+            .persist_consensus(&durable)
+            .context(StorageFault)?;
+        // Execution batches contain only real blocks. The outgoing seal produces no ledger changes.
+        for (index, (point, prepared)) in branch.iter().zip(batches).take(commit_count).enumerate()
+        {
             let proposal = &self.candidates[point].proposal.wire;
             self.journal.finalized = point.encode().to_vec();
             self.journal.lock = point.view;
@@ -523,20 +713,39 @@ impl Replica {
                 .committed_transactions
                 .checked_add(proposal.transactions.len() as u64)
                 .context("transaction counter overflow")?;
+            let mut records = vec![
+                (proposal_key(old_epoch, *point), proposal.encode_to_vec()),
+                (
+                    finality_key(prepared.header().context.height),
+                    wire::Finalized {
+                        proof: proof.clone(),
+                        epoch: old_epoch,
+                        handoff: successor.is_some(),
+                    }
+                    .encode_to_vec(),
+                ),
+            ];
+            if let Some((change, next)) = successor.as_ref().filter(|_| index + 1 == commit_count) {
+                let anchor = next.genesis_quorum();
+                self.journal = wire::Journal {
+                    identity: self.journal.identity.clone(),
+                    high: anchor.encode(),
+                    finalized: anchor.point.encode().to_vec(),
+                    committed_transactions: self.journal.committed_transactions,
+                    committee: change.encode(),
+                    anchor: anchor.point.header.to_vec(),
+                    ..Default::default()
+                };
+                records.push((handoff_key(old_epoch), proof.clone()));
+            }
+            records.push((STATE.to_vec(), self.journal.encode_to_vec()));
             self.store
-                .commit_certified(
-                    &prepared,
-                    &[
-                        (STATE.to_vec(), self.journal.encode_to_vec()),
-                        (proposal_key(*point), proposal.encode_to_vec()),
-                        (
-                            finality_key(prepared.header().context.height),
-                            proof.clone(),
-                        ),
-                    ],
-                )
+                .commit_certified(&prepared, &records)
                 .context(StorageFault)?;
             self.finalized = *point;
+            if let Some(change) = prepared.committee_change() {
+                self.pending = Some(change.clone());
+            }
             for tx in &proposal.transactions {
                 let id = ckb_hash::blake2b_256(tx);
                 if let Some(removed) = self.mempool.remove(&id) {
@@ -544,18 +753,45 @@ impl Replica {
                 }
             }
         }
-        let view = self.finalized.view;
-        self.candidates.retain(|point, _| point.view > view);
-        self.preferred.retain(|slot, _| *slot > view);
-        self.votes.retain(|point, _| point.view > view);
-        self.timeouts.retain(|slot, _| *slot > view);
-        self.observed_votes
-            .retain(|(slot, _), _| slot.saturating_add(256) >= view);
+        if let Some((change, committee)) = successor {
+            self.net.broadcast_at(old_epoch, wire::HANDOFF, proof);
+            self.routes = self.directory.routes(&change.members);
+            self.member = self.directory.member(&change.members);
+            self.net.epoch = change.epoch;
+            self.high = committee.genesis_quorum();
+            self.finalized = self.high.point;
+            self.committee = committee;
+            self.pending = None;
+            self.handoff_tip = None;
+            self.handoff_requested = None;
+            self.certificate = None;
+            self.view = 0;
+            self.backoff = 0;
+            self.candidates.clear();
+            self.preferred.clear();
+            self.votes.clear();
+            self.timeouts.clear();
+            self.observed_votes.clear();
+            self.requests.clear();
+            self.certificates.clear();
+            self.timeout_views.clear();
+            self.enter();
+        } else {
+            let view = self.finalized.view;
+            self.candidates.retain(|point, _| point.view > view);
+            self.preferred.retain(|slot, _| *slot > view);
+            self.votes.retain(|point, _| point.view > view);
+            self.timeouts.retain(|slot, _| *slot > view);
+            self.observed_votes
+                .retain(|(slot, _), _| slot.saturating_add(256) >= view);
+        }
         Ok(())
     }
 
     fn vote_for(&mut self, point: Point) -> Result<()> {
-        if point.view != self.view
+        if self.member.is_none()
+            || self.handoff_tip.is_some()
+            || point.view != self.view
             || point.view <= self.high.point.view
             || point.parent_view < self.journal.lock
         {
@@ -591,18 +827,25 @@ impl Replica {
     }
 
     fn dispatch_vote(&mut self, point: Point) -> Result<()> {
+        let Some(member) = self.member else {
+            return Ok(());
+        };
         let share = Share {
-            member: self.member,
+            member,
             signature: self.key.sign(&self.committee.vote_digest(point)).to_bytes(),
         };
         let body = [point.encode().as_slice(), &share.encode()].concat();
         let collector = self.committee.leader(point.view)?;
         let next = self.committee.leader(point.view.saturating_add(1))?;
-        self.net.send(collector, wire::VOTE, body.clone());
-        if next != collector {
-            self.net.send(next, wire::VOTE, body);
+        if let Some(peer) = self.routes[usize::from(collector)] {
+            self.net.send(peer, wire::VOTE, body.clone());
         }
-        if self.member == collector || self.member == next {
+        if next != collector
+            && let Some(peer) = self.routes[usize::from(next)]
+        {
+            self.net.send(peer, wire::VOTE, body);
+        }
+        if member == collector || member == next {
             self.accept_vote(point, share)?;
         }
         Ok(())
@@ -705,6 +948,9 @@ impl Replica {
     }
 
     fn local_timeout(&mut self) -> Result<()> {
+        let Some(member) = self.member else {
+            return Ok(());
+        };
         if !self.journal.timeout.is_empty() {
             let prior: wire::Timeout = wire::canonical(&self.journal.timeout)?;
             if prior.view >= self.view {
@@ -713,7 +959,7 @@ impl Replica {
         }
         let high = self.high.point;
         let share = Share {
-            member: self.member,
+            member,
             signature: self
                 .key
                 .sign(&self.committee.timeout_digest(self.view, high))
@@ -732,7 +978,7 @@ impl Replica {
     }
 
     fn propose(&mut self) -> Result<()> {
-        if self.committee.leader(self.view)? != self.member
+        if Some(self.committee.leader(self.view)?) != self.member
             || self.preferred.contains_key(&self.view)
         {
             return Ok(());
@@ -765,31 +1011,47 @@ impl Replica {
         let Some(branch) = self.branch(parent.point)? else {
             return Ok(());
         };
-        let batches = self.execute(&branch)?;
-        let (transactions, execution) = self.workers.install(|| {
-            self.store.on_branch(&batches, |state| {
-                let at = now_ms()?.max(state.tip().context.timestamp_ms);
-                let selected = state.select(
-                    self.mempool.values().cloned().collect(),
-                    at,
-                    MAX_PROPOSAL_BYTES,
-                )?;
-                let prepared = state.prepare(&selected, at, true)?;
-                Ok((selected, prepared))
-            })
-        })?;
-        ensure!(
-            execution.validator_updates().is_empty(),
-            "committee handoff is not enabled in this replica"
-        );
+        let BranchExecution { batches, pending } = self.execute(&branch)?;
+        let parent_header = batches
+            .last()
+            .map_or(self.store.tip(), |batch| batch.header());
+        let seal = pending.as_ref().is_some_and(|change| {
+            parent_header.context.height.checked_add(1) == Some(change.activation_height)
+        });
+        let (header, transactions, execution) = if seal {
+            (parent_header.clone(), Vec::new(), None)
+        } else {
+            let (transactions, execution) = self.workers.install(|| {
+                self.store.on_branch(&batches, |state| {
+                    let at = now_ms()?.max(state.tip().context.timestamp_ms);
+                    let selected = state.select(
+                        self.mempool.values().cloned().collect(),
+                        at,
+                        MAX_PROPOSAL_BYTES,
+                    )?;
+                    let prepared = state.prepare(&selected, at, true)?;
+                    Ok((selected, prepared))
+                })
+            })?;
+            (
+                execution.header().clone(),
+                transactions,
+                Some(Arc::new(execution)),
+            )
+        };
+        let header_id: Hash32 = header.id(self.store.network()).unpack();
         let point = Point {
             view: self.view,
             parent_view: parent.point.view,
-            header: execution.header().id(self.store.network()).unpack(),
+            header: if seal {
+                self.committee.seal_header(header_id)
+            } else {
+                header_id
+            },
         };
         let proposal = wire::Proposal {
             view: self.view,
-            header: execution.header().encode().to_vec(),
+            header: header.encode().to_vec(),
             parent: parent.encode(),
             timeout: tc,
             transactions: transactions
@@ -801,9 +1063,10 @@ impl Replica {
                 .sign(&self.committee.proposal_digest(point))
                 .to_bytes()
                 .to_vec(),
+            seal,
         };
-        self.admit_proposal(proposal.clone(), self.member)?;
-        self.candidates.get_mut(&point).unwrap().execution = Some(Arc::new(execution));
+        self.admit_proposal(proposal.clone(), self.directory.own)?;
+        self.candidates.get_mut(&point).unwrap().execution = execution;
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &proposal)))?;
         self.net.broadcast(wire::PROPOSAL, proposal.encode_to_vec());
@@ -812,6 +1075,9 @@ impl Replica {
 
     fn tick(&mut self) -> Result<()> {
         self.finalize()?;
+        if self.handoff_tip.is_some() {
+            return Ok(());
+        }
         if let Some(&point) = self.preferred.get(&self.view) {
             // Invalid candidate execution is a view failure. The pacemaker still runs.
             if let Err(error) = self.vote_for(point) {
@@ -846,9 +1112,9 @@ impl Replica {
                 if vote.view == self.view {
                     if let Some(raw) = self
                         .store
-                        .consensus_record(&proposal_key(vote))
+                        .consensus_record(&proposal_key(self.committee.epoch(), vote))
                         .context(StorageFault)?
-                        && self.committee.leader(vote.view)? == self.member
+                        && Some(self.committee.leader(vote.view)?) == self.member
                     {
                         self.net.broadcast(wire::PROPOSAL, raw);
                     }
@@ -869,8 +1135,53 @@ impl Replica {
             return Ok(());
         }
         let peer = u16::try_from(frame.sender)?;
-        self.committee.power(peer)?;
+        ensure!(
+            usize::from(peer) < self.directory.keys.len(),
+            "unknown peer route"
+        );
+        let epoch = self.committee.epoch();
+        if frame.kind == wire::GET {
+            let point = Point::decode(&frame.body)?;
+            if let Some(raw) = self
+                .store
+                .consensus_record(&proposal_key(frame.epoch, point))
+                .context(StorageFault)?
+            {
+                self.net.send_at(frame.epoch, peer, wire::PROPOSAL, raw);
+            }
+            return Ok(());
+        }
+        if frame.kind == wire::GET_HANDOFF {
+            if let Some(raw) = self
+                .store
+                .consensus_record(&handoff_key(frame.epoch))
+                .context(StorageFault)?
+            {
+                self.net.send_at(frame.epoch, peer, wire::HANDOFF, raw);
+            }
+            return Ok(());
+        }
+        if frame.epoch != epoch {
+            if frame.epoch > epoch
+                && self
+                    .handoff_requested
+                    .is_none_or(|time| time.elapsed() >= Duration::from_millis(500))
+            {
+                self.handoff_requested = Some(Instant::now());
+                self.net.broadcast(wire::GET_HANDOFF, Vec::new());
+            }
+            return Ok(());
+        }
         match frame.kind {
+            wire::HANDOFF => {
+                if self.handoff_tip.is_none() {
+                    let (_, _, seal) = self.committee.verify_handoff(&frame.body)?;
+                    self.store
+                        .persist_consensus(&[(known_handoff_key(epoch), frame.body)])
+                        .context(StorageFault)?;
+                    self.handoff_tip = Some(seal);
+                }
+            }
             wire::PROPOSAL => self.admit_proposal(wire::canonical(&frame.body)?, peer)?,
             wire::VOTE => {
                 let (point, share) = frame
@@ -897,16 +1208,6 @@ impl Replica {
                 {
                     self.committee.verify_timeout_certificate(&tc)?;
                     self.learn_tc(tc)?;
-                }
-            }
-            wire::GET => {
-                let point = Point::decode(&frame.body)?;
-                if let Some(raw) = self
-                    .store
-                    .consensus_record(&proposal_key(point))
-                    .context(StorageFault)?
-                {
-                    self.net.send(peer, wire::PROPOSAL, raw);
                 }
             }
             wire::RELAY_TX => {
@@ -938,7 +1239,9 @@ impl Replica {
         let tip = self.store.tip();
         match kind {
             wire::STATUS => Ok(json!({
-                "height": tip.context.height, "view": self.view, "high_view": self.high.point.view, "member": self.member,
+                "height": tip.context.height, "epoch": self.committee.epoch(), "view": self.view,
+                "high_view": self.high.point.view, "member": self.member,
+                "voting_power": self.member.map(|member| self.committee.power(member)).transpose()?,
                 "app_hash": hex::encode(tip.app_hash(self.store.network()).as_slice()),
                 "committed_transactions": self.journal.committed_transactions,
                 "timeout_view": self.certificate.as_ref().map_or(0, |tc| tc.view),
@@ -973,6 +1276,17 @@ impl Replica {
                     .store
                     .consensus_record(&finality_key(height))?
                     .context("no finalized proof at that height")?;
+                let proof: wire::Finalized = wire::canonical(&proof)?;
+                Ok(
+                    json!({"proof": hex::encode(proof.proof), "epoch": proof.epoch, "handoff": proof.handoff}),
+                )
+            }
+            wire::HANDOFF_PROOF => {
+                let epoch = u64::from_le_bytes(body.as_slice().try_into()?);
+                let proof = self
+                    .store
+                    .consensus_record(&handoff_key(epoch))?
+                    .context("no handoff from that epoch")?;
                 Ok(json!({"proof": hex::encode(proof)}))
             }
             _ => anyhow::bail!("unknown client request"),
@@ -993,18 +1307,53 @@ fn members(store: &Store) -> Result<Vec<Member>> {
         .collect()
 }
 
-pub fn verify_finality(store: &Store, raw: &[u8]) -> Result<Header> {
-    let committee = Committee::new(
-        store.network().unpack(),
-        store.genesis_id().unpack(),
-        0,
-        &members(store)?,
-    )?;
-    Header::decode(committee.verify_finality(raw)?.as_bytes())
+pub fn verify_finality(
+    store: &Store,
+    handoffs: &[Vec<u8>],
+    raw: &[u8],
+    terminal: bool,
+) -> Result<Header> {
+    let network = store.network().unpack();
+    let genesis = store.genesis_id().unpack();
+    let mut committee = Committee::new(network, genesis, 0, &members(store)?)?;
+    let mut previous_height = 0;
+    for raw in handoffs {
+        let (change, boundary, _) = committee.verify_handoff(raw)?;
+        ensure!(
+            boundary.height() > previous_height,
+            "handoffs must advance execution height"
+        );
+        committee = Committee::at_anchor(
+            network,
+            genesis,
+            change.epoch,
+            boundary.id(),
+            &change.members,
+        )?;
+        previous_height = boundary.height();
+    }
+    let finalized = if terminal {
+        committee.verify_handoff(raw)?.1
+    } else {
+        committee.verify_finality(raw)?
+    };
+    ensure!(
+        finalized.height() > previous_height,
+        "proof predates its committee's activation"
+    );
+    Header::decode(finalized.as_bytes())
 }
 
-fn proposal_key(point: Point) -> Vec<u8> {
-    [b"body".as_slice(), &point.encode()].concat()
+fn proposal_key(epoch: u64, point: Point) -> Vec<u8> {
+    [b"body".as_slice(), &epoch.to_be_bytes(), &point.encode()].concat()
+}
+
+fn handoff_key(epoch: u64) -> Vec<u8> {
+    [b"handoff".as_slice(), &epoch.to_be_bytes()].concat()
+}
+
+fn known_handoff_key(epoch: u64) -> Vec<u8> {
+    [b"known-handoff".as_slice(), &epoch.to_be_bytes()].concat()
 }
 
 fn finality_key(height: u64) -> Vec<u8> {

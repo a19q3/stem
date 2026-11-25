@@ -8,10 +8,13 @@ pub const TIMEOUT: u32 = 4;
 pub const TIMEOUT_CERTIFICATE: u32 = 5;
 pub const GET: u32 = 6;
 pub const RELAY_TX: u32 = 7;
+pub const HANDOFF: u32 = 8;
+pub const GET_HANDOFF: u32 = 9;
 pub const SUBMIT: u32 = 20;
 pub const STATUS: u32 = 21;
 pub const FINALITY: u32 = 22;
 pub const HEADER: u32 = 23;
+pub const HANDOFF_PROOF: u32 = 24;
 pub const CLIENT: u32 = u32::MAX;
 pub const MAX_FRAME: usize = 24 * 1024 * 1024;
 
@@ -23,6 +26,8 @@ pub struct Frame {
     pub kind: u32,
     #[prost(bytes, tag = "3")]
     pub body: Vec<u8>,
+    #[prost(uint64, tag = "4")]
+    pub epoch: u64,
 }
 
 #[derive(Clone, Message)]
@@ -39,6 +44,8 @@ pub struct Proposal {
     pub transactions: Vec<Vec<u8>>,
     #[prost(bytes, tag = "6")]
     pub signature: Vec<u8>,
+    #[prost(bool, tag = "7")]
+    pub seal: bool,
 }
 
 #[derive(Clone, Message)]
@@ -69,6 +76,20 @@ pub struct Journal {
     pub lock: u64,
     #[prost(uint64, tag = "8")]
     pub committed_transactions: u64,
+    #[prost(bytes, tag = "9")]
+    pub committee: Vec<u8>,
+    #[prost(bytes, tag = "10")]
+    pub anchor: Vec<u8>,
+}
+
+#[derive(Clone, Message)]
+pub struct Finalized {
+    #[prost(bytes, tag = "1")]
+    pub proof: Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub epoch: u64,
+    #[prost(bool, tag = "3")]
+    pub handoff: bool,
 }
 
 pub fn canonical<T: Message + Default>(raw: &[u8]) -> Result<T> {

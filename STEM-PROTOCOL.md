@@ -224,6 +224,14 @@ CKB L1 Registry 用 Type ID 保证唯一性。Stake Cell Type Script 绑定 Regi
 
 先排除未激活、已退休、已冻结和已到退出 epoch 的记录。对其余合格记录按质押从高到低排列，公钥字节序打破平局，取配置规模。票权为 `bonded_shannons / shannons_per_power` 的整数商。非空、最小质押、正权重和总权重上限全部是确定性检查。genesis 委员会通过同一认证路径直接生效。正常交接在 `FinalizeBlock(A−2)` 发出 `ValidatorUpdate`。旧委员会签名的 `A−1` Header 绑定新 `NextValidatorsHash`，新委员会签名的 `A` Header 绑定实际新 `ValidatorsHash`。交接证明包含这两个 Header 和签名，以及快照与更新执行证明。缺少新快照时，只有旧委员会对应质押仍锁在 L1 的情况下，旧委员会才能继续按原权重执行。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
 
+### Jolteon 委员会交接
+
+在 `A(e)−2` 提交的执行状态中，`stake/announced` 记录目标 epoch、生效高度和规范排序的加权委员名单。旧委员会在 `A(e)−1` 停止认证新的执行块，随后对绑定该 Header 的封闭提案投票。封闭提案沿用 QC、TC 和相邻视图的两链规则。视图跳过后可以用同一边界的两份相邻封闭证书确定最终性。只有执行块写入历史 MMR。
+
+交接证明包含边界 Header、两个旧委员会 QC 及下一届委员记录的 Patricia 路径。边界执行、最终性证明和新委员会投票日志原子落盘。新委员会使用边界 Header ID 作为起点，视图编号从 1 开始，签名域绑定新 epoch 和起点。节点通过持久化的交接证明及候选载荷追赶旧历史。
+
+原生 CKB 检查点单元信任固定的创世身份与委员承诺。更新验证当前成员、两链或交接证明，以及从实际 CKB 输入记录到新 Header 的 MMR 扩展。交接更新同时认证后继委员。客户端需从可信的 CKB 锚点确定当前检查点。CKB 合约验证最终性证书及连续性，执行有效性仍取决于 Stem 共识。质押退休与桥兑付需绑定同一个已认证检查点，才能把长期历史安全与资本锁定对应起来。[运行验证](BENCHMARKS.md#ckb-funded-jolteon-handoffs)
+
 ### 退休的不可逆性和快照签名人轮换
 
 1. **请求退出。** 所有者在 L1 更新 Registry 和 Stake Cell。资金继续锁定。在快照中因排名下降离开委员会的记录仍可参加后续选举。
@@ -415,6 +423,6 @@ Polytype 的边际成本采用控制实验。固定输入数量和数据、输�
 
 同一普通支付夹具使用内联 Strand 时为 312 B。三 Type Script 组合 Cell 的输出向量为 285 B，CKB 三个单独输出及 Data 向量为 590 B。标准锁的恢复调用计费 1,900,000 cycles，完整交易另计其余执行开销。早期 Molecule 编码、k256 锁与对应吞吐数据保存在[历史实验归档](FERN-BENCHMARKS.md)。[当前性能记录](BENCHMARKS.md)
 
-已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。固定 epoch 的 Jolteon 实际网络覆盖 4 至 128 副本，验证了候选载荷执行、加权两链最终性、连续 Leader 离线和从持久化投票状态恢复。CKB 直接证明及跨 epoch 委员会交接仍使用 CometBFT。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
+已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。Jolteon 实际网络覆盖 4 至 128 副本，并在 CKB devnet 核验跨 epoch 交接、观察节点恢复与原生检查点发布。当前默认节点、桥兑付及质押退休路径使用 CometBFT。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
 
 CKB 历史输出验证器从可信区块哈希重算 Header、交易及见证根，并按 OutPoint 提取原始输出。确认策略由调用方执行。锚点上的 Cell 存活与后续消费需要额外认证，本轮该验证器用于 Rust 客户端和离线 CLI。

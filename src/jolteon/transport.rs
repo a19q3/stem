@@ -36,6 +36,7 @@ pub struct Traffic {
 pub struct Network {
     pub traffic: Arc<Traffic>,
     own: u16,
+    pub epoch: u64,
     peers: Vec<Option<mpsc::Sender<Arc<Vec<u8>>>>>,
 }
 
@@ -43,6 +44,7 @@ impl Network {
     pub async fn listen(
         own: u16,
         addresses: &[SocketAddr],
+        epoch: u64,
     ) -> Result<(Self, mpsc::Receiver<Incoming>)> {
         let (sender, incoming) = mpsc::channel(256);
         let listener = TcpListener::bind(addresses[usize::from(own)]).await?;
@@ -78,33 +80,43 @@ impl Network {
             Self {
                 traffic,
                 own,
+                epoch,
                 peers,
             },
             incoming,
         ))
     }
 
-    fn frame(&self, kind: u32, body: Vec<u8>) -> Arc<Vec<u8>> {
+    fn frame(&self, epoch: u64, kind: u32, body: Vec<u8>) -> Arc<Vec<u8>> {
         Arc::new(
             Frame {
                 sender: u32::from(self.own),
                 kind,
                 body,
+                epoch,
             }
             .encode_to_vec(),
         )
     }
 
     pub fn broadcast(&self, kind: u32, body: Vec<u8>) {
-        let msg = self.frame(kind, body);
+        self.broadcast_at(self.epoch, kind, body);
+    }
+
+    pub fn broadcast_at(&self, epoch: u64, kind: u32, body: Vec<u8>) {
+        let msg = self.frame(epoch, kind, body);
         for peer in self.peers.iter().flatten() {
             self.enqueue(peer, msg.clone());
         }
     }
 
     pub fn send(&self, peer: u16, kind: u32, body: Vec<u8>) {
+        self.send_at(self.epoch, peer, kind, body);
+    }
+
+    pub fn send_at(&self, epoch: u64, peer: u16, kind: u32, body: Vec<u8>) {
         if let Some(Some(peer)) = self.peers.get(usize::from(peer)) {
-            self.enqueue(peer, self.frame(kind, body));
+            self.enqueue(peer, self.frame(epoch, kind, body));
         }
     }
 
@@ -130,7 +142,11 @@ async fn receive(
             ensure!(
                 matches!(
                     frame.kind,
-                    wire::SUBMIT | wire::STATUS | wire::FINALITY | wire::HEADER
+                    wire::SUBMIT
+                        | wire::STATUS
+                        | wire::FINALITY
+                        | wire::HEADER
+                        | wire::HANDOFF_PROOF
                 ),
                 "unsupported client request"
             );
@@ -146,7 +162,7 @@ async fn receive(
             return Ok(());
         }
         ensure!(
-            matches!(frame.kind, wire::PROPOSAL..=wire::RELAY_TX),
+            matches!(frame.kind, wire::PROPOSAL..=wire::GET_HANDOFF),
             "unsupported peer frame"
         );
         incoming.send(Incoming { frame, reply: None }).await?;

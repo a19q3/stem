@@ -23,6 +23,7 @@ use stem_ledger::{
     protocol::Operation,
     record,
 };
+use stem_stake::jolteon::{COMMITTEE_RECORD, CommitteeChange};
 use stem_vm::VerificationCache;
 
 mod bridge;
@@ -235,6 +236,7 @@ pub struct Prepared {
     receipts: Vec<Receipt>,
     keeper_receipts: usize,
     validator_updates: Vec<stem_stake::Member>,
+    committee_change: Option<CommitteeChange>,
     batch: Batch,
 }
 
@@ -261,6 +263,10 @@ impl Prepared {
 
     pub fn validator_updates(&self) -> &[stem_stake::Member] {
         &self.validator_updates
+    }
+
+    pub(crate) fn committee_change(&self) -> Option<&CommitteeChange> {
+        self.committee_change.as_ref()
     }
 }
 
@@ -302,6 +308,7 @@ impl Store {
         let mut validators = if let Some((_, state, _, _)) = &configured_staking {
             state
                 .announced
+                .members
                 .iter()
                 .map(|member| Ok((member.key, i64::try_from(member.power)?)))
                 .collect::<Result<_>>()?
@@ -626,6 +633,25 @@ impl Store {
 
     pub fn prove_stake_snapshot(&self) -> Result<(Option<Vec<u8>>, Proof)> {
         self.prove_system(staking::SNAPSHOT)
+    }
+
+    pub(crate) fn announced_committee(&self) -> Result<Option<CommitteeChange>> {
+        Ok(self
+            .system_record(COMMITTEE_RECORD)?
+            .as_deref()
+            .map(CommitteeChange::decode)
+            .transpose()?)
+    }
+
+    pub(crate) fn stake_committee_limit(&self) -> Option<usize> {
+        self.staking
+            .as_ref()
+            .map(|staking| staking.max_validators())
+    }
+
+    pub(crate) fn prove_announced_committee(&self) -> Result<(Vec<u8>, Proof)> {
+        let (record, proof) = self.prove_system(COMMITTEE_RECORD)?;
+        Ok((record.context("missing announced committee")?, proof))
     }
 
     pub fn prove_extinguished_fees(&self) -> Result<(Option<u64>, Proof)> {
@@ -994,10 +1020,14 @@ impl Store {
             None
         };
         let mut validator_updates = Vec::new();
+        let mut committee_change = None;
         if let Some((staking, stake)) = self.staking.as_ref().zip(overlay.stake) {
             let (records, updates) = staking.finish(stake, height)?;
             validator_updates = updates;
             for (name, value) in records {
+                if name == COMMITTEE_RECORD {
+                    committee_change = Some(CommitteeChange::decode(&value)?);
+                }
                 let id = self.system.record_key(&name);
                 system_changes.push((id, Some(self.system.value_hash(&value))));
                 batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
@@ -1072,6 +1102,7 @@ impl Store {
             receipts,
             keeper_receipts: due.len(),
             validator_updates,
+            committee_change,
             batch,
         })
     }

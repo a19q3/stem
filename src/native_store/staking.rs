@@ -10,13 +10,14 @@ use stem_ledger::{
 };
 use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, Member, Registry, RegistryAnchor,
-    StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey, l1::guardian_generation,
+    StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey,
+    jolteon::{COMMITTEE_RECORD, CommitteeChange},
+    l1::guardian_generation,
 };
 
 use super::Store;
 
 pub(super) const ACCEPTED: &[u8] = b"stake/accepted";
-pub(super) const ANNOUNCED: &[u8] = b"stake/announced";
 pub(super) const SNAPSHOT: &[u8] = b"stake/snapshot";
 pub(super) const CONFIG: &[u8] = b"stake/config";
 const AUTHORITY: &[u8] = b"stake/authority";
@@ -62,6 +63,10 @@ impl Staking {
         self.window
     }
 
+    pub(super) fn max_validators(&self) -> usize {
+        self.config.max_validators
+    }
+
     pub(super) fn initialize(
         genesis: &StakeGenesis,
         network: [u8; 32],
@@ -87,7 +92,11 @@ impl Staking {
         let state = StakeState {
             accepted,
             eligible: members.clone(),
-            announced: members,
+            announced: CommitteeChange {
+                epoch: 0,
+                activation_height: 1,
+                members,
+            },
             submitted: None,
         };
         let mut config = Vec::new();
@@ -135,7 +144,7 @@ impl Staking {
             .system_record(ACCEPTED)?
             .context("missing accepted Stake Snapshot")?;
         let announced = store
-            .system_record(ANNOUNCED)?
+            .system_record(COMMITTEE_RECORD)?
             .context("missing announced committee")?;
         let authority = match store.system_record(AUTHORITY)? {
             Some(encoded) => {
@@ -254,6 +263,7 @@ impl Staking {
         }
 
         let prior = announced
+            .members
             .iter()
             .map(|member| (member.key, member.power))
             .collect::<std::collections::BTreeMap<_, _>>();
@@ -279,7 +289,12 @@ impl Staking {
             }
         }
         updates.sort_unstable_by_key(|member| member.key);
-        writes.push((ANNOUNCED.to_vec(), encode_members(&eligible)));
+        let next_committee = CommitteeChange {
+            epoch: accepted.epoch,
+            activation_height: self.config.effective_height(accepted.epoch)?,
+            members: eligible,
+        };
+        writes.push((COMMITTEE_RECORD.to_vec(), next_committee.encode()));
         Ok((writes, updates))
     }
 }
@@ -295,7 +310,7 @@ pub(super) struct StagedStake {
 pub(super) struct StakeState {
     accepted: AcceptedSnapshot,
     eligible: Vec<Member>,
-    pub(super) announced: Vec<Member>,
+    pub(super) announced: CommitteeChange,
     submitted: Option<Transaction>,
 }
 
@@ -303,7 +318,7 @@ impl StakeState {
     pub(super) fn genesis_records(&self) -> [(&'static [u8], Vec<u8>); 2] {
         [
             (ACCEPTED, encode_accepted(self.accepted, &self.eligible)),
-            (ANNOUNCED, encode_members(&self.announced)),
+            (COMMITTEE_RECORD, self.announced.encode()),
         ]
     }
 
@@ -324,7 +339,7 @@ impl StakeState {
                 },
             },
             eligible: decode_members(eligible)?,
-            announced: decode_members(announced)?,
+            announced: CommitteeChange::decode(announced)?,
             submitted: None,
         })
     }

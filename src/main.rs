@@ -85,12 +85,18 @@ enum Command {
         #[arg(long)]
         initialize: bool,
     },
-    /// Verify a fixed-epoch two-chain execution proof against Stem genesis.
+    /// Verify a two-chain execution proof and any preceding committee handoffs.
     JolteonProof {
         #[arg(long)]
         genesis: PathBuf,
         #[arg(long)]
         proof: PathBuf,
+        /// Earlier handoff proofs in chronological order.
+        #[arg(long = "handoff")]
+        handoffs: Vec<PathBuf>,
+        /// The target proof itself closes its committee's epoch.
+        #[arg(long)]
+        terminal: bool,
     },
     Run {
         #[arg(long)]
@@ -169,20 +175,30 @@ fn main() -> Result<()> {
             )?;
             stem::jolteon::run(store, key, config, initialize)
         }
-        Command::JolteonProof { genesis, proof } => {
+        Command::JolteonProof {
+            genesis,
+            proof,
+            handoffs,
+            terminal,
+        } => {
             use ckb_types::prelude::Entity;
             let spec = native_spec::load(&genesis)?;
-            let raw: String = bridge_cli::read_json_limited(&proof, 128 * 1024)?;
+            let read_proof = |path: &PathBuf| -> Result<Vec<u8>> {
+                let raw: String = bridge_cli::read_json_limited(path, 128 * 1024)?;
+                Ok(hex::decode(raw.strip_prefix("0x").unwrap_or(&raw))?)
+            };
+            let handoffs = handoffs
+                .iter()
+                .map(read_proof)
+                .collect::<Result<Vec<_>>>()?;
             let directory = tempfile::tempdir()?;
             let store = stem::native_store::Store::open(
                 directory.path(),
                 &spec,
                 stem::native_store::Retention::Archive,
             )?;
-            let header = stem::jolteon::verify_finality(
-                &store,
-                &hex::decode(raw.strip_prefix("0x").unwrap_or(&raw))?,
-            )?;
+            let header =
+                stem::jolteon::verify_finality(&store, &handoffs, &read_proof(&proof)?, terminal)?;
             bridge_cli::print_json(&serde_json::json!({
                 "height": header.context.height,
                 "header": hex::encode(header.encode()),

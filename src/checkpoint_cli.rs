@@ -3,6 +3,7 @@ use std::{path::PathBuf, process::Command};
 use anyhow::{Context, Result, ensure};
 use ckb_types::{packed::Byte32, prelude::*};
 use clap::{Args, Subcommand};
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use stem::{native_store::HistoryIndex, native_store::Store};
@@ -11,6 +12,7 @@ use stem_stake::{
     BlockId,
     checkpoint::{Checkpoint, Domain, Update, ZERO_OUT_POINT, stake_snapshot_commitment},
     finality::{self, Tip, Trust},
+    jolteon::{HandoffProof, checkpoint as jolteon},
 };
 
 use crate::{
@@ -26,6 +28,8 @@ pub enum CheckpointCommand {
     Verify(Box<Verify>),
     /// Verify a direct CometBFT bundle and its native checkpoint tip.
     VerifyDirect(Box<VerifyDirect>),
+    /// Build a permissionless CKB checkpoint witness from Jolteon finality.
+    JolteonBundle(Box<JolteonBundle>),
     /// Rebuild the archive index as needed and produce a historical Header proof.
     History {
         #[command(flatten)]
@@ -33,6 +37,24 @@ pub enum CheckpointCommand {
         #[arg(long)]
         header: u64,
     },
+}
+
+#[derive(Args)]
+pub struct JolteonBundle {
+    #[command(flatten)]
+    archive: Archive,
+    /// Full arguments of the pinned CKB checkpoint Type Script.
+    #[arg(long)]
+    policy: String,
+    /// JSON hex string of the active committee record.
+    #[arg(long)]
+    roster: PathBuf,
+    #[arg(long)]
+    proof: PathBuf,
+    #[arg(long)]
+    previous_tip: Option<PathBuf>,
+    #[arg(long)]
+    terminal: bool,
 }
 
 #[derive(Args)]
@@ -231,6 +253,7 @@ impl CheckpointCommand {
             Self::Prepare(args) => args.run(),
             Self::Verify(args) => args.run(),
             Self::VerifyDirect(args) => args.run(),
+            Self::JolteonBundle(args) => args.run(),
             Self::History { archive, header } => {
                 let (network, index) = archive.open()?;
                 let historical = index.header(header)?;
@@ -249,6 +272,62 @@ impl CheckpointCommand {
                 }))
             }
         }
+    }
+}
+
+impl JolteonBundle {
+    fn run(self) -> Result<()> {
+        let (network, index) = self.archive.open()?;
+        let policy = jolteon::Policy::decode(&decode::<160>(&self.policy)?)?;
+        ensure!(
+            policy.network.as_slice() == network.as_slice(),
+            "checkpoint network differs from archive"
+        );
+        let read_hex = |path: &PathBuf| -> Result<Vec<u8>> {
+            let value: String = read_json_limited(path, 128 * 1024)?;
+            Ok(hex::decode(value.strip_prefix("0x").unwrap_or(&value))?)
+        };
+        let previous = self
+            .previous_tip
+            .as_ref()
+            .map(|path| Ok::<_, anyhow::Error>(jolteon::Tip::decode(&read_hex(path)?)?))
+            .transpose()?;
+        let start = previous.as_ref().map_or(0, jolteon::Tip::height);
+        ensure!(
+            start < self.archive.height,
+            "checkpoint height must advance"
+        );
+        let advance = jolteon::Advance {
+            roster: read_hex(&self.roster)?,
+            genesis_header: if previous.is_none() {
+                index.header(0)?.encode().to_vec()
+            } else {
+                Vec::new()
+            },
+            previous_frontier: index.frontier_at(start)?.encode(),
+            suffix: index
+                .extension(start + 1, self.archive.height)?
+                .into_iter()
+                .flatten()
+                .collect(),
+            proof: read_hex(&self.proof)?,
+            terminal: self.terminal,
+        };
+        let witness = advance.encode_to_vec();
+        let proved = jolteon::verify(&policy, previous.as_ref(), &witness)?;
+        ensure!(
+            proved.height() == self.archive.height,
+            "proof certifies a different checkpoint height"
+        );
+        let next = if self.terminal {
+            HandoffProof::decode(advance.proof.as_slice())?.announcement
+        } else {
+            advance.roster
+        };
+        print_json(
+            &json!({"height": proved.height(), "witness": encode(witness),
+            "tip": encode(proved.encode()), "next_roster": encode(next)}),
+        )
     }
 }
 

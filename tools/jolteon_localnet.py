@@ -17,7 +17,7 @@ from bridge_localnet import CKB, binary, ckb_hash, dependency, hex_bytes, point,
 from localnet import process_resources, run, write_json
 from native_bridge_localnet import cell, start, wait_for
 
-SUBMIT, STATUS, FINALITY, HEADER = 20, 21, 22, 23
+SUBMIT, STATUS, FINALITY, HEADER, HANDOFF = 20, 21, 22, 23, 24
 
 
 def varint(value):
@@ -48,6 +48,16 @@ def evidence_keys(args):
         public = key.public_key().public_bytes_raw()
         result.append((public, write_key(args.output, f"validator-{slot}", raw)))
     return sorted(result)
+
+
+def write_configuration(output, keys, ports, cadence, timeout):
+    configuration = output / "replicas.json"
+    write_json(configuration, {
+        "peers": [{"key": key.hex(), "address": f"127.0.0.1:{port}"}
+                  for key, port in zip(keys, ports, strict=True)],
+        "proposal_interval_ms": cadence, "view_timeout_ms": timeout,
+    })
+    return configuration
 
 
 def genesis_and_payments(args, keys, weights):
@@ -117,9 +127,9 @@ def scenario(args):
     weights = [1 + i % 2 for i in range(args.validators)]
     spec, payments = genesis_and_payments(args, keys, weights)
     peers = [args.port + i for i in range(args.validators)]
-    configuration = args.output / "replicas.json"
-    write_json(configuration, {"peers": [f"127.0.0.1:{port}" for port in peers],
-                               "proposal_interval_ms": args.cadence, "view_timeout_ms": args.timeout})
+    configuration = write_configuration(
+        args.output, [key for key, _ in keys], peers, args.cadence, args.timeout,
+    )
     nodes = {}
     phase = "startup"
 

@@ -4,17 +4,72 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use ed25519_dalek::Signature;
 use prost::Message;
 
+pub mod checkpoint;
+
 use crate::{
-    Authority, Error, Hash32, Member, Result,
+    Authority, Error, Hash32, MAX_RECORDS, Member, Result,
     compact::SignerBitmap,
     digest,
     finality::{NATIVE_HEADER_BYTES, native_height, native_id},
     history::Frontier,
+    patricia::{Commitment, MAX_PATH_BYTES, Namespace, decode_path},
 };
 
 pub const MAX_MEMBERS: usize = 128;
 const LEADER_SLOTS: usize = 10_000;
 const MAX_PROOF_BYTES: usize = 32 * 1024;
+pub const COMMITTEE_RECORD: &[u8] = b"stake/announced";
+
+/// Execution commits the successor roster two heights before its activation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommitteeChange {
+    pub epoch: u64,
+    pub activation_height: u64,
+    pub members: Vec<Member>,
+}
+
+impl CommitteeChange {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(16 + 40 * self.members.len());
+        bytes.extend_from_slice(&self.epoch.to_le_bytes());
+        bytes.extend_from_slice(&self.activation_height.to_le_bytes());
+        for member in &self.members {
+            bytes.extend_from_slice(&member.key);
+            bytes.extend_from_slice(&member.power.to_le_bytes());
+        }
+        bytes
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let (position, members) = bytes.split_at_checked(16).ok_or(Error::Encoding)?;
+        let (members, remainder) = members.as_chunks::<40>();
+        if !remainder.is_empty() || !(1..=MAX_RECORDS).contains(&members.len()) {
+            return Err(Error::Encoding);
+        }
+        let epoch = u64::from_le_bytes(position[..8].try_into().unwrap());
+        let activation_height = u64::from_le_bytes(position[8..].try_into().unwrap());
+        if (epoch == 0 && activation_height != 1) || (epoch != 0 && activation_height <= 2) {
+            return Err(Error::Epoch);
+        }
+        let members: Vec<_> = members
+            .iter()
+            .map(|member| Member {
+                key: member[..32].try_into().unwrap(),
+                power: u64::from_le_bytes(member[32..].try_into().unwrap()),
+            })
+            .collect();
+        if members.iter().any(|member| member.power == 0)
+            || members.windows(2).any(|pair| pair[0].key >= pair[1].key)
+        {
+            return Err(Error::Committee);
+        }
+        Ok(Self {
+            epoch,
+            activation_height,
+            members,
+        })
+    }
+}
 
 /// Two certified Headers. The child certifies the parent at the next view.
 #[derive(Clone, Message)]
@@ -27,6 +82,21 @@ pub struct FinalityProof {
     pub child_header: Vec<u8>,
     #[prost(bytes, tag = "4")]
     pub child_qc: Vec<u8>,
+}
+
+/// The outgoing committee certifies a terminal pair and an authenticated successor.
+#[derive(Clone, Message)]
+pub struct HandoffProof {
+    #[prost(bytes, tag = "1")]
+    pub boundary_header: Vec<u8>,
+    #[prost(bytes, tag = "2")]
+    pub parent_qc: Vec<u8>,
+    #[prost(bytes, tag = "3")]
+    pub seal_qc: Vec<u8>,
+    #[prost(bytes, tag = "4")]
+    pub announcement: Vec<u8>,
+    #[prost(bytes, tag = "5")]
+    pub path: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,6 +112,10 @@ impl FinalizedHeader {
 
     pub fn height(&self) -> u64 {
         native_height(&self.header)
+    }
+
+    pub fn id(&self) -> Hash32 {
+        native_id(&self.network, &self.header)
     }
 
     /// Checks an MMR extension from a previously authenticated checkpoint.
@@ -246,6 +320,7 @@ impl TimeoutCertificate {
 pub struct Committee {
     network: Hash32,
     genesis: Hash32,
+    anchor: Hash32,
     epoch: u64,
     generation: Hash32,
     authority: Authority,
@@ -254,7 +329,21 @@ pub struct Committee {
 
 impl Committee {
     pub fn new(network: Hash32, genesis: Hash32, epoch: u64, members: &[Member]) -> Result<Self> {
-        if network == [0; 32] || genesis == [0; 32] || !(1..=MAX_MEMBERS).contains(&members.len()) {
+        Self::at_anchor(network, genesis, epoch, genesis, members)
+    }
+
+    pub fn at_anchor(
+        network: Hash32,
+        genesis: Hash32,
+        epoch: u64,
+        anchor: Hash32,
+        members: &[Member],
+    ) -> Result<Self> {
+        if network == [0; 32]
+            || genesis == [0; 32]
+            || anchor == [0; 32]
+            || !(1..=MAX_MEMBERS).contains(&members.len())
+        {
             return Err(Error::Configuration);
         }
         let mut raw = Vec::with_capacity(40 * members.len());
@@ -262,12 +351,20 @@ impl Committee {
             raw.extend_from_slice(&member.key);
             raw.extend_from_slice(&member.power.to_le_bytes());
         }
-        let generation = digest(b"Stem Jolteon committee\0", &[&raw]);
+        let generation = if epoch == 0 {
+            if anchor != genesis {
+                return Err(Error::Anchor);
+            }
+            digest(b"Stem Jolteon committee\0", &[&raw])
+        } else {
+            digest(b"Stem Jolteon successor committee\0", &[&anchor, &raw])
+        };
         let authority = Authority::new(generation, members)?;
         let schedule = leader_schedule(members, authority.total);
         Ok(Self {
             network,
             genesis,
+            anchor,
             epoch,
             generation,
             authority,
@@ -279,12 +376,20 @@ impl Committee {
         self.authority.guardians.len()
     }
 
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub fn seal_header(&self, boundary: Hash32) -> Hash32 {
+        self.sign_digest(b"Stem Jolteon epoch seal\0", &boundary)
+    }
+
     pub fn genesis_quorum(&self) -> Quorum {
         Quorum {
             point: Point {
                 view: 0,
                 parent_view: 0,
-                header: self.genesis,
+                header: self.anchor,
             },
             bitmap: Vec::new(),
             signatures: Vec::new(),
@@ -423,6 +528,60 @@ impl Committee {
             network: self.network,
             header: *parent_header,
         })
+    }
+
+    pub fn verify_handoff(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(CommitteeChange, FinalizedHeader, Quorum)> {
+        if bytes.len() > MAX_PROOF_BYTES + MAX_PATH_BYTES {
+            return Err(Error::Encoding);
+        }
+        let proof = HandoffProof::decode(bytes).map_err(|_| Error::Encoding)?;
+        if proof.encode_to_vec() != bytes {
+            return Err(Error::Encoding);
+        }
+        let header = proof
+            .boundary_header
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::Encoding)?;
+        let boundary = native_id(&self.network, header);
+        let terminal = self.seal_header(boundary);
+        let parent = Quorum::decode(&proof.parent_qc, self.size())?;
+        let seal = Quorum::decode(&proof.seal_qc, self.size())?;
+        if !seal.point.directly_certifies(parent.point)
+            || seal.point.header != terminal
+            || (parent.point.header != boundary && parent.point.header != terminal)
+        {
+            return Err(Error::Sequence);
+        }
+        let change = CommitteeChange::decode(&proof.announcement)?;
+        if change.epoch <= self.epoch
+            || change.members.len() > MAX_MEMBERS
+            || native_height(header).checked_add(1) != Some(change.activation_height)
+        {
+            return Err(Error::Epoch);
+        }
+        let commitment = Commitment::new(self.network, Namespace::System);
+        if !commitment.verify(
+            header[112..144].try_into().unwrap(),
+            &commitment.record_key(COMMITTEE_RECORD),
+            Some(&commitment.value_hash(&proof.announcement)),
+            decode_path(&proof.path)?.into_iter(),
+        ) {
+            return Err(Error::Anchor);
+        }
+        self.verify_quorum(&parent)?;
+        self.verify_quorum(&seal)?;
+        Ok((
+            change,
+            FinalizedHeader {
+                network: self.network,
+                header: *header,
+            },
+            seal,
+        ))
     }
 
     /// The network collector has already verified these individual votes.
@@ -593,6 +752,77 @@ mod tests {
         assert!(next_epoch.verify_quorum(&quorum).is_err());
         encoded[Point::SIZE] |= 1 << 7;
         assert!(Quorum::decode(&encoded, members.len()).is_err());
+    }
+
+    #[test]
+    fn terminal_pair_authenticates_roster_after_a_skipped_view() {
+        let (keys, members) = fixture();
+        let network = [8; 32];
+        let genesis = [9; 32];
+        let outgoing = Committee::new(network, genesis, 0, &members).unwrap();
+        let incoming = CommitteeChange {
+            epoch: 1,
+            activation_height: 11,
+            members: members.clone(),
+        };
+        let state = Commitment::new(network, Namespace::System);
+        let leaf = crate::patricia::Node::Leaf {
+            key: state.record_key(COMMITTEE_RECORD),
+            value: state.value_hash(&incoming.encode()),
+        }
+        .encode();
+        let mut path = 1u32.to_le_bytes().to_vec();
+        path.extend_from_slice(&(leaf.len() as u32).to_le_bytes());
+        path.extend_from_slice(&leaf);
+        let mut boundary = [0; NATIVE_HEADER_BYTES];
+        boundary[..8].copy_from_slice(&10u64.to_le_bytes());
+        boundary[112..144].copy_from_slice(&state.node_hash(&leaf));
+        let anchor = native_id(&network, &boundary);
+        let terminal = outgoing.seal_header(anchor);
+        let certify = |point| {
+            let digest = outgoing.vote_digest(point);
+            let votes = [0, 1, 3]
+                .into_iter()
+                .map(|i| (i, share(&keys, i, digest).signature))
+                .collect();
+            outgoing.assemble_quorum(point, &votes).unwrap().encode()
+        };
+        let mut witness = HandoffProof {
+            boundary_header: boundary.to_vec(),
+            parent_qc: certify(Point {
+                view: 13,
+                parent_view: 10,
+                header: terminal,
+            }),
+            seal_qc: certify(Point {
+                view: 14,
+                parent_view: 13,
+                header: terminal,
+            }),
+            announcement: incoming.encode(),
+            path,
+        };
+        let (proved, header, seal) = outgoing.verify_handoff(&witness.encode_to_vec()).unwrap();
+        assert_eq!(proved, incoming);
+        assert_eq!(header.height(), 10);
+        let next = Committee::at_anchor(network, genesis, 1, anchor, &proved.members).unwrap();
+        assert_eq!(next.genesis_quorum().point.header, anchor);
+        assert_eq!(next.verify_quorum(&seal), Err(Error::Signature));
+        witness.announcement[48] ^= 8;
+        assert_eq!(
+            outgoing.verify_handoff(&witness.encode_to_vec()),
+            Err(Error::Anchor)
+        );
+        witness.announcement = incoming.encode();
+        witness.seal_qc = certify(Point {
+            view: 15,
+            parent_view: 13,
+            header: terminal,
+        });
+        assert_eq!(
+            outgoing.verify_handoff(&witness.encode_to_vec()),
+            Err(Error::Sequence)
+        );
     }
 
     #[test]

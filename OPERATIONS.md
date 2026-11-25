@@ -43,7 +43,7 @@ Keep CometBFT's private validator key and signing state together during recovery
 
 ## Exercise the native Jolteon path
 
-Use a fresh development genesis and a separate home per replica. `stem jolteon` accepts one 32-byte Ed25519 seed and a JSON config with `peers` in genesis public-key order, `view_timeout_ms`, `proposal_interval_ms`, and an optional `vm_workers`. Run once with `--initialize`. To restart, keep the same home and key and omit that flag. The runner defaults to two VM workers. It generates disposable keys for a private loopback network.
+Use a fresh development genesis and a separate home per replica. `stem jolteon` accepts one 32-byte Ed25519 seed and a JSON config with `peers` as `{key, address}` entries in ascending Ed25519 public-key order, `view_timeout_ms`, `proposal_interval_ms`, and an optional `vm_workers`. Run once with `--initialize`. To restart, keep the same home and key and omit that flag. The runner defaults to two VM workers. It generates disposable keys for a private loopback network.
 
 ```sh
 python3 tools/jolteon_localnet.py \
@@ -71,6 +71,29 @@ python3 tools/jolteon_finality_cost.py \
   --elf target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/jolteon-finality-cost \
   --archive benchmarks/2026-11-25-stem-jolteon-runtime.json.xz
 ```
+
+To exercise CKB-backed committee handoffs and native checkpoint publication, use
+a CKB executable with IntegrationTest RPC enabled. Configure the peer directory
+with the participating validators and observers before starting the fixture.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --target-dir target/stem-contracts \
+  --bin stake-registry --bin jolteon-checkpoint
+contracts_dir=target/stem-contracts/riscv64imac-unknown-none-elf/release
+python3 tools/jolteon_stake_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb --output /tmp/stem-jolteon-epochs \
+  --stake-registry "$contracts_dir/stake-registry" --direct-checkpoint "$contracts_dir/jolteon-checkpoint" \
+  --publish-checkpoint --replace
+```
+
+Drop `--replace` to test an overlapping join followed by an exit. The
+runner saves CKB transactions, guardian observations, boundary witnesses
+and execution proofs. `stem jolteon-proof --handoff <file>` takes preceding
+handoff files in chronological order. Use `--terminal` for a boundary
+proof. `stem checkpoint jolteon-bundle` reads an archive and constructs a
+CKB witness with the previous frontier, history suffix and finality proof.
 
 ## Exercise the native CometBFT path
 
