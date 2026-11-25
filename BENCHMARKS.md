@@ -1486,3 +1486,43 @@ the confirmed substituted vault transaction.
 
 [Genesis and deployment](OPERATIONS.md#start-a-native-replica) ·
 [Raw experiment evidence](benchmarks/2026-11-25-stem-checkpoint-policy.json.xz).
+
+## CKB Cell references in StemVM
+
+Revision `6614033`, based on `35fe09c`. Four local Jolteon replicas and
+CKB 0.210.0 devnet exercised an actual RISC-V Type Script using syscall
+2130. The experiment bridged the script code into Stem through an
+ordinary registered vault. The guardians certified CKB block 22, which
+the Stem bridge adopted at height 9. Each reference used three guardian
+signatures.
+
+| Accepted reference | CKB output | Finalized Stem height | Signed transaction bytes | Receipt cycles |
+| --- | --- | ---: | ---: | ---: |
+| Live at the anchor | Consolidated vault output | 14 | 1,208 | 13,959,940 |
+| Historical inclusion | Deposit output already spent by consolidation | 75 | 939 | 13,949,533 |
+
+The receipt includes 12,000,000 cycles for the three signatures. The
+remaining cycles include the ordinary payment Lock and the sample Type
+Script. A live reference expired after the configured 64 Stem heights
+from adoption. The historical reference then remained usable against
+the same accepted CKB anchor. All four replicas agreed at height 76.
+
+The fixture rejected a request to attest the spent deposit's liveness.
+Stem rejected a missing reference, a historical record used where a
+live observation was required, an altered guardian signature, a quorum
+for a different CKB anchor and an expired live observation. On a
+disposable CKB fork replacement, the guardian journal rejected further
+observations. The ordinary CKB and xUDT bridge regression, including
+reserve adjustment and vault rotation, passed at agreed Stem height 44.
+
+The release workspace passed 442 tests with 12 ignored. The Go proof
+suite and CometBFT comparison build check passed. The archive retains
+the compilation error in the first sample contract, the harness errors
+and the run that exposed the extra confirmation depth needed for the
+mint's accepted anchor. The successful run records the exact
+transactions, CKB inclusion evidence, guardian votes and execution
+receipts. The live result applies to the specified anchor on the
+guardian-observed chain.
+
+[Reproduction](OPERATIONS.md#read-a-ckb-cell-from-stemvm) ·
+[Raw runs and regression evidence](benchmarks/2026-11-26-stem-l1-references.json.xz).

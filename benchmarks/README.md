@@ -40,5 +40,6 @@ available. Published network evidence contains public genesis and proof data.
 | Individual reward redemption, replay protection and CKB reserve reconciliation | [Report](../BENCHMARKS.md#individual-stake-reward-redemption), [successful runs and failed attempts](2026-11-25-stem-stake-reward-claims.json.xz) |
 | Accrued stake rewards, restart durability and CKB redemption | [Report](../BENCHMARKS.md#accrued-stake-reward-balances), [both reward rounds and bridge regressions](2026-11-25-stem-stake-reward-accrual.json.xz) |
 | Shared checkpoint enforcement at genesis | [Report](../BENCHMARKS.md#shared-ckb-checkpoint-at-genesis), [substitution, recovery, bridge and build evidence](2026-11-25-stem-checkpoint-policy.json.xz) |
+| Read-only CKB references in StemVM | [Report](../BENCHMARKS.md#ckb-cell-references-in-stemvm), [successful run, regressions and early failures](2026-11-26-stem-l1-references.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
