@@ -1,4 +1,5 @@
 #![no_std]
+pub mod intercell;
 
 pub const HASH_SIZE: usize = 32;
 pub const MAX_RECIPIENT_SIZE: usize = 4096;

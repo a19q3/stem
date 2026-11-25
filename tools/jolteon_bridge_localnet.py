@@ -11,6 +11,7 @@ import subprocess
 
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, script, write_key
 from jolteon_checkpoint_localnet import Relay
+from intercell_localnet import intercell_round
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, QUERY, STATUS, SUBMIT, evidence_keys, rpc, write_configuration
 from localnet import run, write_json
 from native_bridge_localnet import (bridge_configuration, cell, deploy, deploy_token, deposit_and_mint, lane_proof,
@@ -364,6 +365,8 @@ def bridge_round(args, l1, fixture, children):
     vault = deploy(args, l1, fixture, network)
     token = deploy_token(args, l1, fixture, vault) if args.xudt else None
     bridge, lane = bridge_configuration(args, l1, fixture, vault, token, network)
+    if args.intercell_mailbox:
+        bridge["intercell_mailbox_code"] = hex_bytes(ckb_hash(args.intercell_mailbox.read_bytes()))
     if args.fee_funds:
         bridge["fee_funds"] = [{"basis_points": share, "recipient": dict(fixture.standard, args=fixture.key(
             write_key(args.output, f"fund-{i}", secrets.token_bytes(32)))["blake160"])}
@@ -382,11 +385,13 @@ def bridge_round(args, l1, fixture, children):
     configuration = write_configuration(args.output, [key for key, _ in keys], ports, 300, 1600)
     clients = [Client(args, port, network) for port in ports]
     homes = [args.output / f"node-{port}" for port in ports]
+    commands = []
     for i, (_, key) in enumerate(keys):
         command = [args.binary, "run", "--home", homes[i], "--genesis", spec_path, "--configuration",
                    configuration, "--key-file", key, "--initialize"]
         if i == 0:
             command.append("--archive")
+        commands.append([argument for argument in command if argument != "--initialize"])
         children.append(start(args, command, f"jolteon-{i}.log"))
     client = clients[0]
     wait_for(lambda: all(peer.status()["height"] >= 2 for peer in clients), "native bridge replicas")
@@ -395,7 +400,10 @@ def bridge_round(args, l1, fixture, children):
     mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client)
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
-    if args.reference_script:
+    if args.intercell_mailbox:
+        report["intercell"] = intercell_round(args, l1, fixture, vault, spec, spec_path,
+                                              mint, clients, relay, commands, children)
+    elif args.reference_script:
         report["references"] = reference_round(args, l1, fixture, spec, spec_path, lane, mint, client)
     elif args.fee_funds:
         report["fee_funds"] = fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
@@ -408,7 +416,7 @@ def bridge_round(args, l1, fixture, children):
         report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                      report["xudt"], spec_path, client)
     report["checkpoint"] = relay.report()
-    if not (args.fee_funds or args.reference_script):
+    if not (args.fee_funds or args.reference_script or args.intercell_mailbox):
         report["backing"] = reconcile_backing(client, report)
         report["authenticated_ckb_outputs"] = verify_l1_output(args, l1, payout, token is not None)
     report["lane_proofs"] = {lane: lane_proof(client, lane)}
@@ -432,10 +440,13 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--validators", type=int, default=4)
     parser.add_argument("--fee-funds", action="store_true")
+    parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
     parser.add_argument("--reference-script", type=lambda path: Path(path).resolve())
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
     args = parser.parse_args()
+    if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
+        parser.error("--intercell-mailbox uses the native CKB lane on its own")
     if args.reference_script and (args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--reference-script uses the native CKB lane without the fee-fund fixture")
     if bool(args.xudt) != bool(args.xudt_gate):
@@ -448,7 +459,9 @@ def main():
     try:
         report = bridge_round(args, l1, Fixtures(args), children)
         write_json(args.output / "jolteon-bridge-report.json", report)
-        if args.reference_script:
+        if args.intercell_mailbox:
+            print(f"Verified bidirectional Intercell messages at agreed height {report['agreed']['height']}")
+        elif args.reference_script:
             print(f"Verified historical and live-at-anchor CKB references at agreed height {report['agreed']['height']}")
         elif args.fee_funds:
             print(f"Reconciled {len(report['fee_funds']['payouts'])} CKB fee payouts at agreed height {report['agreed']['height']}")

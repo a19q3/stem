@@ -512,7 +512,7 @@ impl Store {
                 spec.development_cells.is_empty(),
                 "a bridged network cannot assign development Capacity"
             );
-            let (bridge, records) = Bridge::initialize(config)?;
+            let (bridge, records) = Bridge::initialize(config, &spec.network)?;
             for (name, value) in records {
                 let value = value.context("bridge genesis is missing a record value")?;
                 let id = system.record_key(&name);
@@ -1483,7 +1483,7 @@ impl Store {
             reference_cycles,
             "block L1 reference verification cycles",
         )?;
-        let (resolved, changes) = if matches!(operation, Some(Operation::BridgeMint(_))) {
+        let (resolved, mut changes) = if matches!(operation, Some(Operation::BridgeMint(_))) {
             let (bridge, stage) = self
                 .bridge
                 .as_ref()
@@ -1539,6 +1539,12 @@ impl Store {
             };
             (resolved, changes)
         };
+        let (message_reads, message_read_bytes, message_write_bytes) = bridge::intercell::apply(
+            self,
+            self.bridge.as_deref().zip(bridge.as_ref()),
+            &resolved,
+            &mut changes,
+        )?;
         let keeper_change = if tx.keeper_action().is_some() {
             keeper::change(self, keeper, &resolved, block, &mut next, fresh)?
         } else {
@@ -1558,6 +1564,7 @@ impl Store {
         let reads = resolved.cell_reads() as u64
             + resolved.l1_references().len() as u64
             + lineage_reads
+            + message_reads
             + materialized.as_ref().map_or(0, |command| command.reads);
         let read_bytes = resolved.resolved_cell_bytes() as u64
             + resolved
@@ -1565,6 +1572,7 @@ impl Store {
                 .iter()
                 .map(|record| record.len() as u64)
                 .sum::<u64>()
+            + message_read_bytes
             + lineage_reads
                 * (lineage::KEY_BYTES + stem_ledger::lineage::Head::MAX_ENCODED_BYTES as u64)
             + materialized
@@ -1614,6 +1622,11 @@ impl Store {
             &mut next.write_bytes,
             lineage_bytes,
             "block Lineage write bytes",
+        )?;
+        charge(
+            &mut next.write_bytes,
+            message_write_bytes,
+            "block Intercell write bytes",
         )?;
         let cycle_limit = self
             .limits

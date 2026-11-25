@@ -85,6 +85,7 @@ struct Bridge {
     anchor_limits: OperationLimits,
     deposits_per_block: u32,
     fee_funds: Option<[FundDestination; 4]>,
+    intercell_mailbox_code: Option<H256>,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +238,7 @@ fn load_bridge(bridge: Bridge) -> Result<BridgeGenesis> {
         settlement_limits: bridge.settlement_limits.into(),
         anchor_limits: bridge.anchor_limits.into(),
         deposits_per_block: bridge.deposits_per_block,
+        intercell_mailbox_code: bridge.intercell_mailbox_code.map(|code| code.pack()),
         fee_funds: bridge.fee_funds.map(|funds| {
             funds.map(|fund| FeeFundDestination {
                 basis_points: fund.basis_points,

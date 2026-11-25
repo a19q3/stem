@@ -5,6 +5,8 @@ mod checkpoint_cli;
 #[cfg(unix)]
 mod ckb_wallet;
 #[cfg(unix)]
+mod intercell_cli;
+#[cfg(unix)]
 mod l1;
 #[cfg(unix)]
 mod native_spec;
@@ -52,6 +54,11 @@ enum Command {
     Bridge {
         #[command(subcommand)]
         command: bridge_cli::BridgeCommand,
+    },
+    /// Encode Intercell messages and prepare CKB delivery proofs.
+    Intercell {
+        #[command(subcommand)]
+        command: intercell_cli::Intercell,
     },
     /// Observe the confirmed CKB Stake Registry and sign a snapshot.
     Stake {
@@ -263,6 +270,7 @@ fn main() -> Result<()> {
         Command::Wallet { command } => command.run(),
         Command::CkbWallet { command } => command.run(),
         Command::Bridge { command } => command.run(),
+        Command::Intercell { command } => command.run(),
         Command::Stake { command } => command.run(),
         Command::Checkpoint { command } => command.run(),
         Command::GenesisHash { genesis, header } => {

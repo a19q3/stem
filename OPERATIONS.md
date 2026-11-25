@@ -359,6 +359,31 @@ Collect strictly more than two-thirds of bridge guardian weight in `anchor-votes
 
 Compile `stem-l1-reference` with the [RISC-V contract build flags](#build). Run `tools/jolteon_bridge_localnet.py` with the native CKB bridge options and `--reference-script /path/to/stem-l1-reference`. The fixture deposits the real sample Type Script into Stem, verifies both reference kinds, checks expiry, refreshes the anchor without moving any vault Cells and replaces the observed CKB fork.
 
+### Exercise Intercell Messaging
+
+Build the native CKB `intercell-mailbox` binary and use the normal Jolteon bridge fixture with its `--intercell-mailbox` option. The deployer fixes the CKB genesis, the active Stem network, the mailbox owner Lock hash, and the same checkpoint used by genesis. The mailbox Type Script uses Data2 addressing and its arguments concatenate Type ID, CKB genesis, Stem network, owner Lock hash, Checkpoint code hash and Checkpoint Type ID, in that order. Initial data consists of a zero little-endian nonce and a zero 32-byte replay root. The deployment supplies the CKB genesis as its first Header Dep.
+
+```sh
+export CARGO_TARGET_DIR=/tmp/stem-intercell-build
+cargo build --locked --release --bin stem
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --bin intercell-mailbox
+python3 tools/jolteon_bridge_localnet.py \
+  --binary "$CARGO_TARGET_DIR/release/stem" --l1 /path/to/ckb \
+  --vault "$programs_dir/vault-type" --deposit-lock "$programs_dir/deposit-lock" \
+  --native-lock "$programs_dir/stem-lock" --wrapped "$programs_dir/bridge-udt" \
+  --direct-checkpoint "$programs_dir/jolteon-checkpoint" \
+  --intercell-mailbox "$CARGO_TARGET_DIR/riscv64imac-unknown-none-elf/release/intercell-mailbox" \
+  --output /tmp/stem-intercell-devnet
+```
+
+Use `stem intercell encode --request message.json`. The request fields are `source`, `destination`, `sender`, `receiver`, `nonce` and hex `payload`. The result contains the hex message `record` and stable `id`. Include the record as a Group Action with kind 65280 for sending or 65281 for receiving. Sign the assigned consuming Lock group only after attaching any required historical CKB observation. For a receive, use `attest-reference` with `live_at_anchor: false` against the currently accepted anchor, then collect and attach the certificates with `attach-references`. A historical reference can prove an outgoing mailbox record after its output is spent.
+
+For CKB delivery, query `/stem/intercell/outbox` with the message ID as hex `data` and `prove=true`. Publish the corresponding finalized execution Header using the Jolteon checkpoint flow. Pass the query's `record` and `proof`, the list of consumed IDs in the mailbox's current history, and its current `expected_root` to `stem intercell delivery-witness --request delivery.json --header header.json`. The Header file holds its canonical bytes as a JSON hex string. The command checks the claimed outbox path and reconstructs the current inbox root. Put the returned `input_type` in the mailbox input's Molecule WitnessArgs and the `successor_root` in the successor data. Keep the outbound nonce and use empty outgoing bytes. The CKB transaction references the matching checkpoint and the owner signs the transaction. Store the consumed IDs or an equivalent derived sparse tree to generate subsequent paths.
+
+A Stem recipient can verify inclusion or absence at the finalized tip via `/stem/intercell/inbox` and `Store::verify_intercell`. The fixture captures failures and successful inclusion transactions in its output directory.
+
 ### Redeem fee revenue on CKB
 
 An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.

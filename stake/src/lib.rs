@@ -15,6 +15,7 @@ pub mod delegation;
 mod evidence;
 pub mod finality;
 pub mod history;
+pub mod intercell;
 pub mod jolteon;
 pub mod l1;
 pub mod patricia;

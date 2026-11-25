@@ -221,6 +221,19 @@ pub(crate) fn query(
                 "backing_proof": format!("0x{}", hex::encode(backing_proof.encode()?)),
             }))?.into()
         }
+        "/stem/intercell/inbox" | "/stem/intercell/outbox" if prove => {
+            ensure!(
+                requested == tip,
+                "Intercell query requires the current height"
+            );
+            let id = data.try_into()?;
+            let (record, path) = store.prove_intercell(path == "/stem/intercell/inbox", &id)?;
+            serde_json::to_vec(&serde_json::json!({
+                "record": record.map(|record| format!("0x{}", hex::encode(record))),
+                "proof": format!("0x{}", hex::encode(path.encode()?)),
+            }))?
+            .into()
+        }
         "/stem/bridge-anchor" if prove && data.is_empty() => {
             ensure!(
                 requested == tip,

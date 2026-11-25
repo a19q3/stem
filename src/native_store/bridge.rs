@@ -19,11 +19,14 @@ use stem_ledger::{
 };
 use stem_stake::{
     Authority, Member, Registry,
+    finality::{CheckpointId, VaultPolicy},
     jolteon::CommitteeChange,
     rewards::{EpochRewards, epoch_key},
 };
 
 use super::Store;
+
+pub(super) mod intercell;
 
 const CONFIG: &[u8] = b"bridge/config";
 const ANCHOR: &[u8] = b"bridge/anchor";
@@ -51,6 +54,7 @@ pub struct BridgeGenesis {
     pub anchor_limits: Limits,
     pub deposits_per_block: u32,
     pub fee_funds: Option<[FeeFundDestination; 4]>,
+    pub intercell_mailbox_code: Option<Byte32>,
 }
 
 pub struct LaneGenesis {
@@ -84,6 +88,7 @@ pub(super) struct Bridge {
     anchor_limits: Limits,
     deposits_per_block: u32,
     fee_funds: Option<FeeFundPolicy>,
+    intercell_mailbox: Option<(Byte32, CheckpointId)>,
 }
 
 struct Asset {
@@ -153,7 +158,7 @@ impl StagedBridge {
 }
 
 impl Bridge {
-    pub fn initialize(spec: &BridgeGenesis) -> Result<(Self, Records)> {
+    pub fn initialize(spec: &BridgeGenesis, network: &Byte32) -> Result<(Self, Records)> {
         ensure!(
             spec.confirmations > 0
                 && spec.l1_genesis != Byte32::default()
@@ -263,6 +268,21 @@ impl Bridge {
             config.extend_from_slice(&u32::try_from(lock.as_slice().len())?.to_le_bytes());
             config.extend_from_slice(lock.as_slice());
         }
+        let intercell_mailbox = if let Some(code) = &spec.intercell_mailbox_code {
+            ensure!(
+                *code != Byte32::default() && network != &spec.l1_genesis,
+                "invalid Intercell network policy"
+            );
+            config.extend_from_slice(code.as_slice());
+            let vault = spec
+                .lanes
+                .first()
+                .context("Intercell requires a shared CKB checkpoint")?;
+            let checkpoint = VaultPolicy::decode(&vault.vault_type.args().raw_data())?.checkpoint;
+            Some((code.clone(), checkpoint))
+        } else {
+            None
+        };
         records.insert(CONFIG.to_vec(), Some(config));
 
         let mut bridge = Self {
@@ -277,6 +297,7 @@ impl Bridge {
             anchor_limits: spec.anchor_limits,
             deposits_per_block: spec.deposits_per_block,
             fee_funds: None,
+            intercell_mailbox,
         };
         if let Some(funds) = &spec.fee_funds {
             let (lane, _) = bridge

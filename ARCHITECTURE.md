@@ -147,6 +147,14 @@ The bridge anchor record commits CKB height and hash plus the Stem adoption heig
 
 A fee-exempt `L1AnchorUpdate` lets the bridge guardian quorum advance the anchor during periods without deposits or settlements. It uses a distinct signing domain and shares the bridge guardian journal for reorg detection. Each update extends the exact accepted predecessor and charges its separate operation, byte and signature budget. Only the anchor record changes. Vault OutPoints, reserve accounting and nonce state remain stable. A transaction can read the new anchor once it is in the parent state.
 
+## Intercell Messaging
+
+Intercell uses one shared codec for the message identity and payload. Its two reserved Group Actions enter the ordinary transaction signing digest. Execution locates the actual consuming Lock group, checks the relevant endpoint, and records the full message under a direction and nonce ID in SystemRoot. A read against both the block overlay and committed state prevents duplicate use. The existing commit batch records the message alongside the application changes. Ordinary byte, state access and VM accounting also applies to Intercell.
+
+A CKB Mailbox is a Type ID state Cell with a pinned owner Lock and checkpoint identity. Sending advances its local nonce and records the outgoing message on the successor. The inbound sparse root commits to each delivered message ID. Each CKB delivery opens an outgoing Stem message under the pinned Jolteon checkpoint and proves non-inclusion in that mailbox's replay root. The owner Lock authorizes spending the mailbox in the same transaction as any receiver application effects.
+
+The reverse path uses an authenticated CKB historical output. Stem pins the Mailbox binary and requires the mailbox to use the genesis-bound checkpoint that also serves the bridge and configured Stake Registry. The recipient Lock authorizes the ordinary Stem transaction. Confirmation and ancestry depend on the guardian quorum and its journal. Incoming and outgoing records do not issue or reserve assets. The generic wire type is independent of the CKB proof and transaction formats.
+
 ## Historical proofs and CKB checkpoints
 
 Archive replicas preserve committed Headers. The proof index follows those records in a separate RocksDB database and checks the predecessor ID and MMR root before advancing. It persists only derived history nodes and progress. Each index update is independent of the application's commit. An archive reader can generate inclusion and append-only proofs at earlier retained heights.
