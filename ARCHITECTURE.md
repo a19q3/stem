@@ -50,6 +50,8 @@ The Keeper uses height buckets and an ordered timed index in SystemRoot. Individ
 
 The Store selects work from the parent Header and state before user transactions. Timed expiry is processed in height order, followed by ready entries ordered by target time and primary fee OutPoint. One selected command or batch uses a single block-derived resource share, which includes reservation reads and cleanup for every sponsor. Registration authenticates each sponsor and all business signatures and bounds their aggregate cycles. Wakeup uses the existing Lineage RISC-V materializer. Batch failure rolls back every member and emits a skip without charging an execution fee. State read faults abort block preparation.
 
+A signed retry policy prepays two to four reservation shares and specifies the minimum block interval. Retry jobs reuse the timed agenda and its block slots. Failed atomic attempts keep the same command body and sponsor locks, updating only the authenticated eligible height and remaining attempts. The journal restores the candidate changes for a standalone retry job as well as for an atomic batch. A spent fee input, the signed expiry or exhausted attempt count ends the job. The initial trigger, member terms and every sponsor authorization stay fixed across all attempts.
+
 Execution and receipt trees commit height attempts, time attempts and submitted transactions in that order. The queue, timed index, bodies and fee links support authenticated inclusion and absence. Snapshots include every pending reservation. The same Jolteon finality proof authenticates their SystemRoot and eventual execution receipt.
 
 

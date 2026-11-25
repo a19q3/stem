@@ -197,6 +197,7 @@ pub enum Outcome {
     Rejected,
     Applied,
     Skipped,
+    Retrying,
 }
 
 impl Outcome {
@@ -213,6 +214,7 @@ impl Outcome {
             Self::Rejected => Bytes::from_static(&[0]),
             Self::Applied => Bytes::from_static(&[1]),
             Self::Skipped => Bytes::from_static(&[2]),
+            Self::Retrying => Bytes::from_static(&[3]),
         }
     }
 
@@ -221,6 +223,7 @@ impl Outcome {
             [0] => Ok(Self::Rejected),
             [1] => Ok(Self::Applied),
             [2] => Ok(Self::Skipped),
+            [3] => Ok(Self::Retrying),
             _ => anyhow::bail!("invalid Lineage outcome"),
         }
     }

@@ -267,6 +267,17 @@ impl Materialized {
     }
 }
 
+#[derive(Debug)]
+pub(super) struct MissingFeeCell;
+
+impl std::fmt::Display for MissingFeeCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Lineage fee Cell is no longer live")
+    }
+}
+
+impl std::error::Error for MissingFeeCell {}
+
 pub(super) struct FeeAuthorization {
     input: CellInput,
     cell: Cell,
@@ -284,7 +295,9 @@ pub(super) fn resolve_fee(
 ) -> Result<FeeAuthorization> {
     let mut fresh = fresh;
     let fee_input = original.input(0).context("missing Lineage fee input")?;
-    let fee_cell = fresh(&fee_input.previous_output)?.cell;
+    let fee_cell = fresh(&fee_input.previous_output)
+        .context(MissingFeeCell)?
+        .cell;
     ensure!(
         fee_cell.data().is_empty() && fee_cell.type_scripts().len() == 0,
         "Lineage fee input must hold only CKB Capacity"

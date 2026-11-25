@@ -5,7 +5,10 @@ use ckb_jsonrpc_types::JsonBytes;
 use ckb_types::prelude::*;
 use serde_json::{Value, json};
 use stem_ledger::{
-    keeper::{Action, Reservation, Trigger, decode_agenda, decode_queue},
+    keeper::{
+        Action, Reservation, Retry, Schedule as KeeperSchedule, Trigger, decode_agenda,
+        decode_queue,
+    },
     lineage::{self, Outcome},
 };
 
@@ -89,9 +92,19 @@ impl BatchFixture {
         second_amount: u128,
         schedule: &Schedule,
     ) -> Result<[Transaction; 2]> {
+        self.scheduled_drafts_with(second_amount, schedule, None, None)
+    }
+
+    fn scheduled_drafts_with(
+        &self,
+        second_amount: u128,
+        schedule: &Schedule,
+        retry: Option<Retry>,
+        gate: Option<u64>,
+    ) -> Result<[Transaction; 2]> {
         let [a, b] = [
             self.markets[0].draft(schedule.version, 40, 70)?,
-            self.markets[1].draft(schedule.version, second_amount, 60)?,
+            self.markets[1].draft_after(schedule.version, second_amount, 60, gate)?,
         ];
         let bind = |(index, draft): (usize, Transaction)| {
             draft
@@ -100,7 +113,10 @@ impl BatchFixture {
                     FEE,
                 )?
                 .with_valid_before_height(schedule.expires[index])?
-                .with_keeper_trigger(schedule.trigger)
+                .with_keeper_schedule(KeeperSchedule {
+                    trigger: schedule.trigger,
+                    retry,
+                })
         };
         Ok([bind((0, a))?, bind((1, b))?])
     }
@@ -160,6 +176,19 @@ impl BatchFixture {
         )
     }
 
+    pub(super) fn wallet_retry(
+        &self,
+        fixture: &Fixture,
+        genesis: &Path,
+        directory: &Path,
+        schedule: &Schedule,
+        retry: Retry,
+        gate: u64,
+    ) -> Result<Transaction> {
+        let drafts = self.scheduled_drafts_with(30, schedule, Some(retry), Some(gate))?;
+        self.wallet_for_drafts(fixture, genesis, directory, drafts)
+    }
+
     fn wallet_for_drafts(
         &self,
         fixture: &Fixture,
@@ -179,10 +208,45 @@ impl BatchFixture {
         let mut plan = command("plan");
         for (index, draft) in drafts.iter().enumerate() {
             let file = directory.join(format!("draft-{index}.json"));
-            fs::write(
-                &file,
-                serde_json::to_vec(&JsonBytes::from_vec(draft.as_slice().to_vec()))?,
-            )?;
+            let encoded = JsonBytes::from_vec(draft.as_slice().to_vec());
+            if let Some(schedule) = draft.keeper_schedule() {
+                if let Some(retry) = schedule.retry {
+                    let request = directory.join(format!("request-{index}.json"));
+                    let terms = draft.lineage_command().unwrap();
+                    let business = draft.lineage_intent().unwrap();
+                    let (height, time) = match schedule.trigger {
+                        Trigger::Height(at) => (Some(at), None),
+                        Trigger::Time(at) => (None, Some(at)),
+                    };
+                    fs::write(
+                        &request,
+                        serde_json::to_vec_pretty(&json!({
+                            "cell_deps": draft.cell_deps().map(ckb_jsonrpc_types::CellDep::from).collect::<Vec<_>>(),
+                            "fee_input": ckb_jsonrpc_types::OutPoint::from(draft.input(0).unwrap().previous_output),
+                            "valid_before_height": draft.valid_before_height().unwrap(),
+                            "execute_at": height, "execute_after_ms": time,
+                            "retry": {"max_attempts": retry.max_attempts, "delay_blocks": retry.delay_blocks},
+                            "executor": format!("0x{}", hex::encode(terms.executor.as_slice())),
+                            "executor_dep": ckb_jsonrpc_types::OutPoint::from(terms.executor_dep.clone()),
+                            "executor_cycles": terms.executor_cycles, "validation_cycles": terms.validation_cycles,
+                            "fee": terms.fee, "payload": JsonBytes::from_vec(terms.payload.to_vec()),
+                            "business": {"actors": business.actors.iter().map(|id| format!("0x{}", hex::encode(id.as_slice()))).collect::<Vec<_>>(),
+                                "max_fee": business.max_fee},
+                            "targets": terms.targets.iter().map(|target| json!({
+                                "id": format!("0x{}", hex::encode(target.id.as_slice())),
+                                "min_version": target.min_version, "max_version": target.max_version,
+                                "min_capacity": target.min_capacity,
+                            })).collect::<Vec<_>>(),
+                        }))?,
+                    )?;
+                    let mut build = Command::new(env!("CARGO_BIN_EXE_stem"));
+                    build
+                        .args(["wallet", "lineage", "build", "--request"])
+                        .arg(request);
+                    assert_eq!(checked(build)?, serde_json::to_value(&encoded)?);
+                }
+            }
+            fs::write(&file, serde_json::to_vec(&encoded)?)?;
             plan.arg("--member").arg(file);
         }
         let plan_file = directory.join("plan.json");
@@ -279,6 +343,25 @@ impl BatchFixture {
         fee: usize,
         command: &Transaction,
     ) -> Result<Transaction> {
+        self.spend_fee(
+            fixture,
+            market,
+            fee,
+            Some(Action::Cancel {
+                trigger: command.keeper_trigger().unwrap(),
+                fee_input: self.markets[market].dynamic.fee_points[fee].clone(),
+                command_id: command.id(&fixture.spec.network),
+            }),
+        )
+    }
+
+    fn spend_fee(
+        &self,
+        fixture: &Fixture,
+        market: usize,
+        fee: usize,
+        action: Option<Action>,
+    ) -> Result<Transaction> {
         let market_config = &self.markets[market].dynamic;
         let point = market_config.fee_points[fee].clone();
         let cell = &market_config.fee_cell;
@@ -294,12 +377,12 @@ impl BatchFixture {
                 Bytes::new(),
             )?],
             vec![],
-        )?
-        .with_keeper_action(Action::Cancel {
-            trigger: command.keeper_trigger().unwrap(),
-            fee_input: point,
-            command_id: command.id(&fixture.spec.network),
-        })?;
+        )?;
+        let tx = if let Some(action) = action {
+            tx.with_keeper_action(action)?
+        } else {
+            tx
+        };
         let digest = tx.signing_digest(
             &fixture.spec.network,
             0,
@@ -788,5 +871,223 @@ fn keeper_batches_recover_and_release_all_sponsor_reservations() -> Result<()> {
     assert!(format!("{error:#}").contains("cycles"));
     assert_links(&capped, &command, false)?;
     eprintln!("combined signing and VM budgets rejected by the Keeper slot: {error:#}");
+    Ok(())
+}
+
+#[test]
+fn keeper_retry_is_prepaid_bounded_and_persists_its_next_height() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let registry = FixtureLineage::fund(&mut fixture)?;
+    let batch = BatchFixture::fund_with_fees(&mut fixture, &registry, 3)?;
+    super::keeper::fund_carriers(&mut fixture, 5)?;
+    fixture.spec.limits.cell_reads = 512;
+    fixture.spec.keeper.as_mut().unwrap().time = Some(stem::native_store::KeeperTimePolicy {
+        per_height: 2,
+        max_delay_ms: 60_000,
+    });
+    let temp = tempfile::tempdir()?;
+    let mut store = Store::open(
+        &temp.path().join("origin"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    store.commit(store.prepare(&batch.registrations(&fixture)?, TIME, false)?)?;
+    let initial_fees = store.fee_surplus()?;
+    let policy = Retry {
+        max_attempts: 3,
+        delay_blocks: 2,
+    };
+    let terms = Schedule {
+        trigger: Trigger::Height(4),
+        expires: [11, 10],
+        version: 0,
+        fees: [0, 0],
+    };
+    let drafts = batch.scheduled_drafts_with(30, &terms, Some(policy), Some(6))?;
+    let mismatched = drafts[1].with_keeper_schedule(KeeperSchedule {
+        trigger: terms.trigger,
+        retry: Some(Retry {
+            delay_blocks: 1,
+            ..policy
+        }),
+    })?;
+    assert!(
+        Transaction::lineage_batch_plan(store.network(), &[drafts[0].clone(), mismatched]).is_err()
+    );
+    let invalid = KeeperSchedule {
+        trigger: terms.trigger,
+        retry: Some(Retry {
+            max_attempts: 5,
+            ..policy
+        }),
+    };
+    assert!(drafts[0].with_keeper_schedule(invalid).is_err());
+    let command = Transaction::new_lineage_batch(batch.signed_members(&fixture, drafts)?)?;
+    let parts = command.lineage_batch().unwrap();
+    let primary = parts[0].input(0).unwrap().previous_output;
+    let secondary = parts[1].input(0).unwrap().previous_output;
+    let underpaid = super::keeper::schedule(&fixture, 0, &command)?;
+    let insufficient = store.check(&underpaid).unwrap_err();
+    assert!(
+        insufficient
+            .to_string()
+            .contains("insufficient Keeper reservation fee")
+    );
+    let short = Schedule {
+        expires: [7, 7],
+        ..terms
+    };
+    let drafts = batch.scheduled_drafts_with(30, &short, Some(policy), None)?;
+    let short = Transaction::new_lineage_batch(batch.signed_members(&fixture, drafts)?)?;
+    let too_short = super::keeper::schedule_with_fee(&fixture, 0, &short, 4 * FEE)?;
+    assert!(
+        store
+            .check(&too_short)
+            .unwrap_err()
+            .to_string()
+            .contains("retry window")
+    );
+    let carrier = super::keeper::schedule_with_fee(&fixture, 0, &command, 4 * FEE)?;
+    store.commit(store.prepare(&[carrier], TIME, false)?)?;
+    assert_eq!(store.fee_surplus()?, initial_fees + 4 * FEE);
+    assert!(store.prove_keeper_queue(4)?.0.is_none());
+    assert!(store.check(&command).is_err());
+
+    store.commit(store.prepare(&[], TIME, false)?)?; // height 3
+    let attempt = store.prepare(&[], TIME, true)?;
+    assert_eq!(attempt.receipts()[0].fee, 0);
+    assert_eq!(
+        Outcome::decode(&attempt.receipts()[0].protocol_result)?,
+        Outcome::Retrying
+    );
+    eprintln!(
+        "first attempt charged {} reserved cycles and no execution fee",
+        attempt.receipts()[0].cycles
+    );
+    store.commit(attempt)?;
+    let entry = decode_agenda(&store.prove_keeper_agenda()?.0.unwrap())?.remove(0);
+    assert_eq!((entry.eligible_height, entry.attempts_left), (6, 2));
+    assert_eq!(entry.fee_input, primary);
+    assert_eq!(store.fee_surplus()?, initial_fees + 4 * FEE);
+    for point in [&primary, &secondary] {
+        assert!(store.live_cell(point)?.is_some());
+        assert!(store.prove_keeper_reservation(point)?.0.is_some());
+    }
+    for market in &batch.markets {
+        for id in market.head_ids() {
+            assert_eq!(store.prove_current_lineage(&id)?.head.unwrap().0.version, 0);
+        }
+    }
+
+    let mut restored = Store::open(
+        &temp.path().join("restored"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    restored.install_state(
+        store.export_state()?,
+        &store.tip().app_hash(store.network()),
+    )?;
+    for replica in [&mut store, &mut restored] {
+        let early = replica.prepare(&[], TIME, false)?;
+        assert!(early.receipts().is_empty());
+        replica.commit(early)?;
+    }
+    let serial = store.prepare(&[], TIME, false)?;
+    let parallel = restored.prepare(&[], TIME, true)?;
+    assert_eq!(serial.header(), parallel.header());
+    assert_eq!(serial.receipts(), parallel.receipts());
+    assert_eq!(parallel.receipts()[0].fee, 2 * FEE);
+    assert_eq!(
+        Outcome::decode(&parallel.receipts()[0].protocol_result)?,
+        Outcome::Applied
+    );
+    eprintln!(
+        "successful second attempt at height 6: {} bytes and {} charged cycles",
+        command.as_slice().len(),
+        parallel.receipts()[0].cycles
+    );
+    restored.commit(parallel)?;
+    assert_eq!(restored.fee_surplus()?, initial_fees + 6 * FEE);
+    for point in [&primary, &secondary] {
+        assert!(restored.live_cell(point)?.is_none());
+        assert!(restored.prove_keeper_reservation(point)?.0.is_none());
+    }
+    assert!(restored.prove_keeper_agenda()?.0.is_none());
+
+    let market = &batch.markets[0];
+    let single = market
+        .draft_after(1, 30, 20, Some(30))?
+        .with_lineage_fee(market.dynamic.fee_points[1].clone(), FEE)?
+        .with_valid_before_height(13)?
+        .with_keeper_schedule(KeeperSchedule {
+            trigger: Trigger::Time(TIME + 100),
+            retry: Some(Retry {
+                max_attempts: 2,
+                delay_blocks: 1,
+            }),
+        })?;
+    let single = seal_member(&fixture, &single, market, &batch.sponsors[0])?;
+    let fee = single.input(0).unwrap().previous_output;
+    let carrier = super::keeper::schedule_with_fee(&fixture, 1, &single, 3 * FEE)?;
+    restored.commit(restored.prepare(&[carrier], TIME, false)?)?;
+    let jumped = restored.prepare(&[], TIME + 100, false)?;
+    assert!(jumped.receipts().is_empty()); // time derives from the parent
+    restored.commit(jumped)?;
+    for expected in [Outcome::Retrying, Outcome::Skipped] {
+        let prepared = restored.prepare(&[], TIME + 100, true)?;
+        assert_eq!(prepared.receipts()[0].fee, 0);
+        assert_eq!(
+            Outcome::decode(&prepared.receipts()[0].protocol_result)?,
+            expected
+        );
+        restored.commit(prepared)?;
+    }
+    assert!(restored.live_cell(&fee)?.is_some());
+    assert!(restored.prove_keeper_reservation(&fee)?.0.is_none());
+    assert!(restored.prove_keeper_agenda()?.0.is_none());
+    assert_eq!(restored.fee_surplus()?, initial_fees + 9 * FEE);
+    eprintln!("timed standalone job exhausted two attempts and kept its fee Cell");
+
+    let spent_terms = Schedule {
+        trigger: Trigger::Height(13),
+        expires: [20, 20],
+        version: 1,
+        fees: [1, 1],
+    };
+    let drafts = batch.scheduled_drafts_with(30, &spent_terms, Some(policy), None)?;
+    let spent = Transaction::new_lineage_batch(batch.signed_members(&fixture, drafts)?)?;
+    let carrier = super::keeper::schedule_with_fee(&fixture, 2, &spent, 4 * FEE)?;
+    restored.commit(restored.prepare(&[carrier], TIME + 100, false)?)?; // height 11
+    let ordinary_spend = batch.spend_fee(&fixture, 1, 1, None)?;
+    restored.commit(restored.prepare(&[ordinary_spend], TIME + 100, false)?)?;
+    let terminal = restored.prepare(&[], TIME + 100, true)?;
+    assert_eq!(
+        Outcome::decode(&terminal.receipts()[0].protocol_result)?,
+        Outcome::Skipped
+    );
+    assert_eq!(terminal.receipts()[0].fee, 0);
+    restored.commit(terminal)?;
+    assert!(restored.prove_keeper_agenda()?.0.is_none());
+    assert!(restored.live_cell(&market.dynamic.fee_points[1])?.is_some());
+    eprintln!("spent secondary fee stopped the batch at its first wakeup");
+
+    let cancel_terms = Schedule {
+        trigger: Trigger::Height(17),
+        expires: [23, 23],
+        version: 1,
+        fees: [2, 2],
+    };
+    let drafts = batch.scheduled_drafts_with(30, &cancel_terms, Some(policy), None)?;
+    let planned = Transaction::new_lineage_batch(batch.signed_members(&fixture, drafts)?)?;
+    let carrier = super::keeper::schedule_with_fee(&fixture, 3, &planned, 4 * FEE)?;
+    restored.commit(restored.prepare(&[carrier], TIME + 100, false)?)?;
+    let cancel = batch.cancel(&fixture, 1, 2, &planned)?;
+    restored.commit(restored.prepare(&[cancel], TIME + 100, false)?)?;
+    assert!(restored.prove_keeper_agenda()?.0.is_none());
+    for member in planned.lineage_batch().unwrap() {
+        let fee = member.input(0).unwrap().previous_output;
+        assert!(restored.prove_keeper_reservation(&fee)?.0.is_none());
+    }
     Ok(())
 }

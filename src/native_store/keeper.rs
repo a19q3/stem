@@ -10,7 +10,7 @@ use ckb_types::{
 use stem_ledger::{
     BlockContext, Origin, ResolvedTransaction, Transaction,
     block::{HeaderContext, Receipt},
-    keeper::{self, Action, Reservation, TimedEntry, Trigger},
+    keeper::{self, Action, AgendaEntry, Reservation, Schedule, Trigger},
 };
 
 use super::{Budget, Limits, Overlay, Proof, StateReadFault, Store, charge, lineage};
@@ -19,7 +19,7 @@ const CONFIG: &[u8] = b"keeper/policy";
 const QUEUE: &[u8] = b"keeper/due/";
 const AGENDA: &[u8] = b"keeper/time";
 const COMMAND: &[u8] = b"keeper/time-command/";
-const MAX_AGENDA_BYTES: u64 = keeper::agenda_bytes(keeper::MAX_TIMED_PENDING) as u64;
+const MAX_AGENDA_BYTES: u64 = keeper::agenda_bytes(keeper::MAX_AGENDA_PENDING) as u64;
 const FEE: &[u8] = b"keeper/fee/";
 const FEE_KEY_BYTES: u64 = (FEE.len() + OutPoint::TOTAL_SIZE) as u64;
 const RESERVATION_BYTES: u64 = FEE_KEY_BYTES + Reservation::SIZE as u64;
@@ -105,7 +105,7 @@ impl KeeperPolicy {
 pub(super) struct Stage {
     queues: BTreeMap<u64, Vec<Transaction>>,
     reservations: BTreeMap<OutPoint, Option<Reservation>>,
-    agenda: Option<Vec<TimedEntry>>,
+    agenda: Option<Vec<AgendaEntry>>,
     timed_commands: BTreeMap<OutPoint, Option<Transaction>>,
     pub running: bool,
 }
@@ -121,13 +121,13 @@ pub(super) struct Change {
 
 enum QueueChange {
     Height(u64, Vec<Transaction>),
-    Timed(Vec<TimedEntry>, Option<Transaction>),
+    Agenda(Vec<AgendaEntry>, Option<Transaction>),
 }
 
 #[derive(Default)]
 pub(super) struct Due {
     pub commands: Vec<Transaction>,
-    remaining_agenda: Option<Vec<TimedEntry>>,
+    agenda: Option<Vec<AgendaEntry>>,
 }
 
 impl Stage {
@@ -142,7 +142,7 @@ impl Stage {
         Ok((queue, record.len() as u64))
     }
 
-    fn agenda(&self, store: &Store) -> Result<(Vec<TimedEntry>, u64)> {
+    fn agenda(&self, store: &Store) -> Result<(Vec<AgendaEntry>, u64)> {
         if let Some(agenda) = &self.agenda {
             return Ok((agenda.clone(), keeper::agenda_bytes(agenda.len()) as u64));
         }
@@ -179,7 +179,7 @@ impl Stage {
             QueueChange::Height(height, queue) => {
                 self.queues.insert(height, queue);
             }
-            QueueChange::Timed(agenda, command) => {
+            QueueChange::Agenda(agenda, command) => {
                 self.agenda = Some(agenda);
                 self.timed_commands.insert(change.primary_fee, command);
             }
@@ -238,13 +238,14 @@ pub(super) fn change(
     let (reservation, submitted, cancel) = match action {
         Action::Schedule(raw) => {
             let command = keeper::decode_command(raw)?;
-            let trigger = command.keeper_trigger().expect("bound command");
-            check_horizon(policy, &command, trigger, block)?;
+            let schedule = command.keeper_schedule().expect("bound command");
+            check_horizon(policy, &command, schedule, block)?;
             (
                 Reservation {
-                    trigger,
+                    trigger: schedule.trigger,
                     primary_fee: fee_point(&command),
                     command_id: command.id(store.network()),
+                    in_agenda: schedule.uses_agenda(),
                 },
                 Some(command),
                 None,
@@ -269,74 +270,91 @@ pub(super) fn change(
         }
     };
     let point = &reservation.primary_fee;
-    let (queue, affected, reads, old_bytes, new_bytes) = match reservation.trigger {
-        Trigger::Height(height) => {
-            let (mut queue, old_bytes) = stage.queue(store, height)?;
-            let entry = queue.binary_search_by_key(point, fee_point);
-            let affected = if let Some(command) = &submitted {
-                ensure!(
-                    queue.len() < usize::from(policy.per_height),
-                    "Keeper height is full"
-                );
-                let position = entry.err().context("Keeper fee Cell is already queued")?;
-                queue.insert(position, command.clone());
-                command.clone()
-            } else {
-                queue.remove(entry.ok().context(StateReadFault)?)
-            };
-            let new_bytes = queue_size(&queue);
-            (
-                QueueChange::Height(height, queue),
-                affected,
-                1,
-                QUEUE_KEY_BYTES + old_bytes,
-                QUEUE_KEY_BYTES + new_bytes,
-            )
-        }
-        Trigger::Time(time) => {
-            let (mut agenda, old_size) = stage.agenda(store)?;
-            let entry = agenda.binary_search_by(|entry| entry.order_key().cmp(&(time, point)));
-            let (affected, reads, command_read, command_size) = if let Some(command) = &submitted {
-                ensure!(
-                    agenda.len() < keeper::MAX_TIMED_PENDING,
-                    "Keeper time agenda is full"
-                );
-                let position = entry.err().context("Keeper fee Cell is already queued")?;
-                agenda.insert(
-                    position,
-                    TimedEntry {
-                        timestamp_ms: time,
-                        valid_before_height: command.valid_before_height().expect("bound command"),
-                        fee_input: point.clone(),
-                    },
-                );
-                (command.clone(), 1, 0, command.as_slice().len() as u64)
-            } else {
-                let command = stage.timed_command(store, point)?;
-                let entry = agenda.remove(entry.ok().context(StateReadFault)?);
-                ensure!(
-                    command.valid_before_height() == Some(entry.valid_before_height),
-                    StateReadFault
-                );
-                let bytes = command.as_slice().len() as u64;
-                (command, 2, COMMAND_KEY_BYTES + bytes, 0)
-            };
-            let new_bytes = AGENDA.len() as u64
-                + keeper::agenda_bytes(agenda.len()) as u64
-                + COMMAND_KEY_BYTES
-                + command_size;
-            (
-                QueueChange::Timed(agenda, submitted.clone()),
-                affected,
-                reads,
-                AGENDA.len() as u64 + old_size + command_read,
-                new_bytes,
-            )
-        }
-    };
+    let (queue, affected, reads, old_bytes, new_bytes) =
+        match (reservation.in_agenda, reservation.trigger) {
+            (false, Trigger::Height(height)) => {
+                let (mut queue, old_bytes) = stage.queue(store, height)?;
+                let entry = queue.binary_search_by_key(point, fee_point);
+                let affected = if let Some(command) = &submitted {
+                    ensure!(
+                        queue.len() < usize::from(policy.per_height),
+                        "Keeper height is full"
+                    );
+                    let position = entry.err().context("Keeper fee Cell is already queued")?;
+                    queue.insert(position, command.clone());
+                    command.clone()
+                } else {
+                    queue.remove(entry.ok().context(StateReadFault)?)
+                };
+                let new_bytes = queue_size(&queue);
+                (
+                    QueueChange::Height(height, queue),
+                    affected,
+                    1,
+                    QUEUE_KEY_BYTES + old_bytes,
+                    QUEUE_KEY_BYTES + new_bytes,
+                )
+            }
+            (true, trigger) => {
+                let (mut agenda, old_size) = stage.agenda(store)?;
+                let entry =
+                    agenda.binary_search_by(|entry| entry.order_key().cmp(&(trigger, point)));
+                let (affected, reads, command_read, command_size) =
+                    if let Some(command) = &submitted {
+                        ensure!(
+                            agenda.len() < keeper::MAX_AGENDA_PENDING,
+                            "Keeper time agenda is full"
+                        );
+                        let position = entry.err().context("Keeper fee Cell is already queued")?;
+                        agenda.insert(
+                            position,
+                            AgendaEntry {
+                                trigger,
+                                eligible_height: match trigger {
+                                    Trigger::Height(first) => first,
+                                    Trigger::Time(_) => 0,
+                                },
+                                valid_before_height: command
+                                    .valid_before_height()
+                                    .expect("bound command"),
+                                fee_input: point.clone(),
+                                attempts_left: command
+                                    .keeper_schedule()
+                                    .expect("bound command")
+                                    .attempts(),
+                            },
+                        );
+                        (command.clone(), 1, 0, command.as_slice().len() as u64)
+                    } else {
+                        let command = stage.timed_command(store, point)?;
+                        let entry = agenda.remove(entry.ok().context(StateReadFault)?);
+                        ensure!(
+                            command.valid_before_height() == Some(entry.valid_before_height),
+                            StateReadFault
+                        );
+                        let bytes = command.as_slice().len() as u64;
+                        (command, 2, COMMAND_KEY_BYTES + bytes, 0)
+                    };
+                let new_bytes = AGENDA.len() as u64
+                    + keeper::agenda_bytes(agenda.len()) as u64
+                    + COMMAND_KEY_BYTES
+                    + command_size;
+                (
+                    QueueChange::Agenda(agenda, submitted.clone()),
+                    affected,
+                    reads,
+                    AGENDA.len() as u64 + old_size + command_read,
+                    new_bytes,
+                )
+            }
+            (false, Trigger::Time(_)) => return Err(StateReadFault.into()),
+        };
     ensure!(
         &fee_point(&affected) == point
-            && affected.keeper_trigger() == Some(reservation.trigger)
+            && affected
+                .keeper_schedule()
+                .is_some_and(|schedule| schedule.trigger == reservation.trigger
+                    && schedule.uses_agenda() == reservation.in_agenda)
             && affected.id(store.network()) == reservation.command_id,
         StateReadFault
     );
@@ -359,15 +377,23 @@ pub(super) fn change(
                 "Keeper reservation requires fresh fee Cells"
             );
         }
+        let attempts = affected
+            .keeper_schedule()
+            .expect("bound command")
+            .attempts();
+        let reservation_fee = policy
+            .reservation_fee
+            .checked_mul(u64::from(attempts))
+            .context("Keeper reservation fee overflow")?;
         ensure!(
-            carrier.fee() >= policy.reservation_fee,
+            carrier.fee() >= reservation_fee,
             "insufficient Keeper reservation fee"
         );
         let slot = policy.slot(store.limits);
         // Cleanup must always fit, even when the application no longer does.
         wake_budget(slot, &affected)?;
         let cycles = verify_reservation(store, &affected, block, budget, slot.cycles, fresh)?;
-        (policy.reservation_fee, cycles)
+        (reservation_fee, cycles)
     };
     charge(&mut budget.reads, reads + count, "Keeper queue reads")?;
     charge(
@@ -399,25 +425,28 @@ pub(super) fn change(
 fn check_horizon(
     policy: KeeperPolicy,
     command: &Transaction,
-    trigger: Trigger,
+    schedule: Schedule,
     block: BlockContext<'_>,
 ) -> Result<()> {
     let height = block.candidate.height;
     let latest = height
         .checked_add(u64::from(policy.max_delay))
         .context("Keeper horizon overflow")?;
-    match trigger {
-        Trigger::Height(target) => ensure!(
-            height < target && target <= latest,
-            "Keeper deadline outside the reservation horizon"
-        ),
+    let earliest = height.checked_add(1).context("Keeper height overflow")?;
+    let expiry = command.valid_before_height().expect("bound command");
+    let first = match schedule.trigger {
+        Trigger::Height(target) => {
+            ensure!(
+                earliest <= target && target <= latest,
+                "Keeper deadline outside the reservation horizon"
+            );
+            target
+        }
         Trigger::Time(target) => {
             let time = policy
                 .time
                 .context("Keeper time triggers are not configured")?;
             let now = block.parent.context.timestamp_ms;
-            let expiry = command.valid_before_height().expect("bound command");
-            let earliest = height.checked_add(1).context("Keeper height overflow")?;
             ensure!(
                 target > now
                     && target - now <= time.max_delay_ms
@@ -425,7 +454,19 @@ fn check_horizon(
                     && expiry <= latest,
                 "Keeper deadline outside the reservation horizon"
             );
+            earliest
         }
+    };
+    if let Some(retry) = schedule.retry {
+        ensure!(
+            policy.time.is_some(),
+            "Keeper retry requires configured agenda slots"
+        );
+        let delay = u64::from(retry.delay_blocks) * u64::from(retry.max_attempts - 1);
+        ensure!(
+            expiry <= latest && first.checked_add(delay).is_some_and(|last| last < expiry),
+            "Keeper retry window does not fit its delay and expiry"
+        );
     }
     Ok(())
 }
@@ -557,7 +598,7 @@ impl Store {
         if policy.time.is_none() {
             return Ok(Due {
                 commands,
-                remaining_agenda: None,
+                agenda: None,
             });
         }
         let (agenda, bytes) = stage.agenda(self)?;
@@ -580,7 +621,7 @@ impl Store {
         let time = self.tip.context.timestamp_ms;
         let ready = agenda
             .iter()
-            .filter(|entry| height < entry.valid_before_height && time >= entry.timestamp_ms);
+            .filter(|entry| height < entry.valid_before_height && entry.ready(height, time));
         let selected: Vec<_> = expired
             .into_iter()
             .chain(ready)
@@ -590,31 +631,18 @@ impl Store {
             let command = stage.timed_command(self, &entry.fee_input)?;
             ensure!(
                 fee_point(&command) == entry.fee_input
-                    && command.keeper_trigger() == Some(Trigger::Time(entry.timestamp_ms))
+                    && command
+                        .keeper_schedule()
+                        .is_some_and(|schedule| schedule.uses_agenda()
+                            && schedule.trigger == entry.trigger
+                            && entry.attempts_left <= schedule.attempts())
                     && command.valid_before_height() == Some(entry.valid_before_height),
                 StateReadFault
             );
             commands.push(command);
         }
-        let remaining_agenda = if selected.is_empty() {
-            None
-        } else {
-            let remaining = agenda
-                .iter()
-                .filter(|entry| !selected.contains(entry))
-                .cloned()
-                .collect::<Vec<_>>();
-            charge(
-                &mut budget.write_bytes,
-                AGENDA.len() as u64 + keeper::agenda_bytes(remaining.len()) as u64,
-                "Keeper agenda writes",
-            )?;
-            Some(remaining)
-        };
-        Ok(Due {
-            commands,
-            remaining_agenda,
-        })
+        let agenda = (!selected.is_empty()).then_some(agenda);
+        Ok(Due { commands, agenda })
     }
 
     pub(super) fn run_keeper(
@@ -631,15 +659,16 @@ impl Store {
         let slot = self.keeper.expect("Keeper is enabled").slot(self.limits);
         let mut receipts = Vec::with_capacity(due.commands.len());
         overlay.keeper.running = true;
-        overlay.keeper.agenda = due.remaining_agenda.clone();
+        overlay.keeper.agenda = due.agenda.clone();
         for command in &due.commands {
             let point = fee_point(command);
-            let trigger = command.keeper_trigger().context(StateReadFault)?;
+            let schedule = command.keeper_schedule().context(StateReadFault)?;
             let fees = fee_inputs(command);
             let reservation = Reservation {
-                trigger,
+                trigger: schedule.trigger,
                 primary_fee: point.clone(),
                 command_id: command.id(self.network()),
+                in_agenda: schedule.uses_agenda(),
             };
             for fee in &fees {
                 ensure!(
@@ -648,15 +677,7 @@ impl Store {
                 );
             }
             let mut remaining = wake_budget(slot, command)?;
-            match trigger {
-                Trigger::Height(height) => {
-                    overlay.keeper.queues.insert(height, vec![]);
-                }
-                Trigger::Time(_) => {
-                    overlay.keeper.timed_commands.insert(point, None);
-                }
-            }
-            let receipt = match self.stage(
+            let (mut receipt, may_retry) = match self.stage(
                 command,
                 context,
                 origin,
@@ -665,25 +686,62 @@ impl Store {
                 None,
                 |resolved, limit| self.cache.verify(resolved, limit, false),
             ) {
-                Ok(receipt) => receipt,
+                Ok(receipt) => (receipt, false),
                 Err(error) if error.is::<StateReadFault>() => return Err(error),
-                Err(_) => {
+                Err(error) => {
                     // The prepaid reservation purchased the attempt. A stale
                     // reference or unaffordable candidate never changes a Cell.
                     remaining = Budget::empty();
-                    Receipt {
-                        fee: 0,
-                        cycles: slot.cycles,
-                        protocol_result: stem_ledger::lineage::Outcome::Skipped.encode(),
-                    }
+                    (
+                        Receipt {
+                            fee: 0,
+                            cycles: slot.cycles,
+                            protocol_result: stem_ledger::lineage::Outcome::Skipped.encode(),
+                        },
+                        !error.is::<lineage::MissingFeeCell>(),
+                    )
                 }
             };
+            let mut pending = false;
+            if schedule.uses_agenda() {
+                let agenda = overlay.keeper.agenda.as_mut().context(StateReadFault)?;
+                let index = agenda
+                    .binary_search_by(|entry| entry.order_key().cmp(&(schedule.trigger, &point)))
+                    .ok()
+                    .context(StateReadFault)?;
+                let entry = &mut agenda[index];
+                if let Some(next) = schedule
+                    .retry
+                    .filter(|_| may_retry && entry.attempts_left > 1)
+                    .and_then(|retry| context.height.checked_add(u64::from(retry.delay_blocks)))
+                    .filter(|next| *next < entry.valid_before_height)
+                {
+                    entry.eligible_height = next;
+                    entry.attempts_left -= 1;
+                    receipt.protocol_result = stem_ledger::lineage::Outcome::Retrying.encode();
+                    pending = true;
+                } else {
+                    agenda.remove(index);
+                    overlay.keeper.timed_commands.insert(point, None);
+                }
+            } else if let Trigger::Height(height) = schedule.trigger {
+                overlay.keeper.queues.insert(height, vec![]);
+            }
+            if !pending {
+                overlay
+                    .keeper
+                    .reservations
+                    .extend(fees.into_iter().map(|fee| (fee, None)));
+            }
             budget.charge_slot(slot, remaining)?;
-            overlay
-                .keeper
-                .reservations
-                .extend(fees.into_iter().map(|fee| (fee, None)));
             receipts.push(receipt);
+        }
+        if let Some(agenda) = &overlay.keeper.agenda {
+            charge(
+                &mut budget.write_bytes,
+                AGENDA.len() as u64 + keeper::agenda_bytes(agenda.len()) as u64,
+                "Keeper agenda writes",
+            )?;
         }
         overlay.keeper.running = false;
         Ok(receipts)
@@ -708,9 +766,10 @@ fn fee_inputs(tx: &Transaction) -> Vec<OutPoint> {
 
 fn wake_budget(mut slot: Budget, tx: &Transaction) -> Result<Budget> {
     let count = keeper::members(tx).len() as u64;
-    let (read_bytes, write_bytes) = match tx.keeper_trigger().expect("bound command") {
-        Trigger::Height(_) => (QUEUE_KEY_BYTES + 8, QUEUE_KEY_BYTES),
-        Trigger::Time(_) => (COMMAND_KEY_BYTES, COMMAND_KEY_BYTES),
+    let (read_bytes, write_bytes) = if tx.keeper_schedule().expect("bound command").uses_agenda() {
+        (COMMAND_KEY_BYTES, COMMAND_KEY_BYTES)
+    } else {
+        (QUEUE_KEY_BYTES + 8, QUEUE_KEY_BYTES)
     };
     charge(&mut slot.reads, 1 + count, "Keeper slot reads")?;
     charge(

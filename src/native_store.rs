@@ -1410,9 +1410,9 @@ impl Store {
         budget: Budget,
     ) -> Result<Option<lineage::Materialized>> {
         ensure!(
-            tx.keeper_trigger().is_none_or(|trigger| {
+            tx.keeper_schedule().is_none_or(|schedule| {
                 overlay.keeper.running
-                    && trigger.ready(context.height, self.tip.context.timestamp_ms)
+                    && schedule.ready(context.height, self.tip.context.timestamp_ms)
             }),
             "trigger-bound Lineage command requires its committed Keeper reservation"
         );
@@ -1451,13 +1451,27 @@ impl Store {
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
     ) -> Result<Receipt> {
         if let Some(members) = tx.lineage_batch() {
-            return self.stage_lineage_batch(tx, members, context, origin, budget, overlay);
+            Transaction::verify_lineage_batch_plan(&self.network, members)?;
+            return self.stage_atomic_lineage(tx, members, context, origin, budget, overlay);
         }
         ensure!(
             tx.lineage_intent()
                 .is_none_or(|intent| intent.batch.is_none()),
             "batch-bound Lineage intent cannot execute alone"
         );
+        if tx
+            .keeper_schedule()
+            .is_some_and(|schedule| schedule.retry.is_some())
+        {
+            return self.stage_atomic_lineage(
+                tx,
+                std::slice::from_ref(tx),
+                context,
+                origin,
+                budget,
+                overlay,
+            );
+        }
         self.stage_transaction(
             tx,
             context,
@@ -1470,7 +1484,7 @@ impl Store {
         )
     }
 
-    fn stage_lineage_batch(
+    fn stage_atomic_lineage(
         &self,
         tx: &Transaction,
         members: &[Transaction],
@@ -1479,7 +1493,6 @@ impl Store {
         budget: &mut Budget,
         overlay: &mut Overlay,
     ) -> Result<Receipt> {
-        Transaction::verify_lineage_batch_plan(&self.network, members)?;
         let payload_bytes = members
             .iter()
             .map(|member| member.as_slice().len() as u64)

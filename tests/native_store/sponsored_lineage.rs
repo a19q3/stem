@@ -132,7 +132,20 @@ impl SponsoredLineage {
     }
 
     pub(super) fn draft(&self, version: u64, x: u128, y: u128) -> Result<Transaction> {
-        let payload = [x.to_le_bytes(), y.to_le_bytes()].concat().into();
+        self.draft_after(version, x, y, None)
+    }
+
+    pub(super) fn draft_after(
+        &self,
+        version: u64,
+        x: u128,
+        y: u128,
+        height: Option<u64>,
+    ) -> Result<Transaction> {
+        let mut payload = [x.to_le_bytes(), y.to_le_bytes()].concat();
+        if let Some(height) = height {
+            payload.extend_from_slice(&height.to_le_bytes());
+        }
         Transaction::new_lineage_command(
             self.dynamic.deps.clone(),
             self.dynamic.fee_points[0].clone(),
@@ -153,7 +166,7 @@ impl SponsoredLineage {
                 executor_cycles: 100_000,
                 validation_cycles: 5_000_000,
                 fee: FEE,
-                payload,
+                payload: payload.into(),
             },
         )?
         .with_lineage_intent(Intent {

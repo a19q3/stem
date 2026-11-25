@@ -303,7 +303,7 @@ pub struct Transaction {
     lineage_command: Option<Arc<lineage::Command>>,
     lineage_intent: Option<Arc<lineage::Intent>>,
     lineage_batch: Option<Arc<[Transaction]>>,
-    keeper_trigger: Option<keeper::Trigger>,
+    keeper_schedule: Option<keeper::Schedule>,
     keeper: Option<keeper::Action>,
 }
 
@@ -483,10 +483,10 @@ impl Transaction {
             .map(lineage::Command::decode)
             .transpose()?
             .map(Arc::new);
-        let keeper_trigger = raw
-            .keeper_trigger()
+        let keeper_schedule = raw
+            .keeper_schedule()
             .to_opt()
-            .map(|trigger| keeper::Trigger::decode(trigger.as_slice()))
+            .map(keeper::Schedule::decode)
             .transpose()?;
         let keeper = raw
             .keeper()
@@ -504,14 +504,14 @@ impl Transaction {
             lineage_command,
             lineage_intent,
             lineage_batch: None,
-            keeper_trigger,
+            keeper_schedule,
             keeper,
         };
-        if let Some(trigger) = tx.keeper_trigger {
+        if let Some(schedule) = tx.keeper_schedule {
             ensure!(
                 tx.has_lineage_command()
                     && tx.valid_before_height().is_some_and(|expiry| {
-                        match trigger {
+                        match schedule.trigger {
                             keeper::Trigger::Height(height) => height < expiry,
                             keeper::Trigger::Time(_) => expiry > 1,
                         }
@@ -774,9 +774,13 @@ impl Transaction {
         self.lineage_command.is_some()
     }
 
+    pub fn keeper_schedule(&self) -> Option<keeper::Schedule> {
+        self.keeper_schedule
+            .or_else(|| self.lineage_batch()?.first()?.keeper_schedule())
+    }
+
     pub fn keeper_trigger(&self) -> Option<keeper::Trigger> {
-        self.keeper_trigger
-            .or_else(|| self.lineage_batch()?.first()?.keeper_trigger())
+        self.keeper_schedule().map(|schedule| schedule.trigger)
     }
 
     pub fn with_execute_at(&self, height: u64) -> Result<Self> {
@@ -784,19 +788,24 @@ impl Transaction {
     }
 
     pub fn with_keeper_trigger(&self, trigger: keeper::Trigger) -> Result<Self> {
+        self.with_keeper_schedule(keeper::Schedule {
+            trigger,
+            retry: None,
+        })
+    }
+
+    pub fn with_keeper_schedule(&self, schedule: keeper::Schedule) -> Result<Self> {
         ensure!(
             self.witnesses().len() == 0 && self.lineage_seals().is_empty(),
-            "set Keeper trigger before signing"
+            "set Keeper schedule before signing"
         );
         let raw = self
             .encoded
             .raw()
             .as_builder()
-            .keeper_trigger(
-                wire::KeeperTriggerOpt::new_builder()
-                    .set(Some(wire::KeeperTrigger::new_unchecked(
-                        trigger.encode().to_vec().into(),
-                    )))
+            .keeper_schedule(
+                wire::KeeperScheduleOpt::new_builder()
+                    .set(Some(schedule.encode()))
                     .build(),
             )
             .build();
@@ -883,8 +892,8 @@ impl Transaction {
         ensure!(
             parsed
                 .iter()
-                .all(|member| member.keeper_trigger() == parsed[0].keeper_trigger()),
-            "Lineage batch members must agree on the Keeper trigger"
+                .all(|member| member.keeper_schedule() == parsed[0].keeper_schedule()),
+            "Lineage batch members must agree on the Keeper schedule"
         );
         Ok(parsed)
     }
@@ -910,8 +919,8 @@ impl Transaction {
         leaves.push(members.len() as u8);
         for member in members {
             ensure!(
-                member.keeper_trigger() == members[0].keeper_trigger(),
-                "Lineage batch members must agree on the Keeper trigger"
+                member.keeper_schedule() == members[0].keeper_schedule(),
+                "Lineage batch members must agree on the Keeper schedule"
             );
             let mut intent = member
                 .lineage_intent()

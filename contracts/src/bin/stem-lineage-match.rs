@@ -66,7 +66,16 @@ fn settle() -> Option<()> {
         return None;
     }
 
-    let terms = load::<32>(DATA, 0, 0)?;
+    let terms = if let Some(gated) = load::<40>(DATA, 0, 0) {
+        let from = u64::from_le_bytes(gated[32..].try_into().ok()?);
+        let height = u64::from_le_bytes(context[..8].try_into().ok()?);
+        if height < from {
+            return None;
+        }
+        gated[..32].try_into().ok()?
+    } else {
+        load::<32>(DATA, 0, 0)?
+    };
     let x = u128::from_le_bytes(terms[..16].try_into().ok()?);
     let y = u128::from_le_bytes(terms[16..].try_into().ok()?);
     if x == 0 || y == 0 {

@@ -90,6 +90,7 @@ struct Request {
     valid_before_height: u64,
     execute_at: Option<u64>,
     execute_after_ms: Option<u64>,
+    retry: Option<RetryRequest>,
     executor: H256,
     executor_dep: OutPoint,
     executor_cycles: u64,
@@ -98,6 +99,13 @@ struct Request {
     business: Option<Business>,
     payload: JsonBytes,
     targets: Vec<Target>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetryRequest {
+    max_attempts: u8,
+    delay_blocks: u16,
 }
 
 #[derive(Deserialize)]
@@ -177,13 +185,24 @@ impl Command {
                 } else {
                     tx
                 };
-                match (request.execute_at, request.execute_after_ms) {
-                    (Some(height), None) => tx.with_execute_at(height)?,
-                    (None, Some(time)) => {
-                        tx.with_keeper_trigger(stem_ledger::keeper::Trigger::Time(time))?
-                    }
-                    (None, None) => tx,
+                use stem_ledger::keeper::{Retry, Schedule, Trigger};
+                let trigger = match (request.execute_at, request.execute_after_ms) {
+                    (Some(height), None) => Some(Trigger::Height(height)),
+                    (None, Some(time)) => Some(Trigger::Time(time)),
+                    (None, None) => None,
                     _ => anyhow::bail!("choose a single Keeper trigger"),
+                };
+                if let Some(trigger) = trigger {
+                    tx.with_keeper_schedule(Schedule {
+                        trigger,
+                        retry: request.retry.map(|policy| Retry {
+                            max_attempts: policy.max_attempts,
+                            delay_blocks: policy.delay_blocks,
+                        }),
+                    })?
+                } else {
+                    ensure!(request.retry.is_none(), "Keeper retry requires a trigger");
+                    tx
                 }
             }
             Self::Actor { key_file } => {

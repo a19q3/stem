@@ -1,5 +1,9 @@
 use std::{
-    fs, net::TcpListener, os::unix::fs::PermissionsExt, path::PathBuf, process::Command,
+    fs,
+    net::TcpListener,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::Command,
     time::Duration,
 };
 
@@ -11,7 +15,7 @@ use stem::jolteon::{Client, verify_finality};
 use stem_ledger::{
     Transaction,
     block::{Header, Receipt},
-    keeper::{Reservation, Trigger, decode_agenda, primary_fee},
+    keeper::{Reservation, Retry, Trigger, decode_agenda, primary_fee},
     lineage::{Head, Outcome},
     patricia::Proof,
     proof::InclusionProof,
@@ -108,8 +112,8 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     let action_swap = Swap::fund_with_actions(&mut fixture, &output)?;
     let lineage = FixtureLineage::fund(&mut fixture)?;
     let dynamic = DynamicLineage::fund_using(&mut fixture, &lineage, 5, 2, None)?;
-    let batch_markets = BatchFixture::fund_with_fees(&mut fixture, &lineage, 3)?;
-    keeper::fund_carriers(&mut fixture, 4)?;
+    let batch_markets = BatchFixture::fund_with_fees(&mut fixture, &lineage, 4)?;
+    keeper::fund_carriers(&mut fixture, 5)?;
     fixture.spec.limits.cell_reads = 512;
     fixture.spec.keeper.as_mut().unwrap().time = Some(stem::native_store::KeeperTimePolicy {
         per_height: 2,
@@ -323,7 +327,11 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     let record = bytes(&agenda, "record")?;
     let entries = decode_agenda(&record)?;
     assert_eq!(entries.len(), 2);
-    assert!(entries.iter().all(|entry| entry.timestamp_ms == target));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.trigger == Trigger::Time(target))
+    );
     assert_eq!(entries[1 - time_index as usize].fee_input.as_slice(), point);
     assert_eq!(
         Some(entries[time_index as usize].fee_input.clone()),
@@ -351,21 +359,13 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     ));
 
     let restart = std::time::Instant::now();
-    drop(replicas.pop().context("missing replica")?);
-    let mut command = Command::new(env!("CARGO_BIN_EXE_stem"));
-    command
-        .args(["run", "--home"])
-        .arg(output.join("node-3"))
-        .arg("--configuration")
-        .arg(&configuration)
-        .arg("--genesis")
-        .arg(&spec)
-        .arg("--key-file")
-        .arg(output.join("validator-3.key"));
-    replicas.push(Process::spawn(
-        &mut command,
-        &output.join("node-3-restart.log"),
-    )?);
+    restart_last_replica(
+        &mut replicas,
+        &output,
+        &configuration,
+        &spec,
+        "node-3-restart.log",
+    )?;
 
     let mut next = before + 2;
     let timed_height = poll("time-triggered Keeper execution", WAIT, || {
@@ -426,8 +426,66 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
             Ok(payload)
         })
         .collect::<Result<Vec<_>>>()?;
+    let first_retry_height = clients[0].status()?.height + 12;
+    let retry_delay = 8;
+    let second_retry_height = first_retry_height + u64::from(retry_delay);
+    let retrying = batch_markets.wallet_retry(
+        &fixture,
+        &spec,
+        &output.join("lineage-retry-batch"),
+        &Schedule {
+            trigger: Trigger::Height(first_retry_height),
+            expires: [first_retry_height + 22, first_retry_height + 20],
+            version: 3,
+            fees: [3, 3],
+        },
+        Retry {
+            max_attempts: 3,
+            delay_blocks: retry_delay,
+        },
+        second_retry_height,
+    )?;
+    let carrier = keeper::schedule_with_fee(&fixture, 4, &retrying, 4 * FEE)?;
+    submit("Keeper retry batch reservation", &carrier, None)?;
+    let first_attempt = prove_execution(
+        &clients,
+        &verifier,
+        first_retry_height,
+        0,
+        &retrying,
+        Some(Outcome::Retrying),
+    )?;
+    let pending_retry = clients[0].query("/stem/keeper-time", 0, &[], true)?;
+    let pending_record: Value = serde_json::from_slice(&pending_retry.value)?;
+    let record = bytes(&pending_record, "record")?;
+    let entry = decode_agenda(&record)?.remove(0);
+    assert_eq!(entry.eligible_height, second_retry_height);
+    assert_eq!(entry.attempts_left, 2);
+    assert!(Store::verify_keeper_agenda(
+        network,
+        &clients[0].header(pending_retry.height)?,
+        Some(&record),
+        &Proof::decode(&bytes(&pending_record, "proof")?)?,
+    ));
+    let retry_links = keeper_batch_links(&clients[0], &verifier, &retrying, true)?;
+    restart_last_replica(
+        &mut replicas,
+        &output,
+        &configuration,
+        &spec,
+        "node-3-retry-restart.log",
+    )?;
+    let second_attempt = prove_execution(
+        &clients,
+        &verifier,
+        second_retry_height,
+        0,
+        &retrying,
+        Some(Outcome::Applied),
+    )?;
+    let retry_cleared = keeper_batch_links(&clients[3], &verifier, &retrying, false)?;
     let mut batch_heads = Vec::new();
-    for member in time_batch.lineage_batch().unwrap() {
+    for member in retrying.lineage_batch().unwrap() {
         let child_id = member.id(network);
         for (index, target) in member.lineage_command().unwrap().targets.iter().enumerate() {
             let mut replicas = Vec::new();
@@ -435,7 +493,7 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
                 let query = client.query("/stem/lineage", 0, target.id.as_slice(), true)?;
                 let payload: Value = serde_json::from_slice(&query.value)?;
                 let head = Head::decode(&bytes(&payload, "record")?)?;
-                assert_eq!(head.version, 3);
+                assert_eq!(head.version, 4);
                 assert_eq!(
                     head.out_point,
                     OutPoint::new(child_id.clone(), index as u32 + 1)
@@ -466,14 +524,39 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
                 "height": {"height": due, "pending": height_pending, "cleared": height_cleared, "proof": height_batch_wake},
                 "time": {"height": timed_height, "pending": time_pending, "cleared": time_cleared, "proof": time_batch_wake},
             },
+            "keeper_retry": {"first_height": first_retry_height, "second_height": second_retry_height,
+                "first_attempt": first_attempt, "second_attempt": second_attempt,
+                "pending": pending_record, "links": retry_links, "cleared": retry_cleared},
             "timed": {"requested_ms": target, "parent_ms": timestamp, "height": timed_height,
                 "pending": pending, "agenda": agenda, "consumed": consumed,
                 "proof": timed_wake, "restart_to_visibility_ms": restart_to_visibility_ms},
         }))?,
     )?;
     println!(
-        "four native replicas verified Polytype, sponsored OTX, atomic Lineage and scheduled batches at heights {due} and {timed_height}"
+        "four native replicas verified Polytype, sponsored OTX, atomic Lineage and scheduled batches at heights {due}, {timed_height}, {first_retry_height} and {second_retry_height}"
     );
+    Ok(())
+}
+
+fn restart_last_replica(
+    replicas: &mut Vec<Process>,
+    output: &Path,
+    configuration: &Path,
+    spec: &Path,
+    log: &str,
+) -> Result<()> {
+    drop(replicas.pop().context("missing replica")?);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_stem"));
+    command
+        .args(["run", "--home"])
+        .arg(output.join("node-3"))
+        .arg("--configuration")
+        .arg(configuration)
+        .arg("--genesis")
+        .arg(spec)
+        .arg("--key-file")
+        .arg(output.join("validator-3.key"));
+    replicas.push(Process::spawn(&mut command, &output.join(log))?);
     Ok(())
 }
 
@@ -545,7 +628,12 @@ fn prove_execution(
         let payload: Value = serde_json::from_slice(&query.value)?;
         assert_eq!(bytes(&payload, "transaction")?, tx.as_slice());
         let receipt = Receipt::decode(&bytes(&payload, "receipt")?)?;
-        assert!(receipt.cycles > 0 && receipt.fee >= FEE);
+        assert!(receipt.cycles > 0);
+        if matches!(expected, Some(Outcome::Retrying | Outcome::Skipped)) {
+            assert_eq!(receipt.fee, 0);
+        } else {
+            assert!(receipt.fee >= FEE);
+        }
         if let Some(outcome) = expected {
             assert_eq!(Outcome::decode(&receipt.protocol_result)?, outcome);
         }

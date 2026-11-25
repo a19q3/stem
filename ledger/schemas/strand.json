@@ -505,23 +505,47 @@
       ]
     },
     {
-      "name": "KeeperTriggerOpt",
-      "kind": "optional",
-      "item": "KeeperTrigger"
-    },
-    {
-      "name": "KeeperTimedEntry",
+      "name": "KeeperRetry",
       "kind": "struct",
       "fields": [
-        { "name": "timestamp_ms", "type": "Uint64" },
-        { "name": "valid_before_height", "type": "Uint64" },
-        { "name": "fee_input", "type": "OutPoint" }
+        { "name": "max_attempts", "type": "byte" },
+        { "name": "delay_blocks", "type": "Uint16" }
       ]
     },
     {
-      "name": "KeeperTimedAgenda",
+      "name": "KeeperRetryOpt",
+      "kind": "optional",
+      "item": "KeeperRetry"
+    },
+    {
+      "name": "KeeperSchedule",
+      "kind": "flagged",
+      "flag_bytes": 1,
+      "fields": [
+        { "name": "trigger", "type": "KeeperTrigger" },
+        { "name": "retry", "type": "KeeperRetryOpt", "bit": 0 }
+      ]
+    },
+    {
+      "name": "KeeperScheduleOpt",
+      "kind": "optional",
+      "item": "KeeperSchedule"
+    },
+    {
+      "name": "KeeperAgendaEntry",
+      "kind": "struct",
+      "fields": [
+        { "name": "trigger", "type": "KeeperTrigger" },
+        { "name": "eligible_height", "type": "Uint64" },
+        { "name": "valid_before_height", "type": "Uint64" },
+        { "name": "fee_input", "type": "OutPoint" },
+        { "name": "attempts_left", "type": "byte" }
+      ]
+    },
+    {
+      "name": "KeeperAgenda",
       "kind": "dense_vector",
-      "item": "KeeperTimedEntry"
+      "item": "KeeperAgendaEntry"
     },
     {
       "name": "KeeperActionKind",
@@ -614,8 +638,8 @@
           "bit": 4
         },
         {
-          "name": "keeper_trigger",
-          "type": "KeeperTriggerOpt",
+          "name": "keeper_schedule",
+          "type": "KeeperScheduleOpt",
           "bit": 5
         },
         {

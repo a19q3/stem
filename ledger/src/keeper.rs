@@ -15,18 +15,19 @@ use crate::{
 
 pub const MAX_COMMAND_BYTES: usize = 8 * 1024;
 pub const MAX_PER_HEIGHT: usize = 16;
-pub const MAX_TIMED_PENDING: usize = 32;
-const TIMED_ENTRY_BYTES: usize = 2 * size_of::<u64>() + OutPoint::TOTAL_SIZE;
+pub const MAX_AGENDA_PENDING: usize = 32;
+pub const MAX_ATTEMPTS: u8 = 4;
+const AGENDA_ENTRY_BYTES: usize = Trigger::SIZE + 2 * size_of::<u64>() + OutPoint::TOTAL_SIZE + 1;
 
 pub const fn agenda_bytes(entries: usize) -> usize {
     if entries == 0 {
         0
     } else {
-        size_of::<u32>() + entries * TIMED_ENTRY_BYTES
+        size_of::<u32>() + entries * AGENDA_ENTRY_BYTES
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Trigger {
     Height(u64),
     Time(u64),
@@ -63,21 +64,95 @@ impl Trigger {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Retry {
+    pub max_attempts: u8,
+    pub delay_blocks: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Schedule {
+    pub trigger: Trigger,
+    pub retry: Option<Retry>,
+}
+
+impl Schedule {
+    pub fn uses_agenda(self) -> bool {
+        self.retry.is_some() || matches!(self.trigger, Trigger::Time(_))
+    }
+
+    pub fn attempts(self) -> u8 {
+        self.retry.map_or(1, |retry| retry.max_attempts)
+    }
+
+    pub fn ready(self, height: u64, parent_time_ms: u64) -> bool {
+        if let (Trigger::Height(first), Some(_)) = (self.trigger, self.retry) {
+            return height >= first;
+        }
+        self.trigger.ready(height, parent_time_ms)
+    }
+
+    pub(crate) fn encode(self) -> wire::KeeperSchedule {
+        wire::KeeperSchedule::new_builder()
+            .trigger(wire::KeeperTrigger::new_unchecked(
+                self.trigger.encode().to_vec().into(),
+            ))
+            .retry(
+                wire::KeeperRetryOpt::new_builder()
+                    .set(self.retry.map(|retry| {
+                        wire::KeeperRetry::new_builder()
+                            .max_attempts(retry.max_attempts.into())
+                            .delay_blocks(wire::Uint16::new_unchecked(
+                                retry.delay_blocks.to_le_bytes().to_vec().into(),
+                            ))
+                            .build()
+                    }))
+                    .build(),
+            )
+            .build()
+    }
+
+    pub(crate) fn decode(value: wire::KeeperSchedule) -> Result<Self> {
+        let retry = value
+            .retry()
+            .to_opt()
+            .map(|retry| {
+                let max_attempts = u8::from(retry.max_attempts());
+                let delay_blocks = u16::from_le_bytes(retry.delay_blocks().as_slice().try_into()?);
+                ensure!(
+                    (2..=MAX_ATTEMPTS).contains(&max_attempts) && delay_blocks != 0,
+                    "invalid Keeper retry policy"
+                );
+                Ok(Retry {
+                    max_attempts,
+                    delay_blocks,
+                })
+            })
+            .transpose()?;
+        Ok(Self {
+            trigger: Trigger::decode(value.trigger().as_slice())?,
+            retry,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reservation {
     pub trigger: Trigger,
     pub primary_fee: OutPoint,
     pub command_id: Byte32,
+    pub in_agenda: bool,
 }
 
 impl Reservation {
-    pub const SIZE: usize = Trigger::SIZE + OutPoint::TOTAL_SIZE + 32;
+    pub const SIZE: usize = Trigger::SIZE + OutPoint::TOTAL_SIZE + 32 + 1;
 
     pub fn encode(&self) -> Vec<u8> {
         [
             self.trigger.encode().as_slice(),
             self.primary_fee.as_slice(),
             self.command_id.as_slice(),
+            &[u8::from(self.in_agenda)],
         ]
         .concat()
     }
@@ -87,18 +162,17 @@ impl Reservation {
             bytes.len() == Self::SIZE,
             "incorrect Keeper reservation size"
         );
-        let trigger = Trigger::decode(&bytes[..Trigger::SIZE])?;
-        let end = Trigger::SIZE + OutPoint::TOTAL_SIZE;
-        let primary_fee = OutPoint::from_slice(&bytes[Trigger::SIZE..end])?;
-        let command_id = Byte32::from_slice(&bytes[end..])?;
-        ensure!(
-            !primary_fee.is_null() && command_id != Byte32::default(),
-            "Keeper reservation must identify a fee Cell and command"
-        );
+        let (trigger, primary_fee, command_id) = decode_command_key(&bytes[..Self::SIZE - 1])?;
+        let in_agenda = match bytes[Self::SIZE - 1] {
+            0 if matches!(trigger, Trigger::Height(_)) => false,
+            1 => true,
+            _ => bail!("invalid Keeper reservation index"),
+        };
         Ok(Self {
             trigger,
             primary_fee,
             command_id,
+            in_agenda,
         })
     }
 }
@@ -136,26 +210,46 @@ fn validate_command(command: &Transaction) -> Result<()> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TimedEntry {
-    pub timestamp_ms: u64,
+pub struct AgendaEntry {
+    pub trigger: Trigger,
+    pub eligible_height: u64,
     pub valid_before_height: u64,
     pub fee_input: OutPoint,
+    pub attempts_left: u8,
 }
 
-pub fn encode_agenda(entries: &[TimedEntry]) -> Bytes {
-    wire::KeeperTimedAgenda::new_builder()
+impl AgendaEntry {
+    pub fn order_key(&self) -> (Trigger, &OutPoint) {
+        (self.trigger, &self.fee_input)
+    }
+
+    pub fn ready(&self, height: u64, parent_time_ms: u64) -> bool {
+        height >= self.eligible_height
+            && match self.trigger {
+                Trigger::Height(at) => height >= at,
+                Trigger::Time(at) => parent_time_ms >= at,
+            }
+    }
+}
+
+fn uint64(value: u64) -> wire::Uint64 {
+    wire::Uint64::new_unchecked(value.to_le_bytes().to_vec().into())
+}
+
+pub fn encode_agenda(entries: &[AgendaEntry]) -> Bytes {
+    wire::KeeperAgenda::new_builder()
         .set(
             entries
                 .iter()
                 .map(|entry| {
-                    wire::KeeperTimedEntry::new_builder()
-                        .timestamp_ms(wire::Uint64::new_unchecked(
-                            entry.timestamp_ms.to_le_bytes().to_vec().into(),
+                    wire::KeeperAgendaEntry::new_builder()
+                        .trigger(wire::KeeperTrigger::new_unchecked(
+                            entry.trigger.encode().to_vec().into(),
                         ))
-                        .valid_before_height(wire::Uint64::new_unchecked(
-                            entry.valid_before_height.to_le_bytes().to_vec().into(),
-                        ))
+                        .eligible_height(uint64(entry.eligible_height))
+                        .valid_before_height(uint64(entry.valid_before_height))
                         .fee_input(wire::OutPoint::new_unchecked(entry.fee_input.as_bytes()))
+                        .attempts_left(entry.attempts_left.into())
                         .build()
                 })
                 .collect(),
@@ -164,24 +258,27 @@ pub fn encode_agenda(entries: &[TimedEntry]) -> Bytes {
         .as_bytes()
 }
 
-pub fn decode_agenda(bytes: &[u8]) -> Result<Vec<TimedEntry>> {
-    let agenda = wire::KeeperTimedAgenda::from_slice(bytes)?;
+pub fn decode_agenda(bytes: &[u8]) -> Result<Vec<AgendaEntry>> {
+    let agenda = wire::KeeperAgenda::from_slice(bytes)?;
     ensure!(
-        (1..=MAX_TIMED_PENDING).contains(&agenda.len()),
-        "invalid Keeper time agenda size"
+        (1..=MAX_AGENDA_PENDING).contains(&agenda.len()),
+        "invalid Keeper agenda size"
     );
-    let mut entries: Vec<TimedEntry> = Vec::with_capacity(agenda.len());
+    let mut entries: Vec<AgendaEntry> = Vec::with_capacity(agenda.len());
     for item in agenda {
-        let entry = TimedEntry {
-            timestamp_ms: u64::from_le_bytes(item.timestamp_ms().as_slice().try_into()?),
+        let entry = AgendaEntry {
+            trigger: Trigger::decode(item.trigger().as_slice())?,
+            eligible_height: u64::from_le_bytes(item.eligible_height().as_slice().try_into()?),
             valid_before_height: u64::from_le_bytes(
                 item.valid_before_height().as_slice().try_into()?,
             ),
             fee_input: OutPoint::from_slice(item.fee_input().as_slice())?,
+            attempts_left: u8::from(item.attempts_left()),
         };
         ensure!(
-            entry.timestamp_ms != 0
+            (1..=MAX_ATTEMPTS).contains(&entry.attempts_left)
                 && entry.valid_before_height > 1
+                && entry.eligible_height < entry.valid_before_height
                 && !entry.fee_input.is_null()
                 && entries
                     .last()
@@ -189,17 +286,27 @@ pub fn decode_agenda(bytes: &[u8]) -> Result<Vec<TimedEntry>> {
                 && entries
                     .iter()
                     .all(|prior| prior.fee_input != entry.fee_input),
-            "invalid Keeper time agenda entry"
+            "invalid Keeper agenda entry"
         );
         entries.push(entry);
     }
     Ok(entries)
 }
 
-impl TimedEntry {
-    pub fn order_key(&self) -> (u64, &OutPoint) {
-        (self.timestamp_ms, &self.fee_input)
-    }
+fn decode_command_key(bytes: &[u8]) -> Result<(Trigger, OutPoint, Byte32)> {
+    let end = Trigger::SIZE + OutPoint::TOTAL_SIZE;
+    ensure!(
+        bytes.len() == end + 32,
+        "incorrect Keeper command reference size"
+    );
+    let trigger = Trigger::decode(&bytes[..Trigger::SIZE])?;
+    let fee = OutPoint::from_slice(&bytes[Trigger::SIZE..end])?;
+    let command_id = Byte32::from_slice(&bytes[end..])?;
+    ensure!(
+        !fee.is_null() && command_id != Byte32::default(),
+        "Keeper command reference must identify a fee Cell and command"
+    );
+    Ok((trigger, fee, command_id))
 }
 
 #[derive(Clone, Debug)]
@@ -247,11 +354,11 @@ impl Action {
         match action.kind().as_slice()[0] {
             0 if (1..=MAX_COMMAND_BYTES).contains(&payload.len()) => Ok(Self::Schedule(payload)),
             1 => {
-                let decoded = Reservation::decode(&payload)?;
+                let (trigger, fee_input, command_id) = decode_command_key(&payload)?;
                 Ok(Self::Cancel {
-                    trigger: decoded.trigger,
-                    fee_input: decoded.primary_fee,
-                    command_id: decoded.command_id,
+                    trigger,
+                    fee_input,
+                    command_id,
                 })
             }
             _ => bail!("invalid Keeper action"),
@@ -286,7 +393,11 @@ pub fn decode_queue(bytes: &[u8], height: u64) -> Result<Vec<Transaction>> {
         .map(|item| {
             let command = decode_command(&item.raw_data())?;
             ensure!(
-                command.keeper_trigger() == Some(Trigger::Height(height)),
+                command.keeper_schedule()
+                    == Some(Schedule {
+                        trigger: Trigger::Height(height),
+                        retry: None
+                    }),
                 "incorrect Keeper queue height"
             );
             let point = primary_fee(&command).expect("validated Keeper fee input");

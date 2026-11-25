@@ -38,12 +38,21 @@ pub(super) fn schedule(
     index: u32,
     command: &Transaction,
 ) -> Result<Transaction> {
+    schedule_with_fee(fixture, index, command, 2 * FEE)
+}
+
+pub(super) fn schedule_with_fee(
+    fixture: &Fixture,
+    index: u32,
+    command: &Transaction,
+    fee: u64,
+) -> Result<Transaction> {
     let carrier = Transaction::new(
         fixture.deps.clone(),
         vec![],
         vec![CellInput::new(carrier_input(index), None)],
         vec![Cell::new(
-            FUND - 2 * FEE,
+            FUND - fee,
             fixture.lock.clone(),
             vec![],
             Bytes::new(),
@@ -541,7 +550,7 @@ fn measure_keeper_time_agenda() -> Result<()> {
 
     const BLOCKS: usize = 31;
     const WIDTH: usize = 4;
-    const SIZE: usize = stem_ledger::keeper::MAX_TIMED_PENDING;
+    const SIZE: usize = stem_ledger::keeper::MAX_AGENDA_PENDING;
     let mut fixture = Fixture::new()?;
     let dynamic = DynamicLineage::fund(&mut fixture, SIZE + 1)?;
     fund_carriers(&mut fixture, (SIZE + 1) as u32)?;
