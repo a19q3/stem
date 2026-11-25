@@ -1169,3 +1169,44 @@ sponsored OTX, atomic Lineage and Keeper test also passed at height 32.
 
 [Reproduction](OPERATIONS.md#calibrate-native-resource-prices) ·
 [Both attempts and the CKB regression](benchmarks/2026-11-25-stem-resource-pricing.json.xz).
+
+## CKB delegation and weighted handoffs
+
+On an Intel Core i9-13900H, three native Stem processes and one CKB
+0.210.0 devnet completed two certifying committee handoffs in each run.
+The initial committee had one active validator. Its 250 CKB self-bond
+and a 100 CKB independently owned delegation produced weight 350 at
+genesis. A top-up and a second owner brought delegated principal to
+245 CKB. At the next handoff the two raw weights were 495 and 400.
+A separate run capped the committee at 800 and verified effective
+weights of 442 and 357. The following epoch excluded the departing
+validator and restored the remaining validator's raw weight of 400.
+
+| CKB operation | Full transaction bytes | Estimated CKB cycles |
+| --- | ---: | ---: |
+| Create first delegation | 1,497 | 1,968,353 |
+| Top up first delegation | 1,663 | 1,945,639 |
+| Create second delegation | 1,611 | 1,957,077 |
+| Redeem retired positions | 1,530 each | 2,011,016–2,025,223 |
+| Finalize both delegated penalties | 1,461 each | 1,962,379–1,993,295 |
+
+The retirement run returned 175 and 70 CKB of principal plus the
+243 CKB occupied Capacity of each position to separate CKB Locks. The
+active equivocation run proved and froze the validator on CKB, used a
+Stem-certified retirement marker, and transferred the same 245 CKB of
+delegated principal to CKB transaction fees. The penalty transactions
+each returned 243 CKB to the beneficiary. CKB rejected incorrect or
+unfunded delegation weight, a missing owner authorization, an immature
+withdrawal, a changed recipient, a frozen withdrawal and replayed vote
+evidence. A self-bond-only retirement through a full committee replacement
+also passed. This validates settlement for delegation held through a
+validator's registration. The per-position occupied Capacity and single
+Registry transaction path are measured costs of the current layout.
+
+The release workspace suite passed 439 tests, with 12 ignored. The
+Go proof suite passed and the comparison contract compiled for RISC-V.
+The archive includes all seven devnet runs and the initial build-test
+failure from a missing fixture field.
+
+[Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
+[Raw run and failure evidence](benchmarks/2026-11-25-stem-ckb-delegation.json.xz).
