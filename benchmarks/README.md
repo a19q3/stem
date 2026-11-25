@@ -28,5 +28,6 @@ available. Published network evidence contains public genesis and proof data.
 | Weighted Jolteon restart after clean rebuild | [Report](../BENCHMARKS.md#native-weighted-jolteon), [signed proofs and replica data](2026-11-25-stem-jolteon-post-clean.json) |
 | Native Jolteon proof verification in CKB-VM | [Report](../BENCHMARKS.md#jolteon-verifier-in-ckb-vm), [raw cycles and fingerprints](2026-11-25-stem-jolteon-ckb-vm.json) |
 | CKB-funded Jolteon handoffs and native CKB checkpoints | [Report](../BENCHMARKS.md#ckb-funded-jolteon-handoffs), [successful and failed runs](2026-11-25-stem-jolteon-handoffs.json.xz) |
+| Jolteon CKB and xUDT payouts, retirement and slashing | [Report](../BENCHMARKS.md#jolteon-withdrawals-retirement-and-slashing), [12 runs including the failed report attempt](2026-11-25-stem-jolteon-l1-consumers.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

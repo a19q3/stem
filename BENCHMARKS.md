@@ -944,3 +944,55 @@ publication attempts stopped before CKB submission because the runner
 had an unbound genesis roster variable. Both are recorded with the
 passing reruns. The workspace run passed 438 tests with 10 opt-in tests
 ignored. [Public evidence and all nine runs](benchmarks/2026-11-25-stem-jolteon-handoffs.json.xz) [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
+
+## Jolteon withdrawals, retirement and slashing
+
+The 2026-11-25 run used four Stem replicas and a local CKB devnet executing
+the deployed RISC-V contracts. It exercised confirmed CKB and xUDT deposits,
+Jolteon-certified burns, permissionless L1 payouts, and guardian reconciliation
+of the observed L1 payouts. The successful reports retain the exact transaction
+hashes, proofs and application roots. CKB's `estimate_cycles` was run on the
+transactions subsequently accepted by the devnet.
+
+| Bridge route | Payout | Estimated CKB cycles | Patricia witness |
+| --- | ---: | ---: | ---: |
+| CKB, exact burn Header | 1,199.99 CKB | 1,874,099 | 690 B |
+| xUDT, exact burn Header | 1,200 units | 1,922,217 | 588 B |
+| CKB, burn ancestry through a later finalized Header | 1,199.99 CKB | 1,866,056 | 690 B |
+| xUDT, burn ancestry through a later finalized Header | 1,200 units | 1,944,796 | 588 B |
+
+All four successful bridge runs ended with zero pending Capacity. The runs
+also moved reserve between vaults and rotated custody on CKB. The vault
+rejected missing or foreign checkpoints, stale roots, invalid Patricia paths,
+wrong recipients, nonce replay and incorrect xUDT units. The ancestry run
+rejected two tampered MMR proofs at the guardian before it approved
+reconciliation. The first bridge attempt sent payouts but exited while
+serializing its report. The original diagnostic and signed payout transactions
+are in the archive.
+
+| Stake scenario | Freeze cycles | Freeze payload | Retirement cycles | Unbond cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Voluntary exit after joining | | | 2,085,615 | 4,197,803 |
+| Voluntary exit after replacing the genesis committee | | | 2,069,854 | 4,204,840 |
+| Slash a genesis voter after committee replacement | 6,351,071 | 1,438 B | 2,085,548 | 4,213,379 |
+| Slash a historical epoch 1 voter | 6,652,562 | 1,995 B | 2,084,422 | 4,231,764 |
+| Freeze an active epoch 1 voter, then exclude it | 6,627,156 | 1,794 B | 2,095,781 | 4,237,889 |
+
+Each unpenalized run released 250 CKB after retirement and the L1 delay.
+Each penalty forfeited all 250 CKB of bonded principal as a CKB transaction
+fee. The evidence used one genuine share from a live network QC and a
+conflicting vote signed with the controlled devnet validator key. The contract
+rejected invalid signatures, valid signatures outside the liability interval,
+repeat submissions, early or unfunded penalties, and early or unauthorized
+withdrawals. The active-voter test froze a bond before any voluntary exit and
+then excluded the voter at Stem height 21 using a new CKB-backed snapshot.
+The measured penalty finalization cost was 2,003,457 cycles in that run.
+
+The archived comparison includes the separately built CometBFT contracts
+completing the CKB and xUDT round trips and the older direct-checkpoint stake
+lifecycle. These runs measure correctness and L1 costs. Throughput was measured
+in the separate replica matrix above. The release workspace tests recorded
+438 passing, zero failing and 10 ignored.
+
+See the [reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
+and [12 archived runs with binary fingerprints and raw evidence](benchmarks/2026-11-25-stem-jolteon-l1-consumers.json.xz).
