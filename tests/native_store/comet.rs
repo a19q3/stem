@@ -127,31 +127,35 @@ impl Asset {
 
 pub(super) fn compile_types(home: &Path) -> Result<()> {
     for rule in [1, 2, 3, 6] {
-        let output =
-            Command::new(std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into()))
-                .args([
-                    "--target=riscv64-unknown-elf",
-                    "-march=rv64im",
-                    "-mabi=lp64",
-                    "-ffreestanding",
-                    "-fno-builtin",
-                    "-nostdlib",
-                    "-fuse-ld=lld",
-                    "-O2",
-                    "-Wl,--no-relax",
-                    "-Wl,-e,_start",
-                ])
-                .arg(format!("-DRULE={rule}"))
-                .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("contracts/examples/type_rules.c"))
-                .arg("-o")
-                .arg(home.join(format!("rule-{rule}")))
-                .output()?;
-        ensure!(
-            output.status.success(),
-            "RISC-V rule {rule}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        compile_type(home, rule)?;
     }
+    Ok(())
+}
+
+pub(super) fn compile_type(home: &Path, rule: u32) -> Result<()> {
+    let output = Command::new(std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into()))
+        .args([
+            "--target=riscv64-unknown-elf",
+            "-march=rv64im",
+            "-mabi=lp64",
+            "-ffreestanding",
+            "-fno-builtin",
+            "-nostdlib",
+            "-fuse-ld=lld",
+            "-O2",
+            "-Wl,--no-relax",
+            "-Wl,-e,_start",
+        ])
+        .arg(format!("-DRULE={rule}"))
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("contracts/examples/type_rules.c"))
+        .arg("-o")
+        .arg(home.join(format!("rule-{rule}")))
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "RISC-V rule {rule}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 

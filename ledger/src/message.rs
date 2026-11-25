@@ -1,8 +1,11 @@
-use anyhow::{Result, ensure};
-use ckb_types::{bytes::Bytes, prelude::*};
+use std::collections::BTreeMap;
+
+use anyhow::{Context, Result, ensure};
+use ckb_hash::new_blake2b;
+use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
 
 use crate::{
-    MAX_SCRIPT_GROUPS, MAX_TRANSACTION_BYTES,
+    MAX_SCRIPT_GROUPS, MAX_TRANSACTION_BYTES, ScriptGroup, ScriptGroupKind,
     strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
@@ -94,6 +97,118 @@ impl GroupMessage {
     pub fn encode_bytes(&self) -> Bytes {
         self.encode().as_bytes()
     }
+}
+
+/// A Group Message identified without any transaction-local position.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IntentMessage {
+    pub group_kind: ScriptGroupKind,
+    pub script_hash: Byte32,
+    pub actions: Vec<GroupAction>,
+}
+
+impl IntentMessage {
+    fn key(&self) -> (ScriptGroupKind, &Byte32) {
+        (self.group_kind, &self.script_hash)
+    }
+}
+
+/// Hashes all application Actions in canonical (role, Script hash) order.
+/// The Action sequence within a group keeps its original ordering.
+pub fn intent_message_commitment(messages: &[IntentMessage]) -> Result<Byte32> {
+    use stem_bridge_wire::intercell::{RECEIVE_ACTION, SEND_ACTION};
+
+    ensure!(
+        messages.len() <= MAX_SCRIPT_GROUPS,
+        "too many intent messages"
+    );
+    ensure!(
+        messages
+            .windows(2)
+            .all(|pair| pair[0].key() < pair[1].key()),
+        "intent messages must be ordered by unique role and Script hash"
+    );
+    let mut digest = new_blake2b();
+    digest.update(b"Stem intent Group Messages\0");
+    digest.update(&(messages.len() as u16).to_le_bytes());
+    let mut remaining = MAX_TRANSACTION_BYTES;
+    for message in messages {
+        ensure!(
+            (1..=MAX_GROUP_ACTIONS).contains(&message.actions.len()),
+            "intent Group Message Action count exceeds limit"
+        );
+        digest.update(&[message.group_kind as u8]);
+        digest.update(message.script_hash.as_slice());
+        digest.update(&(message.actions.len() as u16).to_le_bytes());
+        for action in &message.actions {
+            ensure!(
+                !matches!(action.kind, SEND_ACTION | RECEIVE_ACTION),
+                "Intercell Actions require complete Lock authorization"
+            );
+            remaining = remaining
+                .checked_sub(action.data.len())
+                .context("intent Action bytes exceed limit")?;
+            digest.update(&action.kind.to_le_bytes());
+            digest.update(&(action.data.len() as u32).to_le_bytes());
+            digest.update(&action.data);
+        }
+    }
+    let mut bytes = [0; 32];
+    digest.finalize(&mut bytes);
+    Ok(bytes.pack())
+}
+
+/// Resolve a signed manifest into the runtime Group Message indices.
+pub fn bind_intent_messages(
+    groups: &[ScriptGroup],
+    manifest: &[IntentMessage],
+) -> Result<Vec<GroupMessage>> {
+    intent_message_commitment(manifest)?;
+    let mut indices = BTreeMap::new();
+    for (index, group) in groups.iter().enumerate() {
+        let key = (group.kind, group.script.calc_script_hash());
+        ensure!(
+            indices.insert(key, u16::try_from(index)?).is_none(),
+            "ambiguous Script group identity"
+        );
+    }
+    let mut messages = manifest
+        .iter()
+        .map(|item| {
+            let key = (item.group_kind, item.script_hash.clone());
+            let group_index = *indices
+                .get(&key)
+                .context("intent message refers to an absent Script Group")?;
+            Ok(GroupMessage {
+                group_index,
+                actions: item.actions.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    messages.sort_unstable_by_key(|item| item.group_index);
+    Ok(messages)
+}
+
+/// Recover the stable identities of the messages the VM will actually see.
+pub fn resolve_intent_messages(
+    groups: &[ScriptGroup],
+    messages: impl IntoIterator<Item = GroupMessage>,
+) -> Result<Byte32> {
+    let mut manifest = messages
+        .into_iter()
+        .map(|message| {
+            let group = groups
+                .get(usize::from(message.group_index))
+                .context("intent message refers to an absent Script Group")?;
+            Ok(IntentMessage {
+                group_kind: group.kind,
+                script_hash: group.script.calc_script_hash(),
+                actions: message.actions,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    manifest.sort_unstable_by(|left, right| left.key().cmp(&right.key()));
+    intent_message_commitment(&manifest)
 }
 
 fn number(value: u16) -> wire::Uint16 {

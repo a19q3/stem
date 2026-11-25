@@ -57,7 +57,11 @@ GroupWitness   = (group_index: u16, proof_data, seal)
 
 标准锁的签名摘要绑定网络、Lock 角色、完整 Script 哈希及原始交易 ID。它还承诺按顺序解析的输入 Cell 内容、每个 Cell Dep、Dep Group 容器及其实际展开成员、已声明 Header Dep 的完整编码，以及所有非空 `proof_data`。交易 ID 已覆盖输出、输入引用、依赖引用、排他有效高度及 Group Messages。独立签名人可分别填入各组的 seal，完整交易承诺覆盖全部 seal。其他 Lock 可以定义自己的验签逻辑。
 
-CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。Stem 的配对 OTX 使用普通交易和专用 RISC-V Lock。签名绑定网络、完整 Lock 身份、输入 OutPoint 与 Cell、交付 Cell 的完整 Strand 哈希、实际解析的有序依赖、有效高度及费用上限。Solver 可以移动一对输入与输出，脚本总是用已解析输入的下标匹配同下标输出。一项部分授权只消费一个 Cell，同一输出不能满足两个独立配对。当前配对模式要求零 Since、相同有序依赖及空 Group Messages，并排除 Keeper 控制。持有人可以使用完整交易签名取消。 [CKB Open Transaction 场景](https://github.com/nervosnetwork/ckb/discussions/3670)
+CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。Stem 的配对 OTX 使用普通交易和专用 RISC-V Lock。签名绑定网络、完整 Lock 身份、输入 OutPoint 与 Cell、交付 Cell 的完整 Strand 哈希、实际解析的有序依赖、有效高度、费用上限及全体签名人认可的完整 Action 清单。Solver 可以移动一对输入与输出，脚本总是用已解析输入的下标匹配同下标输出。一项部分授权只消费一个 Cell，同一输出不能满足两个独立配对。配对模式要求零 Since 和相同有序依赖。持有人可以使用完整交易签名取消。 [CKB Open Transaction 场景](https://github.com/nervosnetwork/ckb/discussions/3670)
+
+Action 清单通过实际推导出的组校验，按 `(role, script_hash)` 唯一排序。哈希从独立域 `Stem intent Group Messages` 开始，承诺小端 `u16` 的组数、每组的角色字节、完整 Script 哈希及小端 `u16` 的 Action 数。各 Action 按原顺序承诺 `kind: u16`、`len: u32` 和原始载荷，整数使用小端。Solver 可根据最终交易重新绑定组编号。新增、移除、改序、改变组身份或修改载荷都会改变摘要。每个实际 Lock 和 Type Group 仍按普通规则执行。
+
+配对授权只接受同一个 Data 寻址 Intent Lock 程序的配对条款作为非空 Group Proof。跨链保留 Action、独立 L1 引用及 Lineage、Keeper 或其他系统控制需要各自的完整授权路径。配对签名和代付共用同一 Action 清单。
 
 可重组代付使用交易位置 0 的一个纯 Capacity 输入及同锁找零。授权额外绑定位置 1 的指定 OutPoint 和完整交付 Cell。代付扣款必须为正、低于各自授权上限且不超过整笔交易实际消耗的手续费。已认证的 Lock 和 Type Groups 仍独立执行。手续费和多资产交付在同一次普通交易提交内生效。
 
@@ -344,7 +348,7 @@ StemVM syscall 2130 按索引返回认证记录。每条记录的 CellOutput 至
 
 一条消息由四个 32 字节标识、一个小端 `u64` nonce 及最多 4,096 字节载荷组成。标识依次为来源网络、目的网络、发送端点、接收端点。CKB 网络标识为 genesis 哈希，Stem 使用原生 network ID。CKB 端点为 Mailbox 的完整 Type Script 哈希，Stem 端点为完整 Lock Script 哈希。消息 ID 是前 136 字节的域隔离哈希。载荷由完整消息记录认证。同一网络和端点组合的同一 nonce 只能发布并消费一份载荷。目的端可乱序消费，未送达的 nonce 不阻塞后续消息。
 
-Genesis 的 `bridge.intercell_mailbox_code` 固定受支持的 CKB 程序。Stem 普通交易可向实际消费的 Lock Group 声明一个保留 Group Action，`0xff00` 为发送，`0xff01` 为接收。完整 Lock 授权覆盖消息，配对部分授权已有的 Group Message 限制继续适用。消息记录与交易的应用输出和防重放状态原子提交。Outbox 和 Inbox 分别使用永久的 SystemRoot 记录，键绑定方向和消息 ID，值为完整消息。回执承诺该 ID。消息占用交易编码、读取、写入及签名资源，费用按普通交易计算。
+Genesis 的 `bridge.intercell_mailbox_code` 固定受支持的 CKB 程序。Stem 普通交易可向实际消费的 Lock Group 声明一个保留 Group Action，`0xff00` 为发送，`0xff01` 为接收。完整 Lock 授权覆盖消息。两种保留 Intercell Action 均要求使用完整授权路径。消息记录与交易的应用输出和防重放状态原子提交。Outbox 和 Inbox 分别使用永久的 SystemRoot 记录，键绑定方向和消息 ID，值为完整消息。回执承诺该 ID。消息占用交易编码、读取、写入及签名资源，费用按普通交易计算。
 
 Stem → CKB 的接收方消费其唯一 Mailbox。Mailbox 的 Type ID、所有者 Lock、双方网络身份和 Jolteon 检查点代码哈希及 Type ID 在创建时固定。创建交易引用 CKB genesis Header。合约读取固定检查点实例中的已认证 SystemRoot，验证 Outbox 的 Patricia 路径和消息正文，然后以稀疏默克尔树不存在证明插入已消费 ID。后继 Mailbox 保留同一类型和所有者。任何中继者都可发布检查点和准备投递证明。Mailbox 的消费由接收者的 CKB Lock 授权。
 

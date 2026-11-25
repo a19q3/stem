@@ -1,9 +1,11 @@
-use std::collections::BTreeSet;
-
 use ckb_crypto::secp::Signature;
 use ckb_types::{core::ScriptHashType, packed::Byte32};
 use serde::Serialize;
-use stem_ledger::intent::{Authorization, LOCK_ARGS_BYTES, SPONSOR_BYTES, Sponsorship, Terms};
+use stem_ledger::{
+    IntentMessage, ScriptGroupKind, bind_intent_messages, derive_script_groups,
+    intent::{Authorization, LOCK_ARGS_BYTES, SPONSOR_BYTES, Sponsorship, Terms},
+    intent_message_commitment, resolve_intent_messages,
+};
 
 use super::*;
 
@@ -27,6 +29,9 @@ pub(crate) enum Command {
         valid_before_height: u64,
         #[arg(long)]
         max_fee: u64,
+        /// Stable Action manifest to bind, shared by all signers.
+        #[arg(long)]
+        actions: Option<PathBuf>,
         /// Authorize fee-only funding at position 0 for the pair at position 1.
         #[arg(long)]
         sponsor_max_debit: Option<u64>,
@@ -41,6 +46,9 @@ pub(crate) enum Command {
         context: PathBuf,
         #[arg(long)]
         code: PathBuf,
+        /// Rebind this Action manifest to the assembled transaction's actual Script Groups.
+        #[arg(long)]
+        actions: Option<PathBuf>,
         #[arg(long, required = true)]
         intent: Vec<PathBuf>,
     },
@@ -52,6 +60,55 @@ struct SignedIntent {
     out_point: OutPoint,
     proof_data: JsonBytes,
     seal: JsonBytes,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Role {
+    Lock,
+    Type,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestEntry {
+    role: Role,
+    script_hash: H256,
+    actions: Vec<Action>,
+}
+
+fn read_manifest(path: &Path) -> Result<Vec<IntentMessage>> {
+    let items: Vec<ManifestEntry> = read_json_limited(path, 4 * 1024 * 1024)?;
+    Ok(items
+        .into_iter()
+        .map(|item| IntentMessage {
+            group_kind: match item.role {
+                Role::Lock => ScriptGroupKind::Lock,
+                Role::Type => ScriptGroupKind::Type,
+            },
+            script_hash: item.script_hash.pack(),
+            actions: item
+                .actions
+                .into_iter()
+                .map(|item| stem_ledger::GroupAction {
+                    kind: item.kind,
+                    data: item.data.into_bytes(),
+                })
+                .collect(),
+        })
+        .collect())
+}
+
+fn ensure_draft(tx: &Transaction, manifest: Option<&Path>) -> Result<()> {
+    ensure!(
+        tx.witnesses().len() == 0,
+        "collect paired authorizations before adding any other proofs or seals"
+    );
+    ensure!(
+        manifest.is_none() || tx.messages().len() == 0,
+        "attach Action messages or a manifest once"
+    );
+    Ok(())
 }
 
 impl Command {
@@ -66,11 +123,26 @@ impl Command {
                 input_index,
                 valid_before_height,
                 max_fee,
+                actions,
                 sponsor_max_debit,
             } => {
                 let network = native_spec::load(&genesis)?.network;
                 let tx = load_draft(&transaction)?;
                 let context = ResolvedSigningContext::load(&context, &network)?;
+                ensure_draft(&tx, actions.as_deref())?;
+                let actions = if let Some(path) = actions {
+                    intent_message_commitment(&read_manifest(&path)?)?
+                } else if tx.messages().len() == 0 {
+                    intent_message_commitment(&[])?
+                } else {
+                    let inputs = tx
+                        .inputs()
+                        .map(|input| context.cell(&input.previous_output))
+                        .collect::<Result<Vec<_>>>()?;
+                    let outputs: Vec<_> = tx.outputs().collect();
+                    let groups = derive_script_groups(&inputs, &outputs)?;
+                    resolve_intent_messages(&groups, tx.messages())?
+                };
                 let input = tx.input(input_index).context("missing intent input")?;
                 let offered = context.cell(&input.previous_output)?;
                 let delivery = output(&tx, input_index)?;
@@ -102,7 +174,7 @@ impl Command {
                     |point| context.cell(point),
                     |id| context.header(id),
                 )?;
-                let digest = authorization(&network, &deps, &input, &offered, &terms)?;
+                let digest = authorization(&network, &deps, &actions, &input, &offered, &terms)?;
                 let seal = key.sign_recoverable(&digest.into())?.serialize();
                 let mut proof = [0; SPONSOR_BYTES];
                 let len = terms.encode(&mut proof);
@@ -117,6 +189,7 @@ impl Command {
                 transaction,
                 context,
                 code,
+                actions,
                 intent,
             } => {
                 let network = native_spec::load(&genesis)?.network;
@@ -127,7 +200,14 @@ impl Command {
                     .iter()
                     .map(|path| read_json_limited(path, 4096))
                     .collect::<Result<Vec<SignedIntent>>>()?;
-                let sealed = attach(&tx, &network, &context, &code_hash, intents)?;
+                let sealed = attach(
+                    tx,
+                    &network,
+                    &context,
+                    &code_hash,
+                    actions.as_deref(),
+                    intents,
+                )?;
                 print_json(&JsonBytes::from_bytes(Bytes::copy_from_slice(
                     sealed.as_slice(),
                 )))
@@ -137,16 +217,14 @@ impl Command {
 }
 
 fn attach(
-    tx: &Transaction,
+    mut tx: Transaction,
     network: &Byte32,
     context: &ResolvedSigningContext,
     code_hash: &Byte32,
+    manifest: Option<&Path>,
     intents: Vec<SignedIntent>,
 ) -> Result<Transaction> {
-    ensure!(
-        tx.witnesses().all(|witness| witness.seal.is_empty()),
-        "attach intents before collecting other seals"
-    );
+    ensure_draft(&tx, manifest)?;
     let inputs = tx
         .inputs()
         .map(|input| context.cell(&input.previous_output))
@@ -154,16 +232,18 @@ fn attach(
     let fee = capacity(inputs.iter().map(Cell::capacity))?
         .checked_sub(capacity(tx.outputs().map(|cell| cell.capacity()))?)
         .context("outputs exceed input Capacity")?;
-    let locks: BTreeSet<_> = inputs.iter().map(|cell| cell.lock().as_bytes()).collect();
+    let outputs: Vec<_> = tx.outputs().collect();
+    let groups = derive_script_groups(&inputs, &outputs)?;
+    if let Some(path) = manifest {
+        tx = tx.with_messages(bind_intent_messages(&groups, &read_manifest(path)?)?)?;
+    }
+    let actions = resolve_intent_messages(&groups, tx.messages())?;
     let deps = tx.intent_dependency_commitment(
         network,
         |point| context.cell(point),
         |id| context.header(id),
     )?;
-    let mut witnesses: BTreeMap<_, _> = tx
-        .witnesses()
-        .map(|witness| (witness.group_index, witness))
-        .collect();
+    let mut witnesses = BTreeMap::new();
     for signed in intents {
         let point: packed::OutPoint = signed.out_point.into();
         let index = tx
@@ -173,25 +253,19 @@ fn attach(
         let offered = &inputs[index];
         let lock = offered.lock();
         let owner = intent_owner(&lock, code_hash)?;
-        let encoded_lock = lock.as_bytes();
+        let group_index = groups
+            .iter()
+            .position(|group| group.kind == ScriptGroupKind::Lock && group.script == lock)
+            .context("missing Intent Lock group")?;
         ensure!(
-            inputs
-                .iter()
-                .filter(|cell| cell.lock().as_bytes() == encoded_lock)
-                .count()
-                == 1,
-            "Intent Lock group must consume exactly one Cell",
+            groups[group_index].inputs == [index],
+            "Intent Lock group must consume exactly one Cell"
         );
-        let group_index = u16::try_from(
-            locks
-                .iter()
-                .position(|candidate| *candidate == encoded_lock)
-                .context("missing Intent Lock group")?,
-        )?;
+        let group_index = u16::try_from(group_index)?;
         let terms = Terms::decode(signed.proof_data.as_bytes()).context("invalid intent terms")?;
         let input = tx.input(index).context("missing intent input")?;
-        check_pair(tx, index, &input, offered, &terms, Some(fee))?;
-        let digest = authorization(network, &deps, &input, offered, &terms)?;
+        check_pair(&tx, index, &input, offered, &terms, Some(fee))?;
+        let digest = authorization(network, &deps, &actions, &input, offered, &terms)?;
         let signature = Signature::from_slice(signed.seal.as_bytes())?;
         let standard = signature.to_recoverable()?.to_standard();
         let mut normalized = standard;
@@ -268,6 +342,7 @@ fn check_pair(
 fn authorization(
     network: &Byte32,
     deps: &Byte32,
+    actions: &Byte32,
     input: &CellInput,
     offered: &Cell,
     terms: &Terms,
@@ -278,6 +353,7 @@ fn authorization(
         out_point: input.previous_output.as_slice().try_into()?,
         input_cell: offered.content_hash().as_slice().try_into()?,
         dependencies: deps.as_slice().try_into()?,
+        actions: actions.as_slice().try_into()?,
     }))
 }
 
@@ -287,10 +363,10 @@ fn load_draft(path: &Path) -> Result<Transaction> {
     let tx = Transaction::from_slice(encoded.as_bytes())?;
     ensure!(
         tx.operation().is_none()
-            && tx.messages().len() == 0
+            && tx.l1_references().len() == 0
             && tx.keeper_action().is_none()
             && !tx.has_lineage_command(),
-        "intent draft must be an ordinary transaction without Group Messages"
+        "intent draft must be an ordinary transaction without protocol operations or L1 references"
     );
     Ok(tx)
 }

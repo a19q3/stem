@@ -34,7 +34,10 @@ pub mod replay;
 pub mod time;
 mod witness;
 
-pub use message::{GroupAction, GroupMessage};
+pub use message::{
+    GroupAction, GroupMessage, IntentMessage, bind_intent_messages, intent_message_commitment,
+    resolve_intent_messages,
+};
 pub use stem_intent as intent;
 pub use witness::GroupWitness;
 
@@ -1201,6 +1204,7 @@ pub struct ResolvedTransaction {
     cache_key: OnceLock<Byte32>,
     groups: Vec<ScriptGroup>,
     messages: BTreeMap<u16, Bytes>,
+    intent_scope: Option<IntentScope>,
     programs_by_data: HashMap<Byte32, usize>,
     programs_by_type: HashMap<Byte32, CodeMatch>,
     fee: u64,
@@ -1208,6 +1212,46 @@ pub struct ResolvedTransaction {
     minted_asset: Option<(Script, u128)>,
     resolved_cell_bytes: usize,
     cell_reads: usize,
+}
+
+#[derive(Clone, Debug)]
+struct IntentScope {
+    lock_code: Byte32,
+    actions: Byte32,
+}
+
+impl IntentScope {
+    fn resolve(tx: &Transaction, groups: &[ScriptGroup]) -> Option<Self> {
+        if tx.operation().is_some()
+            || tx.has_lineage_command()
+            || tx.keeper_action().is_some()
+            || tx.l1_references().len() != 0
+        {
+            return None;
+        }
+        let mut lock_code = None;
+        for witness in tx
+            .witnesses()
+            .filter(|witness| !witness.proof_data.is_empty())
+        {
+            let group = groups.get(usize::from(witness.group_index))?;
+            if group.kind != ScriptGroupKind::Lock
+                || group.script.hash_type().as_slice() != [0]
+                || intent::Terms::decode(&witness.proof_data).is_none()
+            {
+                return None;
+            }
+            let code = group.script.code_hash();
+            if lock_code.as_ref().is_some_and(|previous| previous != &code) {
+                return None;
+            }
+            lock_code = Some(code);
+        }
+        Some(Self {
+            lock_code: lock_code?,
+            actions: resolve_intent_messages(groups, tx.messages()).ok()?,
+        })
+    }
 }
 
 impl ResolvedTransaction {
@@ -1345,6 +1389,7 @@ impl ResolvedTransaction {
         for (input, record) in transaction.inputs().zip(&inputs) {
             block.verify_since(input.since, &record.origin)?;
         }
+        let has_intent_dependencies = dependencies.is_some();
         let authorization = authorization::LockAuthorization::new(
             &network_id,
             &transaction,
@@ -1369,25 +1414,7 @@ impl ResolvedTransaction {
                 .context("outputs exceed input capacity")?
         };
 
-        let mut groups = BTreeMap::new();
-        for (index, input) in inputs.iter().enumerate() {
-            get_group(&mut groups, ScriptGroupKind::Lock, input.cell.lock())
-                .inputs
-                .push(index);
-            for script in input.cell.type_scripts() {
-                get_group(&mut groups, ScriptGroupKind::Type, script)
-                    .inputs
-                    .push(index);
-            }
-        }
-        for (index, output) in outputs.iter().enumerate() {
-            for script in output.type_scripts() {
-                get_group(&mut groups, ScriptGroupKind::Type, script)
-                    .outputs
-                    .push(index);
-            }
-        }
-        ensure!(groups.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
+        let groups = derive_script_groups(inputs.iter().map(|input| &input.cell), outputs.iter())?;
         let mut messages = BTreeMap::new();
         for message in transaction.messages() {
             ensure!(
@@ -1402,6 +1429,9 @@ impl ResolvedTransaction {
                 .all(|witness| usize::from(witness.group_index) < groups.len()),
             "Group Witness refers to an absent Script Group"
         );
+        let intent_scope = has_intent_dependencies
+            .then(|| IntentScope::resolve(&transaction, &groups))
+            .flatten();
         let mut programs_by_data = HashMap::new();
         let mut programs_by_type = HashMap::new();
         for (index, cell) in cell_deps.iter().enumerate() {
@@ -1438,8 +1468,9 @@ impl ResolvedTransaction {
             headers_by_origin,
             cache_key: OnceLock::new(),
             fee,
-            groups: groups.into_values().collect(),
+            groups,
             messages,
+            intent_scope,
             programs_by_data,
             programs_by_type,
             capacity: block.capacity,
@@ -1489,6 +1520,18 @@ impl ResolvedTransaction {
 
     pub fn intent_dependency_commitment(&self) -> Option<Byte32> {
         self.authorization.intent_dependencies(&self.network_id)
+    }
+
+    pub fn intent_action_commitment(&self, group: &ScriptGroup) -> Option<&Byte32> {
+        self.intent_scope
+            .as_ref()
+            .filter(|scope| {
+                self.lineage_authorization.is_none()
+                    && group.kind == ScriptGroupKind::Lock
+                    && group.script.hash_type().as_slice() == [0]
+                    && group.script.code_hash() == scope.lock_code
+            })
+            .map(|scope| &scope.actions)
     }
 
     /// Bind a kernel-materialized transaction to its original signed command.
@@ -1642,6 +1685,33 @@ impl ResolvedTransaction {
 enum CodeMatch {
     Unique(Byte32, usize),
     Ambiguous,
+}
+
+/// Derive canonical runtime groups from all concrete input and output Cells.
+pub fn derive_script_groups<'a>(
+    inputs: impl IntoIterator<Item = &'a Cell>,
+    outputs: impl IntoIterator<Item = &'a Cell>,
+) -> Result<Vec<ScriptGroup>> {
+    let mut groups = BTreeMap::new();
+    for (index, input) in inputs.into_iter().enumerate() {
+        get_group(&mut groups, ScriptGroupKind::Lock, input.lock())
+            .inputs
+            .push(index);
+        for script in input.type_scripts() {
+            get_group(&mut groups, ScriptGroupKind::Type, script)
+                .inputs
+                .push(index);
+        }
+    }
+    for (index, output) in outputs.into_iter().enumerate() {
+        for script in output.type_scripts() {
+            get_group(&mut groups, ScriptGroupKind::Type, script)
+                .outputs
+                .push(index);
+        }
+    }
+    ensure!(groups.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
+    Ok(groups.into_values().collect())
 }
 
 fn get_group(

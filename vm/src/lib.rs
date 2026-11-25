@@ -461,14 +461,13 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 let Some(deps) = context.tx.intent_dependency_commitment() else {
                     return Ok(status(machine, ITEM_MISSING));
                 };
-                let mut value = [0; 41];
+                let Some(actions) = context.tx.intent_action_commitment(group) else {
+                    return Ok(status(machine, ITEM_MISSING));
+                };
+                let mut value = [0; 72];
                 value[..32].copy_from_slice(deps.as_slice());
                 value[32..40].copy_from_slice(&context.tx.fee().to_le_bytes());
-                value[40] = u8::from(
-                    tx.messages().len() != 0
-                        || tx.keeper_action().is_some()
-                        || tx.l1_references().len() != 0,
-                );
+                value[40..].copy_from_slice(actions.as_slice());
                 store_data(machine, &value)
             }
             LOAD_LINEAGE_AUTHORIZATION => {

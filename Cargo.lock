@@ -3699,6 +3699,7 @@ dependencies = [
  "ed25519-dalek",
  "molecule",
  "molecule-codegen",
+ "stem-bridge-wire",
  "stem-intent",
  "stem-stake",
  "tempfile",

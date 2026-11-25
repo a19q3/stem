@@ -28,6 +28,7 @@ pub struct Authorization {
     pub out_point: [u8; 36],
     pub input_cell: [u8; 32],
     pub dependencies: [u8; 32],
+    pub actions: [u8; 32],
 }
 
 impl Terms {
@@ -76,12 +77,13 @@ impl Terms {
         let mut encoded = [0; SPONSOR_BYTES];
         let len = self.encode(&mut encoded);
         let mut hash = new_blake2b();
-        hash.update(b"Stem paired Cell authorization\0");
+        hash.update(b"Stem paired Cell and Action authorization\0");
         hash.update(&context.network);
         hash.update(&context.lock);
         hash.update(&context.out_point);
         hash.update(&context.input_cell);
         hash.update(&context.dependencies);
+        hash.update(&context.actions);
         hash.update(&encoded[..len]);
         let mut bytes = [0; 32];
         hash.finalize(&mut bytes);

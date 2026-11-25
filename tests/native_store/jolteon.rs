@@ -20,7 +20,7 @@ use stem_ledger::{
 use super::{
     Context, FEE, Fixture, OutPoint, Result, Retention, Store,
     comet::{Asset, Process, compile_types, poll, write_spec},
-    intent::Swap,
+    intent::{Swap, altered_action},
     keeper,
     lineage::{DynamicLineage, FixtureLineage},
 };
@@ -104,6 +104,7 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         .development_cells
         .push((asset.point.clone(), asset.cell.clone()));
     let swap = Swap::fund(&mut fixture)?;
+    let action_swap = Swap::fund_with_actions(&mut fixture, &output)?;
     let lineage = FixtureLineage::fund(&mut fixture)?;
     let dynamic = DynamicLineage::fund_using(&mut fixture, &lineage, 5, 2, None)?;
     keeper::fund_carriers(&mut fixture, 2)?;
@@ -190,6 +191,22 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     submit(
         "independently sponsored OTX swap",
         &swap.sign(&fixture, &spec, 500)?,
+        None,
+    )?;
+    let with_actions = action_swap.sign(&fixture, &spec, 500)?;
+    let (fragment_index, final_index) = action_swap.policy_indices(&fixture, &with_actions)?;
+    let altered = altered_action(&with_actions)?;
+    let action_rejections = clients
+        .iter()
+        .map(|replica| {
+            let error = replica.submit(&altered).unwrap_err().to_string();
+            assert!(error.contains("Lock Script Group"), "{error}");
+            error
+        })
+        .collect::<Vec<_>>();
+    submit(
+        "independently sponsored OTX with application Actions",
+        &with_actions,
         None,
     )?;
     submit(
@@ -334,6 +351,8 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         output.join("native-composition.json"),
         serde_json::to_vec_pretty(&json!({
             "rejected_policy_removal": invalid, "executions": executions,
+            "otx_actions": {"fragment_index": fragment_index, "final_index": final_index,
+                "rejections": action_rejections, "invalid_transaction": hex::encode(altered.as_slice())},
             "keeper_wake_height": due, "keeper_wake": wake, "heads": heads,
             "timed": {"requested_ms": target, "parent_ms": timestamp, "height": timed_height,
                 "pending": pending, "agenda": agenda, "consumed": consumed,

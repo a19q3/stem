@@ -46,7 +46,12 @@ fn read(call: u64, index: u64, source: u64, field: u64, data: &mut [u8]) -> (u64
     (result, length)
 }
 
-fn read_fixed<const N: usize>(call: u64, index: u64, source: u64, field: u64) -> Result<[u8; N], i8> {
+fn read_fixed<const N: usize>(
+    call: u64,
+    index: u64,
+    source: u64,
+    field: u64,
+) -> Result<[u8; N], i8> {
     let mut data = [0; N];
     (read(call, index, source, field, &mut data) == (0, N as u64))
         .then_some(data)
@@ -100,12 +105,17 @@ fn trade_digest(terms: &Terms) -> Result<[u8; 32], i8> {
     if read_fixed::<9>(LOAD_INPUT_BY_FIELD, 0, GROUP_INPUT, 1)? != [0; 9] {
         return Err(21);
     }
-    let index = u64::from(u32::from_le_bytes(read_fixed(LOAD_GROUP_INDEX, 0, GROUP_INPUT, 0)?));
+    let index = u64::from(u32::from_le_bytes(read_fixed(
+        LOAD_GROUP_INDEX,
+        0,
+        GROUP_INPUT,
+        0,
+    )?));
     let block = read_fixed::<48>(LOAD_BLOCK_CONTEXT, 0, 0, 0)?;
     let height = u64::from_le_bytes(block[..8].try_into().unwrap());
-    let context = read_fixed::<41>(LOAD_INTENT_CONTEXT, 0, 0, 0)?;
+    let context = read_fixed::<72>(LOAD_INTENT_CONTEXT, 0, 0, 0)?;
     let fee = u64::from_le_bytes(context[32..40].try_into().unwrap());
-    if height >= terms.valid_before || fee > terms.max_fee || context[40] != 0 {
+    if height >= terms.valid_before || fee > terms.max_fee {
         return Err(22);
     }
     if read_fixed::<32>(LOAD_CELL_BY_FIELD, index, OUTPUT, 7)? != terms.delivery {
@@ -124,9 +134,10 @@ fn trade_digest(terms: &Terms) -> Result<[u8; 32], i8> {
         }
         let input = u64::from_le_bytes(read_fixed(LOAD_CELL_BY_FIELD, 0, GROUP_INPUT, 0)?);
         let change = u64::from_le_bytes(read_fixed(LOAD_CELL_BY_FIELD, 0, OUTPUT, 0)?);
-        if !input.checked_sub(change).is_some_and(|debit| {
-            debit > 0 && debit <= sponsor.max_debit && debit <= fee
-        }) {
+        if !input
+            .checked_sub(change)
+            .is_some_and(|debit| debit > 0 && debit <= sponsor.max_debit && debit <= fee)
+        {
             return Err(24);
         }
     }
@@ -136,6 +147,7 @@ fn trade_digest(terms: &Terms) -> Result<[u8; 32], i8> {
         out_point: read_fixed(LOAD_INPUT_BY_FIELD, 0, GROUP_INPUT, 0)?,
         input_cell: read_fixed(LOAD_CELL_BY_FIELD, 0, GROUP_INPUT, 7)?,
         dependencies: context[..32].try_into().unwrap(),
+        actions: context[40..].try_into().unwrap(),
     }))
 }
 
