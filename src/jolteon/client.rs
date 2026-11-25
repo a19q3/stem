@@ -24,6 +24,10 @@ pub struct Client {
 pub struct Status {
     pub height: u64,
     pub epoch: u64,
+    pub view: u64,
+    pub high_view: u64,
+    pub timeout_views: Vec<u64>,
+    pub last_untimely_view: u64,
     pub app_hash: String,
     pub member: Option<u16>,
     pub voting_power: Option<u64>,

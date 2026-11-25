@@ -382,6 +382,11 @@ pub(super) struct NetworkOptions {
     pub storage_metrics: bool,
 }
 
+pub(super) fn replica_binary() -> PathBuf {
+    std::env::var_os("STEM_TEST_REPLICA_BIN")
+        .map_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_stem")), PathBuf::from)
+}
+
 pub(super) fn start_network_configured(
     fixture: &mut Fixture,
     output: &Path,
@@ -421,7 +426,7 @@ pub(super) fn start_network_configured(
         let key_file = output.join(format!("validator-{index}.key"));
         fs::write(&key_file, key.to_bytes())?;
         fs::set_permissions(&key_file, fs::Permissions::from_mode(0o600))?;
-        let mut command = Command::new(env!("CARGO_BIN_EXE_stem"));
+        let mut command = Command::new(replica_binary());
         command
             .args(["run", "--initialize", "--home"])
             .arg(output.join(format!("node-{index}")))

@@ -895,6 +895,12 @@ replays the archive in a separate store. The audit checks every
 receipt and Header, the final versions and both proof paths for
 each Head, and the two asset supplies for AMM runs.
 
+Set `STEM_TEST_REPLICA_BIN` to a fixed Stem executable for a before/after
+network comparison. The same load driver launches that executable and
+uses it for the history index. Status samples include current and high
+views, observed timeout certificates, and the most recent view whose
+proposal failed the local timestamp window.
+
 To measure only proposal selection against an exhausted read budget,
 run the fixed-queue test. For checkout comparisons use the same
 directory of prebuilt RISC-V contracts in both runs.

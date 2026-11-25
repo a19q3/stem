@@ -19,7 +19,8 @@ use super::{
     Bytes, Cell, Context, FEE, FUND, Fixture, OutPoint, Result, Transaction,
     comet::Process,
     keeper_load::{
-        NetworkOptions, ProcessStats, start_network_configured, stats, statuses, transactions,
+        NetworkOptions, ProcessStats, replica_binary, start_network_configured, stats, statuses,
+        transactions,
     },
     lineage_load,
 };
@@ -418,7 +419,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let index = output.join("history-index");
     let indexed = history
         .arg("-v")
-        .arg(env!("CARGO_BIN_EXE_stem"))
+        .arg(replica_binary())
         .args(["checkpoint", "history", "--archive-db"])
         .arg(output.join(format!("node-{}/db", clients.len() - 1)))
         .arg("--index")

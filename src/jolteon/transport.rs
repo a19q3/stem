@@ -19,11 +19,53 @@ use tokio::{
 use super::wire::{self, Frame};
 
 const QUEUE: usize = 8;
+const INBOUND_QUEUE: usize = 128;
+const CONTROL_BURST: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_secs(6);
 
 pub struct Incoming {
     pub frame: Frame,
     pub reply: Option<oneshot::Sender<Vec<u8>>>,
+}
+
+pub(super) struct Inbox {
+    control: mpsc::Receiver<Incoming>,
+    application: mpsc::Receiver<Incoming>,
+    burst: usize,
+}
+
+impl Inbox {
+    pub(super) async fn recv(&mut self) -> Option<Incoming> {
+        if self.burst == CONTROL_BURST
+            && let Ok(event) = self.application.try_recv()
+        {
+            self.burst = 0;
+            return Some(event);
+        }
+        tokio::select! {
+            biased;
+            Some(event) = self.control.recv() => {
+                self.burst = (self.burst + 1).min(CONTROL_BURST);
+                Some(event)
+            }
+            Some(event) = self.application.recv() => {
+                self.burst = 0;
+                Some(event)
+            }
+            else => None,
+        }
+    }
+}
+
+struct PeerQueues {
+    control: mpsc::Sender<Arc<Vec<u8>>>,
+    relay: mpsc::Sender<Arc<Vec<u8>>>,
+}
+
+#[derive(Clone)]
+struct IncomingQueues {
+    control: mpsc::Sender<Incoming>,
+    application: mpsc::Sender<Incoming>,
 }
 
 #[derive(Default)]
@@ -37,16 +79,21 @@ pub struct Network {
     pub traffic: Arc<Traffic>,
     own: u16,
     pub epoch: u64,
-    peers: Vec<Option<mpsc::Sender<Arc<Vec<u8>>>>>,
+    peers: Vec<Option<PeerQueues>>,
 }
 
 impl Network {
-    pub async fn listen(
+    pub(super) async fn listen(
         own: u16,
         addresses: &[SocketAddr],
         epoch: u64,
-    ) -> Result<(Self, mpsc::Receiver<Incoming>)> {
-        let (sender, incoming) = mpsc::channel(256);
+    ) -> Result<(Self, Inbox)> {
+        let (control_sender, control) = mpsc::channel(INBOUND_QUEUE);
+        let (application_sender, application) = mpsc::channel(INBOUND_QUEUE);
+        let sender = IncomingQueues {
+            control: control_sender,
+            application: application_sender,
+        };
         let listener = TcpListener::bind(addresses[usize::from(own)]).await?;
         let traffic = Arc::new(Traffic::default());
         let counters = traffic.clone();
@@ -71,9 +118,12 @@ impl Network {
                 if index == usize::from(own) {
                     return None;
                 }
-                let (tx, rx) = mpsc::channel(QUEUE);
-                tokio::spawn(send(addr, rx, traffic.clone()));
-                Some(tx)
+                let (control, control_in) = mpsc::channel(QUEUE);
+                let (relay, relay_in) = mpsc::channel(QUEUE);
+                // Independent streams also keep TCP backpressure off the control path.
+                tokio::spawn(send(addr, control_in, traffic.clone()));
+                tokio::spawn(send(addr, relay_in, traffic.clone()));
+                Some(PeerQueues { control, relay })
             })
             .collect();
         Ok((
@@ -83,7 +133,11 @@ impl Network {
                 epoch,
                 peers,
             },
-            incoming,
+            Inbox {
+                control,
+                application,
+                burst: 0,
+            },
         ))
     }
 
@@ -106,7 +160,7 @@ impl Network {
     pub fn broadcast_at(&self, epoch: u64, kind: u32, body: Vec<u8>) {
         let msg = self.frame(epoch, kind, body);
         for peer in self.peers.iter().flatten() {
-            self.enqueue(peer, msg.clone());
+            self.enqueue(peer, kind, msg.clone());
         }
     }
 
@@ -116,12 +170,17 @@ impl Network {
 
     pub fn send_at(&self, epoch: u64, peer: u16, kind: u32, body: Vec<u8>) {
         if let Some(Some(peer)) = self.peers.get(usize::from(peer)) {
-            self.enqueue(peer, self.frame(epoch, kind, body));
+            self.enqueue(peer, kind, self.frame(epoch, kind, body));
         }
     }
 
-    fn enqueue(&self, peer: &mpsc::Sender<Arc<Vec<u8>>>, frame: Arc<Vec<u8>>) {
-        if peer.try_send(frame).is_err() {
+    fn enqueue(&self, peer: &PeerQueues, kind: u32, frame: Arc<Vec<u8>>) {
+        let queue = if kind == wire::RELAY_TX {
+            &peer.relay
+        } else {
+            &peer.control
+        };
+        if queue.try_send(frame).is_err() {
             self.traffic.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -129,7 +188,7 @@ impl Network {
 
 async fn receive(
     mut stream: TcpStream,
-    incoming: mpsc::Sender<Incoming>,
+    incoming: IncomingQueues,
     traffic: Arc<Traffic>,
 ) -> Result<()> {
     loop {
@@ -153,6 +212,7 @@ async fn receive(
             );
             let (sender, receiver) = oneshot::channel();
             incoming
+                .application
                 .send(Incoming {
                     frame,
                     reply: Some(sender),
@@ -166,7 +226,12 @@ async fn receive(
             matches!(frame.kind, wire::PROPOSAL..=wire::REPLAY),
             "unsupported peer frame"
         );
-        incoming.send(Incoming { frame, reply: None }).await?;
+        let queue = if frame.kind == wire::RELAY_TX {
+            &incoming.application
+        } else {
+            &incoming.control
+        };
+        queue.send(Incoming { frame, reply: None }).await?;
     }
 }
 
@@ -217,4 +282,72 @@ async fn write(stream: &mut TcpStream, bytes: &[u8]) -> Result<()> {
         .write_all(bytes)
         .await
         .context("write consensus frame")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn control_overtakes_application_with_a_bounded_burst() -> Result<()> {
+        let (control_tx, control) = mpsc::channel(CONTROL_BURST + 1);
+        let (app_tx, application) = mpsc::channel(1);
+        let mut inbox = Inbox {
+            control,
+            application,
+            burst: 0,
+        };
+        let event = |kind| Incoming {
+            frame: Frame {
+                kind,
+                ..Frame::default()
+            },
+            reply: None,
+        };
+        app_tx.try_send(event(wire::RELAY_TX))?;
+        for _ in 0..=CONTROL_BURST {
+            control_tx.try_send(event(wire::VOTE))?;
+        }
+        for _ in 0..CONTROL_BURST {
+            assert_eq!(
+                inbox.recv().await.context("control event")?.frame.kind,
+                wire::VOTE
+            );
+        }
+        assert_eq!(
+            inbox.recv().await.context("application event")?.frame.kind,
+            wire::RELAY_TX
+        );
+        drop(app_tx);
+        drop(control_tx);
+        assert_eq!(
+            inbox.recv().await.context("last control event")?.frame.kind,
+            wire::VOTE
+        );
+        assert!(inbox.recv().await.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn relay_backpressure_leaves_a_separate_control_socket() -> Result<()> {
+        let peer = TcpListener::bind("127.0.0.1:0").await?;
+        let local = "127.0.0.1:0".parse()?;
+        let (network, _inbox) = Network::listen(0, &[local, peer.local_addr()?], 3).await?;
+        let payload = vec![1; stem_ledger::MAX_TRANSACTION_BYTES];
+        network.send(1, wire::RELAY_TX, payload.clone());
+        let (_unread_relay, _) = timeout(Duration::from_secs(2), peer.accept()).await??;
+        for _ in 0..=QUEUE {
+            network.send(1, wire::RELAY_TX, payload.clone());
+        }
+        assert!(network.traffic.dropped.load(Ordering::Relaxed) > 0);
+        network.send(1, wire::QUORUM, vec![2, 3]);
+        let (mut control, _) = timeout(Duration::from_secs(2), peer.accept()).await??;
+        let raw = timeout(Duration::from_secs(2), read(&mut control)).await??;
+        let frame: Frame = wire::canonical(&raw)?;
+        assert_eq!(
+            (frame.sender, frame.epoch, frame.kind, frame.body),
+            (0, 3, wire::QUORUM, vec![2, 3])
+        );
+        Ok(())
+    }
 }
