@@ -11,8 +11,8 @@ use ckb_types::{
 use stem_ledger::{
     Transaction,
     protocol::{
-        BlockBudget, BridgeLedger, L1Anchor, Lane, Limits, PendingWithdrawal, SettlementChanges,
-        VerifiedMint,
+        BlockBudget, BridgeBacking, BridgeLedger, L1Anchor, Lane, Limits, PendingWithdrawal,
+        SettlementChanges, VerifiedMint,
     },
     replay,
 };
@@ -22,6 +22,7 @@ use super::Store;
 
 const CONFIG: &[u8] = b"bridge/config";
 const ANCHOR: &[u8] = b"bridge/anchor";
+const BACKING: &[u8] = b"bridge/backing";
 const DEPOSITS: &[u8] = b"bridge/replay-count";
 const LANE: &[u8] = b"bridge/lane/";
 const PENDING: &[u8] = b"bridge/pending/";
@@ -99,6 +100,28 @@ impl StagedBridge {
             self.deposits_remaining = remaining;
         }
     }
+
+    pub fn finish(mut self, store: &Store, fees: u64, total_fees: Option<u64>) -> Result<Records> {
+        if fees > 0 || self.records.contains_key(BACKING) {
+            let backing = View {
+                store,
+                staged: &self.records,
+            }
+            .backing()?
+            .extinguish_fee(fees)?;
+            let expected = match total_fees {
+                Some(value) => value,
+                None => store.fee_surplus()?,
+            };
+            ensure!(
+                backing.unallocated() == expected,
+                "bridge backing differs from fee accounting"
+            );
+            self.records
+                .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
+        }
+        Ok(self.records)
+    }
 }
 
 impl Bridge {
@@ -122,6 +145,10 @@ impl Bridge {
         let authority = Authority::new(spec.guardian_generation.unpack(), &spec.guardians)?;
         let mut records = Records::new();
         records.insert(ANCHOR.to_vec(), Some(encode_anchor(&spec.anchor)));
+        records.insert(
+            BACKING.to_vec(),
+            Some(BridgeBacking::default().encode().to_vec()),
+        );
         records.insert(DEPOSITS.to_vec(), Some(0u64.to_le_bytes().to_vec()));
 
         let mut lanes = BTreeMap::new();
@@ -311,6 +338,10 @@ impl Bridge {
             budget: Some(budget),
             ..Default::default()
         };
+        let backing = view.backing()?.credit_mint(observation.capacity)?;
+        changes
+            .records
+            .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
         changes.records.insert(
             key(LANE, &observation.vault.lane, None),
             Some(encode_lane(&lane, next_request)),
@@ -364,6 +395,7 @@ impl Bridge {
         let tx_id = tx.id(store.network());
         let mut changes = BridgeChanges::default();
         let mut receipts = Vec::new();
+        let mut withdrawal_capacity = 0u64;
         for (index, cell) in tx.outputs().enumerate() {
             let lock = cell.lock();
             if !self.is_burn(&lock) {
@@ -458,8 +490,22 @@ impl Bridge {
             changes.records.insert(pending_key, Some(pending));
             changes.records.insert(name, Some(encode_lane(&lane, next)));
             changes.omit_outputs.insert(index);
+            withdrawal_capacity = withdrawal_capacity
+                .checked_add(cell.capacity())
+                .context("withdrawal capacity overflow")?;
             receipts.extend_from_slice(&u32::try_from(receipt.len())?.to_le_bytes());
             receipts.extend_from_slice(&receipt);
+        }
+        if withdrawal_capacity > 0 {
+            let backing = View {
+                store,
+                staged: &state.records,
+            }
+            .backing()?
+            .reserve_withdrawal(withdrawal_capacity)?;
+            changes
+                .records
+                .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
         }
         changes.protocol_result = receipts.into();
         Ok(changes)
@@ -496,6 +542,11 @@ impl Bridge {
                 .insert(key(LANE, id, None), Some(encode_lane(lane, next_request)));
         }
         if let Some((lane, nonce)) = settlement.paid {
+            let paid = view.pending(&lane, nonce)?;
+            let backing = view.backing()?.settle_withdrawal(paid.capacity)?;
+            changes
+                .records
+                .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
             changes
                 .records
                 .insert(key(PENDING, &lane, Some(nonce)), None);
@@ -530,6 +581,21 @@ impl Bridge {
 }
 
 impl Store {
+    pub fn prove_bridge_backing(&self) -> Result<(BridgeBacking, super::Proof)> {
+        let (record, proof) = self.prove_system(BACKING)?;
+        let record = record.context("bridge backing is not configured")?;
+        Ok((BridgeBacking::decode(&record)?, proof))
+    }
+
+    pub fn verify_bridge_backing(
+        network: &Byte32,
+        header: &super::Header,
+        backing: &BridgeBacking,
+        proof: &super::Proof,
+    ) -> bool {
+        Self::verify_system_record(network, header, BACKING, Some(&backing.encode()), proof)
+    }
+
     pub fn bridge_lane(&self, lane: &Byte32) -> Result<Lane> {
         Ok(decode_lane(
             &self
@@ -564,6 +630,10 @@ impl View<'_> {
             height: u64::from_le_bytes(encoded[..8].try_into()?),
             hash: Byte32::from_slice(&encoded[8..])?,
         })
+    }
+
+    fn backing(&self) -> Result<BridgeBacking> {
+        BridgeBacking::decode(&self.read(BACKING)?.context("missing bridge backing")?)
     }
 
     fn lane_state(&self, lane: &Byte32) -> Result<(Lane, u64)> {

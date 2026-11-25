@@ -11,9 +11,11 @@ use stem_stake::{Attestation, Authority, MAX_RECORDS};
 
 use crate::{Transaction, hash, wire};
 
+mod backing;
 mod mint;
 mod settlement;
 mod snapshot;
+pub use backing::BridgeBacking;
 pub use mint::{MintObservation, VerifiedMint, mint_digest};
 pub use settlement::{BridgeLedger, Lane, PendingWithdrawal, SettlementChanges};
 pub use snapshot::{

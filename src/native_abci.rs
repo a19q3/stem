@@ -302,6 +302,22 @@ impl App {
                 }))?
                 .into()
             }
+            "/stem/bridge-backing" if request.prove && request.data.is_empty() => {
+                ensure!(
+                    requested == tip,
+                    "bridge backing proof requires the current height"
+                );
+                let (backing, path) = store.prove_bridge_backing()?;
+                serde_json::to_vec(&serde_json::json!({
+                    "record": format!("0x{}", hex::encode(backing.encode())),
+                    "proof": format!("0x{}", hex::encode(path.encode()?)),
+                    "liquid_shannons": ckb_jsonrpc_types::Uint64::from(backing.liquid()),
+                    "circulating_shannons": ckb_jsonrpc_types::Uint64::from(backing.circulating()),
+                    "pending_shannons": ckb_jsonrpc_types::Uint64::from(backing.pending()),
+                    "unallocated_shannons": ckb_jsonrpc_types::Uint64::from(backing.unallocated()),
+                }))?
+                .into()
+            }
             "/stem/cell" => {
                 ensure!(
                     requested == tip,

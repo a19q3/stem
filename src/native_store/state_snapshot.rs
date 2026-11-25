@@ -155,6 +155,8 @@ impl Store {
         }
         let mut cells = self.cells.edit(self.cells.empty_root(), |_| Ok(None));
         let mut system = self.system.edit(self.system.empty_root(), |_| Ok(None));
+        let mut cell_records = Vec::new();
+        let mut system_records = Vec::new();
         let mut previous = None;
         for (namespace, key, data) in image.records {
             let ordered = (namespace.tag(), key);
@@ -186,14 +188,16 @@ impl Store {
                             "snapshot Cell origin differs from matching Header"
                         );
                     }
-                    cells.set(key, Some(self.cells.value_hash(&data)))?;
+                    cell_records.push((key, Some(self.cells.value_hash(&data))));
                 }
                 Namespace::System => {
-                    system.set(key, Some(self.system.value_hash(&data)))?;
+                    system_records.push((key, Some(self.system.value_hash(&data))));
                 }
             }
             batch.put(state_key(STATE_RECORD, namespace, &key), data);
         }
+        cells.set_batch(&cell_records, |_, _, _| {})?;
+        system.set_batch(&system_records, |_, _, _| {})?;
         ensure!(
             cells.root().pack() == image.header.state.cell_root
                 && system.root().pack() == image.header.state.system_root,

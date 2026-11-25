@@ -303,6 +303,7 @@ impl Store {
         let origin = Origin::new(&network, &context);
         let mut batch = Batch::default();
         let mut cell_edit = cells.edit(cells.empty_root(), |_| Ok(None));
+        let mut allocations = Vec::with_capacity(spec.development_cells.len());
         spec.development_cells
             .iter()
             .try_fold(0u64, |sum, (point, cell)| -> Result<u64> {
@@ -314,16 +315,15 @@ impl Store {
                 };
                 let id = record::cell_key(&cells, point);
                 let record = record::encode_cell(point, &cell);
-                ensure!(
-                    cell_edit
-                        .set(id, Some(cells.value_hash(&record)))?
-                        .is_none(),
-                    "duplicate genesis allocation"
-                );
+                allocations.push((id, Some(cells.value_hash(&record))));
                 batch.put(state_key(STATE_RECORD, Namespace::Cells, &id), record);
                 sum.checked_add(cell.cell.capacity())
                     .context("genesis Capacity overflow")
             })?;
+        allocations.sort_unstable_by_key(|(key, _)| *key);
+        cell_edit
+            .set_batch(&allocations, |_, _, _| {})
+            .context("invalid genesis allocations")?;
         let mut system_edit = system.edit(system.empty_root(), |_| Ok(None));
         let mut params = spec.limits.encode();
         params.extend_from_slice(&spec.fees.encode());
@@ -782,54 +782,69 @@ impl Store {
         let mut cells = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
             self.node(Namespace::Cells, id)
         });
+        let mut cell_changes = Vec::with_capacity(live.len());
         for (point, record) in live {
             let id = record::cell_key(&self.cells, &point);
-            let key = state_key(STATE_RECORD, Namespace::Cells, &id);
-            if let Some(record) = record {
+            let value = record.map(|record| {
                 let bytes = record::encode_cell(&point, &record);
-                cells.set(id, Some(self.cells.value_hash(&bytes)))?;
-                batch.put(key, bytes);
-            } else if cells.set(id, None)?.is_some() {
-                batch.delete(key);
-            }
+                let hash = self.cells.value_hash(&bytes);
+                batch.put(state_key(STATE_RECORD, Namespace::Cells, &id), bytes);
+                hash
+            });
+            cell_changes.push((id, value));
         }
+        cell_changes.sort_unstable_by_key(|(id, _)| *id);
+        cells.set_batch(&cell_changes, |id, _, value| {
+            if value.is_none() {
+                batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
+            }
+        })?;
         let cell_root = cells.root().pack();
         put_nodes(&mut batch, Namespace::Cells, cells.into_writes());
         let mut system = self.system.edit(as_key(&self.tip.state.system_root), |id| {
             self.node(Namespace::System, id)
         });
-        if fees != 0 {
-            let value = self
+        let mut system_changes = Vec::new();
+        let total_fees = if fees != 0 {
+            let total = self
                 .fee_surplus()?
                 .checked_add(fees)
-                .context("total extinguished Capacity overflow")?
-                .to_le_bytes();
+                .context("total extinguished Capacity overflow")?;
+            let value = total.to_le_bytes();
             let id = self.system.record_key(FEE_KEY);
-            system.set(id, Some(self.system.value_hash(&value)))?;
+            system_changes.push((id, Some(self.system.value_hash(&value))));
             batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
-        }
+            Some(total)
+        } else {
+            None
+        };
         let mut validator_updates = Vec::new();
         if let Some((staking, stake)) = self.staking.as_ref().zip(stake) {
             let (records, updates) = staking.finish(stake, height)?;
             validator_updates = updates;
             for (name, value) in records {
                 let id = self.system.record_key(&name);
-                system.set(id, Some(self.system.value_hash(&value)))?;
+                system_changes.push((id, Some(self.system.value_hash(&value))));
                 batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
             }
         }
         if let Some(bridge) = bridge {
-            for (name, value) in bridge.records {
+            for (name, value) in bridge.finish(self, fees, total_fees)? {
                 let id = self.system.record_key(&name);
-                let key = state_key(STATE_RECORD, Namespace::System, &id);
-                if let Some(value) = value {
-                    system.set(id, Some(self.system.value_hash(&value)))?;
-                    batch.put(key, value);
-                } else if system.set(id, None)?.is_some() {
-                    batch.delete(key);
-                }
+                let hash = value.map(|value| {
+                    let hash = self.system.value_hash(&value);
+                    batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
+                    hash
+                });
+                system_changes.push((id, hash));
             }
         }
+        system_changes.sort_unstable_by_key(|(id, _)| *id);
+        system.set_batch(&system_changes, |id, _, value| {
+            if value.is_none() {
+                batch.delete(state_key(STATE_RECORD, Namespace::System, &id));
+            }
+        })?;
         let system_root = system.root().pack();
         put_nodes(&mut batch, Namespace::System, system.into_writes());
         let mut history = self.history.clone();

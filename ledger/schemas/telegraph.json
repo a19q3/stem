@@ -730,6 +730,15 @@
       "name": "PatriciaPath",
       "kind": "dense_vector",
       "item": "Bytes"
+    },
+    {
+      "name": "BridgeBacking",
+      "kind": "sequence",
+      "fields": [
+        { "name": "liquid", "type": "CompactUint64" },
+        { "name": "circulating", "type": "CompactUint64" },
+        { "name": "pending", "type": "CompactUint64" }
+      ]
     }
   ]
 }

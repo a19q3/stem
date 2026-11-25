@@ -173,6 +173,7 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     let udt_dep = CellDep::new_builder()
         .out_point(OutPoint::new(code_mint.id(store.network()), 1))
         .build();
+    let code_capacity: u64 = code_mint.outputs().map(|cell| cell.capacity()).sum();
     commit(&mut store, code_mint)?;
     let mint = make_mint(
         out(51, 0),
@@ -194,6 +195,22 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     let prepared = store.prepare(std::slice::from_ref(&mint), TIME, true)?;
     assert!(prepared.receipts()[0].cycles > 0);
     store.commit(prepared)?;
+    let (backing, proof) = store.prove_bridge_backing()?;
+    assert_eq!(backing.liquid(), code_capacity + MINT);
+    assert_eq!(backing.circulating(), backing.liquid());
+    assert_eq!(backing.pending(), 0);
+    assert!(Store::verify_bridge_backing(
+        store.network(),
+        store.tip(),
+        &backing,
+        &proof,
+    ));
+    assert!(!Store::verify_bridge_backing(
+        store.network(),
+        store.tip(),
+        &backing.credit_mint(1)?,
+        &proof,
+    ));
     let mint_again = make_mint(
         out(51, 0),
         3,
@@ -263,6 +280,11 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     assert!(store.live_cell(&omitted)?.is_none());
     assert!(store.live_cell(&funded)?.is_none());
     assert_eq!(store.fee_surplus()?, FEE);
+    let (backing, _) = store.prove_bridge_backing()?;
+    assert_eq!(backing.liquid(), code_capacity + MINT);
+    assert_eq!(backing.circulating(), code_capacity);
+    assert_eq!(backing.pending(), MINT - FEE);
+    assert_eq!(backing.unallocated(), FEE);
     let pending = store
         .bridge_receipt(&asset_lane, 0)?
         .context("pending nonce zero")?;
@@ -305,6 +327,11 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         (0, 0, 1)
     );
     assert!(store.bridge_receipt(&asset_lane, 0)?.is_none());
+    let (backing, _) = store.prove_bridge_backing()?;
+    assert_eq!(backing.liquid(), code_capacity + FEE);
+    assert_eq!(backing.circulating(), code_capacity);
+    assert_eq!(backing.pending(), 0);
+    assert_eq!(backing.unallocated(), FEE);
     let snapshot = store.export_state()?;
     let trusted = store.tip().app_hash(store.network());
     let restore_path = tempfile::tempdir()?;
@@ -313,6 +340,14 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     assert_eq!(restored.bridge_lane(&asset_lane)?, quote);
     assert!(restored.bridge_receipt(&asset_lane, 0)?.is_none());
     assert_eq!(restored.fee_surplus()?, FEE);
+    let (restored_backing, proof) = restored.prove_bridge_backing()?;
+    assert_eq!(restored_backing, backing);
+    assert!(Store::verify_bridge_backing(
+        restored.network(),
+        restored.tip(),
+        &backing,
+        &proof,
+    ));
     ensure!(restored.check(&mint_again).is_err());
     Ok(())
 }

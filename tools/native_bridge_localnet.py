@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise Stem's native peg-in against a locally deployed CKB vault."""
+"""Exercise and reconcile Stem's native bridge against locally deployed CKB vaults."""
 
 import argparse
 import base64
@@ -488,6 +488,29 @@ def vault_operations(args, l1, fixture, native, token, ckb_lane, ckb, typed, spe
 
 
 
+def reconcile_backing(comet_rpc, report):
+    lanes = [report]
+    if "xudt" in report:
+        lanes.append(report["xudt"])
+    minted = sum(lane["mint"]["capacity"] for lane in lanes)
+    paid = sum(lane["withdrawal"]["capacity"] for lane in lanes)
+    expected = {
+        "liquid_shannons": minted - paid,
+        "circulating_shannons": minted - sum(lane["mint"]["payment_capacity"] for lane in lanes),
+        "pending_shannons": 0,
+        "unallocated_shannons": FEE * len(lanes),
+    }
+    response = comet_rpc.call("abci_query", path=json.dumps("/stem/bridge-backing"),
+                              prove="true")["response"]
+    if response["code"] != 0:
+        raise AssertionError(response)
+    backing = json.loads(base64.b64decode(response["value"]))
+    measured = {key: int(backing[key], 16) for key in expected}
+    if measured != expected or any(not binary(backing[key]) for key in ("record", "proof")):
+        raise AssertionError((measured, expected))
+    return {"height": response["height"], **backing}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("binary", "l1", "comet", "vault", "deposit-lock", "native-lock", "wrapped", "proof-verifier", "output"):
@@ -524,6 +547,7 @@ def main():
             report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                              report["xudt"], spec_path, comet_rpc)
             print(f"CKB xUDT payout {report['xudt']['withdrawal']['l1_payout']} for {report['xudt']['units']} units")
+        report["backing"] = reconcile_backing(comet_rpc, report)
         write_json(args.output / "native-bridge-report.json", report)
         print(f"CKB payout {payout['l1_payout']} for {payout['capacity']} shannons, native settlement height {payout['settlement']['height']}")
         print(f"CKB consolidation {result['l1_consolidation']}, native Stem mint {result['mint_id']}, height {result['mint']['height']}")

@@ -268,9 +268,31 @@ impl<Read: FnMut(&Key) -> Result<Option<Vec<u8>>>> Edit<'_, Read> {
     }
 
     pub fn set(&mut self, key: Key, value: Option<Key>) -> Result<Option<Key>> {
-        let (root, previous) = self.update(self.root, key, value, 0)?;
+        let mut previous = None;
+        let old = self.load_optional(self.root)?;
+        let root = self.update(old, &[(key, value)], 0, &mut |_, value, _| {
+            previous = Some(value)
+        })?;
         self.root = root;
         Ok(previous)
+    }
+
+    /// Apply unique changes in key order and report the touched leaves that existed.
+    pub fn set_batch(
+        &mut self,
+        changes: &[(Key, Option<Key>)],
+        mut previous: impl FnMut(Key, Key, Option<Key>),
+    ) -> Result<()> {
+        if changes.is_empty() {
+            return Ok(());
+        }
+        ensure!(
+            changes.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "unordered or duplicate Patricia changes"
+        );
+        let old = self.load_optional(self.root)?;
+        self.root = self.update(old, changes, 0, &mut previous)?;
+        Ok(())
     }
 
     pub fn prove(&mut self, key: &Key) -> Result<(Option<Key>, Proof)> {
@@ -330,74 +352,111 @@ impl<Read: FnMut(&Key) -> Result<Option<Vec<u8>>>> Edit<'_, Read> {
         id
     }
 
+    fn load_optional(&mut self, id: Key) -> Result<Option<(Key, Node)>> {
+        if id == self.tree.empty_root() {
+            Ok(None)
+        } else {
+            Ok(Some((id, self.load(&id)?.0)))
+        }
+    }
+
+    fn branch(&mut self, key: &Key, bits: u8, children: [Key; 2]) -> Key {
+        let empty = self.tree.empty_root();
+        if children[0] == empty {
+            children[1]
+        } else if children[1] == empty {
+            children[0]
+        } else {
+            self.insert(Node::Branch {
+                prefix: canonical_prefix(key, bits),
+                bits,
+                children,
+            })
+        }
+    }
+
     fn update(
         &mut self,
-        id: Key,
-        key: Key,
-        value: Option<Key>,
+        old: Option<(Key, Node)>,
+        changes: &[(Key, Option<Key>)],
         depth: usize,
-    ) -> Result<(Key, Option<Key>)> {
+        previous: &mut impl FnMut(Key, Key, Option<Key>),
+    ) -> Result<Key> {
         let empty = self.tree.empty_root();
-        if id == empty {
-            return Ok((
-                value.map_or(empty, |value| self.insert(Node::Leaf { key, value })),
-                None,
-            ));
-        }
-        let (node, _) = self.load(&id)?;
+        let Some((first, _)) = changes.first() else {
+            return Ok(old.map_or(empty, |(id, _)| id));
+        };
+        let last = &changes.last().expect("nonempty changes").0;
+        let Some((id, node)) = old else {
+            if let Some(bit) = difference(first, last) {
+                ensure!(usize::from(bit) >= depth, "invalid Patricia update depth");
+                let (left, right) =
+                    changes.split_at(changes.partition_point(|(key, _)| side(key, bit) == 0));
+                let children = [
+                    self.update(None, left, usize::from(bit) + 1, previous)?,
+                    self.update(None, right, usize::from(bit) + 1, previous)?,
+                ];
+                return Ok(self.branch(first, bit, children));
+            }
+            return Ok(changes[0].1.map_or(empty, |value| {
+                self.insert(Node::Leaf { key: *first, value })
+            }));
+        };
         let (prefix, bits) = node.prefix();
         ensure!(bits >= depth, "invalid Patricia path depth");
-        if let Some(bit) = difference(prefix, &key).filter(|&bit| usize::from(bit) < bits) {
-            let Some(value) = value else {
-                return Ok((id, None));
-            };
-            let leaf = self.insert(Node::Leaf { key, value });
-            let mut children = [id; 2];
-            children[side(&key, bit)] = leaf;
-            let branch = self.insert(Node::Branch {
-                prefix: canonical_prefix(&key, bit),
-                bits: bit,
-                children,
-            });
-            return Ok((branch, None));
+        let split = difference(prefix, first)
+            .into_iter()
+            .chain(difference(prefix, last))
+            .min();
+        if let Some(bit) = split.filter(|&bit| usize::from(bit) < bits) {
+            ensure!(
+                usize::from(bit) >= depth,
+                "Patricia child escapes its parent"
+            );
+            let mut children = [empty; 2];
+            let old_side = side(prefix, bit);
+            let offset = changes.partition_point(|(key, _)| side(key, bit) == 0);
+            let (left, right) = changes.split_at(offset);
+            let halves = [left, right];
+            let depth = usize::from(bit) + 1;
+            children[1 - old_side] = self.update(None, halves[1 - old_side], depth, previous)?;
+            children[old_side] =
+                self.update(Some((id, node)), halves[old_side], depth, previous)?;
+            return Ok(self.branch(first, bit, children));
         }
-        match node {
-            Node::Leaf {
-                value: previous, ..
-            } => {
-                if Some(previous) == value {
-                    return Ok((id, Some(previous)));
+        Ok(match node {
+            Node::Leaf { key, value } => {
+                previous(key, value, changes[0].1);
+                if Some(value) == changes[0].1 {
+                    return Ok(id);
                 }
                 self.writes.insert(id, None);
-                let next = value.map_or(empty, |value| self.insert(Node::Leaf { key, value }));
-                Ok((next, Some(previous)))
+                changes[0]
+                    .1
+                    .map_or(empty, |value| self.insert(Node::Leaf { key, value }))
             }
             Node::Branch {
                 prefix,
                 bits,
-                mut children,
+                children,
             } => {
-                let side = side(&key, bits);
-                let (child, previous) =
-                    self.update(children[side], key, value, usize::from(bits) + 1)?;
-                if child == children[side] {
-                    return Ok((id, previous));
+                let offset = changes.partition_point(|(key, _)| side(key, bits) == 0);
+                let (left, right) = changes.split_at(offset);
+                let mut updated = children;
+                for (index, edits) in [left, right].into_iter().enumerate() {
+                    if !edits.is_empty() {
+                        let child = self.load_optional(children[index])?;
+                        updated[index] =
+                            self.update(child, edits, usize::from(bits) + 1, previous)?;
+                    }
+                }
+                if updated == children {
+                    return Ok(id);
                 }
                 self.writes.insert(id, None);
-                if child == empty {
-                    return Ok((children[1 - side], previous));
-                }
-                children[side] = child;
-                Ok((
-                    self.insert(Node::Branch {
-                        prefix,
-                        bits,
-                        children,
-                    }),
-                    previous,
-                ))
+                self.branch(&prefix, bits, updated)
             }
-        }
+        })
     }
 }
 
@@ -429,6 +488,95 @@ fn difference(left: &Key, right: &Key) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_rewrites_shared_paths_once_and_preserves_proofs() -> Result<()> {
+        let tree = Patricia::new(Byte32::default(), Namespace::Cells);
+        let keys: Vec<_> = (0..1024u16)
+            .map(|i| tree.record_key(&i.to_le_bytes()))
+            .collect();
+        let old = tree.value_hash(b"old");
+        let new = tree.value_hash(b"new");
+        let mut genesis = tree.edit(tree.empty_root(), |_| Ok(None));
+        for &key in &keys[..700] {
+            genesis.set(key, Some(old))?;
+        }
+        let root = genesis.root();
+        let mut storage: BTreeMap<_, _> = genesis
+            .into_writes()
+            .into_iter()
+            .filter_map(|(id, value)| value.map(|bytes| (id, bytes)))
+            .collect();
+        let mut changes: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &key)| match index % 5 {
+                0 => Some((key, None)),
+                1 | 2 => Some((key, Some(new))),
+                3 => Some((key, Some(old))),
+                _ => None,
+            })
+            .collect();
+        changes.sort_unstable_by_key(|(key, _)| *key);
+        let (batch_result, batch_writes) = {
+            let mut reads = 0;
+            let mut batch = tree.edit(root, |id| {
+                reads += 1;
+                Ok(storage.get(id).cloned())
+            });
+            let mut seen = BTreeMap::new();
+            batch.set_batch(&changes, |key, before, after| {
+                assert!(seen.insert(key, before).is_none());
+                assert_eq!(
+                    after,
+                    changes[changes.binary_search_by_key(&key, |(key, _)| *key).unwrap()].1
+                );
+            })?;
+            let mut sequential_reads = 0;
+            let mut sequential = tree.edit(root, |id| {
+                sequential_reads += 1;
+                Ok(storage.get(id).cloned())
+            });
+            for &(key, value) in &changes {
+                assert_eq!(sequential.set(key, value)?, seen.get(&key).copied());
+            }
+            let result = batch.root();
+            assert_eq!(result, sequential.root());
+            let writes = batch.into_writes();
+            assert!(writes.len() < sequential.into_writes().len());
+            assert!(reads < sequential_reads);
+            (result, writes)
+        };
+        for (id, value) in batch_writes {
+            if let Some(bytes) = value {
+                storage.insert(id, bytes);
+            } else {
+                storage.remove(&id);
+            }
+        }
+        let mut verify = tree.edit(batch_result, |id| Ok(storage.get(id).cloned()));
+        for (index, key) in keys.iter().enumerate() {
+            let expected = match index % 5 {
+                0 => None,
+                1 | 2 => Some(new),
+                3 => Some(old),
+                _ => (index < 700).then_some(old),
+            };
+            let (value, proof) = verify.prove(key)?;
+            assert_eq!(value, expected);
+            assert!(tree.verify(&batch_result, key, expected.as_ref(), &proof));
+        }
+        let leaves = (0..keys.len())
+            .filter(|index| index % 5 != 0 && (index % 5 != 4 || *index < 700))
+            .count();
+        assert_eq!(storage.len(), 2 * leaves - 1);
+        assert!(
+            verify
+                .set_batch(&[changes[0], changes[0]], |_, _, _| {})
+                .is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn incremental_roots_proofs_and_reclamation() -> Result<()> {
