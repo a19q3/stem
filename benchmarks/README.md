@@ -54,4 +54,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Intercell Mailbox recovery and canonical CKB replay state | [Report](../BENCHMARKS.md#intercell-mailbox-recovery-after-ckb-reorganization), [raw rounds, failures and regressions](2026-11-26-stem-intercell-recovery.json.xz) |
 
+| Native OTX Group Actions and independent sponsorship | [Report](../BENCHMARKS.md#native-otx-action-authorization), [raw proofs, failures and Intercell regression](2026-11-26-stem-otx-actions.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

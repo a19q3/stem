@@ -1999,3 +1999,45 @@ delegation, slashing and stake reward redemption.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
 [Raw reports, commands and fingerprints](benchmarks/2026-11-26-stem-intercell-recovery.json.xz).
+
+## Native OTX Action authorization
+
+Revision `c3208af` exercised independently signed pairs and one
+sponsor on four native Jolteon replicas on an i9-13900H host. Each
+participant signed the canonical Action manifest along with the exact
+pair and shared dependencies. The solver assembled four pairs with a
+different pair order. The application Type group's index moved from
+1 in the signing fragment to 4 in the complete transaction. The group
+received the same signed `open` Action through syscall 2123. All four
+replicas verified the same execution receipt and finality proof.
+
+| Four-replica fixture | Stem height | Signed bytes | Charged VM cycles |
+| --- | ---: | ---: | ---: |
+| Sponsored two-asset swap | 7 | 1,135 | 5,886,419 |
+| Sponsored two-asset swap with Actions and a fourth pair | 9 | 1,497 | 7,837,364 |
+
+The second fixture also executes a fourth Lock and an additional Type
+Script. Its size and cycles measure the whole transaction. These rows
+cannot isolate the cost of the Action manifest. Both swaps pay the
+same test fee, 5,000,000,000 shannons.
+
+Each replica rejected the transaction with an altered Lock Action
+payload. The local RISC-V test also rejected changed Action order and
+group identity, added and omitted Actions, and an unrelated proof.
+An otherwise valid collection of pairs without the required Action
+was rejected by the actual Type Script. The wallet rejected a
+reserved Intercell Action, while the regular full-authorization path
+passed a separate CKB devnet round with four Jolteon replicas.
+Serial and parallel execution produced identical Headers and receipt
+cycles. Real Polytype, Lineage and Keeper execution continued through
+a restart in the same four-replica fixture.
+
+The first four-replica run rejected a duplicate development genesis
+allocation. The rerun used separate test OutPoints. The archive also
+preserves initial build and shared target directory failures. The
+release workspace passed 452 tests with 13 ignored. The explicit
+four-replica test, Go proof suite and frozen CometBFT feature check
+passed.
+
+[Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
+[Raw proofs, runs, failures and commands](benchmarks/2026-11-26-stem-otx-actions.json.xz).
