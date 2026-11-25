@@ -588,6 +588,49 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         )?;
         assert!(nodes[0].rpc(&client, "block?height=1").is_err());
     }
+    let fee_query = nodes[0].rpc(
+        &client,
+        "abci_query?path=%22%2Fstem%2Fextinguished-fees%22&prove=true",
+    )?;
+    let response = &fee_query["response"];
+    ensure!(
+        response["code"].as_u64() == Some(0),
+        "fee proof query failed: {response}"
+    );
+    let height_with_fees: u64 = response["height"]
+        .as_str()
+        .context("fee proof height")?
+        .parse()?;
+    let fees = STANDARD.decode(response["value"].as_str().context("fee proof response")?)?;
+    let payload: serde_json::Value = serde_json::from_slice(&fees)?;
+    let amount = serde_json::from_value::<Option<ckb_jsonrpc_types::Uint64>>(
+        payload["extinguished_shannons"].clone(),
+    )?
+    .map(|value| value.value());
+    let path: ckb_jsonrpc_types::JsonBytes = serde_json::from_value(payload["proof"].clone())?;
+    let proof = stem_ledger::patricia::Proof::decode(path.as_bytes())?;
+    assert_eq!(amount, Some(2 * FEE));
+    let fee_header = nodes[0].header(&client, height_with_fees)?;
+    assert!(Store::verify_extinguished_fees(
+        &fixture.spec.network,
+        &fee_header,
+        amount,
+        &proof
+    ));
+    poll(
+        "signed successor for fee proof",
+        Duration::from_secs(10),
+        || Ok((nodes[0].signed_height(&client)? > height_with_fees).then_some(())),
+    )?;
+    let successor = nodes[0].rpc(&client, &format!("commit?height={}", height_with_fees + 1))?;
+    let root = successor["signed_header"]["header"]["app_hash"]
+        .as_str()
+        .context("fee proof AppHash")?;
+    assert_eq!(
+        hex::decode(root)?,
+        fee_header.app_hash(&fixture.spec.network).as_slice()
+    );
+    fs::write(output.join("extinguished-fees.json"), fees)?;
     println!(
         "native payment H={height}, two Type Groups H={composed_height} cycles={total_cycles}, four replicas share H+1 AppHash, restarted replica agrees at H={target}, remote snapshot H={restored}"
     );

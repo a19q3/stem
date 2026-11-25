@@ -62,6 +62,8 @@ STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
 
 The benchmark uses the same four-node harness. Set `STEM_TEST_LOADGEN`, `STEM_TEST_LOAD_RATE`, `STEM_TEST_LOAD_COUNT` and `STEM_TEST_LOAD_KIND`. Workloads are `payment`, `single`, `double`, `multi` and `settlement`. Set `STEM_TEST_EVIDENCE_ROOT=target/stem-runs` to keep evidence on the workspace filesystem. Set `STEM_TEST_VALIDATORS` to vary the same-host benchmark from 4 to 32 replicas. Use `--release` for throughput characterization.
 
+In benchmark mode, `STEM_TEST_BLOCK_CYCLES` and `STEM_TEST_BLOCK_TX_LIMIT` control the disposable genesis. Keep the transaction limit high enough that it does not cap the cycle-budget comparison. A load of 7,800 payments at 260/s schedules 30 seconds of input. The report gives rates for the final two-thirds of that schedule and counts admissions still awaiting confirmation at its end. Confirmation requires observing H+1 on every replica. `block-load.json` records each observed block's transaction count and charged cycles.
+
 ## Wallet and proofs
 
 `stem wallet build --request request.json` encodes inputs, outputs, dependencies and optional ordered `messages` and `proofs`. `stem wallet sign` needs the native genesis, complete requested Lock Script, group index and `--context` file. Its `cells` array contains `{"out_point": ..., "cell": "0x..."}` records for all inputs, explicit dependencies and expanded Dep Group members. Its optional `headers` array contains canonical encoded Header Deps. Obtain and authenticate these records against the expected chain state before signing. `stem wallet id --network HASH` reads the JSON hex transaction from stdin. `stem ckb-wallet` uses the CKB-native encoding for L1 signing.
@@ -71,6 +73,8 @@ A separate payer can sign its Lock Group with `--sponsor-max-debit SHANNONS` aft
 `stem wallet find` discovers by complete Lock or Type Script hash in a local, read-only application database. Repeat the returned height and cursor for a consistent page sequence. Query selected OutPoints through ABCI for corresponding authenticated proofs.
 
 With `prove=true`, `/stem/cell` returns a hex Telegraph `PatriciaPath` in its `proof` field. `/stem/execution` returns a hex Telegraph `ExecutionProof` with one position and count for both Merkle paths. Verify each proof against the corresponding root in the authenticated Stem Header.
+
+Query `/stem/extinguished-fees` with `prove=true` and empty data to audit the cumulative fee tally at the current application height. The response contains `extinguished_shannons` as a hex u64 or `null` for an absent record, and a Telegraph Patricia proof. Authenticate the Header at the returned height through its signed successor, then verify against its SystemRoot using `Store::verify_extinguished_fees`. A verified absent record represents zero fees. The tally measures extinguished Capacity and can include fees from development allocations.
 
 CometBFT serves ABCI queries at `/stem/header`, `/stem/cell` and `/stem/execution`. A Live Cell query uses the packed OutPoint. An execution query uses a little-endian `u32` transaction index and a block height. Use `prove=true` for the Patricia path or the matching transaction and receipt Merkle paths. To authenticate header height H, verify the CometBFT commit at H+1 against the native AppHash. Supply signed handoff certificates when validator sets have changed.
 

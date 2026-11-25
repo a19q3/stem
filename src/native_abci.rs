@@ -290,6 +290,18 @@ impl App {
                 }))?
                 .into()
             }
+            "/stem/extinguished-fees" if request.prove && request.data.is_empty() => {
+                ensure!(
+                    requested == tip,
+                    "fee proof queries require the current height"
+                );
+                let (amount, proof) = store.prove_extinguished_fees()?;
+                serde_json::to_vec(&serde_json::json!({
+                    "extinguished_shannons": amount.map(ckb_jsonrpc_types::Uint64::from),
+                    "proof": format!("0x{}", hex::encode(proof.encode()?)),
+                }))?
+                .into()
+            }
             "/stem/cell" => {
                 ensure!(
                     requested == tip,

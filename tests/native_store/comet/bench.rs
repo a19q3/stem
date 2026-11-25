@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::*;
@@ -16,6 +16,7 @@ pub(super) struct Benchmark {
     rate: u32,
     count: u32,
     workload: String,
+    limits: Limits,
 }
 
 impl Benchmark {
@@ -35,10 +36,20 @@ impl Benchmark {
             .parse::<u32>()?;
         let workload = env::var("STEM_TEST_LOAD_KIND").unwrap_or_else(|_| "payment".into());
         ensure!(
-            (1..=10_000).contains(&count) && (1..=5_000).contains(&rate),
+            (1..=20_000).contains(&count) && (1..=5_000).contains(&rate),
             "unsupported test load"
         );
-        fixture.spec.limits.transaction_count = 256;
+        let transaction_limit = env::var("STEM_TEST_BLOCK_TX_LIMIT")
+            .unwrap_or_else(|_| "256".into())
+            .parse()?;
+        let block_cycles = env::var("STEM_TEST_BLOCK_CYCLES")
+            .map_or(Ok(fixture.spec.limits.block_cycles), |value| value.parse())?;
+        ensure!(
+            transaction_limit > 0 && block_cycles > 0,
+            "benchmark block budget must be positive"
+        );
+        fixture.spec.limits.transaction_count = transaction_limit;
+        fixture.spec.limits.block_cycles = block_cycles;
         fixture.spec.limits.cell_reads = 4096;
         fixture.spec.limits.cell_read_bytes = 64 * 1024 * 1024;
         fixture.spec.limits.cell_write_bytes = 1024 * 1024;
@@ -123,6 +134,7 @@ impl Benchmark {
             rate,
             count,
             workload,
+            limits: fixture.spec.limits,
         }))
     }
 
@@ -164,10 +176,12 @@ impl Benchmark {
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .min()
-            .context("benchmark replica list is empty")?;
+            .context("benchmark replica list is empty")?
+            .saturating_sub(1);
         let deadline = Instant::now()
             + Duration::from_secs(u64::from(self.count).div_ceil(u64::from(self.rate)) + 22);
         let mut visibility = BTreeMap::new();
+        let mut blocks = Vec::new();
         let mut client = None;
         loop {
             if client.is_none()
@@ -184,12 +198,20 @@ impl Benchmark {
             let limit = heights
                 .into_iter()
                 .min()
-                .context("benchmark replica list is empty")?;
+                .context("benchmark replica list is empty")?
+                .saturating_sub(1);
+            // H+1 on every replica commits application execution at H.
             while cursor < limit {
                 cursor += 1;
-                let block = nodes[0].rpc(rpc, &format!("block?height={cursor}"))?;
-                let observed = ((unix()?.as_nanos() as i128 - start as i128) as f64) / 1e9;
-                if let Some(txs) = block["block"]["data"]["txs"]
+                let reply = nodes[0].rpc(rpc, &format!("block?height={cursor}"))?;
+                let mut load = BlockLoad {
+                    height: cursor,
+                    observed_s: ((unix()?.as_nanos() as i128 - start as i128) as f64) / 1e9,
+                    transactions: 0,
+                    successful: 0,
+                    cycles: 0,
+                };
+                if let Some(txs) = reply["block"]["data"]["txs"]
                     .as_array()
                     .filter(|txs| !txs.is_empty())
                 {
@@ -201,14 +223,33 @@ impl Benchmark {
                         results.len() == txs.len(),
                         "block missing execution receipts"
                     );
+                    load.transactions = txs.len();
+                    load.observed_s = ((unix()?.as_nanos() as i128 - start as i128) as f64) / 1e9;
                     for (tx, result) in txs.iter().zip(results) {
+                        let gas = match result["gas_used"].as_u64() {
+                            Some(gas) => gas,
+                            None => result["gas_used"]
+                                .as_str()
+                                .context("missing VM cycles")?
+                                .parse()?,
+                        };
+                        load.cycles = load
+                            .cycles
+                            .checked_add(gas)
+                            .context("block cycle overflow")?;
                         if result["code"].as_u64().unwrap_or(0) == 0 {
                             let bytes =
                                 STANDARD.decode(tx.as_str().context("network transaction")?)?;
-                            visibility.insert(hex::encode(Sha256::digest(bytes)), observed);
+                            visibility.insert(hex::encode(Sha256::digest(bytes)), load.observed_s);
+                            load.successful += 1;
                         }
                     }
                 }
+                ensure!(
+                    load.cycles <= self.limits.block_cycles,
+                    "block exceeds configured cycle limit"
+                );
+                blocks.push(load);
             }
             memory = memory.max(sample_processes(nodes, cpus, pages)?.memory);
             if client.as_ref().is_some_and(|rows| {
@@ -229,25 +270,51 @@ impl Benchmark {
         let mut offered = 0;
         let mut admitted = 0;
         let mut drops = 0;
+        let scheduled_s = f64::from(self.count) / f64::from(self.rate);
+        let window_start = scheduled_s / 3.0;
+        let in_window = |at: f64| (window_start..scheduled_s).contains(&at);
+        let mut in_window_offered = 0;
+        let mut in_window_admitted = 0;
+        let mut admitted_at_end = 0;
+        let mut pending_at_end = 0;
         for event in &rows {
             drops += usize::from(event.client_dropped);
             admitted += usize::from(event.code == Some(0));
+            let seen = visibility.get(&event.id.to_lowercase()).copied();
+            if let Some(ack) = event.ack_s.filter(|_| event.code == Some(0)) {
+                in_window_admitted += usize::from(in_window(ack));
+                if ack < scheduled_s {
+                    admitted_at_end += 1;
+                    pending_at_end += usize::from(seen.is_none_or(|at| at >= scheduled_s));
+                }
+            }
             if let Some(offered_at) = event.offered_s {
                 offered += 1;
+                in_window_offered += usize::from(in_window(offered_at));
                 duration = duration.max(offered_at);
-                if let Some(&last) = visibility.get(&event.id.to_lowercase()) {
+                if let Some(last) = seen {
                     confirmed.push((last - offered_at).max(0.0) * 1000.0);
                     finalized_at = finalized_at.max(last);
                 }
             }
         }
-        let offered_duration = duration.max(f64::from(self.count) / f64::from(self.rate));
+        let offered_duration = duration.max(scheduled_s);
         confirmed.sort_unstable_by(f64::total_cmp);
         let percentile = |p: usize| {
             confirmed
                 .get((p * confirmed.len()).div_ceil(100).saturating_sub(1))
                 .copied()
         };
+        let window = blocks
+            .iter()
+            .filter(|block| in_window(block.observed_s))
+            .collect::<Vec<_>>();
+        let window_duration = scheduled_s - window_start;
+        let window_finalized: usize = window.iter().map(|block| block.successful).sum();
+        let mut cycle_samples = window.iter().map(|block| block.cycles).collect::<Vec<_>>();
+        cycle_samples.sort_unstable();
+        let cycles_p95 =
+            cycle_samples.get((cycle_samples.len() * 95).div_ceil(100).saturating_sub(1));
         let report = json!({
             "workload": self.workload, "requested_tps": self.rate, "transactions": self.count,
             "replicas": nodes.len(), "vm_workers_per_replica": vm_workers().parse::<u32>()?,
@@ -259,7 +326,23 @@ impl Benchmark {
             "process_write_bytes": final_.writes.saturating_sub(initial.writes),
             "p2p_sent_bytes": final_.sent.saturating_sub(initial.sent),
             "p2p_received_bytes": final_.recv.saturating_sub(initial.recv),
+            "execution_height_attestation": "H+1 on every replica",
+            "limits": self.limits,
+            "steady": {
+                "start_s": window_start, "end_s": scheduled_s,
+                "offered_tps": in_window_offered as f64 / window_duration,
+                "admitted_tps": in_window_admitted as f64 / window_duration,
+                "finalized_tps": window_finalized as f64 / window_duration,
+                "admitted_by_end": admitted_at_end, "pending_at_end": pending_at_end,
+                "blocks": window.len(), "cycles_per_block_p95": cycles_p95,
+                "max_block_cycles": cycle_samples.last(),
+                "max_transactions_per_block": window.iter().map(|block| block.transactions).max(),
+            },
         });
+        fs::write(
+            evidence.join("block-load.json"),
+            serde_json::to_vec(&blocks)?,
+        )?;
         fs::write(
             evidence.join("first-seen.json"),
             serde_json::to_vec(&visibility)?,
@@ -282,9 +365,19 @@ struct Event {
     #[serde(default)]
     id: String,
     offered_s: Option<f64>,
+    ack_s: Option<f64>,
     code: Option<u32>,
     #[serde(default)]
     client_dropped: bool,
+}
+
+#[derive(Serialize)]
+struct BlockLoad {
+    height: u64,
+    observed_s: f64,
+    transactions: usize,
+    successful: usize,
+    cycles: u64,
 }
 
 #[derive(Default)]

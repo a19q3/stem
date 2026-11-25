@@ -164,3 +164,65 @@ Increasing the delivery rate shortened submission and increased time spent
 in the queue. Confirmation stayed near 116–119 TPS in these runs. The
 [measurement archive](benchmarks/2026-11-25-stem-native.json.xz) includes
 process CPU, memory, physical writes and P2P counters for each window.
+
+## Sustained local cycle-budget sweep
+
+Four local CometBFT 0.38.26 validators on an Intel Core i9-13900H, with
+two Stem workers per replica and a fresh development genesis for each
+run. The runtime for the matched runs was `3aada6d`. Each set offered
+equal-shaped, independently funded payments for 30 seconds. Within each
+set only `block_cycles` varied. The transaction-count cap was 1,024 and
+the per-transaction cycle cap was 100 million throughout.
+
+This harness counts execution at height H after all replicas report
+height H+1. The active window is seconds [10, 30) of the scheduled load.
+Pending counts include successful admissions that had not yet reached that
+confirmation boundary at second 30. The whole-run rate includes drain
+and the observation deadline. The active window can count earlier
+transactions confirmed after the warm-up, so a short window can exceed
+the input rate without demonstrating that rate indefinitely.
+
+| Offered TPS | Block cycles | Active confirmed TPS | p95 cycles per observed block | Pending at 30 s | Whole-run confirmed TPS | Confirmed / sent | Confirmation p99 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 260 | 300 M | 117.0 | 299.6 M | 4,416 | 107.08 | 5,408 / 7,800 | 30.075 s |
+| 260 | 600 M | 234.0 | 599.2 M | 1,472 | 218.36 | 7,800 / 7,800 | 6.400 s |
+| 260 | 1,200 M | 268.8 | 768.2 M | 632 | 242.45 | 7,800 / 7,800 | 3.308 s |
+| 500 | 1,200 M | 436.8 | 1,198.4 M | 3,008 | 416.82 | 15,000 / 15,000 | 6.916 s |
+| 500 | 2,400 M | 516.0 | 1,394.3 M | 1,200 | 467.41 | 15,000 / 15,000 | 3.302 s |
+
+All transactions were admitted in these five runs with zero client drops.
+Three configurations filled almost all of the cycle budget at p95. The
+1,200 M limit had spare capacity at 260 TPS, as did 2,400 M at 500 TPS.
+Only confirmed transactions contribute to the latency percentiles.
+The 300 M run still had 2,392 transactions awaiting confirmation when its
+observation window closed.
+
+The higher budget at 500 TPS reduced aggregate process CPU from 93.48 s
+to 45.70 s. Physical process writes were 586.48 MB and 581.75 MB.
+CPU includes proposer work, execution, snapshots and all other process
+activity over each run's full measurement window. Component-level CPU and
+storage saturation require separate profiling.
+
+```sh
+STEM_TEST_COMET=target/stem-tools/cometbft \
+STEM_TEST_LOADGEN=target/stem-tools/stem-loadgen \
+STEM_TEST_LOAD_RATE=260 STEM_TEST_LOAD_COUNT=7800 \
+STEM_TEST_BLOCK_TX_LIMIT=1024 STEM_TEST_BLOCK_CYCLES=600000000 \
+cargo test --locked --release --test native_store \
+  four_node_native_finality_restart_and_app_hash -- --ignored --nocapture
+```
+
+A separate 20-second pressure probe offered 1,000 payments/s using the
+runtime with the fee-proof query, a 4 billion block cycle budget, and a
+2,048-transaction cap. All 20,000 were admitted and confirmed with zero
+client drops. The active window measured 1,036.8 confirmed TPS, while the
+whole-run rate including drain was **900.52 TPS**. Visibility p50/p95/p99
+was 2.982/3.681/3.785 s. The maximum observed block had 1,584 transactions
+and 3.042 billion charged cycles, so the higher cycle and transaction
+caps still had headroom at this load. The run used 57.01 aggregate CPU
+seconds, 1,158,811,648 peak sampled RSS bytes, and 632,471,552 physical
+process write bytes. This probe did not establish a CPU or storage
+saturation point.
+
+The [cycle sweep archive](benchmarks/2026-11-25-stem-cycle-sweep.json.xz)
+contains per-run counters and per-block charged cycles for all six runs.

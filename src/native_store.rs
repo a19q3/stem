@@ -483,6 +483,15 @@ impl Store {
         self.prove_system(staking::SNAPSHOT)
     }
 
+    pub fn prove_extinguished_fees(&self) -> Result<(Option<u64>, Proof)> {
+        let (record, proof) = self.prove_system(FEE_KEY)?;
+        let amount = record
+            .as_deref()
+            .map(decode_extinguished_fees)
+            .transpose()?;
+        Ok((amount, proof))
+    }
+
     pub fn prove_stake_retirement(&self, validator: [u8; 32]) -> Result<(Option<u64>, Proof)> {
         let staking = self
             .staking
@@ -517,6 +526,23 @@ impl Store {
         proof: &Proof,
     ) -> bool {
         Self::verify_system_record(network, header, staking::SNAPSHOT, record, proof)
+    }
+
+    pub fn verify_extinguished_fees(
+        network: &Byte32,
+        header: &Header,
+        amount: Option<u64>,
+        proof: &Proof,
+    ) -> bool {
+        let record = amount.map(u64::to_le_bytes);
+        amount != Some(0)
+            && Self::verify_system_record(
+                network,
+                header,
+                FEE_KEY,
+                record.as_ref().map(|bytes| bytes.as_slice()),
+                proof,
+            )
     }
 
     pub fn verify_stake_retirement(
@@ -565,7 +591,7 @@ impl Store {
         let id = self.system.record_key(FEE_KEY);
         self.db
             .get(state_key(STATE_RECORD, Namespace::System, &id))?
-            .map(|bytes| Ok(u64::from_le_bytes(bytes.as_ref().try_into()?)))
+            .map(|bytes| decode_extinguished_fees(bytes.as_ref()))
             .transpose()
             .map(|value| value.unwrap_or_default())
     }
@@ -1076,6 +1102,12 @@ impl Store {
         self.live_cache.get_mut().expect("Live Cell cache").clear();
         Ok(())
     }
+}
+
+fn decode_extinguished_fees(bytes: &[u8]) -> Result<u64> {
+    let amount = u64::from_le_bytes(bytes.try_into()?);
+    ensure!(amount != 0, "zero extinguished fee record");
+    Ok(amount)
 }
 
 #[derive(Clone, Copy)]

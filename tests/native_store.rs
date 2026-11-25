@@ -210,6 +210,20 @@ fn resource_fees_bound_cycles_in_parallel_and_cached_execution() -> Result<()> {
     };
     let temp = tempfile::tempdir()?;
     let mut store = Store::open(temp.path(), &fixture.spec, Retention::Archive)?;
+    let (initial, absence) = store.prove_extinguished_fees()?;
+    assert_eq!(initial, None);
+    assert!(Store::verify_extinguished_fees(
+        store.network(),
+        store.tip(),
+        initial,
+        &absence
+    ));
+    assert!(!Store::verify_extinguished_fees(
+        store.network(),
+        store.tip(),
+        Some(0),
+        &absence
+    ));
     let low = fixture.signed(fixture.spend.clone(), None, FUND - 1_000_000, None)?;
     assert!(store.check(&low).is_err());
     let thread_pool = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
@@ -228,6 +242,33 @@ fn resource_fees_bound_cycles_in_parallel_and_cached_execution() -> Result<()> {
     assert_eq!(admitted.cycles, parallel.receipts()[0].cycles);
     store.commit(parallel)?;
     assert_eq!(store.fee_surplus()?, fee);
+    let (amount, proof) = store.prove_extinguished_fees()?;
+    let proof = stem_ledger::patricia::Proof::decode(&proof.encode()?)?;
+    assert_eq!(amount, Some(fee));
+    assert!(Store::verify_extinguished_fees(
+        store.network(),
+        store.tip(),
+        amount,
+        &proof
+    ));
+    assert!(!Store::verify_extinguished_fees(
+        store.network(),
+        store.tip(),
+        None,
+        &proof
+    ));
+    assert!(!Store::verify_extinguished_fees(
+        store.network(),
+        store.tip(),
+        Some(fee + 1),
+        &proof
+    ));
+    assert!(!Store::verify_extinguished_fees(
+        &[6; 32].pack(),
+        store.tip(),
+        amount,
+        &proof
+    ));
     Ok(())
 }
 
