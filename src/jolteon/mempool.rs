@@ -187,13 +187,17 @@ impl Mempool {
 
 #[cfg(test)]
 mod tests {
+    use ckb_types::packed::OutPoint;
+    use stem_ledger::CellInput;
+
     use super::*;
 
     #[test]
     fn relay_retries_are_local_bounded_and_removed_with_the_entry() -> anyhow::Result<()> {
         let at = Instant::now();
         let mut pool = Mempool::default();
-        let transaction = Transaction::new(vec![], vec![], vec![], vec![], vec![])?;
+        let input = CellInput::new(OutPoint::default(), None);
+        let transaction = Transaction::new(vec![], vec![], vec![input], vec![], vec![])?;
         let local = transaction.with_valid_before_height(12)?;
         let peer = transaction.with_valid_before_height(20)?;
         pool.insert([1; 32], local)?;
