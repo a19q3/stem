@@ -867,6 +867,34 @@ Set `STEM_STORAGE_REPLICAS`, `STEM_STORAGE_VM_WORKERS`,
 `STEM_STORAGE_BLOCK_CYCLES`, `STEM_STORAGE_CADENCE` or
 `STEM_STORAGE_RETENTION` to make an explicit comparison.
 
+### Measure sustained Lineage commands
+
+Run the native load fixture with real Lineage registration, signed fee
+Cells and RISC-V Executors.
+
+```sh
+STEM_TEST_EVIDENCE_ROOT=/tmp/stem-lineage-measurements \
+STEM_LINEAGE_WORKLOAD=distributed_amm STEM_STORAGE_REPLICAS=4 \
+STEM_STORAGE_RATE=240 STEM_STORAGE_SECONDS=30 STEM_STORAGE_DRAIN=12 \
+cargo test --locked --release --test native_store \
+  sustained_lineage_load -- --ignored --nocapture
+```
+
+`distributed_amm` assigns each of 32 traders its own pool.
+`hotspot_amm` uses the same development state, scripts and signers
+and sends every trade through the first pool. Each trade atomically
+changes a pool and a trader reserve and executes both asset Type
+Groups. `independent` rotates across 64 counters, `atomic` increments
+eight counters per command, and `mixed` adds a shared counter to every
+third command. Set `STEM_STORAGE_VM_WORKERS=1` for the serial worker
+control or `STEM_STORAGE_REPLICAS=16` for the larger local network.
+
+The fixture samples common finality during offer and drain. After
+capturing resource counters, it stops the replicas and serially
+replays the archive in a separate store. The audit checks every
+receipt and Header, the final versions and both proof paths for
+each Head, and the two asset supplies for AMM runs.
+
 ### Exercise the browser SDK
 
 Build the ES module and TypeScript declarations with the [SDK build

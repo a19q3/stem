@@ -649,7 +649,7 @@ impl DynamicLineage {
         self.sign_command(fixture, tx)
     }
 
-    fn signed_payload(
+    pub(super) fn signed_payload(
         &self,
         fixture: &Fixture,
         fee: usize,
@@ -948,7 +948,7 @@ pub(super) fn reserve_data(x: u128, y: u128, tag: u8, owner: [u8; 32]) -> Bytes 
     bytes.into()
 }
 
-fn swap_payload(amount: u128, min_received: u128) -> Bytes {
+pub(super) fn swap_payload(amount: u128, min_received: u128) -> Bytes {
     let mut bytes = [0; 33];
     bytes[..16].copy_from_slice(&amount.to_le_bytes());
     bytes[16..32].copy_from_slice(&min_received.to_le_bytes());
@@ -956,8 +956,18 @@ fn swap_payload(amount: u128, min_received: u128) -> Bytes {
 }
 
 fn fund_amm(fixture: &mut Fixture, fees: usize) -> Result<DynamicLineage> {
+    fund_amm_market(fixture, fees, 1, 1, 20_000)
+}
+
+pub(super) fn fund_amm_market(
+    fixture: &mut Fixture,
+    fees: usize,
+    pools: usize,
+    traders: usize,
+    inventory: u128,
+) -> Result<DynamicLineage> {
     let registry = FixtureLineage::fund(fixture)?;
-    let mut amm = DynamicLineage::fund_using(fixture, &registry, fees, 3, None)?;
+    let mut amm = DynamicLineage::fund_using(fixture, &registry, fees, traders + pools + 1, None)?;
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
     let swap = super::contract::native_contract(workspace, "stem-lineage-swap")?;
     let asset = super::contract::native_contract(workspace, "stem-lineage-reserve-udt")?;
@@ -995,19 +1005,19 @@ fn fund_amm(fixture: &mut Fixture, fees: usize) -> Result<DynamicLineage> {
                 .build()
         })
         .collect();
-    for (index, data) in [
-        reserve_data(1_000_000, 1_000_000, 0, [0; 32]),
-        reserve_data(
-            20_000,
-            0,
-            1,
-            amm.fee_cell.lock().calc_script_hash().unpack(),
-        ),
-        reserve_data(20_000, 0, 1, [7; 32]),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    let pool = reserve_data(1_000_000, 1_000_000, 0, [0; 32]);
+    let trader = reserve_data(
+        inventory,
+        0,
+        1,
+        amm.fee_cell.lock().calc_script_hash().unpack(),
+    );
+    let outsider = reserve_data(inventory, 0, 1, [7; 32]);
+    let reserves = std::iter::once(pool.clone())
+        .chain(std::iter::repeat_n(trader, traders))
+        .chain(std::iter::once(outsider))
+        .chain(std::iter::repeat_n(pool, pools - 1));
+    for (index, data) in reserves.enumerate() {
         fixture
             .spec
             .development_cells

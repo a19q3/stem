@@ -555,6 +555,8 @@ mod keeper;
 mod keeper_load;
 #[path = "native_store/lineage.rs"]
 mod lineage;
+#[path = "native_store/lineage_load.rs"]
+mod lineage_load;
 #[path = "native_store/storage_load.rs"]
 mod storage_load;
 

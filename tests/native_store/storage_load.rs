@@ -21,6 +21,7 @@ use super::{
     keeper_load::{
         NetworkOptions, ProcessStats, start_network_configured, stats, statuses, transactions,
     },
+    lineage_load,
 };
 
 #[derive(Clone, Copy, Serialize)]
@@ -129,6 +130,16 @@ fn micros(start: Instant) -> u64 {
 #[test]
 #[ignore = "locally replicated sustained payment and storage experiment"]
 fn sustained_payment_storage() -> Result<()> {
+    sustained_storage(None)
+}
+
+#[test]
+#[ignore = "sustained real native Jolteon Lineage commands"]
+fn sustained_lineage_load() -> Result<()> {
+    sustained_storage(Some(lineage_load::Mode::load()?))
+}
+
+fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let load = Load::load()?;
     let root =
         std::env::var_os("STEM_TEST_EVIDENCE_ROOT").map_or_else(std::env::temp_dir, PathBuf::from);
@@ -137,10 +148,13 @@ fn sustained_payment_storage() -> Result<()> {
         .prefix("stem-storage-")
         .tempdir_in(root)?
         .keep();
-    eprintln!("sustained payment evidence in {}", output.display());
+    eprintln!("sustained load evidence in {}", output.display());
     let mut fixture = Fixture::new()?;
-    fixture.spec.chain_id = "stem-storage-load".into();
-    fixture.spec.network = [137; 32].pack();
+    (fixture.spec.chain_id, fixture.spec.network) = if mode.is_some() {
+        ("stem-lineage-load".into(), [139; 32].pack())
+    } else {
+        ("stem-storage-load".into(), [137; 32].pack())
+    };
     let limits = &mut fixture.spec.limits;
     limits.transaction_count = 1024;
     limits.transaction_bytes = 2 * 1024 * 1024;
@@ -151,32 +165,19 @@ fn sustained_payment_storage() -> Result<()> {
     limits.cell_write_bytes = 4 * 1024 * 1024;
     limits.header_dep_age = 32;
     let work = load.rate * load.seconds as usize;
-    let base = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
-    let change = Cell::new(FUND - FEE, fixture.lock.clone(), vec![], Bytes::new())?;
-    let (code_point, code) = fixture.spec.development_cells[0].clone();
+    let (lineage, transactions_to_offer) = if let Some(mode) = mode {
+        ensure!(
+            (load.seconds + load.drain + 10) * 1000 / load.cadence_ms < 1000,
+            "offer horizon exceeds the fixture's signed expiration"
+        );
+        let (workload, commands) = lineage_load::Workload::fund(&mut fixture, mode, work)?;
+        (Some(workload), commands)
+    } else {
+        (None, payments(&mut fixture, work)?)
+    };
     let mut jobs = Vec::with_capacity(work);
     let mut workload = Vec::new();
-    for index in 0..work {
-        let point = OutPoint::new([138; 32].pack(), index as u32);
-        fixture
-            .spec
-            .development_cells
-            .push((point.clone(), base.clone()));
-        let tx = Transaction::new(
-            fixture.deps.clone(),
-            vec![],
-            vec![stem_ledger::CellInput::new(point.clone(), None)],
-            vec![change.clone()],
-            vec![],
-        )?;
-        let tx = fixture.seal_with(tx, |input| {
-            if input == &point {
-                Ok(base.clone())
-            } else {
-                ensure!(input == &code_point, "unexpected signing dependency");
-                Ok(code.clone())
-            }
-        })?;
+    for tx in transactions_to_offer {
         workload.extend_from_slice(&(tx.as_slice().len() as u32).to_le_bytes());
         workload.extend_from_slice(tx.as_slice());
         jobs.push((hex::encode(tx.id(&fixture.spec.network).as_slice()), tx));
@@ -197,6 +198,13 @@ fn sustained_payment_storage() -> Result<()> {
             storage_metrics: load.measured,
         },
     )?;
+    if let Some(lineage) = &lineage {
+        let registration = lineage.register(&fixture, &clients)?;
+        fs::write(
+            output.join("lineage-registration.json"),
+            serde_json::to_vec(&registration)?,
+        )?;
+    }
     let before = capture(&replicas, &clients, load.measured)?;
     let first_height = before
         .statuses
@@ -268,7 +276,7 @@ fn sustained_payment_storage() -> Result<()> {
             .collect();
         let mut rows = Vec::new();
         for sender in senders {
-            rows.extend(sender.join().expect("payment submitter"));
+            rows.extend(sender.join().expect("load submitter"));
         }
         rows.sort_unstable_by_key(|row| row.planned_us);
         let (samples, failures) = observer.join().expect("replica observer");
@@ -307,7 +315,7 @@ fn sustained_payment_storage() -> Result<()> {
             for id in &ids {
                 ensure!(
                     seen.insert(id.clone(), sample.at_us).is_none(),
-                    "repeated finalized payment"
+                    "repeated finalized transaction"
                 );
             }
             sampled_blocks.push(json!({"height": cursor, "seen_us": sample.at_us, "ids": ids}));
@@ -345,7 +353,7 @@ fn sustained_payment_storage() -> Result<()> {
         .collect();
     ensure!(
         seen.keys().all(|id| offered_ids.contains(id)),
-        "archive contains unknown payment"
+        "archive contains unknown transaction"
     );
     let admitted_in_window = deliveries
         .iter()
@@ -382,13 +390,28 @@ fn sustained_payment_storage() -> Result<()> {
     fs::write(
         output.join("report.json"),
         serde_json::to_vec(&json!({
-            "load": load, "limits": fixture.spec.limits, "workload_id": workload_hash,
+            "mode": mode, "load": load, "limits": fixture.spec.limits, "workload_id": workload_hash,
             "summary": summary, "before": before, "after": after,
             "samples": samples, "blocks": sampled_blocks, "deliveries": deliveries, "observation_errors": failures,
             "agreed_height": common_height, "header": hex::encode(final_header.encode()),
             "finality": hex::encode(certificate.proof), "network": hex::encode(fixture.spec.network.as_slice()),
         }))?,
     )?;
+
+    if let Some(lineage) = lineage {
+        drop(replicas);
+        let audit = lineage.audit(
+            &fixture,
+            &output,
+            clients.len() - 1,
+            common_height,
+            seen.len(),
+        )?;
+        fs::write(
+            output.join("lineage-audit.json"),
+            serde_json::to_vec(&audit)?,
+        )?;
+    }
 
     // This separate process opens only the disposable archive and a new index.
     let mut history = Command::new("/usr/bin/time");
@@ -415,9 +438,40 @@ fn sustained_payment_storage() -> Result<()> {
     println!("{summary}");
     ensure!(
         offered != 0 && !seen.is_empty(),
-        "no replicated payment evidence"
+        "no replicated load evidence"
     );
     Ok(())
+}
+
+fn payments(fixture: &mut Fixture, work: usize) -> Result<Vec<Transaction>> {
+    let base = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
+    let change = Cell::new(FUND - FEE, fixture.lock.clone(), vec![], Bytes::new())?;
+    let (code_point, code) = fixture.spec.development_cells[0].clone();
+    let mut payments = Vec::with_capacity(work);
+    for index in 0..work {
+        let point = OutPoint::new([138; 32].pack(), index as u32);
+        fixture
+            .spec
+            .development_cells
+            .push((point.clone(), base.clone()));
+        let tx = Transaction::new(
+            fixture.deps.clone(),
+            vec![],
+            vec![stem_ledger::CellInput::new(point.clone(), None)],
+            vec![change.clone()],
+            vec![],
+        )?;
+        let tx = fixture.seal_with(tx, |input| {
+            if input == &point {
+                Ok(base.clone())
+            } else {
+                ensure!(input == &code_point, "unexpected signing dependency");
+                Ok(code.clone())
+            }
+        })?;
+        payments.push(tx);
+    }
+    Ok(payments)
 }
 
 #[test]
