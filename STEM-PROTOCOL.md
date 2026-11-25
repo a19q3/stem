@@ -245,6 +245,8 @@ L1 Registry 轮换由旧集合和新集合共同签署并在 CKB 确认。Stem �
 
 L1 验证真实 CometBFT canonical vote sign bytes。两票需对应同一 chain ID、公钥、高度、round、vote type，不同的完整 Block ID 和各自有效签名。证据高度必须落入该质押代次已认证的实际活跃区间，包含退出等待期内仍可追责的历史区间。证据键按投票位置去重。罚没额与去向由网络规则指定。证据通过后，L1 冻结罚没部分。Stem 认证冻结状态后将该代次排除出候选集合，并以与退休相同的机制提交终止记录。实际移除该代次前，资金继续作为 L1 受约束资产锁定。完成移除后才执行资产结算。开发链已实测双签冻结、提前结算拒绝和退休后全额罚没。 [CometBFT v0.38.26 投票签名源码](https://github.com/cometbft/cometbft/blob/v0.38.26/types/vote.go)
 
+Jolteon 罚没使用同一 epoch、同一视图、同一成员的两份有效签名，签名绑定各自的候选点及其执行 Header。当前 CKB 检查点的 SystemRoot 认证历史 epoch 的结束高度，尚未公告后继的 epoch 使用不存在证明。创世名单由部署参数固定，后续历史名单由 epoch 启动 Header 的 Patricia 路径与检查点的 MMR 包含证明认证。两份投票的执行高度同时受实际委员任期和 Stake Cell 责任区间约束。冻结、认证移除、罚没以及等待后领取剩余容量均由 CKB 交易执行。[双签与退休实验](BENCHMARKS.md#jolteon-withdrawals-retirement-and-slashing)
+
 活跃权重不足以形成超过三分之二的签名时，Stem 接受停摆。L1 可接收证据并冻结资产。停摆期间的 L1 处罚不会跳过委员会交接，也不能替 Stem 选择后续区块。原网络在当前委员会恢复合法法定人数后，按 CometBFT 的正常规则从最后已确定区块继续。若长期无法恢复，另建网络需要新的网络身份和 genesis。新网络只能使用独立储备，原金库负债先按已验证的原历史核对，同一笔资产只能承担一条历史的兑付。首轮方案没有同身份紧急换委员会的应急路径。
 
 ## 6. 桥、储备与提款
@@ -423,6 +425,6 @@ Polytype 的边际成本采用控制实验。固定输入数量和数据、输�
 
 同一普通支付夹具使用内联 Strand 时为 312 B。三 Type Script 组合 Cell 的输出向量为 285 B，CKB 三个单独输出及 Data 向量为 590 B。标准锁的恢复调用计费 1,900,000 cycles，完整交易另计其余执行开销。早期 Molecule 编码、k256 锁与对应吞吐数据保存在[历史实验归档](FERN-BENCHMARKS.md)。[当前性能记录](BENCHMARKS.md)
 
-已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。Jolteon 实际网络覆盖 4 至 128 副本，并在 CKB devnet 核验跨 epoch 交接、观察节点恢复与原生检查点发布。当前默认节点、桥兑付及质押退休路径使用 CometBFT。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
+已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。Jolteon 实际网络覆盖 4 至 128 副本，并在 CKB devnet 核验跨 epoch 交接、观察节点恢复与原生检查点发布。当前默认节点使用 CometBFT。独立的 Jolteon 部署已在 CKB devnet 验证无许可兑付、退休、解押和双签罚没。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
 
 CKB 历史输出验证器从可信区块哈希重算 Header、交易及见证根，并按 OutPoint 提取原始输出。确认策略由调用方执行。锚点上的 Cell 存活与后续消费需要额外认证，本轮该验证器用于 Rust 客户端和离线 CLI。

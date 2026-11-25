@@ -8,6 +8,10 @@ rust-version = "1.95.0"
 license = "MIT"
 publish = false
 
+[features]
+# Selects the checkpoint proof accepted by the deployed vault and Registry binaries.
+jolteon = []
+
 [dependencies]
 ckb-hash = { version = "=1.1.1", default-features = false, features = ["ckb-contract"] }
 stem-bridge-wire = { path = "../bridge-wire" }

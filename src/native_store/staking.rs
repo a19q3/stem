@@ -11,7 +11,7 @@ use stem_ledger::{
 use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, Member, Registry, RegistryAnchor,
     StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey,
-    jolteon::{COMMITTEE_RECORD, CommitteeChange},
+    jolteon::{COMMITTEE_RECORD, CommitteeChange, evidence::epoch_end_key},
     l1::guardian_generation,
 };
 
@@ -294,6 +294,10 @@ impl Staking {
             activation_height: self.config.effective_height(accepted.epoch)?,
             members: eligible,
         };
+        writes.push((
+            epoch_end_key(announced.epoch),
+            next_committee.activation_height.to_le_bytes().to_vec(),
+        ));
         writes.push((COMMITTEE_RECORD.to_vec(), next_committee.encode()));
         Ok((writes, updates))
     }

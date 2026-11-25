@@ -39,6 +39,7 @@ class Relay:
     def __init__(self, args, l1, fixture, anchor, spec_path, comet_genesis, rpc, *, directory="bridge-checkpoints"):
         self.args, self.l1, self.fixture, self.anchor, self.rpc = args, l1, fixture, anchor, rpc
         self.comet_genesis = comet_genesis
+        self.spec_path = spec_path
         self.chain = json.loads(comet_genesis.read_text())["chain_id"]
         self.network = anchor["network"]
         self.native_genesis = binary(json.loads(run(args.binary, "genesis-hash", "--genesis", spec_path, "--header")))
@@ -58,6 +59,19 @@ class Relay:
         if response["code"] != 0 or int(response["height"]) != height:
             raise AssertionError(response)
         return base64.b64decode(response["value"])
+
+    def foreign(self, anchor):
+        return Relay(self.args, self.l1, self.fixture, anchor, self.spec_path, self.comet_genesis, self.rpc,
+            directory="bridge-foreign-checkpoints")
+
+    def audit_burn(self, label, height, header):
+        path = self.args.output / f"{label}-successor.json"
+        write_json(path, self.rpc.call("commit", height=height + 1))
+        app_hash = ckb_hash(b"Stem AppHash\0" + binary(self.network) + le(height, 8)
+                           + ckb_hash(b"Stem Header\0" + binary(self.network) + header))
+        verified = run(self.args.proof_verifier, "-genesis", self.comet_genesis, "-commit", path,
+                       "-height", str(height), "-app-hash", app_hash.hex())
+        return path, ["--comet-genesis", self.comet_genesis, "--proof-verifier", self.args.proof_verifier], verified
 
     def export(self, label, entries):
         source = self.root / f"{label}-source.json"

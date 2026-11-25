@@ -17,9 +17,11 @@ use ckb_std::{
 };
 use stem_contracts::load_checkpoint;
 use stem_stake::{
-    Attestation, DoubleVote, Hash32, MAX_RECORDS, Member, Registry, SignedVote, StakeData,
+    Attestation, Hash32, MAX_RECORDS, Member, Registry, StakeData,
     l1::{Action, ChangeContext, GuardianProof, Policy, StakeCell, verify_rotation},
 };
+#[cfg(not(feature = "jolteon"))]
+use stem_stake::{DoubleVote, SignedVote};
 
 entry!(main);
 default_alloc!();
@@ -195,11 +197,27 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
             )?
             .ok_or(Error::Stake)?;
             context.verify(Action::Retire {
-                checkpoint: &checkpoint,
+                checkpoint: checkpoint.state,
                 path: payload,
             })?;
         }
         5 => context.verify(Action::Withdraw(payload))?,
+        #[cfg(feature = "jolteon")]
+        6 => {
+            let checkpoint = load_checkpoint(
+                &policy.checkpoint,
+                &policy.ckb_genesis,
+                &policy.network_id,
+                None,
+            )?
+            .ok_or(Error::Stake)?;
+            context.verify(Action::FreezeJolteon {
+                policy: &checkpoint.policy,
+                tip: &checkpoint.tip,
+                evidence: payload,
+            })?;
+        }
+        #[cfg(not(feature = "jolteon"))]
         6 if payload.len() == 2 * SignedVote::SIZE => {
             context.verify(Action::Freeze(DoubleVote {
                 first: SignedVote::decode(&payload[..SignedVote::SIZE])?,

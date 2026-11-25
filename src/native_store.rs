@@ -635,6 +635,15 @@ impl Store {
         self.prove_system(staking::SNAPSHOT)
     }
 
+    pub(crate) fn prove_stake_epoch_end(&self, epoch: u64) -> Result<(Option<u64>, Proof)> {
+        let (record, path) =
+            self.prove_system(&stem_stake::jolteon::evidence::epoch_end_key(epoch))?;
+        let end = record
+            .map(|bytes| -> Result<_> { Ok(u64::from_le_bytes(bytes.as_slice().try_into()?)) })
+            .transpose()?;
+        Ok((end, path))
+    }
+
     pub(crate) fn announced_committee(&self) -> Result<Option<CommitteeChange>> {
         Ok(self
             .system_record(COMMITTEE_RECORD)?

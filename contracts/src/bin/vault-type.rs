@@ -50,7 +50,7 @@ impl Policy {
     fn system_root(&self) -> Result<[u8; 32], Error> {
         let tip = load_checkpoint(&self.checkpoint, &self.ckb_genesis, &self.network, None)?
             .ok_or(Error::Proof)?;
-        Ok(tip.system_root())
+        Ok(tip.state.system_root)
     }
 }
 

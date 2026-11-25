@@ -5,6 +5,7 @@ use ed25519_dalek::Signature;
 use prost::Message;
 
 pub mod checkpoint;
+pub mod evidence;
 
 use crate::{
     Authority, Error, Hash32, MAX_RECORDS, Member, Result,

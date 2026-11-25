@@ -17,7 +17,7 @@ from bridge_localnet import CKB, binary, ckb_hash, dependency, hex_bytes, point,
 from localnet import process_resources, run, write_json
 from native_bridge_localnet import cell, start, wait_for
 
-SUBMIT, STATUS, FINALITY, HEADER, HANDOFF = 20, 21, 22, 23, 24
+SUBMIT, STATUS, FINALITY, HEADER, HANDOFF, QUERY = 20, 21, 22, 23, 24, 25
 
 
 def varint(value):

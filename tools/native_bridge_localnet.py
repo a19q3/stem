@@ -255,7 +255,7 @@ def attain_mint(args, l1, fixture, vault, spec_path, lane, consolidated, comet_r
     return encoded, minted, approvals, rejected
 
 
-def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, mint, comet_rpc, relay,
+def withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, comet_rpc, relay,
                         *, typed=None):
     source = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())), fixture.key(fixture.owner)["blake160"], "data")
     recipient = fixture.friend_lock
@@ -300,12 +300,7 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     proof = json.loads(query("/stem/execution", data=hex_bytes(le(index, 4)), prove="true"))
     proof["transaction"] = hex_bytes(bytes.fromhex(proof["transaction"]))
     proof["receipt"] = hex_bytes(bytes.fromhex(proof["receipt"]))
-    commit = args.output / f"{name}-burn-successor.json"
-    write_json(commit, comet_rpc.call("commit", height=height + 1))
-    app_hash = ckb_hash(b"Stem AppHash\0" + binary(spec["network_id"]) + le(height, 8)
-                       + ckb_hash(b"Stem Header\0" + binary(spec["network_id"]) + header))
-    verification = run(args.proof_verifier, "-genesis", comet / "config/genesis.json",
-                       "-commit", commit, "-height", str(height), "-app-hash", app_hash.hex())
+    commit, finality_arguments, verification = relay.audit_burn(f"{name}-burn", height, header)
     input_vault = point(mint["l1_consolidation"], 0)
     fee_input = point(mint["l1_consolidation"], 2 if typed else 1)
     fee_cell = l1.call("get_live_cell", fee_input, True)["cell"]["output"]
@@ -373,8 +368,7 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
 
         negative["wrong_xudt_units"] = l1.reject(release("wrong-units", checkpoint, modify=wrong_units))
     else:
-        foreign = Relay(args, l1, fixture, vault["foreign_anchor"], spec_path, relay.comet_genesis, comet_rpc,
-                        directory="bridge-foreign-checkpoints")
+        foreign = relay.foreign(vault["foreign_anchor"])
         foreign_dep = foreign.advance(pending_height, vault["secp"])
         foreign_checkpoint = {"type": foreign.type, "publications": foreign.publications}
         if foreign.type == relay.type:
@@ -400,11 +394,23 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     }
     request_file = args.output / f"{name}-payout-request.json"
     write_json(request_file, request)
+    ancestry_rejection = None
+    if not finality_arguments:
+        bundle = json.loads(commit.read_text())
+        frontier = bytearray(binary(bundle["history"]["frontier"]))
+        frontier[-1] ^= 1
+        bundle["history"]["frontier"] = hex_bytes(frontier)
+        bad_finality = args.output / f"{name}-bad-finality.json"
+        bad_request = args.output / f"{name}-bad-ancestry-request.json"
+        write_json(bad_finality, bundle)
+        write_json(bad_request, dict(request, commit=bad_finality.name))
+        ancestry_rejection = reject_cli("Jolteon proof does not authenticate the withdrawal Header",
+            args.binary, "bridge", "attest-payout", "--genesis", spec_path, "--l1-rpc", l1.url,
+            "--request", bad_request, "--journal", args.output / "journal-0", "--key-file", fixture.guardian_keys[0])
     approvals = []
     for index, key in enumerate(fixture.guardian_keys):
         raw = run(args.binary, "bridge", "attest-payout", "--genesis", spec_path,
-                  "--comet-genesis", comet / "config/genesis.json", "--proof-verifier", args.proof_verifier,
-                  "--l1-rpc", l1.url, "--request", request_file, "--key-file", key,
+                  *finality_arguments, "--l1-rpc", l1.url, "--request", request_file, "--key-file", key,
                   "--journal", args.output / f"journal-{index}")
         approvals.append(json.loads(raw))
     votes = args.output / f"{name}-payout-approvals.json"
@@ -421,6 +427,7 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
         raise AssertionError(settled)
     return {"burn": burned, "l1_payout": payout, "l1_payout_proof": l1.prove_committed(payout),
             "settlement": confirmed, "signature_verification": verification, "capacity": capacity,
+            "guardian_invalid_ancestry": ancestry_rejection,
             "direct_release": {"checkpoint": checkpoint, "pending_height": pending_height,
                                 "proof_bytes": len(payload), "estimated_cycles": estimate, "rejections": negative,
                                "foreign_checkpoint": foreign_checkpoint,
@@ -463,7 +470,7 @@ def deploy_token(args, l1, fixture, vault):
                 fee_capacity=capital, escrow_capacity=600 * CKB)
 
 
-def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, prior, comet_rpc, relay):
+def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, baseline, prior, comet_rpc, relay):
     lane = hex_bytes(ckb_hash(b"Stem bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"])
                               + b"\1" + script_hash(vault["l1_type"])))
     native = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())), fixture.key(fixture.owner)["blake160"], "data")
@@ -496,7 +503,7 @@ def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, 
             "payment": point(tx_id, 0), "lock_dep": baseline["lock_dep"], "minority_rejected": rejected,
             "confirmed_height": votes[0]["mint"]["confirmed_height"], "confirmed_hash": votes[0]["mint"]["confirmed_hash"]}
     wrapped = script(spec["bridge"]["wrapped_code_hash"], hex_bytes(script_hash(vault["l1_type"])), "data")
-    payout = withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, mint, comet_rpc, relay,
+    payout = withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, comet_rpc, relay,
                                  typed={"wrapped": wrapped, "amount": amount, "stem_dep": stem_dep})
     return {"mint": mint, "withdrawal": payout, "units": amount, "lane": lane}
 
@@ -694,11 +701,11 @@ def main():
         relay.advance(0, vault["secp"])
         result = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
         write_json(args.output / "native-mint-report.json", result)
-        payout = withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, result, comet_rpc, relay)
+        payout = withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, result, comet_rpc, relay)
         report = {"mint": result, "withdrawal": payout, "checkpoint_type": relay.type, "checkpoints": relay.publications}
         if token:
             token["custody_cell"] = vault["custody_cell"]
-            report["xudt"] = xudt_round_trip(args, l1, fixture, token, spec, spec_path, comet, result, payout, comet_rpc, relay)
+            report["xudt"] = xudt_round_trip(args, l1, fixture, token, spec, spec_path, result, payout, comet_rpc, relay)
             report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                              report["xudt"], spec_path, comet_rpc)
             print(f"CKB xUDT payout {report['xudt']['withdrawal']['l1_payout']} for {report['xudt']['units']} units")

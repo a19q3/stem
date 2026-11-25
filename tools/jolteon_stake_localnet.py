@@ -9,82 +9,128 @@ import subprocess
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from bridge_localnet import (CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le,
-                             output, point, script, script_hash, transaction, wallet_group, write_key)
+from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, script_hash, write_key
+from jolteon_bridge_localnet import Client
+from jolteon_checkpoint_localnet import Relay
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, STATUS, SUBMIT, rpc, write_configuration
+from jolteon_slash_localnet import evidence as slash_evidence
 from localnet import run, write_json
 from native_bridge_localnet import start, wait_for
-from stake_localnet import CHAIN, EMPTY, Scenario, mk_record, proof, signable, witness
+from stake_localnet import CHAIN, DELAY, EMPTY, Scenario, mk_record, proof, signable
 
 
 def public(key):
     return key.public_key().public_bytes_raw()
 
 
-def publish_checkpoints(args, l1, scenario, fixture, archive, genesis_committee, target_height):
-    anchor = scenario.checkpoint
-    directory = args.output / "jolteon-checkpoints"
-    directory.mkdir()
-    initial = le(0, 8) + le(1, 8) + b"".join(binary(member["ed25519"]) + le(member["power"], 8)
-                                               for member in genesis_committee)
-    genesis = binary(json.loads((args.output / "public-genesis-header.json").read_text()))
-    genesis_id = ckb_hash(b"Stem Header\0" + scenario.network + genesis)
-    policy = (anchor["id"] + scenario.network + scenario.genesis + genesis_id
-              + ckb_hash(b"Stem Jolteon checkpoint roster\0" + initial))
-    type_script = script(anchor["hash"], hex_bytes(policy), "data2")
-    lock = dict(type_script, args=hex_bytes(script_hash(type_script)))
-    roster = directory / "initial-roster.json"
-    write_json(roster, hex_bytes(initial))
-    previous = None
-    publications, rejections = [], {}
-    checkpoint = None
-    funding = anchor["seed"]
+def retirement_marker(client, validator, effective):
+    response = client.query("/stem/stake-retirement", data=hex_bytes(validator), prove=True)
+    marker = json.loads(bytes.fromhex(response["value"]))
+    assert marker["effective_height"] == effective
+    return marker, response["height"]
+
+
+def freeze_fixture(args, scenario, relay, signer, epoch, sample_height, checkpoint_height, old_meta, low,
+                   exit_epoch, dependency):
+    validator = public(signer)
+    raw, forged, late, penalty = slash_evidence(args, relay, signer, epoch, sample_height, checkpoint_height)
+    frozen_meta = old_meta[:48] + penalty
+    frozen_record = mk_record(validator, low, 0, exit_epoch, frozen_meta, frozen=True)
+    failures = {
+        "forged_vote": scenario.change("freeze-forged-vote", 6, validator, frozen_record,
+            lambda *_: forged, dependencies=[dependency], expected="error code 25"),
+        "outside_committee_interval": scenario.change("freeze-late-vote", 6, validator, frozen_record,
+            lambda *_: late, dependencies=[dependency], expected="error code 23"),
+        "freeze_missing_checkpoint": scenario.change("freeze-no-checkpoint", 6, validator, frozen_record,
+            lambda *_: raw, expected="error code 23"),
+    }
+    tx = scenario.change("freeze-double-vote", 6, validator, frozen_record,
+        lambda *_: raw, dependencies=[dependency], measure=True, relayer=True)
+    failures["replayed_double_vote"] = scenario.change("freeze-replay", 6, validator, frozen_record,
+        lambda *_: raw, dependencies=[dependency], expected="error code 23")
+    failures["slash_before_retirement"] = scenario.change("slash-before-retire", 8, validator,
+        mk_record(validator, 0, 0, exit_epoch, frozen_meta, frozen=True), fee=low + FEE, expected="error code 23")
+    return tx, frozen_meta, failures
+
+
+def publish_checkpoints(args, l1, scenario, relay, spec, client, target_height, exit_case, active_freeze):
+    frozen, slashed = None, None
+    retired = None
+    failures = {}
+    since = (1 << 63) | DELAY
+    if exit_case:
+        signer, old_meta, low, effective, early_marker = exit_case
+        validator = public(signer)
+        epoch = None if active_freeze else (effective - 1) // 10
+        if active_freeze:
+            frozen, old_meta, failures = active_freeze
+        old_record = mk_record(validator, 0, 0, epoch, old_meta, True, bool(frozen))
+        retired_meta = old_meta[:40] + le(effective, 8) + old_meta[48:]
+        retired_record = mk_record(validator, low, 0, epoch, retired_meta, frozen=bool(frozen))
+        final_record = mk_record(validator, 0, 0, epoch, retired_meta, True, bool(frozen))
 
     for height, label in ((10, "handoff-0"), (20, "handoff-1"), (target_height, "post-handoff")):
-        command = [args.binary, "checkpoint", "jolteon-bundle", "--archive-db", archive,
-                   "--index", directory / "history", "--network", hex_bytes(scenario.network),
-                   "--height", str(height), "--policy", hex_bytes(policy), "--roster", roster,
-                   "--proof", args.output / f"{label}.json"]
-        if label.startswith("handoff-"):
-            command.append("--terminal")
-        if previous is not None:
-            command += ["--previous-tip", previous]
-        bundle = json.loads(run(*command))
-        write_json(directory / f"{label}-bundle.json", bundle)
-        raw = binary(bundle["witness"])
-
-        def sign(name, source, fees, tip, evidence):
-            inputs = [source, fees] if source else [fees]
-            capacity = 1000 * CKB
-            payer = fixture.friend if source else fixture.faucet
-            available = int(l1.call("get_live_cell", fees, True)["cell"]["output"]["capacity"], 16)
-            change = available - FEE - (capacity if source is None else 0)
-            tx = transaction(inputs, [output(capacity, lock, type_script), output(change, fixture.friend_lock)],
-                             [tip, "0x"], [anchor["code"], scenario.secp])
-            tx["witnesses"] = [witness(evidence)]
-            return fixture.sign(name, tx, [wallet_group(len(inputs) - 1, [payer])])
-
-        if checkpoint is None:
-            corrupt = bytearray(binary(bundle["tip"]))
-            corrupt[-1] ^= 1
-            rejections["different_execution_root"] = l1.reject(sign("bad-tip", None, funding, hex_bytes(corrupt), raw))
-        if height == target_height:
-            # Replay the earlier authenticated handoff against its own live successor.
-            old_bundle = json.loads((directory / "handoff-1-bundle.json").read_text())
-            rejections["replayed_handoff"] = l1.reject(sign("replay-handoff", checkpoint, funding,
-                old_bundle["tip"], binary(old_bundle["witness"])))
-        signed = sign(f"ckb-checkpoint-{height}", checkpoint, funding, bundle["tip"], raw)
-        estimated = int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
-        tx = l1.send(signed)
-        checkpoint, funding = point(tx, 0), point(tx, 1)
-        publications.append({"height": height, "transaction": tx, "estimated_cycles": estimated,
-                             "witness_bytes": len(raw), "l1_inclusion": l1.prove_committed(tx)})
-        previous = directory / f"{label}-tip.json"
-        write_json(previous, bundle["tip"])
-        roster = directory / f"{label}-next-roster.json"
-        write_json(roster, bundle["next_roster"])
-    return {"checkpoint_type": hex_bytes(script_hash(type_script)), "publications": publications,
-            "rejections": rejections}
+        if relay.publications and height <= relay.publications[-1]["height"]:
+            continue
+        dependency = relay.advance(height, scenario.secp, proof_file=args.output / f"{label}.json",
+                                   terminal=height != target_height, probe=height in (10, target_height))
+        if exit_case and height == effective - 1:
+            failures["not_yet_inactive"] = scenario.change("retire-early", 4, validator, retired_record,
+                lambda *_: binary(early_marker["proof"]), dependencies=[dependency], expected="error code 23")
+            l1.mine(DELAY)
+            failures["withdraw_without_retirement"] = scenario.change("unretired-withdrawal", 5, validator, old_record,
+                since=since, expected="error code 23")
+    if exit_case:
+        if args.slash and not frozen:
+            sample_epoch = 0 if args.replace else 1
+            frozen, frozen_meta, rejected = freeze_fixture(args, scenario, relay, signer, sample_epoch,
+                3 if args.replace else 12, target_height, old_meta, low, epoch, dependency)
+            failures.update(rejected)
+            retired_meta = retired_meta[:48] + frozen_meta[48:]
+            retired_record = mk_record(validator, low, 0, epoch, retired_meta, frozen=True)
+            final_record = mk_record(validator, 0, 0, epoch, retired_meta, True, True)
+        marker, captured = retirement_marker(client, validator, effective)
+        # Empty execution after the last announcement preserves the SystemRoot.
+        assert relay.header(captured)[112:144] == relay.header(target_height)[112:144]
+        marker_file = args.output / "effective-retirement-proof.json"
+        header_file = args.output / "effective-retirement-header.json"
+        write_json(marker_file, marker)
+        write_json(header_file, hex_bytes(relay.header(target_height)))
+        witness = binary(json.loads(run(args.binary, "stake", "retirement-witness", "--genesis", spec,
+            "--validator", hex_bytes(validator), "--marker", marker_file, "--header", header_file)))
+        failures["missing_checkpoint"] = scenario.change("retire-no-checkpoint", 4, validator, retired_record,
+            lambda *_: witness, expected="error code 23")
+        failures["modified_path"] = scenario.change("retire-bad-path", 4, validator, retired_record,
+            lambda *_: witness[:-1] + bytes([witness[-1] ^ 1]), dependencies=[dependency], expected="error code 23")
+        retirement = scenario.change("retire-excluded", 4, validator, retired_record, lambda *_: witness,
+            dependencies=[dependency], relayer=True, measure=True)
+        failures["retirement_replayed"] = scenario.change("retirement-replay", 4, validator, retired_record,
+            lambda *_: witness, dependencies=[dependency], expected="error code 23")
+        if frozen:
+            l1.mine(DELAY)
+            failures["withdraw_before_slash"] = scenario.change("unbond-before-slash", 5, validator, final_record,
+                since=since, expected="error code 23")
+            slash_record = mk_record(validator, 0, 0, epoch, retired_meta, frozen=True)
+            failures["unfunded_slash"] = scenario.change("slash-unfunded", 8, validator, slash_record,
+                expected="error code 23")
+            slashed = scenario.change("finalize-slash", 8, validator, slash_record, fee=low + FEE, measure=True)
+        failures["immature"] = scenario.change("early-unbonding", 5, validator, final_record,
+            since=since, expected="Immature")
+        l1.mine(DELAY)
+        failures["owner_required"] = scenario.change("unbond-by-relayer", 5, validator, final_record,
+            since=since, expected="error code 23", relayer=True)
+        unbonded = scenario.change("unbond-retired", 5, validator, final_record, since=since, measure=True)
+        assert validator not in scenario.records and validator in scenario.retired
+        retired = {"effective_height": effective, "retirement": retirement, "unbonding": unbonded,
+                   "bond_shannons": low, "retirement_l1_proof": l1.prove_committed(retirement),
+                   "unbonding_l1_proof": l1.prove_committed(unbonded), "rejections": failures,
+                   "measurements": scenario.measurements, "freeze": frozen, "slash": slashed,
+                   "released_bond": 0 if slashed else low, "slashed_bond": low if slashed else 0}
+        if slashed:
+            retired["frozen_before_snapshot"] = bool(active_freeze)
+            retired["slash_l1_proof"] = l1.prove_committed(slashed)
+            retired["freeze_l1_proof"] = l1.prove_committed(frozen)
+    return relay.report(), retired
 
 
 def run_epochs(args, l1, scenario, fixture):
@@ -129,7 +175,8 @@ def run_epochs(args, l1, scenario, fixture):
                json.loads(run(args.binary, "genesis-hash", "--genesis", spec, "--header")))
     keys = sorted([old, incoming, observer], key=public)
     ports = {public(key): args.port + i for i, key in enumerate(keys)}
-    configuration = write_configuration(args.output, [public(key) for key in keys], ports.values(), 750, 2800)
+    cadence, timeout = (1400, 3600) if args.active_slash else (750, 2800)
+    configuration = write_configuration(args.output, [public(key) for key in keys], ports.values(), cadence, timeout)
     key_files = {public(key): write_key(args.output, f"jolteon-{i}", key.private_bytes_raw())
                  for i, key in enumerate(keys)}
     processes = {}
@@ -199,6 +246,14 @@ def run_epochs(args, l1, scenario, fixture):
         processes[public(observer)].wait(timeout=8)
         joined = [progress(key, 11, 1) for key in (old, incoming)]
         increased = None
+        stake_client = Client(args, ports[public(incoming)], hex_bytes(scenario.network))
+        archive = args.output / f"node-{ports[public(incoming)]}" / "db"
+        relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint else None
+        active_freeze = None
+        early = None
+        if args.retire and args.replace:
+            early, marker_at = retirement_marker(stake_client, public(old), 11)
+            assert bytes.fromhex(header(incoming, marker_at)["header"])[112:144] == bytes.fromhex(header(incoming, 10)["header"])[112:144]
         if args.replace:
             assert [status["member"] for status in joined] == [None, 0]
             assert [status["voting_power"] for status in joined] == [None, 400]
@@ -207,11 +262,23 @@ def run_epochs(args, l1, scenario, fixture):
         else:
             assert sorted(status["member"] for status in joined) == [0, 1]
             assert [status["voting_power"] for status in joined] == [250, 400]
-            retired = scenario.change("request-live-exit", 2, public(old), mk_record(public(old), low, 0, 2, old_meta))
+            if args.active_slash:
+                handoff_proof = request(incoming, HANDOFF, le(0, 8))["proof"]
+                verify(handoff_proof, "handoff-0", terminal=True)
+                relay.advance(10, scenario.secp, proof_file=args.output / "handoff-0.json", terminal=True, probe=True)
+                progress(incoming, 12, 1)
+                active_dep = relay.advance(12, scenario.secp)
+                active_freeze = freeze_fixture(args, scenario, relay, old, 1, 12, 12, old_meta, low, None, active_dep)
+                retired = None
+            else:
+                retired = scenario.change("request-live-exit", 2, public(old), mk_record(public(old), low, 0, 2, old_meta))
         snapshot(2, incoming, original)
         current = [progress(key, 21, 2) for key in (old, incoming)]
         assert current[0]["member"] is None and current[1]["member"] == 0
         assert [status["voting_power"] for status in current] == [None, 450 if args.replace else 400]
+        if args.retire and not args.replace:
+            early, marker_at = retirement_marker(stake_client, public(old), 21)
+            assert bytes.fromhex(header(incoming, marker_at)["header"])[112:144] == bytes.fromhex(header(incoming, 20)["header"])[112:144]
 
         # The old process is now outside the certified roster. Restart it on the handed-off journal.
         processes[public(old)].kill()
@@ -245,8 +312,11 @@ def run_epochs(args, l1, scenario, fixture):
         bad_handoff = subprocess.run([args.binary, "jolteon-proof", "--genesis", spec,
             "--proof", corrupted_path, "--terminal"], text=True, capture_output=True)
         assert bad_handoff.returncode != 0
-        checkpoints = publish_checkpoints(args, l1, scenario, fixture, args.output / f"node-{ports[public(incoming)]}" / "db",
-                                          genesis_committee, verified["height"]) if args.publish_checkpoint else None
+        checkpoints = exit_report = None
+        if args.publish_checkpoint:
+            exit_case = (old, old_meta, low, 11 if args.replace else 21, early) if args.retire else None
+            checkpoints, exit_report = publish_checkpoints(args, l1, scenario, relay, spec,
+                stake_client, verified["height"], exit_case, active_freeze)
         return {
             "replace": args.replace, "l1_transactions": {"registered_old": registered_old, "activated_old": activated_old,
                                 "registered_incoming": registered_new, "activated_incoming": activated_new,
@@ -255,7 +325,7 @@ def run_epochs(args, l1, scenario, fixture):
             "after_retired_offline": while_old_offline, "caught_up": caught_up, "agreed": agreed,
             "handoffs": handoffs, "post_handoff_header": verified, "missing_handoff_rejected": wrong_epoch.stderr,
             "altered_handoff_rejected": bad_handoff.stderr,
-            "ckb_checkpoints": checkpoints,
+            "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report,
         }
     finally:
         for child in processes.values():
@@ -277,7 +347,16 @@ def main():
     parser.add_argument("--l1-port", type=int, default=22110)
     parser.add_argument("--replace", action="store_true", help="replace the entire first committee, then increase power")
     parser.add_argument("--publish-checkpoint", action="store_true", help="publish native Jolteon checkpoints on the CKB devnet")
+    parser.add_argument("--retire", action="store_true", help="retire and unbond the outgoing stake using the native checkpoint")
+    parser.add_argument("--slash", action="store_true", help="slash the outgoing fixture validator using native vote evidence")
+    parser.add_argument("--active-slash", action="store_true", help="freeze while the outgoing validator is still active")
     args = parser.parse_args()
+    if args.active_slash and (not args.slash or args.replace):
+        parser.error("--active-slash exercises the join fixture with --slash")
+    if args.retire and not args.publish_checkpoint:
+        parser.error("--retire requires --publish-checkpoint")
+    if args.slash and not args.retire:
+        parser.error("--slash requires --retire")
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)
     try:

@@ -147,6 +147,7 @@ async fn receive(
                         | wire::FINALITY
                         | wire::HEADER
                         | wire::HANDOFF_PROOF
+                        | wire::QUERY
                 ),
                 "unsupported client request"
             );

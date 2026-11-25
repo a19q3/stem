@@ -95,6 +95,41 @@ handoff files in chronological order. Use `--terminal` for a boundary
 proof. `stem checkpoint jolteon-bundle` reads an archive and constructs a
 CKB witness with the previous frontier, history suffix and finality proof.
 
+To test permissionless payouts and stake liability, build the CKB consumers
+for the native checkpoint. Each deployed binary selects its verifier at build
+time. A new deployment pins the corresponding CKB code hash and Type ID.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --target-dir target/stem-jolteon-contracts \
+  --features jolteon --bin jolteon-checkpoint --bin stake-registry --bin vault-type \
+  --bin deposit-lock --bin xudt-gate
+native_dir=target/stem-jolteon-contracts/riscv64imac-unknown-none-elf/release
+programs_dir=target/stem-contracts/riscv64imac-unknown-none-elf/release
+python3 tools/jolteon_bridge_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb --output /tmp/stem-jolteon-bridge \
+  --vault "$native_dir/vault-type" --deposit-lock "$native_dir/deposit-lock" \
+  --direct-checkpoint "$native_dir/jolteon-checkpoint" \
+  --native-lock "$programs_dir/stem-lock" --wrapped "$programs_dir/bridge-udt" \
+  --xudt /path/to/xudt_rce --xudt-gate "$native_dir/xudt-gate"
+python3 tools/jolteon_stake_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb --output /tmp/stem-jolteon-slash \
+  --stake-registry "$native_dir/stake-registry" --direct-checkpoint "$native_dir/jolteon-checkpoint" \
+  --publish-checkpoint --retire --slash --active-slash
+```
+
+The retirement fixture also accepts `--retire` alone for an unpenalized
+exit. Adding `--slash --replace` exercises evidence from the genesis
+committee after it has been replaced. The Jolteon client frame type 25
+exposes the same read-only execution and SystemRoot queries used by the
+application. For withdrawal reconciliation, pass `--commit` a JSON object
+with `proof` (hex certificate bytes), `terminal` (boolean) and, for an
+earlier burn Header, `history` (hex MMR inclusion proof). Pass `--handoffs`
+the JSON array of preceding hex handoff proofs when the certificate is from
+a successor committee. The optional CometBFT comparison arguments select
+the frozen comparison verifier explicitly.
+
 ## Exercise the native CometBFT path
 
 ```sh

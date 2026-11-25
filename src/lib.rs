@@ -4,6 +4,8 @@ pub mod l1_proof;
 #[cfg(unix)]
 pub mod native_abci;
 #[cfg(unix)]
+mod native_query;
+#[cfg(unix)]
 pub mod native_store;
 #[cfg(unix)]
 pub mod socket;

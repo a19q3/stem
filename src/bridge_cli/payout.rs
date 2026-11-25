@@ -64,10 +64,11 @@ impl WithdrawalWitness {
 pub struct AttestPayout {
     #[arg(long)]
     genesis: PathBuf,
-    #[arg(long)]
-    comet_genesis: PathBuf,
-    #[arg(long)]
-    proof_verifier: PathBuf,
+    /// Explicitly verify a CometBFT comparison-network proof using its fixed genesis.
+    #[arg(long, requires = "proof_verifier")]
+    comet_genesis: Option<PathBuf>,
+    #[arg(long, requires = "comet_genesis")]
+    proof_verifier: Option<PathBuf>,
     #[arg(long)]
     l1_rpc: String,
     #[arg(long)]
@@ -93,6 +94,21 @@ struct PayoutRequest {
     proof: JsonBytes,
     commit: PathBuf,
     handoffs: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JolteonProof {
+    proof: JsonBytes,
+    terminal: bool,
+    history: Option<HeaderHistory>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeaderHistory {
+    frontier: JsonBytes,
+    siblings: Vec<H256>,
 }
 
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -186,31 +202,8 @@ impl AttestPayout {
     }
 
     fn verify_ticket(&self, spec: &Spec, request: &PayoutRequest) -> Result<Ticket> {
-        let genesis = crate::native_spec::verify_comet_genesis(spec, &self.comet_genesis)?;
         let header = Header::decode(request.header.as_bytes())?;
-        let app_hash = header.app_hash(&spec.network);
-        let directory = self.request.parent().unwrap_or_else(|| Path::new("."));
-        let mut verifier = Command::new(&self.proof_verifier);
-        verifier
-            .arg("-genesis")
-            .arg(&self.comet_genesis)
-            .arg("-stem-genesis")
-            .arg(hex::encode(genesis.as_slice()))
-            .arg("-commit")
-            .arg(directory.join(&request.commit))
-            .arg("-height")
-            .arg(header.context.height.to_string())
-            .arg("-app-hash")
-            .arg(hex::encode(app_hash.as_slice()));
-        if let Some(handoffs) = &request.handoffs {
-            verifier.arg("-handoffs").arg(directory.join(handoffs));
-        }
-        let verification = verifier.output()?;
-        ensure!(
-            verification.status.success(),
-            "Stem signed successor: {}",
-            String::from_utf8_lossy(&verification.stderr)
-        );
+        self.authenticate_header(spec, request, &header)?;
         let raw = Transaction::from_slice(request.transaction.as_bytes())?;
         let receipt = Receipt::decode(request.receipt.as_bytes())?;
         let (tx_proof, receipt_proof) =
@@ -262,6 +255,89 @@ impl AttestPayout {
             });
         }
         anyhow::bail!("proof has no matching withdrawal ticket")
+    }
+
+    fn authenticate_header(
+        &self,
+        spec: &Spec,
+        request: &PayoutRequest,
+        header: &Header,
+    ) -> Result<()> {
+        let directory = self.request.parent().unwrap_or_else(|| Path::new("."));
+        if let Some((comet, proof_verifier)) = self
+            .comet_genesis
+            .as_ref()
+            .zip(self.proof_verifier.as_ref())
+        {
+            let genesis = native_spec::verify_comet_genesis(spec, comet)?;
+            let mut verifier = Command::new(proof_verifier);
+            verifier
+                .arg("-genesis")
+                .arg(comet)
+                .arg("-stem-genesis")
+                .arg(hex::encode(genesis.as_slice()))
+                .arg("-commit")
+                .arg(directory.join(&request.commit))
+                .arg("-height")
+                .arg(header.context.height.to_string())
+                .arg("-app-hash")
+                .arg(hex::encode(header.app_hash(&spec.network).as_slice()));
+            if let Some(handoffs) = &request.handoffs {
+                verifier.arg("-handoffs").arg(directory.join(handoffs));
+            }
+            let verification = verifier.output()?;
+            ensure!(
+                verification.status.success(),
+                "Stem signed successor: {}",
+                String::from_utf8_lossy(&verification.stderr)
+            );
+        } else {
+            let bundle: JolteonProof =
+                read_json_limited(&directory.join(&request.commit), 128 * 1024)?;
+            let handoffs: Vec<JsonBytes> = request
+                .handoffs
+                .as_ref()
+                .map(|path| read_json_limited(&directory.join(path), 16 * 1024 * 1024))
+                .transpose()?
+                .unwrap_or_default();
+            let handoffs: Vec<_> = handoffs
+                .into_iter()
+                .map(|proof| proof.as_bytes().to_vec())
+                .collect();
+            let home = tempfile::tempdir()?;
+            let genesis = stem::native_store::Store::open(
+                home.path(),
+                spec,
+                stem::native_store::Retention::Archive,
+            )?;
+            let proved = stem::jolteon::verify_finality(
+                &genesis,
+                &handoffs,
+                bundle.proof.as_bytes(),
+                bundle.terminal,
+            )?;
+            if proved != *header {
+                let history = bundle
+                    .history
+                    .context("missing Jolteon withdrawal ancestry proof")?;
+                let frontier = stem_stake::history::Frontier::decode(
+                    spec.network.unpack(),
+                    history.frontier.as_bytes(),
+                )?;
+                let siblings: Vec<_> = history.siblings.into_iter().map(|hash| hash.0).collect();
+                ensure!(
+                    frontier.count() == proved.context.height
+                        && frontier.root().as_slice() == proved.state.history_root.as_slice()
+                        && frontier.verify_inclusion(
+                            header.context.height,
+                            &header.id(&spec.network).unpack(),
+                            &siblings
+                        ),
+                    "Jolteon proof does not authenticate the withdrawal Header"
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -339,7 +415,8 @@ fn inspect_payout(
     ensure!(
         after_data.get(1) == Some(&1)
             && nonce(&before_data)? == request.nonce
-            && request.nonce.checked_add(1) == Some(nonce(&after_data)?),
+            && request.nonce.checked_add(1) == Some(nonce(&after_data)?)
+            && after_data.get(114..146) == Some(ticket.id.as_bytes()),
         "wrong L1 payout nonce"
     );
     let confirmed_height = height

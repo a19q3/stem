@@ -15,6 +15,7 @@ pub const STATUS: u32 = 21;
 pub const FINALITY: u32 = 22;
 pub const HEADER: u32 = 23;
 pub const HANDOFF_PROOF: u32 = 24;
+pub const QUERY: u32 = 25;
 pub const CLIENT: u32 = u32::MAX;
 pub const MAX_FRAME: usize = 24 * 1024 * 1024;
 

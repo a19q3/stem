@@ -107,6 +107,17 @@ struct BranchExecution {
     pending: Option<CommitteeChange>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Query {
+    path: String,
+    #[serde(default)]
+    height: u64,
+    #[serde(default)]
+    prove: bool,
+    data: Option<ckb_jsonrpc_types::JsonBytes>,
+}
+
 struct Replica {
     store: Store,
     committee: Committee,
@@ -1288,6 +1299,19 @@ impl Replica {
                     .consensus_record(&handoff_key(epoch))?
                     .context("no handoff from that epoch")?;
                 Ok(json!({"proof": hex::encode(proof)}))
+            }
+            wire::QUERY => {
+                ensure!(body.len() <= 1024, "oversized native query");
+                let query: Query = serde_json::from_slice(&body)?;
+                let data = query.data.as_ref().map_or(&[][..], |data| data.as_bytes());
+                let (height, value) = crate::native_query::query(
+                    &self.store,
+                    &query.path,
+                    data,
+                    query.height,
+                    query.prove,
+                )?;
+                Ok(json!({"height": height, "value": hex::encode(value)}))
             }
             _ => anyhow::bail!("unknown client request"),
         }

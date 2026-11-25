@@ -6,10 +6,8 @@ use ed25519_dalek::Signature;
 
 use crate::{
     Attestation, Authority, DoubleVote, Error, Hash32, Liability, Member, Registry, Result,
-    StakeData, ValidatorKey, digest,
-    finality::{CheckpointId, Tip},
-    patricia::decode_path,
-    public_key, retirement,
+    StakeData, ValidatorKey, digest, finality::CheckpointId, patricia::decode_path, public_key,
+    retirement,
 };
 
 const EMPTY: Hash32 = [0; 32];
@@ -192,14 +190,28 @@ pub struct ChangeContext<'a> {
     pub fee: u64,
 }
 
+#[derive(Clone, Copy)]
+pub struct CheckpointState {
+    pub height: u64,
+    pub system_root: Hash32,
+}
+
 pub enum Action<'a> {
     Register([u8; 64], &'a [u8]),
     Increase,
     RequestExit,
     Activate(GuardianProof<'a>),
-    Retire { checkpoint: &'a Tip, path: &'a [u8] },
+    Retire {
+        checkpoint: CheckpointState,
+        path: &'a [u8],
+    },
     Withdraw(&'a [u8]),
     Freeze(DoubleVote),
+    FreezeJolteon {
+        policy: &'a crate::jolteon::checkpoint::Policy,
+        tip: &'a crate::jolteon::checkpoint::Tip,
+        evidence: &'a [u8],
+    },
     FinalizeSlash,
 }
 
@@ -337,8 +349,8 @@ impl ChangeContext<'_> {
                     &self.policy.registry_id,
                     &self.validator,
                     effective,
-                    checkpoint.height(),
-                    &checkpoint.system_root(),
+                    checkpoint.height,
+                    &checkpoint.system_root,
                     decode_path(path)?.into_iter(),
                 )
             }
@@ -356,31 +368,22 @@ impl ChangeContext<'_> {
                 }
                 Ok(())
             }
-            Action::Freeze(evidence) => {
-                let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
-                if before.bonded_amount == 0 || before.frozen || old_cell.penalty != EMPTY {
-                    return Err(Error::Evidence);
+            Action::Freeze(evidence) => self.freeze(|liability| {
+                evidence.verify(&self.policy.network_id, self.policy.chain_id, liability)
+            }),
+            Action::FreezeJolteon {
+                policy,
+                tip,
+                evidence,
+            } => {
+                if policy.network != self.policy.network_id
+                    || policy.ckb_genesis != self.policy.ckb_genesis
+                {
+                    return Err(Error::Identity);
                 }
-                let penalty = evidence.verify(
-                    &self.policy.network_id,
-                    self.policy.chain_id,
-                    &Liability {
-                        validator: self.validator,
-                        first_active_height: old_cell.first_active_height,
-                        first_inactive_height: (old_cell.first_inactive_height != 0)
-                            .then_some(old_cell.first_inactive_height),
-                    },
-                )?;
-                self.verify_cell_update(
-                    StakeData {
-                        frozen: true,
-                        ..before
-                    },
-                    StakeCell {
-                        penalty,
-                        ..old_cell
-                    },
-                )
+                self.freeze(|liability| {
+                    crate::jolteon::evidence::verify(policy, tip, liability, evidence)
+                })
             }
             Action::FinalizeSlash => {
                 let (before, cell) = self.old.ok_or(Error::Sequence)?;
@@ -401,6 +404,29 @@ impl ChangeContext<'_> {
                 )
             }
         }
+    }
+
+    fn freeze(&self, verify: impl FnOnce(&Liability) -> Result<Hash32>) -> Result<()> {
+        let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
+        if before.bonded_amount == 0 || before.frozen || old_cell.penalty != EMPTY {
+            return Err(Error::Evidence);
+        }
+        let penalty = verify(&Liability {
+            validator: self.validator,
+            first_active_height: old_cell.first_active_height,
+            first_inactive_height: (old_cell.first_inactive_height != 0)
+                .then_some(old_cell.first_inactive_height),
+        })?;
+        self.verify_cell_update(
+            StakeData {
+                frozen: true,
+                ..before
+            },
+            StakeCell {
+                penalty,
+                ..old_cell
+            },
+        )
     }
 
     fn verify_cell_update(&self, before: StakeData, cell: StakeCell) -> Result<()> {
