@@ -561,3 +561,49 @@ STEM_TEST_COMET="$PWD/target/stem-tools/cometbft" STEM_TEST_EVIDENCE_ROOT="$PWD/
 STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
   go -C tools/proof test -mod=readonly -run TestKeeperWakeSignatures -v .
 ```
+
+## Sponsored bilateral Lineage settlement
+
+This round started from `d459d09`, which includes the one-shot Keeper.
+The implementation at `190e7c9` required two independently verified
+business seals and a separate fee seal. The signed business terms
+bounded the fee and fixed at least one target version. The RISC-V
+Executor applied both sides of the exchange, and two native UDT Type
+Groups independently checked the two asset totals.
+
+The first network run exposed the fee Lock to the Executor. The adopted
+implementation masks that field for sponsored intents, so the Executor
+uses the verified business actors and cannot choose output state based
+on the fee payer. Both variants were tested on four CometBFT validators
+and a snapshot-restored observer. The fixture settled one immediate
+exchange and a second one through Keeper. It checked both reserve proofs
+on all replicas. The independent Go verifier checked the signed wake
+and ten signed reserve-proof responses in each run. Local negative tests
+rejected modified amounts and deadlines, reordered actor seals,
+a fee above the signed cap, a copied fee seal and a second successful
+attempt with a differently owned fee Cell.
+
+The serial local run measured one pre-signed settlement per block for
+31 blocks on an Intel Core i9-13900H. Signing was outside the timer.
+Both variants encoded the command in 766 bytes.
+
+| Variant | Prepare p50/p95/p99 | Sync commit p50/p95/p99 | Mean charged cycles |
+| --- | ---: | ---: | ---: |
+| Fee Lock visible to Executor | 1254 / 1342 / 1463 µs | 30 / 39 / 45 µs | 7,735,142 |
+| Masked fee field, adopted | 1524 / 2418 / 3116 µs | 36 / 52 / 67 µs | 7,735,690 |
+
+The two local runs show observed timing variation. They do not isolate
+the wall-time cost of the field check or measure sustained network
+throughput. The [raw report](benchmarks/2026-11-25-stem-sponsored-lineage.json.xz)
+preserves both rounds, binary fingerprints, public committees, native
+execution and state proofs and independent verifier output.
+
+```sh
+cargo test --locked --release --test native_store sponsored_lineage -- --nocapture
+cargo test --locked --release --test native_store measure_sponsored_lineage_settlement -- --ignored --nocapture
+STEM_TEST_COMET="$PWD/target/stem-tools/cometbft" STEM_TEST_EVIDENCE_ROOT="$PWD/target/stem-runs" \
+  cargo test --locked --release --test native_store four_node_native_finality_restart_and_app_hash \
+  -- --ignored --nocapture
+STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
+  go -C tools/proof test -mod=readonly -run TestSponsoredLineageSignatures -v .
+```
