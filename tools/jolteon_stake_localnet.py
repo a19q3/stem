@@ -346,7 +346,7 @@ def exercise_reductions(args, l1, scenario, relay, key, incoming, registry, requ
         write_json(args.output / "reduction-late-evidence.json", hex_bytes(late))
         checkpoints["post_cutoff_vote"] = scenario.delegation("pending-slash-after-cutoff", 15, validator,
             evidence=late, checkpoint=checkpoint, funded_by_owner=False, expected="error code 23")
-        old, forged, _, penalty = slash_evidence(args, relay, key, 0, 3, target)
+        old, forged, _, penalty = slash_evidence(args, relay, key, 0, 3, target, alternative_height=4)
         historical = hex_bytes(old)
         checkpoints["before_new_position"] = scenario.delegation("pending-slash-before-activation", 15,
             validator, label="second", evidence=old, checkpoint=checkpoint, funded_by_owner=False, expected="error code 23")
@@ -354,7 +354,11 @@ def exercise_reductions(args, l1, scenario, relay, key, incoming, registry, requ
             validator, evidence=forged, checkpoint=checkpoint, funded_by_owner=False, expected="error code 25")
         stake = scenario.records[validator][1]
         frozen = mk_record(validator, int.from_bytes(stake[:8], "little"), 0, None,
-            stake[24:72] + penalty, frozen=True, fault_height=3)
+            stake[24:72] + penalty, frozen=True, fault_height=4, fault_start_height=3)
+        invalid = mk_record(validator, int.from_bytes(stake[:8], "little"), 0, None,
+            stake[24:72] + penalty, frozen=True, fault_height=4)
+        checkpoints["freeze_omits_earlier_vote_height"] = scenario.change("freeze-wrong-first-height",
+            6, validator, invalid, lambda *_: old, dependencies=[checkpoint], expected="error code 23")
         tx = scenario.change("freeze-older-than-second-position", 6, validator, frozen,
             lambda *_: old, dependencies=[checkpoint], measure=True)
         checkpoints["withdraw_liable_position"] = scenario.delegation("withdraw-liable-old-position", 14,

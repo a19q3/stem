@@ -108,6 +108,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
             activation_epoch: 0,
             exit_epoch: (i == 1).then_some(1),
             fault_height: 0,
+            fault_start_height: 0,
             first_active_height: 1,
             first_inactive_height: 0,
             stake_cell_hash: [i as u8 + 1; 32],
@@ -312,6 +313,20 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
     };
     assert_eq!(DelegationBond::decode(&bond.encode())?, bond);
     assert!(DelegationBond::decode(&DelegationBond { pending: 0, ..bond }.encode()).is_err());
+    let created = DelegationBond {
+        active: 75,
+        creation_sequence: 10,
+        ..DelegationBond::default()
+    };
+    let active = DelegationBond {
+        active: created.active,
+        first_active_height: 10,
+        ..DelegationBond::default()
+    };
+    assert_eq!(created.encode().len(), 40);
+    assert_eq!(DelegationBond::decode(&created.encode())?, created);
+    assert_eq!(DelegationBond::decode(&active.encode())?, active);
+    assert_ne!(created.encode(), active.encode());
     let stake = StakeData {
         validator_pubkey,
         bonded_amount: 250,
@@ -322,6 +337,7 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
         activation_epoch: 0,
         exit_epoch: None,
         fault_height: 10,
+        fault_start_height: 8,
         first_active_height: 1,
         first_inactive_height: 0,
         stake_cell_hash: [10; 32],
@@ -330,6 +346,19 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
         Registry::new(policy.network_id, sequence, [11; 32], [0; 32], vec![stake])
     };
     let prior = registry(13, stake)?;
+    assert_eq!(Registry::decode(&prior.encode())?, prior);
+    for malformed in [0, 11] {
+        assert_eq!(
+            registry(
+                13,
+                StakeData {
+                    fault_start_height: malformed,
+                    ..stake
+                }
+            ),
+            Err(Error::Encoding)
+        );
+    }
     let next = registry(
         14,
         StakeData {
@@ -377,14 +406,14 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
     assert_eq!(verify(slash(11, 99)), Err(Error::Evidence));
     verify(DelegationAction::WithdrawReduction {
         amount: bond.pending,
-        start: 11,
+        start: 9,
         cutoff: 21,
         since: RELATIVE_BLOCKS | 20,
     })?;
     assert_eq!(
         verify(DelegationAction::SlashReduction {
             amount: bond.pending,
-            start: 11,
+            start: 9,
             cutoff: 21,
             fee: bond.pending,
             historical_evidence: false,

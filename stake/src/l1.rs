@@ -78,17 +78,27 @@ pub struct DelegationBond {
 }
 
 impl DelegationBond {
-    pub const SIZE: usize = 48;
+    pub const SIZE: usize = 40;
 
     pub fn decode(data: &[u8]) -> Result<Self> {
         let bytes: &[u8; Self::SIZE] = data.try_into().map_err(|_| Error::Encoding)?;
+        let sequence = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+        let first_active_height = u64::from_le_bytes(bytes[32..40].try_into().unwrap());
         let bond = Self {
             active: u64::from_le_bytes(bytes[..8].try_into().unwrap()),
             pending: u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
-            requested_sequence: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+            requested_sequence: if first_active_height == 0 {
+                0
+            } else {
+                sequence
+            },
             cutoff_height: u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
-            creation_sequence: u64::from_le_bytes(bytes[32..40].try_into().unwrap()),
-            first_active_height: u64::from_le_bytes(bytes[40..48].try_into().unwrap()),
+            creation_sequence: if first_active_height == 0 {
+                sequence
+            } else {
+                0
+            },
+            first_active_height,
         };
         if bond.total()? == 0
             || (bond.pending != 0) != (bond.requested_sequence != 0)
@@ -103,13 +113,18 @@ impl DelegationBond {
     }
 
     pub fn encode(self) -> [u8; Self::SIZE] {
+        // A pending reduction can only exist after activation.
+        let sequence = if self.first_active_height == 0 {
+            self.creation_sequence
+        } else {
+            self.requested_sequence
+        };
         let mut bytes = [0; Self::SIZE];
         for (field, value) in bytes.chunks_exact_mut(8).zip([
             self.active,
             self.pending,
-            self.requested_sequence,
+            sequence,
             self.cutoff_height,
-            self.creation_sequence,
             self.first_active_height,
         ]) {
             field.copy_from_slice(&value.to_le_bytes());
@@ -476,6 +491,7 @@ impl ChangeContext<'_> {
                     || before.delegation_root != after.delegation_root
                     || before.commission_bps != after.commission_bps
                     || before.fault_height != after.fault_height
+                    || before.fault_start_height != after.fault_start_height
                 {
                     return Err(Error::Sequence);
                 }
@@ -543,10 +559,8 @@ impl ChangeContext<'_> {
             Action::Freeze(evidence) => self.freeze(|liability| {
                 let hash =
                     evidence.verify(&self.policy.network_id, self.policy.chain_id, liability)?;
-                Ok((
-                    hash,
-                    u64::try_from(evidence.first.height).map_err(|_| Error::Evidence)?,
-                ))
+                let height = u64::try_from(evidence.first.height).map_err(|_| Error::Evidence)?;
+                Ok((hash, height, height))
             }),
             Action::FreezeJolteon {
                 policy,
@@ -583,12 +597,12 @@ impl ChangeContext<'_> {
         }
     }
 
-    fn freeze(&self, verify: impl FnOnce(&Liability) -> Result<(Hash32, u64)>) -> Result<()> {
+    fn freeze(&self, verify: impl FnOnce(&Liability) -> Result<(Hash32, u64, u64)>) -> Result<()> {
         let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
         if before.bonded_amount == 0 || before.frozen() || old_cell.penalty != EMPTY {
             return Err(Error::Evidence);
         }
-        let (penalty, fault_height) = verify(&Liability {
+        let (penalty, fault_start_height, fault_height) = verify(&Liability {
             validator: self.validator,
             first_active_height: old_cell.first_active_height,
             first_inactive_height: (old_cell.first_inactive_height != 0)
@@ -597,6 +611,7 @@ impl ChangeContext<'_> {
         self.verify_cell_update(
             StakeData {
                 fault_height,
+                fault_start_height,
                 ..before
             },
             StakeCell {
@@ -717,7 +732,7 @@ pub fn verify_delegation(
                 .ok_or(Error::Overflow)?;
             if before.first_inactive_height == 0
                 || start == 0
-                || before.fault_height >= start
+                || before.fault_in(start, before.first_inactive_height as u64)
                 || retired_block == 0
                 || since & !MAX_DELAY != 0
                 || since < minimum
@@ -740,7 +755,8 @@ pub fn verify_delegation(
                 || amount == 0
                 || fee < amount
                 || start == 0
-                || !(historical_evidence || before.fault_height >= start)
+                || !(historical_evidence
+                    || before.fault_in(start, before.first_inactive_height as u64))
             {
                 return Err(Error::Evidence);
             }
@@ -780,7 +796,7 @@ pub fn verify_delegation(
                 || cutoff == 0
                 || start == 0
                 || cutoff < start
-                || (before.fault_height >= start && before.fault_height < cutoff)
+                || before.fault_in(start, cutoff)
                 || since & !MAX_DELAY != RELATIVE_BLOCKS
                 || since & MAX_DELAY < policy.unbonding_blocks
             {
@@ -803,8 +819,7 @@ pub fn verify_delegation(
                 || fee < amount
                 || start == 0
                 || cutoff < start
-                || !(historical_evidence
-                    || (before.fault_height >= start && before.fault_height < cutoff))
+                || !(historical_evidence || before.fault_in(start, cutoff))
             {
                 return Err(Error::Evidence);
             }

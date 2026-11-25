@@ -28,7 +28,7 @@ pub type ValidatorKey = [u8; 32];
 
 pub const MAX_TOTAL_VOTING_POWER: u64 = (i64::MAX / 8) as u64;
 pub const MAX_RECORDS: usize = 256;
-const RECORD_BYTES: usize = 163;
+const RECORD_BYTES: usize = 171;
 const REGISTRY_HEADER: usize = 32 + 8 + 32 + 32 + 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,7 +68,9 @@ pub struct StakeData {
     pub commission_bps: u16,
     pub activation_epoch: u64,
     pub exit_epoch: Option<u64>,
+    /// The later height of the two signed votes, or zero before a fault.
     pub fault_height: u64,
+    pub fault_start_height: u64,
     pub first_active_height: i64,
     pub first_inactive_height: i64,
     pub stake_cell_hash: Hash32,
@@ -77,6 +79,10 @@ pub struct StakeData {
 impl StakeData {
     pub fn frozen(&self) -> bool {
         self.fault_height != 0
+    }
+
+    pub(crate) fn fault_in(&self, start: u64, end: u64) -> bool {
+        self.frozen() && self.fault_start_height >= start && self.fault_height < end
     }
 
     pub fn total_bond(&self) -> Result<u64> {
@@ -114,9 +120,11 @@ impl Registry {
                 || entry.first_inactive_height < 0
                 || (entry.first_inactive_height != 0
                     && entry.first_inactive_height <= entry.first_active_height)
+                || entry.frozen() != (entry.fault_start_height != 0)
                 || (entry.frozen()
                     && (entry.first_active_height == 0
-                        || entry.fault_height < entry.first_active_height as u64
+                        || entry.fault_start_height < entry.first_active_height as u64
+                        || entry.fault_start_height > entry.fault_height
                         || (entry.first_inactive_height != 0
                             && entry.fault_height >= entry.first_inactive_height as u64)))
                 || entry.stake_cell_hash == [0; 32]
@@ -172,6 +180,7 @@ impl Registry {
                 activation_epoch: u64::from_le_bytes(record[40..48].try_into().unwrap()),
                 exit_epoch,
                 fault_height: u64::from_le_bytes(record[57..65].try_into().unwrap()),
+                fault_start_height: u64::from_le_bytes(record[163..171].try_into().unwrap()),
                 first_active_height: i64::from_le_bytes(record[65..73].try_into().unwrap()),
                 first_inactive_height: i64::from_le_bytes(record[73..81].try_into().unwrap()),
                 stake_cell_hash: record[81..113].try_into().unwrap(),
@@ -207,6 +216,7 @@ impl Registry {
             data.extend_from_slice(&entry.unbonding_amount.to_le_bytes());
             data.extend_from_slice(&entry.delegation_root);
             data.extend_from_slice(&entry.commission_bps.to_le_bytes());
+            data.extend_from_slice(&entry.fault_start_height.to_le_bytes());
         }
         data
     }

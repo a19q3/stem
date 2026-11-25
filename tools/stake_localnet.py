@@ -48,11 +48,14 @@ def witness(payload):
 
 
 def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False, *,
-              fault_height=0, commission=0):
+              fault_height=0, fault_start_height=None, commission=0):
     commitment = EMPTY if withdrawn else ckb_hash(b"Stem CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
-    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + le(fault_height or int(frozen), 8)
-            + meta[32:48] + commitment + bytes(48) + le(commission, 2),
+    fault_height = fault_height or int(frozen)
+    if fault_start_height is None:
+        fault_start_height = fault_height
+    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + le(fault_height, 8)
+            + meta[32:48] + commitment + bytes(48) + le(commission, 2) + le(fault_start_height, 8),
             fields + meta)
 
 
@@ -177,7 +180,8 @@ class Scenario:
                 raw = new_record[0]
                 if number != 6:
                     raw = raw[:57] + old_bytes[57:65] + raw[65:]
-                new_record = (raw[:113] + old_bytes[113:], new_record[1])
+                fault_start = raw[163:] if number == 6 else old_bytes[163:]
+                new_record = (raw[:113] + old_bytes[113:163] + fault_start, new_record[1])
             records[key] = new_record
         state = self.encode(self.sequence + 1, records, next_authority, root)
         payload = bytes([number])
@@ -280,7 +284,7 @@ class Scenario:
         stake_type, lock = position["type"], position["lock"]
         args = binary(position["identity"])
         occupied = (8 + 33 + len(binary(lock["args"])) + 33
-                    + len(binary(stake_type["args"])) + 48) * CKB
+                    + len(binary(stake_type["args"])) + 40) * CKB
         records = self.records.copy()
         record, own_data = records[validator]
         inputs = [point(self.registry_tx, 0)]
@@ -356,7 +360,9 @@ class Scenario:
         if next_position:
             next_capacity = occupied + sum(next_position[:2])
             outputs.append(output(next_capacity, lock, stake_type))
-            data.append(hex_bytes(b"".join(le(value, 8) for value in next_position)))
+            active_next, pending_next, request_next, cutoff_next, creation_next, start_next = next_position
+            data.append(hex_bytes(b"".join(le(value, 8) for value in
+                (active_next, pending_next, creation_next or request_next, cutoff_next, start_next))))
         payment_index = len(outputs)
         if payment:
             outputs.append(output(payment, self.fixture.standard if wrong_recipient else owner_lock))

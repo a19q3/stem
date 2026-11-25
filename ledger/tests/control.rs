@@ -570,6 +570,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         activation_epoch: 0,
         exit_epoch: None,
         fault_height: 0,
+        fault_start_height: 0,
         first_active_height: 1,
         first_inactive_height: 0,
         stake_cell_hash: [6; 32],

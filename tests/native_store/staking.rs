@@ -70,6 +70,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         activation_epoch,
         exit_epoch,
         fault_height: 0,
+        fault_start_height: 0,
         first_active_height: 1,
         first_inactive_height: 0,
         stake_cell_hash: validator_pubkey,

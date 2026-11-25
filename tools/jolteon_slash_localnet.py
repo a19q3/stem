@@ -29,7 +29,7 @@ def read_fields(raw):
     return fields
 
 
-def evidence(args, relay, signer, epoch, sample_height, target):
+def evidence(args, relay, signer, epoch, sample_height, target, *, alternative_height=None):
     network = binary(relay.anchor["network"])
     genesis = binary(json.loads((args.output / "public-genesis-header.json").read_text()))
     genesis_id = ckb_hash(b"Stem Header\0" + network + genesis)
@@ -95,11 +95,12 @@ def evidence(args, relay, signer, epoch, sample_height, target):
                 + deadline + field(7, binary(end["proof"]))
                 + field(8, first) + field(9, second))
 
-    good = payload(conflict(sample_height))
-    forged = payload(conflict(sample_height, invalid_signature=True))
+    second_height = sample_height if alternative_height is None else alternative_height
+    good = payload(conflict(second_height))
+    forged = payload(conflict(second_height, invalid_signature=True))
     late = payload(conflict(end_height or target + 1))
     penalty = ckb_hash(b"Stem Jolteon double vote\0" + binding + point[:8] + le(member, 2))
     write_json(args.output / "slash-evidence.json", {"witness": hex_bytes(good), "bad_signature": hex_bytes(forged),
-        "late_vote": hex_bytes(late), "epoch": epoch, "height": sample_height, "end": end,
+        "late_vote": hex_bytes(late), "epoch": epoch, "height": sample_height, "second_height": second_height, "end": end,
         "original_finality": finality, "penalty": hex_bytes(penalty)})
     return good, forged, late, penalty

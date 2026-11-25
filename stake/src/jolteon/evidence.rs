@@ -99,7 +99,7 @@ pub fn verify(
     tip: &Tip,
     liability: &Liability,
     bytes: &[u8],
-) -> Result<(Hash32, u64)> {
+) -> Result<(Hash32, u64, u64)> {
     if bytes.len() > 72 * 1024 {
         return Err(Error::Encoding);
     }
@@ -186,6 +186,11 @@ pub fn verify(
     }
     let penalty =
         committee.verify_double_vote((first.point, first.share), (second.point, second.share))?;
-    let height = native_height(first.header).max(native_height(second.header));
-    Ok((penalty, height))
+    let first_height = native_height(first.header);
+    let second_height = native_height(second.header);
+    Ok((
+        penalty,
+        first_height.min(second_height),
+        first_height.max(second_height),
+    ))
 }
