@@ -1840,3 +1840,53 @@ bidirectional Intercell with the current native transaction schema.
 
 [Reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
 [Raw timings, proofs and the rejected configuration](benchmarks/2026-11-26-stem-keeper-time.json.xz).
+
+## CKB checkpoint fees from the PoW Security Fund
+
+Four Jolteon replicas and CKB 0.210.0 exercised the complete fee path.
+Research-network payments extinguished 4,000 CKB of Stem liabilities.
+All four revenue accounts were reconciled through five actual CKB
+payouts. The two PoW fund payouts carried 200 CKB each. A merge retained
+all 400 CKB and paid its own fee from a separate wallet input.
+
+The funded update moved the checkpoint from Stem height 46 to 56.
+The authenticated Stem time advanced 3,200 ms against the fixture's
+3,000 ms interval. CKB confirmed the transaction with unchanged
+checkpoint capacity, a 0.01 CKB transaction fee and 399.99 CKB under
+the original fund Lock. The Stem backing record stayed identical
+after CKB spent the already-paid fund. All four replicas agreed at
+Stem height 59.
+
+| Same checkpoint proof, different fee source | CKB transaction bytes | CKB estimated cycles |
+| --- | ---: | ---: |
+| Independent Sighash wallet | 2,363 | 14,317,078 |
+| Restricted PoW fund | 2,394 | 12,752,078 |
+
+These are CKB node estimates against the same live checkpoint and
+witness. Only the funded transaction was submitted. The paired run
+saved 1,565,000 cycles with the fund Lock.
+
+A separate three-replica CKB-backed committee test funded a real
+handoff from Stem height 9 to 10, using a CKB contribution to the
+same restricted Lock. Its parent and successor timestamps were
+760 ms apart, inside the configured four-hour ordinary interval.
+The handoff took 2,217 CKB transaction bytes and an estimated
+4,580,268 cycles. The publisher recovered its pending fund transaction
+after restart and used the original wallet change at height 20.
+The fund change remained a live CKB Cell.
+
+The bridge fixture exercised nine rejections, including early
+publication, excessive fees, merged principal shortfall, changed
+recipients, extra outputs, a forged checkpoint and a foreign Type ID.
+Two genesis checks rejected use as an ordinary withdrawal recipient
+and use with a foreign checkpoint. The first devnet stopped at genesis
+because the ordinary recipient rules excluded the custom Lock. A
+later malformed allowlist test failed at JSON parsing. Both attempts
+are archived alongside the verified runs.
+
+Unrestricted fee payouts, ordinary publisher recovery and CKB/xUDT
+bridge devnets passed their regressions. The Rust workspace passed
+450 tests with 13 ignored. The Go proof suite passed.
+
+[Reproduction](OPERATIONS.md#fund-ckb-checkpoint-fees) ·
+[Raw measurements, transactions, proofs and failed attempts](benchmarks/2026-11-26-stem-checkpoint-fee-fund.json.xz).

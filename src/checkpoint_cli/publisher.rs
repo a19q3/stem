@@ -4,8 +4,8 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
 use ckb_jsonrpc_types::{
-    CellInfo, CellWithStatus, JsonBytes, OutPoint, Status, Transaction as JsonTransaction,
-    TransactionWithStatusResponse, Uint64,
+    JsonBytes, OutPoint, Status, Transaction as JsonTransaction, TransactionWithStatusResponse,
+    Uint64,
 };
 use ckb_types::{
     H256,
@@ -22,7 +22,7 @@ use stem::{jolteon::Client, native_store::HistoryIndex};
 use stem_ledger::block::Header;
 use stem_stake::jolteon::{CommitteeChange, HandoffProof, checkpoint as jolteon};
 
-use super::{Bundle, build_jolteon_bundle, read_hex};
+use super::{Bundle, build_jolteon_bundle, fund, read_hex};
 use crate::{
     bridge_cli::{parse_hash, print_json, read_json_limited},
     ckb_wallet,
@@ -39,6 +39,9 @@ pub struct Publish {
     /// Publish this finalized Stem height on demand, after any preceding handoffs.
     #[arg(long)]
     at_least_height: Option<u64>,
+    /// Pay for this update from the specified PoW Security Fund Cell.
+    #[arg(long)]
+    fee_fund: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -63,6 +66,13 @@ struct Config {
     confirmations: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FundInput {
+    out_point: OutPoint,
+    code: OutPoint,
+}
+
 #[derive(Deserialize, Serialize)]
 struct State {
     identity: H256,
@@ -77,6 +87,9 @@ struct Confirmed {
     l1_block: H256,
     tip: JsonBytes,
     roster: JsonBytes,
+    // Only needed when the checkpoint transaction returned change to the fund.
+    #[serde(default)]
+    wallet_change: Option<OutPoint>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -85,6 +98,8 @@ struct Pending {
     next_roster: JsonBytes,
     witness_bytes: usize,
     estimated_cycles: u64,
+    #[serde(default)]
+    uses_fund: bool,
 }
 
 struct Candidate {
@@ -110,7 +125,12 @@ impl Publish {
     pub fn run(self) -> Result<()> {
         let config = read_json_limited(&self.config, 64 * 1024)?;
         let (publisher, mut state) = Publisher::open(config)?;
-        print_json(&publisher.tick(&mut state, self.at_least_height)?)
+        let fund = self
+            .fee_fund
+            .as_deref()
+            .map(|path| read_json_limited(path, 4096))
+            .transpose()?;
+        print_json(&publisher.tick(&mut state, self.at_least_height, fund)?)
     }
 }
 
@@ -198,7 +218,12 @@ impl Publisher {
         ))
     }
 
-    fn tick(&self, state: &mut State, requested: Option<u64>) -> Result<Value> {
+    fn tick(
+        &self,
+        state: &mut State,
+        requested: Option<u64>,
+        fund: Option<FundInput>,
+    ) -> Result<Value> {
         self.validate_anchor(state.confirmed.as_ref())?;
         if state.pending.is_some() {
             return self.resume(state);
@@ -240,7 +265,29 @@ impl Publisher {
             candidate.proof,
             candidate.terminal,
         )?;
-        let signed = self.build_transaction(state.confirmed.as_ref(), &bundle)?;
+        let uses_fund = fund.is_some();
+        let signed = if let Some(fund) = fund {
+            let previous = state
+                .confirmed
+                .as_ref()
+                .context("initialize the checkpoint with the fee wallet first")?;
+            let funded = fund::Update {
+                checkpoint: out_point(&previous.transaction, 0),
+                checkpoint_code: self.config.checkpoint_code.clone(),
+                fund: fund.out_point,
+                fund_code: fund.code,
+                fee: self.config.fee,
+                witness: JsonBytes::from_vec(bundle.witness.clone()),
+            }
+            .build(&self.node)?;
+            ensure!(
+                funded.tip == bundle.tip,
+                "funded checkpoint differs from the journal update"
+            );
+            funded.transaction
+        } else {
+            self.build_transaction(state.confirmed.as_ref(), &bundle)?
+        };
         let json = JsonTransaction::from(signed.data());
         let estimate: Cycles = self.node.call("estimate_cycles", json!([json]))?;
         self.validate_anchor(state.confirmed.as_ref())?;
@@ -249,6 +296,7 @@ impl Publisher {
             next_roster: JsonBytes::from_vec(bundle.next_roster),
             witness_bytes: bundle.witness.len(),
             estimated_cycles: estimate.cycles.value(),
+            uses_fund,
         });
         // The next invocation must be able to resume even if the RPC receives the
         // transaction and the process dies before it reads the RPC reply.
@@ -319,22 +367,14 @@ impl Publisher {
         Ok(())
     }
 
-    fn live(&self, point: &OutPoint) -> Result<CellInfo> {
-        let reply: CellWithStatus = self.node.call("get_live_cell", json!([point, true]))?;
-        ensure!(
-            reply.status == "live",
-            "publisher input is no longer live: {point:?}"
-        );
-        reply.cell.context("CKB returned no live Cell")
-    }
-
     fn build_transaction(
         &self,
         previous: Option<&Confirmed>,
         bundle: &Bundle,
     ) -> Result<TransactionView> {
         let code = self
-            .live(&self.config.checkpoint_code)?
+            .node
+            .live_cell(&self.config.checkpoint_code)?
             .data
             .context("CKB omitted checkpoint code")?;
         ensure!(
@@ -346,7 +386,7 @@ impl Publisher {
         let fee_point = match previous {
             Some(previous) => {
                 let point = out_point(&previous.transaction, 0);
-                let cell = self.live(&point)?;
+                let cell = self.node.live_cell(&point)?;
                 ensure!(
                     packed::Script::from(cell.output.lock) == self.checkpoint_lock
                         && cell.output.type_.map(Script::from).as_ref()
@@ -356,11 +396,11 @@ impl Publisher {
                     "live checkpoint differs from the journal"
                 );
                 inputs.push(CellInput::new(point.into(), 0));
-                out_point(&previous.transaction, 1)
+                previous.wallet_point()
             }
             None => self.config.seed.clone(),
         };
-        let fee = self.live(&fee_point)?;
+        let fee = self.node.live_cell(&fee_point)?;
         ensure!(
             packed::Script::from(fee.output.lock) == self.fee_lock
                 && fee.output.type_.is_none()
@@ -447,7 +487,11 @@ impl Publisher {
             "status": "submitted", "transaction": hash, "stem_height": tip.height(),
             "next_epoch": next.epoch, "estimated_cycles": pending.estimated_cycles,
             "witness_bytes": pending.witness_bytes,
+            "fee_source": if pending.uses_fund { "fund" } else { "wallet" },
         });
+        if pending.uses_fund {
+            result["fund_change"] = json!(out_point(&hash, 1));
+        }
         let response: TransactionWithStatusResponse = self
             .node
             .call("get_transaction", json!([hash, "0x1", false]))?;
@@ -497,12 +541,24 @@ impl Publisher {
                         canonical_height == height && canonical_block == block,
                         "checkpoint inclusion changed during confirmation"
                     );
+                    let wallet_change = if pending.uses_fund {
+                        Some(
+                            state
+                                .confirmed
+                                .as_ref()
+                                .context("missing checkpoint wallet")?
+                                .wallet_point(),
+                        )
+                    } else {
+                        None
+                    };
                     state.confirmed = Some(Confirmed {
                         transaction: hash,
                         l1_height: height,
                         l1_block: block,
                         tip: JsonBytes::from_vec(tip.encode()),
                         roster: pending.next_roster.clone(),
+                        wallet_change,
                     });
                     state.pending = None;
                     self.journal.write_record(state)?;
@@ -511,6 +567,14 @@ impl Publisher {
             }
         }
         Ok(result)
+    }
+}
+
+impl Confirmed {
+    fn wallet_point(&self) -> OutPoint {
+        self.wallet_change
+            .clone()
+            .unwrap_or_else(|| out_point(&self.transaction, 1))
     }
 }
 

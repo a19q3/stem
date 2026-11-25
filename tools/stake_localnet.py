@@ -106,6 +106,7 @@ class Scenario:
             deployment["outputs_data"].append("0x")
         code_tx = self.l1.send(self.sign("deploy-stake", deployment, 0))
         self.code = dependency(point(code_tx, 0))
+        self.deployment_change = point(code_tx, 2)
         checkpoint_hash = hex_bytes(ckb_hash(checkpoint_code))
         def anchor(index):
             return {

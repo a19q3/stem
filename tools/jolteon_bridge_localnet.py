@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import copy
 import json
 from pathlib import Path
 import secrets
@@ -12,6 +13,7 @@ import subprocess
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, script, write_key
 from jolteon_checkpoint_localnet import PublisherFixture, Relay
 from intercell_localnet import intercell_round
+from checkpoint_fee_fund_localnet import deploy_fee_lock, use_fee_fund
 from asset_export_localnet import asset_round
 from spore_settlement_localnet import spore_round
 from object_export_localnet import object_round
@@ -104,8 +106,8 @@ def fee_payment(args, fixture, spec_path, mint, client, fee):
     return payment
 
 
-def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay):
-    fee = 800 * CKB
+def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay, fee_fund):
+    fee = (4000 if fee_fund else 800) * CKB
     payment = fee_payment(args, fixture, spec_path, mint, client, fee)
 
     def proved(path):
@@ -125,12 +127,16 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
     paid_fee = client.call("broadcast_tx_commit", tx=payment)
     before = proved("/stem/fee-funds")
     assert int(before["extinguished_shannons"], 16) == fee, before
-    wrong_amount = reject(claim(0, 521 * CKB), "exceeds fund allocation")
+    amounts = [fee * basis // 10_000 for basis in (6500, 1500, 1000, 1000)]
+    wrong_amount = reject(claim(0, amounts[0] + 1), "exceeds fund allocation")
     dust = reject(claim(0, 1), "below L1 occupied Capacity")
-    amounts = [520 * CKB, 120 * CKB, 80 * CKB, 80 * CKB]
+    debits = [(fund, amount, 0) for fund, amount in enumerate(amounts)]
+    if fee_fund:
+        half = amounts[3] // 2
+        debits[3:] = [(3, half, 0), (3, amounts[3] - half, half)]
     claims = []
-    for fund, amount in enumerate(amounts):
-        tx = claim(fund, amount)
+    for fund, amount, claimed in debits:
+        tx = claim(fund, amount, claimed)
         claims.append(client.call("broadcast_tx_commit", tx=tx))
     replay = reject(claim(0, amounts[0]), "stale fee claim")
     queued = proved("/stem/fee-funds")
@@ -144,12 +150,12 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
     fee_input = point(mint["l1_consolidation"], 1)
     previous_anchor = mint
     payouts = []
-    for fund, (amount, transaction) in enumerate(zip(amounts, claims)):
+    for nonce, ((fund, amount, _), transaction) in enumerate(zip(debits, claims)):
         recipient = spec["bridge"]["fee_funds"][fund]["recipient"]
         redeemed = redeem_withdrawal(
             args, l1, fixture, vault, spec, spec_path, lane, client, relay,
-            name=f"fee-fund-{fund}", burned=transaction, recipient=recipient, capacity=amount,
-            units=b"", nonce=fund, input_vault=vault_input, fee_input=fee_input, previous_anchor=previous_anchor,
+            name=f"fee-fund-{nonce}", burned=transaction, recipient=recipient, capacity=amount,
+            units=b"", nonce=nonce, input_vault=vault_input, fee_input=fee_input, previous_anchor=previous_anchor,
         )
         output = l1.call("get_transaction", redeemed["l1_payout"])["transaction"]["outputs"][0]
         assert output["lock"] == recipient and int(output["capacity"], 16) == amount
@@ -162,8 +168,10 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
     backing = proved("/stem/bridge-backing")
     assert int(backing["liquid_shannons"], 16) == int(backing["circulating_shannons"], 16) == mint["capacity"] - fee
     assert int(backing["pending_shannons"], 16) == int(backing["unallocated_shannons"], 16) == 0
+    expenses = use_fee_fund(args, l1, fixture, vault, relay, fee_fund, payouts[-2:], fee_input) if fee_fund else None
+    assert proved("/stem/bridge-backing")["record"] == backing["record"]
     return {"payment": paid_fee, "before": before, "queued": queued, "backing_queued": backing_queued,
-            "payouts": payouts, "after": after, "backing": backing,
+            "payouts": payouts, "after": after, "backing": backing, "checkpoint_expenses": expenses,
             "rejections": {"unearned": unearned, "overclaim": wrong_amount, "dust": dust, "replay": replay}}
 
 
@@ -370,10 +378,15 @@ def bridge_round(args, l1, fixture, children):
     bridge, lane = bridge_configuration(args, l1, fixture, vault, token, network)
     if args.intercell_mailbox:
         bridge["intercell_mailbox_code"] = hex_bytes(ckb_hash(args.intercell_mailbox.read_bytes()))
+    fee_fund = None
     if args.fee_funds:
         bridge["fee_funds"] = [{"basis_points": share, "recipient": dict(fixture.standard, args=fixture.key(
             write_key(args.output, f"fund-{i}", secrets.token_bytes(32)))["blake160"])}
             for i, share in enumerate((6500, 1500, 1000, 1000))]
+        if args.checkpoint_fee_fund:
+            fee_fund = deploy_fee_lock(args, l1, fixture, vault)
+            bridge["fee_funds"][3]["recipient"] = fee_fund["lock"]
+            bridge["checkpoint_fee_fund_code"] = fee_fund["lock"]["code_hash"]
     keys = evidence_keys(args)
     members = [{"ed25519": hex_bytes(key), "power": 1} for key, _ in keys]
     spec = {"chain_id": "stem-jolteon-ckb-local", "network_id": network, "genesis_time_ms": 1_735_689_600_000,
@@ -384,6 +397,25 @@ def bridge_round(args, l1, fixture, children):
             "development_validators": members, "bridge": bridge}
     spec_path = args.output / "stem.json"
     write_json(spec_path, spec)
+    genesis_probes = {}
+    if fee_fund:
+        def rejected(name, mutated, reason):
+            draft = args.output / f"checkpoint-fund-invalid-genesis-{name}.json"
+            write_json(draft, mutated)
+            attempt = subprocess.run([args.binary, "genesis-hash", "--genesis", draft],
+                                     text=True, capture_output=True)
+            assert attempt.returncode and reason in attempt.stderr, attempt
+            genesis_probes[name] = attempt.stderr
+
+        wrong = copy.deepcopy(spec)
+        lock = wrong["bridge"]["fee_funds"][3]["recipient"]
+        arguments = bytearray(binary(lock["args"]))
+        arguments[32] ^= 1
+        lock["args"] = hex_bytes(arguments)
+        rejected("foreign-checkpoint", wrong, "must target the native vault checkpoint")
+        wrong = copy.deepcopy(spec)
+        wrong["bridge"]["recipient_locks"].append({"example": fee_fund["lock"]})
+        rejected("ordinary-allowlist", wrong, "cannot be a general withdrawal recipient")
     ports = list(range(args.port, args.port + len(keys)))
     configuration = write_configuration(args.output, [key for key, _ in keys], ports, 300, 1600)
     clients = [Client(args, port, network) for port in ports]
@@ -405,7 +437,8 @@ def bridge_round(args, l1, fixture, children):
         publisher.publish("bootstrap-checkpoint", 1)
     else:
         relay.advance(1, vault["secp"], probe=True)
-    mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client)
+    mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client,
+                            payment_capacity=(4400 if fee_fund else 1200) * CKB)
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
     if args.stem_native_object:
@@ -421,7 +454,9 @@ def bridge_round(args, l1, fixture, children):
     elif args.reference_script:
         report["references"] = reference_round(args, l1, fixture, spec, spec_path, lane, mint, client)
     elif args.fee_funds:
-        report["fee_funds"] = fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
+        report["fee_funds"] = fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay, fee_fund)
+        if genesis_probes:
+            report["fee_funds"]["genesis_rejections"] = genesis_probes
     else:
         payout = withdraw_and_settle(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
         report["withdrawal"] = payout
@@ -455,6 +490,8 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--validators", type=int, default=4)
     parser.add_argument("--fee-funds", action="store_true")
+    parser.add_argument("--checkpoint-fee-fund", type=lambda path: Path(path).resolve(),
+                        help="use restricted checkpoint Lock for the PoW Security Fund")
     for name in ("export-udt", "asset-escrow", "ckb-stem-udt"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     for name in ("stem-spore", "ckb-spore-escrow", "spore-v2"):
@@ -489,6 +526,8 @@ def main():
         parser.error("--reference-script uses the native CKB lane without the fee-fund fixture")
     if bool(args.xudt) != bool(args.xudt_gate):
         parser.error("--xudt and --xudt-gate must be specified together")
+    if args.checkpoint_fee_fund and not args.fee_funds:
+        parser.error("--checkpoint-fee-fund requires --fee-funds")
     if args.fee_funds and args.xudt:
         parser.error("fee funds and xUDT use separate test rounds")
     args.output.mkdir(mode=0o700, parents=True)

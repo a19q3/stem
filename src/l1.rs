@@ -7,7 +7,9 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{DB, Options, WriteBatch, WriteOptions, prelude::*};
-use ckb_jsonrpc_types::{Either, JsonBytes, Status, TransactionWithStatusResponse};
+use ckb_jsonrpc_types::{
+    CellInfo, CellWithStatus, Either, JsonBytes, OutPoint, Status, TransactionWithStatusResponse,
+};
 use ckb_types::{
     H256,
     packed::{Byte32, Transaction},
@@ -170,6 +172,15 @@ impl Rpc {
             .get("result")
             .context("L1 RPC response has no result")?;
         Ok(serde_json::from_value(result.clone())?)
+    }
+
+    pub fn live_cell(&self, point: &OutPoint) -> Result<CellInfo> {
+        let reply: CellWithStatus = self.call("get_live_cell", json!([point, true]))?;
+        ensure!(
+            reply.status == "live",
+            "L1 Cell is no longer live: {point:?}"
+        );
+        reply.cell.context("CKB returned no live Cell")
     }
 
     pub fn block_hash(&self, height: u64) -> Result<H256> {

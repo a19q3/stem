@@ -210,6 +210,51 @@ output directory. It uses actual CKB blocks and records each fresh CLI
 invocation, canonical witness inclusion proofs and the response to both
 shallow and confirmed-anchor reorganizations.
 
+### Fund CKB checkpoint fees
+
+Build and deploy the `checkpoint-fee-fund` Data2 contract on CKB.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --target-dir target/stem-fund-contracts \
+  --bin checkpoint-fee-fund
+```
+
+Use `stem checkpoint fund lock --request lock.json`. The request fields
+are `code_hash`, `checkpoint_code_hash`, `checkpoint_type_id`, `network`,
+`ckb_genesis`, `fee_cap` in shannons and `interval_ms` in Stem consensus
+milliseconds. Set the returned Lock as the PoW Security Fund recipient
+and pin its Data2 hash in `bridge.checkpoint_fee_fund_code` at genesis.
+The original four-account accrual and vault claim flow supplies the L1
+fund pot. Each payout must independently cover the Lock's 185 CKB
+occupied capacity. Consolidate two or more same-Lock pots into one,
+preserving all principal and adding a separate fee input.
+
+After bootstrapping the checkpoint with a wallet, pass
+`--fee-fund fund.json` to `stem checkpoint publish` for an eligible
+ordinary checkpoint or mandatory committee handoff. The file contains
+the pot's `out_point` and its code OutPoint in `code`. The publisher
+returns the submitted transaction and `fund_change`. Poll through
+confirmation using the same journal. The funding flag applies to the
+chosen new update, and the journal carries the decision through retries.
+After confirmation, a normal poll uses the separate wallet. For a later
+funded update, provide the confirmed successor OutPoint.
+
+A relayer with a Jolteon bundle can also build an independent transaction
+using `stem checkpoint fund update --l1-rpc URL --request update.json`,
+and submit with `--submit`. The request fields are `checkpoint`,
+`checkpoint_code`, `fund`, `fund_code`, `fee` in shannons and the
+bundle's hex `witness`. OutPoints use CKB RPC JSON. Check canonical CKB
+inclusion and confirmation depth before treating the fund change as
+settled. When managing a checkpoint with a publisher journal, use its
+fund option so the journal advances with the sponsored transaction.
+
+Add `--fee-funds --checkpoint-fee-fund PATH` to the Jolteon bridge fixture
+to exercise accounting, actual payout, merge and funded publication on
+CKB. Add `--checkpoint-fee-fund PATH --replace` to the stake fixture to
+exercise the funded committee handoff and a subsequent wallet publication.
+
 To test permissionless payouts and stake liability, build the CKB consumers
 for the native checkpoint. The default contract build selects Jolteon checkpoint verification. A new deployment pins the corresponding CKB code hash and Type ID.
 

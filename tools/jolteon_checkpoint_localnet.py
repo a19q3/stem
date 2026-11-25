@@ -33,9 +33,7 @@ class Relay:
     def header(self, height):
         return bytes.fromhex(self.client.header(height)["header"])
 
-    def advance(self, height, secp, *, proof_file=None, terminal=False, probe=False, submit=None):
-        if self.publications and height == self.publications[-1]["height"]:
-            return dependency(self.point)
+    def bundle(self, height, *, proof_file=None, terminal=False):
         label = f"checkpoint-{height}"
         if proof_file is None:
             signed = self.client.finality(height)
@@ -51,6 +49,13 @@ class Relay:
             command += ["--previous-tip", self.previous]
         bundle = json.loads(run(*command))
         write_json(self.root / f"{label}-bundle.json", bundle)
+        return bundle
+
+    def advance(self, height, secp, *, proof_file=None, terminal=False, probe=False, submit=None):
+        if self.publications and height == self.publications[-1]["height"]:
+            return dependency(self.point)
+        label = f"checkpoint-{height}"
+        bundle = self.bundle(height, proof_file=proof_file, terminal=terminal)
         raw = binary(bundle["witness"])
 
         def sign(name, tip, evidence):
@@ -142,11 +147,13 @@ class PublisherFixture:
         }
         self.events, self.publications = [], []
 
-    def tick(self, label, requested=None, error=None):
+    def tick(self, label, requested=None, error=None, fee_fund=None):
         write_json(self.path, self.config)
         command = [self.args.binary, "checkpoint", "publish", "--config", self.path]
         if requested is not None:
             command += ["--at-least-height", str(requested)]
+        if fee_fund is not None:
+            command += ["--fee-fund", fee_fund]
         result = subprocess.run(command, text=True, capture_output=True, timeout=30)
         event = {"label": label, "command": list(map(str, command)), "configuration": dict(self.config),
                  "stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}

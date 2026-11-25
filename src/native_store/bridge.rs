@@ -20,7 +20,7 @@ use stem_ledger::{
 use stem_stake::{
     Authority, Member, Registry,
     finality::{CheckpointId, VaultPolicy},
-    jolteon::CommitteeChange,
+    jolteon::{CommitteeChange, checkpoint::FundingPolicy},
     rewards::{EpochRewards, epoch_key},
 };
 
@@ -55,6 +55,7 @@ pub struct BridgeGenesis {
     pub deposits_per_block: u32,
     pub fee_funds: Option<[FeeFundDestination; 4]>,
     pub intercell_mailbox_code: Option<Byte32>,
+    pub checkpoint_fee_fund_code: Option<Byte32>,
 }
 
 pub struct LaneGenesis {
@@ -283,6 +284,19 @@ impl Bridge {
         } else {
             None
         };
+        if let Some(code) = &spec.checkpoint_fee_fund_code {
+            ensure!(
+                *code != Byte32::default()
+                    && spec.fee_funds.is_some()
+                    && !spec
+                        .recipient_locks
+                        .iter()
+                        .any(|recipient| recipient.code_hash == *code),
+                "restricted checkpoint fee fund cannot be a general withdrawal recipient"
+            );
+            config.extend_from_slice(b"Stem checkpoint fee fund\0");
+            config.extend_from_slice(code.as_slice());
+        }
         records.insert(CONFIG.to_vec(), Some(config));
 
         let mut bridge = Self {
@@ -305,8 +319,30 @@ impl Bridge {
                 .iter()
                 .find(|(_, asset)| asset.l1.is_none())
                 .context("fee funds require a native CKB vault")?;
-            for fund in funds {
-                bridge.check_recipient(&fund.recipient)?;
+            for (role, fund) in FeeFund::ALL.into_iter().zip(funds) {
+                if let (FeeFund::ProofOfWork, Some(code)) = (role, &spec.checkpoint_fee_fund_code) {
+                    bridge.check_recipient_shape(&fund.recipient)?;
+                    let vault = spec
+                        .lanes
+                        .iter()
+                        .find(|lane| lane.l1_type.is_none())
+                        .context("checkpoint fee fund requires a native CKB vault")?;
+                    let checkpoint =
+                        VaultPolicy::decode(&vault.vault_type.args().raw_data())?.checkpoint;
+                    let purpose = FundingPolicy::decode(&fund.recipient.args().raw_data())?;
+                    ensure!(
+                        fund.recipient.code_hash() == *code
+                            && ScriptHashType::try_from(fund.recipient.hash_type())?
+                                == ScriptHashType::Data2
+                            && purpose.checkpoint_code == checkpoint.code_hash
+                            && purpose.checkpoint_type_id == checkpoint.type_id
+                            && purpose.ckb_genesis.as_slice() == spec.l1_genesis.as_slice()
+                            && purpose.network.as_slice() == network.as_slice(),
+                        "PoW Security Fund must target the native vault checkpoint on this network"
+                    );
+                } else {
+                    bridge.check_recipient(&fund.recipient)?;
+                }
             }
             let policy = FeeFundPolicy {
                 lane: lane.clone(),
@@ -831,8 +867,7 @@ impl Bridge {
         lock.code_hash() == self.burn
     }
 
-    fn check_recipient(&self, recipient: &Script) -> Result<()> {
-        let hash_type = recipient.hash_type().as_slice()[0];
+    fn check_recipient_shape(&self, recipient: &Script) -> Result<()> {
         ensure!(
             recipient.as_slice().len() <= stem_bridge_wire::MAX_RECIPIENT_SIZE,
             "L1 recipient Lock exceeds the withdrawal proof size limit"
@@ -841,6 +876,12 @@ impl Bridge {
             !self.reserved_locks.contains(recipient),
             "reserved L1 recipient"
         );
+        Ok(())
+    }
+
+    fn check_recipient(&self, recipient: &Script) -> Result<()> {
+        self.check_recipient_shape(recipient)?;
+        let hash_type = recipient.hash_type().as_slice()[0];
         ensure!(
             self.recipient_locks.iter().any(|(code, kind, len)| {
                 *code == recipient.code_hash()

@@ -15,6 +15,7 @@ use stem_stake::{
     jolteon::{HandoffProof, checkpoint as jolteon},
 };
 
+mod fund;
 mod publisher;
 
 use crate::{
@@ -34,6 +35,11 @@ pub enum CheckpointCommand {
     JolteonBundle(Box<JolteonBundle>),
     /// Publish or resume one permissionless, sparse CKB checkpoint update.
     Publish(Box<publisher::Publish>),
+    /// Lock PoW Security Fund assets to actual CKB checkpoint fees.
+    Fund {
+        #[command(subcommand)]
+        command: fund::Command,
+    },
     /// Rebuild the archive index as needed and produce a historical Header proof.
     History {
         #[command(flatten)]
@@ -259,6 +265,7 @@ impl CheckpointCommand {
             Self::VerifyDirect(args) => args.run(),
             Self::JolteonBundle(args) => args.run(),
             Self::Publish(args) => args.run(),
+            Self::Fund { command } => command.run(),
             Self::History { archive, header } => {
                 let (network, index) = archive.open()?;
                 let historical = index.header(header)?;

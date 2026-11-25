@@ -129,6 +129,7 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         mint_limits: protocol,
         settlement_limits: protocol,
         intercell_mailbox_code: None,
+        checkpoint_fee_fund_code: None,
         anchor_limits: protocol,
         deposits_per_block: 4,
         fee_funds: Some(std::array::from_fn(|index| FeeFundDestination {

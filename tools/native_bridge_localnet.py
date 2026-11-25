@@ -206,10 +206,10 @@ def bridge_configuration(args, l1, fixture, vault, token, network):
     return bridge, lane
 
 
-def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc):
+def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc, *, payment_capacity=1200 * CKB):
     program = args.native_lock.read_bytes()
     lock = script(hex_bytes(ckb_hash(program)), fixture.key(fixture.owner)["blake160"], "data")
-    payloads = [cell((len(program) + 500) * CKB, lock, program), cell(1200 * CKB, lock)]
+    payloads = [cell((len(program) + 500) * CKB, lock, program), cell(payment_capacity, lock)]
     if args.xudt:
         wrapper = args.wrapped.read_bytes()
         payloads.append(cell((len(wrapper) + 500) * CKB, lock, wrapper))
@@ -260,7 +260,7 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
         raise AssertionError("native mint did not create the funded Live Cell and proof")
     return {"l1_consolidation": consolidated, "l1_proof": l1.prove_committed(consolidated),
             "l1_deposits": deposited, "mint": minted, "mint_id": mint_id, "capacity": total,
-            "mint_proof": proof, "minority_rejected": rejected, "payment_capacity": 1200 * CKB,
+            "mint_proof": proof, "minority_rejected": rejected, "payment_capacity": payment_capacity,
             "lock_dep": point(mint_id, 0), "payment": point(mint_id, 1),
             "confirmed_height": approvals[0]["mint"]["confirmed_height"],
             "confirmed_hash": approvals[0]["mint"]["confirmed_hash"]}

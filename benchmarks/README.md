@@ -49,5 +49,6 @@ available. Published network evidence contains public genesis and proof data.
 | Stem native compound object settlement | [Report](../BENCHMARKS.md#native-compound-object-settlement-over-ckb), [three object runs, initial failure and regressions](2026-11-26-stem-object-settlement.json.xz) |
 | Sparse CKB checkpoint publisher | [Report](../BENCHMARKS.md#sparse-ckb-checkpoint-publication), [successful and failed publisher and Intercell runs](2026-11-26-stem-checkpoint-publisher.json.xz) |
 | Consensus-time Keeper scheduling | [Report](../BENCHMARKS.md#consensus-time-keeper), [raw samples, replica proofs and first failed measurement](2026-11-26-stem-keeper-time.json.xz) |
+| L1 checkpoint expenses from the PoW Security Fund | [Report](../BENCHMARKS.md#ckb-checkpoint-fees-from-the-pow-security-fund), [paired estimates, canonical proofs, failed runs and regressions](2026-11-26-stem-checkpoint-fee-fund.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
