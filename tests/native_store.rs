@@ -551,6 +551,8 @@ mod intent;
 
 #[path = "native_store/keeper.rs"]
 mod keeper;
+#[path = "native_store/keeper_load.rs"]
+mod keeper_load;
 #[path = "native_store/lineage.rs"]
 mod lineage;
 

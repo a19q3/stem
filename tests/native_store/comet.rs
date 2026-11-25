@@ -195,6 +195,10 @@ fn read_json(path: &Path) -> Result<Value> {
 pub(super) struct Process(Child);
 
 impl Process {
+    pub(super) fn pid(&self) -> u32 {
+        self.0.id()
+    }
+
     pub(super) fn spawn(command: &mut Command, log: &Path) -> Result<Self> {
         let out = fs::OpenOptions::new().create(true).append(true).open(log)?;
         Ok(Self(

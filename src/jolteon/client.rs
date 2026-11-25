@@ -20,7 +20,7 @@ pub struct Client {
     timeout: Duration,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub struct Status {
     pub height: u64,
     pub epoch: u64,
@@ -31,6 +31,12 @@ pub struct Status {
     pub catching_up: bool,
     pub observer_only: bool,
     pub history_window: Option<u64>,
+    pub sent_bytes: u64,
+    pub received_bytes: u64,
+    pub transport_drops: u64,
+    pub invalid_messages: u64,
+    pub mempool_transactions: usize,
+    pub mempool_bytes: usize,
 }
 
 #[derive(Debug, Deserialize)]

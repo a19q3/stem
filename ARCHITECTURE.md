@@ -55,6 +55,13 @@ A signed retry policy prepays two to four reservation shares and specifies the m
 Execution and receipt trees commit height attempts, time attempts and submitted transactions in that order. The queue, timed index, bodies and fee links support authenticated inclusion and absence. Snapshots include every pending reservation. The same Jolteon finality proof authenticates their SystemRoot and eventual execution receipt.
 
 
+Each replica's admission pool indexes exclusive transaction height
+deadlines, Keeper registration heights and Keeper registration times.
+After a finalized commit it removes entries whose deadlines preclude
+inclusion in the next block. Uncertified proposals and temporary queue
+saturation leave entries eligible for later selection. Removing a
+carrier from the pool has no effect on committed reservations.
+
 ## CKB-VM host
 
 The [StemVM crate](vm) owns the native ABI, verification cache and Group execution. The RISC-V backend is the exact upstream CKB-VM v0.24.15 source at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Stem uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)

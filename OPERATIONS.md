@@ -411,6 +411,26 @@ cargo test --locked --release --test native_store \
   measure_keeper_time_agenda -- --ignored --nocapture
 ```
 
+For a 30-second mixed run with native Jolteon, select a fresh evidence
+directory. The observer records all-replica visibility by polling and
+verifies finalized execution proofs after the load stops.
+
+```sh
+STEM_TEST_EVIDENCE_ROOT=/tmp/stem-keeper-load \
+  STEM_KEEPER_REPLICAS=4 STEM_KEEPER_RATE=6 STEM_KEEPER_PAYMENTS=24 \
+  STEM_KEEPER_SECONDS=30 STEM_KEEPER_DRAIN=18 \
+  cargo test --locked --release --test native_store \
+  keeper_load::sustained_keeper_load -- --ignored --nocapture
+```
+
+Set `STEM_KEEPER_REPLICAS=16` for the larger matched run, or
+`STEM_KEEPER_RATE=12` for the four-replica agenda-pressure run. Set
+`STEM_KEEPER_HOT_HEIGHT=1 STEM_KEEPER_SECONDS=2 STEM_KEEPER_RATE=24
+STEM_KEEPER_PAYMENTS=8 STEM_KEEPER_DRAIN=10` with four replicas for a
+fixed-height contention run. RPC admission can precede discovery
+that another proposal already booked the height. A reservation
+takes effect once the carrier finalizes.
+
 `stem wallet build --request request.json` encodes inputs, outputs, dependencies and optional ordered `messages` and `proofs`. `stem wallet sign` needs the native genesis, complete requested Lock Script, group index and `--context` file. Its `cells` array contains `{"out_point": ..., "cell": "0x..."}` records for all inputs, explicit dependencies and expanded Dep Group members. Its optional `headers` array contains canonical encoded Header Deps. Obtain and authenticate these records against the expected chain state before signing. `stem wallet id --network HASH` reads the JSON hex transaction from stdin. `stem ckb-wallet` uses the CKB-native encoding for L1 signing.
 
 A separate payer can sign its Lock Group with `--sponsor-max-debit SHANNONS` after the participants fix the full transaction. The wallet requires plain Capacity inputs and change for that group. It checks that the payer's net debit fits the supplied cap and the actual total transaction fee. Each signer authorizes the same transaction and can add its seal independently.

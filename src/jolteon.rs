@@ -26,11 +26,13 @@ use stem_stake::{
 use crate::native_store::{Prepared, Store};
 
 mod client;
+mod mempool;
 mod recovery;
 pub mod snapshot;
 mod transport;
 mod wire;
 
+use mempool::Mempool;
 use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
@@ -155,8 +157,7 @@ struct Replica {
     timeouts: BTreeMap<u64, BTreeMap<u16, (Quorum, Share)>>,
     certificates: HashSet<Hash32>,
     requests: HashMap<Point, Instant>,
-    mempool: BTreeMap<Hash32, Transaction>,
-    mempool_bytes: usize,
+    mempool: Mempool,
     rejected: u64,
     timeout_views: VecDeque<u64>,
     last_untimely_view: u64,
@@ -352,8 +353,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 timeouts: BTreeMap::new(),
                 certificates: HashSet::new(),
                 requests: HashMap::new(),
-                mempool: BTreeMap::new(),
-                mempool_bytes: 0,
+                mempool: Mempool::default(),
                 rejected: 0,
                 timeout_views: VecDeque::new(),
                 last_untimely_view: 0,
@@ -819,11 +819,10 @@ impl Replica {
                 self.pending = Some(change.clone());
             }
             for tx in &proposal.transactions {
-                let id = ckb_hash::blake2b_256(tx);
-                if let Some(removed) = self.mempool.remove(&id) {
-                    self.mempool_bytes -= removed.as_slice().len();
-                }
+                self.mempool.remove(&ckb_hash::blake2b_256(tx));
             }
+            let context = &prepared.header().context;
+            self.mempool.expire(context.height, context.timestamp_ms);
         }
         self.recovery.record_commit(high.point, commit_count);
         if let Some((change, committee)) = successor {
@@ -1151,11 +1150,8 @@ impl Replica {
             }
             let (transactions, execution) = self.workers.install(|| {
                 self.store.on_branch(&batches, |state| {
-                    let selected = state.select(
-                        self.mempool.values().cloned().collect(),
-                        at,
-                        MAX_PROPOSAL_BYTES,
-                    )?;
+                    let selected =
+                        state.select(self.mempool.transactions(), at, MAX_PROPOSAL_BYTES)?;
                     let prepared = state.prepare(&selected, at, true)?;
                     Ok((selected, prepared))
                 })
@@ -1354,18 +1350,17 @@ impl Replica {
 
     fn insert_tx(&mut self, raw: Vec<u8>) -> Result<bool> {
         let id = ckb_hash::blake2b_256(&raw);
-        if self.mempool.contains_key(&id) {
+        if self.mempool.contains(&id) {
             return Ok(false);
         }
         ensure!(
             raw.len() <= stem_ledger::MAX_TRANSACTION_BYTES
-                && self.mempool_bytes.saturating_add(raw.len()) <= MAX_MEMPOOL_BYTES,
+                && self.mempool.bytes().saturating_add(raw.len()) <= MAX_MEMPOOL_BYTES,
             "mempool capacity exceeded"
         );
         let tx = Transaction::from_slice(&raw)?;
         self.workers.install(|| self.store.check(&tx))?;
-        self.mempool_bytes += raw.len();
-        self.mempool.insert(id, tx);
+        self.mempool.insert(id, tx)?;
         Ok(true)
     }
 
@@ -1389,6 +1384,8 @@ impl Replica {
                 "received_bytes": self.net.traffic.received.load(Ordering::Relaxed),
                 "transport_drops": self.net.traffic.dropped.load(Ordering::Relaxed),
                 "invalid_messages": self.rejected,
+                "mempool_transactions": self.mempool.len(),
+                "mempool_bytes": self.mempool.bytes(),
             })),
             wire::SUBMIT => {
                 let id = hex::encode(ckb_hash::blake2b_256(&body));
