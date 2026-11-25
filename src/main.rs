@@ -27,7 +27,7 @@ mod payout;
 #[cfg(unix)]
 mod snapshots;
 #[cfg(unix)]
-mod socket;
+use fern::socket;
 #[cfg(unix)]
 mod stake_cli;
 #[cfg(unix)]

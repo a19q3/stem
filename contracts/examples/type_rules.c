@@ -9,7 +9,7 @@ typedef unsigned char byte;
 #define GROUP_OUTPUT 0x0100000000000002ULL
 #define OUT_OF_BOUND 1
 #define MISSING 2
-#define LOAD_INPUT 2073
+#define LOAD_INPUT_BY_FIELD 2083
 #define LOAD_CELL_FIELD 2081
 #define LOAD_DATA 2092
 #define LOAD_TYPES 2110
@@ -18,6 +18,7 @@ typedef unsigned char byte;
 #define FIND_TYPE 2113
 #define LOAD_GROUP 2114
 #define LOAD_GROUP_INDEX 2115
+#define LOAD_GROUP_PROOF 2117
 #define LOAD_SCRIPT 2052
 #define LOAD_SCRIPT_HASH 2062
 
@@ -100,19 +101,25 @@ static int verify(void) {
     return inputs != 1 || outputs != 1 ||
            load(LOAD_GROUP_INDEX, index_bytes, &len, 0, GROUP_INPUT, 0) ||
            len != sizeof(index_bytes) || le32(index_bytes) != 0;
+#elif RULE == 10
+    byte proof[4];
+    len = sizeof(proof);
+    return inputs != 1 || outputs != 1 ||
+           load(LOAD_GROUP_PROOF, proof, &len, 0, 0, 0) ||
+           len != sizeof(proof) || le32(proof) != 42;
 #elif RULE == 4
-    /* Identity args are a specific 44-byte creating CellInput. The input is
+    /* Identity args are a specific 36-byte creating OutPoint. The input is
        consumed once, so it cannot create a second instance of this identity. */
     if (outputs != 1 || inputs > 1)
         return 11;
     if (inputs == 0) {
-        byte script[97];
+        byte script[89];
         len = sizeof(script);
         if (load(LOAD_SCRIPT, script, &len, 0, 0, 0) || len != sizeof(script))
             return 12;
-        byte input[44];
+        byte input[36];
         len = sizeof(input);
-        if (load(LOAD_INPUT, input, &len, 0, INPUT, 0) ||
+        if (load(LOAD_INPUT_BY_FIELD, input, &len, 0, INPUT, 0) ||
             len != sizeof(input) || !eq(script + sizeof(script) - len, input, len))
             return 13;
     }

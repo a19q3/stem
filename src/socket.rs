@@ -21,13 +21,17 @@ use prost::Message;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use tendermint_proto::v0_38::abci::{Request, Response, request::Value};
 
-use crate::abci::App;
+pub trait Handler: Send + Sync + 'static {
+    fn dispatch(&self, request: Value) -> tendermint_proto::v0_38::abci::response::Value;
+
+    fn record_abci_flush(&self, _received: Instant) {}
+}
 
 const MAX_CONNECTIONS: usize = 8;
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_PENDING_RESPONSES: usize = 128;
 
-pub fn serve(path: &Path, app: App, workers: usize, response_queue: usize) -> Result<()> {
+pub fn serve(path: &Path, app: impl Handler, workers: usize, response_queue: usize) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             ensure!(
@@ -124,7 +128,7 @@ enum Job {
 
 fn handle(
     stream: UnixStream,
-    app: Arc<App>,
+    app: Arc<impl Handler>,
     admission: &ThreadPool,
     response_queue: usize,
 ) -> Result<()> {
@@ -132,7 +136,7 @@ fn handle(
     thread::scope(|scope| {
         let (ordered, queue) = mpsc::sync_channel(response_queue);
         let response_app = Arc::clone(&app);
-        let writer = scope.spawn(move || write_responses(writer, queue, &response_app));
+        let writer = scope.spawn(move || write_responses(writer, queue, response_app.as_ref()));
         let result = read_requests(stream, app, admission, ordered);
         let output = writer.join().expect("ABCI write thread");
         result.and(output)
@@ -141,7 +145,7 @@ fn handle(
 
 fn read_requests(
     stream: UnixStream,
-    app: Arc<App>,
+    app: Arc<impl Handler>,
     admission: &ThreadPool,
     ordered: SyncSender<Job>,
 ) -> Result<()> {
@@ -193,7 +197,7 @@ fn read_requests(
 fn write_responses(
     mut stream: UnixStream,
     queue: impl IntoIterator<Item = Job>,
-    app: &App,
+    app: &impl Handler,
 ) -> Result<()> {
     let result = (|| -> Result<()> {
         let mut data = Vec::new();
@@ -251,11 +255,28 @@ mod tests {
     use std::time::Duration;
     use tendermint_proto::v0_38::abci::{RequestCheckTx, RequestEcho, RequestFlush, response};
 
+    struct App;
+
+    impl Handler for App {
+        fn dispatch(&self, request: Value) -> response::Value {
+            use tendermint_proto::v0_38::abci::{ResponseCheckTx, ResponseEcho, ResponseFlush};
+            match request {
+                Value::CheckTx(_) => response::Value::CheckTx(ResponseCheckTx {
+                    gas_wanted: 1,
+                    ..Default::default()
+                }),
+                Value::Echo(request) => response::Value::Echo(ResponseEcho {
+                    message: request.message,
+                }),
+                Value::Flush(_) => response::Value::Flush(ResponseFlush {}),
+                _ => unreachable!("unexpected request in transport test"),
+            }
+        }
+    }
+
     #[test]
     fn flush_drains_responses_in_order_while_later_checks_can_queue() {
-        let fixture = crate::tests::payments(2);
-        let path = tempfile::tempdir().unwrap();
-        let app = Arc::new(App::open(path.path(), fixture.genesis, 1, 0, false, false).unwrap());
+        let app = Arc::new(App);
         let pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let (mut client, server) = UnixStream::pair().unwrap();
         let writer_socket = server.try_clone().unwrap();
@@ -278,7 +299,7 @@ mod tests {
                 scope.spawn(move || read_requests(server, request_app, admission, ordered));
             let check = |index: usize| {
                 Value::CheckTx(RequestCheckTx {
-                    tx: bytes::Bytes::copy_from_slice(fixture.transactions[index].as_bytes()),
+                    tx: bytes::Bytes::from(vec![index as u8]),
                     ..Default::default()
                 })
             };
@@ -310,7 +331,7 @@ mod tests {
                 write_responses(
                     writer_socket,
                     prefix.into_iter().chain(queue),
-                    &response_app,
+                    response_app.as_ref(),
                 )
             });
             release.send(()).unwrap();

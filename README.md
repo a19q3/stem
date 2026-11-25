@@ -1,6 +1,6 @@
 # Fern
 
-The native Many-to-Many ledger and its VM host have a standalone RISC-V test suite. The CKB Stake Registry runs on a CKB development chain, and the application CLI can observe and verify guardian-certified snapshots. The running Fern consensus application still uses the original transaction and committee paths. See the [native architecture](ARCHITECTURE.md) and [L1 staking test](OPERATIONS.md#exercise-the-ckb-stake-registry).
+The native Many-to-Many ledger runs in a four-node CometBFT test network with group-addressed signatures, authenticated state and execution receipts. The CKB Stake Registry runs on a CKB development chain, and verified guardian observations can initialize a native genesis committee. The default `fern run` entry point still uses the existing transaction, bridge and committee paths. [Native architecture](ARCHITECTURE.md) · [Native network test](OPERATIONS.md#exercise-the-native-cometbft-path)
 
 The node pairs a CometBFT 0.38.26 process with the Rust `fern` ABCI application. Each replica keeps an independent RocksDB database and runs CKB transaction resolution, time locks, capacity checks and CKB-VM. Ordinary transactions are standard Molecule-encoded CKB transactions.
 

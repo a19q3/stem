@@ -3,14 +3,14 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, ensure};
-use ckb_types::{bytes::Bytes, core::HeaderView, packed::Byte32, prelude::*};
+use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
 use ckb_vm::{
     Error, Register, SupportMachine, Syscalls,
     memory::Memory,
     registers::{A0, A3, A4, A5, A7},
     snapshot2::DataSource,
 };
-use fern_ledger::{Cell, ResolvedTransaction, ScriptGroupKind};
+use fern_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, block::Header};
 use lru::LruCache;
 use rayon::prelude::*;
 
@@ -23,7 +23,7 @@ use crate::{
     cost_model::transferred_byte_cycles,
     syscalls::{
         Close, CurrentCycles, ExecV2, INDEX_OUT_OF_BOUND, ITEM_MISSING, InheritedFd,
-        LOAD_BLOCK_EXTENSION, LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, LOAD_CELL_SYSCALL_NUMBER,
+        LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, LOAD_CELL_SYSCALL_NUMBER,
         LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, LOAD_HEADER_SYSCALL_NUMBER,
         LOAD_INPUT_BY_FIELD_SYSCALL_NUMBER, LOAD_INPUT_SYSCALL_NUMBER,
         LOAD_SCRIPT_HASH_SYSCALL_NUMBER, LOAD_SCRIPT_SYSCALL_NUMBER,
@@ -48,6 +48,9 @@ pub const FIND_CELL_TYPE_SCRIPT: u64 = 2113;
 pub const LOAD_SCRIPT_GROUP: u64 = 2114;
 pub const LOAD_GROUP_INDEX: u64 = 2115;
 pub const LOAD_NETWORK_ID: u64 = 2116;
+pub const LOAD_GROUP_PROOF: u64 = 2117;
+pub const LOAD_GROUP_SEAL: u64 = 2118;
+pub const LOAD_GROUP_SIGNING_DIGEST: u64 = 2119;
 
 #[derive(Clone)]
 struct GroupContext {
@@ -79,7 +82,7 @@ impl GroupContext {
         })
     }
 
-    fn header(&self, source: u64, index: usize) -> Result<&HeaderView, u8> {
+    fn header(&self, source: u64, index: usize) -> Result<&Header, u8> {
         let origin = match source {
             INPUT => {
                 &self
@@ -106,7 +109,9 @@ impl GroupContext {
             HEADER_DEP => return self.tx.header(index).ok_or(INDEX_OUT_OF_BOUND),
             _ => return Err(INDEX_OUT_OF_BOUND),
         };
-        self.tx.header_by_hash(&origin.hash()).ok_or(ITEM_MISSING)
+        self.tx
+            .header_by_origin(&origin.context_id)
+            .ok_or(ITEM_MISSING)
     }
 }
 
@@ -128,15 +133,13 @@ impl DataSource<DataPieceId> for GroupContext {
             DataPieceId::CellDep(index) => self.cell(CELL_DEP, index as usize)?.data(),
             DataPieceId::GroupInput(index) => self.cell(GROUP_INPUT, index as usize)?.data(),
             DataPieceId::GroupOutput(index) => self.cell(GROUP_OUTPUT, index as usize)?.data(),
-            DataPieceId::Witness(index) => self.tx.transaction().witness(index as usize)?,
-            DataPieceId::WitnessGroupInput(index) => self
-                .tx
-                .transaction()
-                .witness(self.group_index(GROUP_INPUT, index as usize)?)?,
-            DataPieceId::WitnessGroupOutput(index) => self
-                .tx
-                .transaction()
-                .witness(self.group_index(GROUP_OUTPUT, index as usize)?)?,
+            DataPieceId::Witness(index) => {
+                self.tx
+                    .transaction()
+                    .witness(u16::try_from(index).ok()?)?
+                    .proof_data
+            }
+            DataPieceId::WitnessGroupInput(_) | DataPieceId::WitnessGroupOutput(_) => return None,
         };
         let offset = offset.min(data.len() as u64) as usize;
         let remaining = data.len() - offset;
@@ -323,20 +326,38 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 let Some(cell) = context.cell(source, index) else {
                     return Ok(status(machine, INDEX_OUT_OF_BOUND));
                 };
-                return load_cell(machine, cell, number, arg);
+                return load_cell(machine, cell, context.tx.capacity_policy(), number, arg);
             }
-            LOAD_WITNESS_SYSCALL_NUMBER => {
-                let witness = match source {
-                    INPUT | OUTPUT => tx.witness(index),
-                    GROUP_INPUT | GROUP_OUTPUT => context
-                        .group_index(source, index)
-                        .and_then(|i| tx.witness(i)),
+            LOAD_WITNESS_SYSCALL_NUMBER | LOAD_GROUP_PROOF | LOAD_GROUP_SEAL => {
+                let index = match source {
+                    0 if index == 0 => u16::try_from(context.group).ok(),
+                    1 => u16::try_from(index)
+                        .ok()
+                        .filter(|index| usize::from(*index) < context.tx.groups().len()),
                     _ => None,
                 };
-                let Some(witness) = witness else {
+                let Some(index) = index else {
                     return Ok(status(machine, INDEX_OUT_OF_BOUND));
                 };
-                store_data(machine, &witness)
+                let Some(witness) = tx.witness(index) else {
+                    return Ok(status(machine, ITEM_MISSING));
+                };
+                let data = match number {
+                    LOAD_GROUP_PROOF => witness.proof_data,
+                    LOAD_GROUP_SEAL => witness.seal,
+                    _ => witness.encode_bytes(),
+                };
+                store_data(machine, &data)
+            }
+            LOAD_GROUP_SIGNING_DIGEST => {
+                if source != 0 || index != 0 || group.kind != ScriptGroupKind::Lock {
+                    return Ok(status(machine, ITEM_MISSING));
+                }
+                // The digest reads the transaction body and its proof data.
+                machine
+                    .add_cycles_no_checking(transferred_byte_cycles(tx.as_slice().len() as u64))?;
+                let digest = tx.lock_digest(context.tx.network_id(), &group.script);
+                store_data(machine, digest.as_slice())
             }
             LOAD_INPUT_SYSCALL_NUMBER | LOAD_INPUT_BY_FIELD_SYSCALL_NUMBER => {
                 let input = match source {
@@ -348,37 +369,39 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                     return Ok(status(machine, INDEX_OUT_OF_BOUND));
                 };
                 match (number, arg) {
-                    (LOAD_INPUT_SYSCALL_NUMBER, _) => store_data(machine, input.as_slice()),
-                    (_, 0) => store_data(machine, input.previous_output().as_slice()),
-                    (_, 1) => store_data(machine, input.since().as_slice()),
+                    (LOAD_INPUT_SYSCALL_NUMBER, _) => store_data(machine, &input.encode_bytes()),
+                    (_, 0) => store_data(machine, input.previous_output.as_slice()),
+                    (_, 1) => store_data(machine, &input.since_bytes()),
                     _ => return Ok(status(machine, ITEM_MISSING)),
                 }
             }
-            LOAD_HEADER_SYSCALL_NUMBER
-            | LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER
-            | LOAD_BLOCK_EXTENSION => {
+            LOAD_HEADER_SYSCALL_NUMBER | LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER => {
                 let header = match context.header(source, index) {
                     Ok(header) => header,
                     Err(code) => return Ok(status(machine, code)),
                 };
-                match (number, arg) {
-                    (LOAD_HEADER_SYSCALL_NUMBER, _) => {
-                        store_data(machine, header.data().as_slice())
-                    }
-                    (LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, 0) => {
-                        store_data(machine, &header.epoch().number().to_le_bytes())
-                    }
-                    (LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, 1) => {
-                        let beginning = header
-                            .number()
-                            .checked_sub(header.epoch().index())
-                            .ok_or_else(|| Error::External("invalid header epoch".into()))?;
-                        store_data(machine, &beginning.to_le_bytes())
-                    }
-                    (LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, 2) => {
-                        store_data(machine, &header.epoch().length().to_le_bytes())
-                    }
-                    _ => return Ok(status(machine, ITEM_MISSING)),
+                if number == LOAD_HEADER_SYSCALL_NUMBER {
+                    store_data(machine, &header.encode())
+                } else {
+                    let field = match arg {
+                        0 => {
+                            let result = store_data(machine, &header.context.height.to_le_bytes());
+                            return finish(machine, result);
+                        }
+                        1 => {
+                            let result =
+                                store_data(machine, &header.context.timestamp_ms.to_le_bytes());
+                            return finish(machine, result);
+                        }
+                        2 => &header.context.parent,
+                        3 => &header.context.transaction_root,
+                        4 => &header.state.cell_root,
+                        5 => &header.state.system_root,
+                        6 => &header.state.history_root,
+                        7 => &header.receipt_root,
+                        _ => return Ok(status(machine, ITEM_MISSING)),
+                    };
+                    store_data(machine, field.as_slice())
                 }
             }
             _ => return Ok(false),
@@ -390,6 +413,7 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
 fn load_cell<M: SupportMachine>(
     machine: &mut M,
     cell: &Cell,
+    policy: CapacityPolicy,
     number: u64,
     arg: u64,
 ) -> Result<bool, Error> {
@@ -411,8 +435,8 @@ fn load_cell<M: SupportMachine>(
             store_data(machine, lock.calc_script_hash().as_slice())
         }
         (LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, 6) => {
-            let capacity = cell
-                .occupied_capacity()
+            let capacity = policy
+                .bond(cell.as_slice().len())
                 .map_err(|error| Error::External(error.to_string()))?;
             store_data(machine, &capacity.to_le_bytes())
         }

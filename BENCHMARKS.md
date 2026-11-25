@@ -494,20 +494,29 @@ python3 tools/l1_baseline.py \
 
 The [compressed observations](benchmarks/2026-11-25.json.xz) include transaction admission, replica visibility, receipt-verifier output, binary hashes and benchmark settings. Use `xz -dc` to inspect the JSON. The bridge, validator handoff and state-sync reports use local test keys. The archive includes executable proof bundles and their public committee configurations for the final bridge and handoff scenarios. The release performance runs precede the checkpoint and admission changes unless their run manifests identify a later commit.
 
-## Native ledger VM fixture cycles
+## Native encoding and VM fixtures
 
-The native host ran these witnessed transactions with CKB-VM assembly, VM reuse, and Clang 23.1.5 RISC-V example ELFs. The cycle counts include the real secp256k1 lock. They measure transaction verification on one process.
+| Molecule fixture | CKB bytes | Fern bytes | Change |
+| --- | ---: | ---: | ---: |
+| Payment with one input, two outputs, one Cell Dep and one 65-byte signature | 460 | 467 | +1.5% |
+| Output vectors with a 20-byte Lock and three 32-byte Type Script arguments, empty Cell Data | 590 | 384 | −34.9% |
 
-| Transaction | Type Script Groups | Charged cycles |
-| --- | ---: | ---: |
-| Fungible asset transfer | 1 | 1,938,965 |
-| Identity and lifecycle update | 2 | 1,931,200 |
-| Two-asset atomic settlement with collateral and transfer policy | 5 | 2,020,121 |
+The output comparison serializes three separate CKB outputs and one combined Fern output. The CKB count includes both output vectors. The calculation excludes application-specific binding data and compares only the output fields. The payment measurements serialize complete transactions. Reproduce with `cargo test --locked -p fern-ledger measure_canonical_payment_and_combined_output_bytes -- --nocapture`.
 
-Run `cargo test --locked -p ckb-script --features vm-reuse --test fern_native -- --nocapture` to reproduce the fixtures. Serial and four-worker execution charged the same amount for the atomic transaction. The host also checked the budget on cached verification and ran separate Spawn and Exec fixtures. These cases use different transaction structures and signatures, so the difference between rows does not isolate the per-group cost.
+The current fixtures use CKB-VM assembly and reuse, independently compiled RISC-V Type Scripts, and the native secp256k1 recovery Lock Script. Charged cycles from the preceding native host with the CKB fixture lock are retained for context.
+
+| Transaction | Type Groups | Current native lock | Earlier CKB fixture lock |
+| --- | ---: | ---: | ---: |
+| Fungible asset transfer | 1 | 5,769,207 | 1,938,965 |
+| Identity and lifecycle update | 2 | 5,760,590 | 1,931,200 |
+| Two-asset settlement with collateral and transfer policy | 5 | 5,835,417 | 2,020,121 |
+
+Run `cargo test --locked -p ckb-script --features vm-reuse --test fern_native -- --nocapture`. Serial and four-worker validation charge identical cycles for the settlement fixture. The tests exercise cache-hit cycle accounting, Spawn, Exec and native Witness parsing. The lock change and the different signatures across fixtures are part of the current cycle measurements.
+
+The native four-node test committed a signed payment at height 2 and a two-Type-Script transfer at height 3, after rejecting an attempted removal of its input Transfer Policy. The composed transfer charged 5,783,509 VM cycles. The test verified the signed AppHash at height 4 on all replicas and compared the restarted replica's Header at height 6. This is a correctness run. The native throughput baseline still needs a sustained load run. [Reproduce the four-node test](OPERATIONS.md#exercise-the-native-cometbft-path)
 
 ## Four-node original-ledger control
 
 A debug build with the bridge recipient fix ran four local CometBFT 0.38.26 replicas and two VM workers per replica. The load offered 64 signed CKB payments per second for 12 seconds, including a restart of one replica. The runner scheduled, offered, admitted, and observed all 768 transactions on every replica. Its sampled admission rate was 63.33 TPS, confirmed rate 56.00 TPS, and client drops zero. Full-replica visibility was p50 2,861 ms, p95 6,473 ms, p99 6,973 ms. The sampled CPU total was 17.67 seconds, process writes were 117,301,248 bytes, and peak combined Fern/CometBFT RSS per replica ranged from 140.5 MB to 146.1 MB. Aggregate sampled P2P counters increased by about 4.67 MB received and 4.73 MB sent, counting sampled increments across the process restart.
 
-The snapshot observer restored checkpoint 16 and caught up through application height 18 in 10.02 seconds. The single-worker observer replayed from genesis through height 19 in 7.49 seconds. The runner verified the exported execution proof. The original ledger control and local CKB/xUDT custody runs exercise the current network binary. The native host has no four-node, staking-handoff, or 1,000–5,000 TPS result.
+The snapshot observer restored checkpoint 16 and caught up through application height 18 in 10.02 seconds. The single-worker observer replayed from genesis through height 19 in 7.49 seconds. The runner verified the exported execution proof. The original ledger control and local CKB/xUDT custody runs exercise the current network binary. Native committee handoffs and 1,000–5,000 TPS remain unmeasured.

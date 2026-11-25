@@ -321,3 +321,32 @@ python3 tools/stake_localnet.py \
 The runner covers registration, stake increases, guardian-authorized activation and retirement, early withdrawal rejection, CKB-enforced unbonding, voting-evidence verification and slashing, guardian handoff, and withdrawal of the full unslashed bond. It also invokes `fern stake observe` against the running L1 node. Each observation binds the confirmed Registry data, live Stake Cells, prior L1 anchor, and target epoch. `fern stake verify` checks the observations against a separate trust file containing the network identities, prior accepted snapshot, guardian committee and selection policy. The runner writes representative request, observation and trust files under its output directory. Its activation and retirement attestations use development fixtures for Fern committee history.
 
 On the current Fern bridge, the payout path rejects reserved vault-side deposit and xUDT gate code hashes, unsupported hash types, oversized recipient scripts, and outputs below CKB occupied Capacity. A signed typed burn to the vault's own escrow is tested before the valid withdrawal at the same nonce.
+
+## Exercise the native CometBFT path
+
+Use the pinned Rust toolchain with the `riscv64imac-unknown-none-elf` target, Clang and LLD, and CometBFT 0.38.26.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --manifest-path contracts/Cargo.toml --release \
+  --target riscv64imac-unknown-none-elf
+cargo test --locked -p fern-ledger measure_canonical_payment_and_combined_output_bytes -- --nocapture
+cargo test --locked -p ckb-script --features vm-reuse --test fern_native -- --nocapture
+FERN_TEST_COMET=target/fern-tools/cometbft \
+  cargo test --locked --test native_store four_node_native_finality_restart_and_app_hash \
+  -- --ignored --nocapture
+```
+
+The four-node test prints its evidence directory and generates an independent genesis with fixture keys. It starts four CometBFT processes and four native ABCI processes, submits a signed payment and a two-Type-Script transfer with real RISC-V programs, compares native headers and restarts one replica. Pass that directory to the independent CometBFT verifier.
+
+```sh
+FERN_NATIVE_EVIDENCE=/path/to/printed/evidence \
+  go -C tools/proof test -mod=readonly -run TestNativeCommitSignatures -v .
+```
+
+To verify a native genesis derived from confirmed L1 Stake Cells, [run the CKB stake scenario](#exercise-the-ckb-stake-registry) and supply the resulting directory.
+
+```sh
+FERN_TEST_L1_STAKE=target/fern-runs/<stake-run> \
+  cargo test --locked --test native_store opens_native_genesis_from_ckb_guardian_observations -- --ignored
+```

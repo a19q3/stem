@@ -205,7 +205,7 @@ pub struct StakeSnapshot {
 }
 
 impl StakeSnapshot {
-    pub fn signing_digest(&self) -> Hash32 {
+    pub fn encode(&self) -> Vec<u8> {
         let mut message = Vec::new();
         message.extend_from_slice(&self.domain.fern_network_id);
         message.extend_from_slice(&self.domain.ckb_genesis);
@@ -217,7 +217,31 @@ impl StakeSnapshot {
         if let Some(parent) = self.parent {
             encode_anchor(&mut message, &parent);
         }
-        digest(b"Fern guardian Stake Snapshot\0", &[&message])
+        message
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let (fixed, parent) = bytes.split_at_checked(217).ok_or(Error::Encoding)?;
+        let parent = match (fixed[216], parent.len()) {
+            (0, 0) => None,
+            (1, 80) => Some(decode_anchor(parent)),
+            _ => return Err(Error::Encoding),
+        };
+        Ok(Self {
+            domain: StakeDomain {
+                fern_network_id: fixed[..32].try_into().unwrap(),
+                ckb_genesis: fixed[32..64].try_into().unwrap(),
+                registry_id: fixed[64..96].try_into().unwrap(),
+            },
+            guardian_generation: fixed[96..128].try_into().unwrap(),
+            target_epoch: u64::from_le_bytes(fixed[128..136].try_into().unwrap()),
+            registry: decode_anchor(&fixed[136..216]),
+            parent,
+        })
+    }
+
+    pub fn signing_digest(&self) -> Hash32 {
+        digest(b"Fern guardian Stake Snapshot\0", &[&self.encode()])
     }
 
     pub fn verify(
@@ -227,6 +251,20 @@ impl StakeSnapshot {
         registry: &Registry,
         authority: &Authority,
         signatures: &[Attestation],
+        config: &StakeConfig,
+    ) -> Result<(AcceptedSnapshot, Vec<Member>)> {
+        let validated = self.validate_statement(domain, previous, registry, authority, config)?;
+        authority.verify(&self.signing_digest(), signatures)?;
+        Ok(validated)
+    }
+
+    /// Validate the statement after its authentication by the enclosing protocol.
+    pub fn validate_statement(
+        &self,
+        domain: &StakeDomain,
+        previous: Option<AcceptedSnapshot>,
+        registry: &Registry,
+        authority: &Authority,
         config: &StakeConfig,
     ) -> Result<(AcceptedSnapshot, Vec<Member>)> {
         if self.domain != *domain
@@ -268,7 +306,6 @@ impl StakeSnapshot {
         } else if self.target_epoch != 0 || self.parent.is_some() {
             return Err(Error::Epoch);
         }
-        authority.verify(&self.signing_digest(), signatures)?;
         let members = config.select(registry, self.target_epoch)?;
         Ok((
             AcceptedSnapshot {
@@ -277,6 +314,17 @@ impl StakeSnapshot {
             },
             members,
         ))
+    }
+}
+
+fn decode_anchor(bytes: &[u8]) -> RegistryAnchor {
+    RegistryAnchor {
+        block: Anchor {
+            height: u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            hash: bytes[8..40].try_into().unwrap(),
+        },
+        sequence: u64::from_le_bytes(bytes[40..48].try_into().unwrap()),
+        commitment: bytes[48..80].try_into().unwrap(),
     }
 }
 
@@ -331,7 +379,11 @@ impl Authority {
         })
     }
 
-    fn verify(&self, message: &[u8], votes: &[Attestation]) -> Result<()> {
+    pub fn generation(&self) -> Hash32 {
+        self.generation
+    }
+
+    pub fn verify(&self, message: &[u8], votes: &[Attestation]) -> Result<()> {
         let mut last = None;
         let mut signed = 0u64;
         for vote in votes {

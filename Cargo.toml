@@ -21,6 +21,7 @@ ckb-jsonrpc-types.workspace = true
 ckb-resource.workspace = true
 ckb-script = { workspace = true, features = ["vm-reuse"] }
 fern-bridge-wire = { path = "bridge-wire" }
+fern-ledger = { path = "ledger" }
 fern-stake = { path = "stake" }
 ckb-traits.workspace = true
 ckb-types.workspace = true

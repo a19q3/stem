@@ -1,9 +1,11 @@
 // Primitives use the canonical CKB Molecule layout.
 array Uint32 [byte; 4];
 array Uint64 [byte; 8];
+option Uint64Opt (Uint64);
 array Byte32 [byte; 32];
+array Uint16 [byte; 2];
+array Byte64 [byte; 64];
 vector Bytes <byte>;
-vector BytesVec <Bytes>;
 vector Byte32Vec <Byte32>;
 
 table Script {
@@ -17,8 +19,13 @@ struct OutPoint {
     index: Uint32,
 }
 
+struct Since {
+    kind: byte,
+    value: Uint64,
+}
+
 struct CellInput {
-    since: Uint64,
+    since: Since,
     previous_output: OutPoint,
 }
 
@@ -39,14 +46,114 @@ table Cell {
     data: Bytes,
 }
 
+struct L1Anchor {
+    height: Uint64,
+    hash: Byte32,
+}
+
+struct BridgeMint {
+    l1_genesis: Byte32,
+    deposit: OutPoint,
+}
+
+struct StakeSnapshot {
+    epoch: Uint64,
+    signing_anchor: Byte32,
+    commitment: Byte32,
+}
+
+struct VaultUpdate {
+    lane: Byte32,
+    input: OutPoint,
+    output: OutPoint,
+}
+
+struct WithdrawalPaid {
+    vault: VaultUpdate,
+    nonce: Uint64,
+    receipt: Byte32,
+}
+
+struct ReserveMoved {
+    source: VaultUpdate,
+    destination: VaultUpdate,
+    capacity: Uint64,
+}
+
+table BridgeSettlement {
+    l1_genesis: Byte32,
+    authority: Byte32,
+    previous_anchor: L1Anchor,
+    anchor: L1Anchor,
+    action: Bytes,
+}
+
+// Kinds 0, 1, 2, 3 encode BridgeMint, StakeSnapshot, WithdrawalPaid, ReserveMoved.
+table ProtocolOperation {
+    kind: byte,
+    payload: Bytes,
+}
+
+option ProtocolOperationOpt (ProtocolOperation);
+
+struct Attestation {
+    signer: Uint16,
+    signature: Byte64,
+}
+
+vector AttestationVec <Attestation>;
+
+table Certificate {
+    body: Bytes,
+    attestations: AttestationVec,
+}
+
+option CertificateOpt (Certificate);
+
 table RawTransaction {
     cell_deps: CellDepVec,
     header_deps: Byte32Vec,
     inputs: CellInputVec,
     outputs: CellVec,
+    protocol: ProtocolOperationOpt,
+    valid_before_height: Uint64Opt,
 }
+
+table GroupWitness {
+    group_index: Uint16,
+    proof_data: Bytes,
+    seal: Bytes,
+}
+
+vector GroupWitnessVec <GroupWitness>;
 
 table Transaction {
     raw: RawTransaction,
-    witnesses: BytesVec,
+    witnesses: GroupWitnessVec,
+    certificate: CertificateOpt,
+}
+
+struct HeaderContext {
+    height: Uint64,
+    timestamp_ms: Uint64,
+    parent: Byte32,
+    transaction_root: Byte32,
+}
+
+struct StateCommitment {
+    cell_root: Byte32,
+    system_root: Byte32,
+    history_root: Byte32,
+}
+
+struct Header {
+    context: HeaderContext,
+    state: StateCommitment,
+    receipt_root: Byte32,
+}
+
+table Receipt {
+    fee: Uint64,
+    cycles: Uint64,
+    protocol_result: Bytes,
 }

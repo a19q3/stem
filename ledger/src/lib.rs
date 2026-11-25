@@ -4,15 +4,33 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
+
+use crate::protocol::{Certificate, Operation};
 use ckb_hash::{blake2b_256, new_blake2b};
 use ckb_types::{
     bytes::Bytes,
-    core::{DepType, EpochNumberWithFraction, HeaderView, ScriptHashType},
-    packed::{Byte32, CellDep, CellInput, OutPoint, Script},
+    core::{DepType, ScriptHashType},
+    packed::{Byte32, CellDep, OutPoint, Script},
     prelude::*,
 };
 
+#[cfg(test)]
+mod encoding_tests;
+
+pub mod block;
+pub mod history;
+pub mod patricia;
 pub mod proof;
+pub mod protocol;
+pub mod record;
+pub mod replay;
+pub mod time;
+mod witness;
+
+pub use witness::GroupWitness;
+
+use block::Header;
+pub use time::{BlockContext, CellInput, Origin, Since};
 
 mod wire {
     #![allow(dead_code)]
@@ -20,7 +38,41 @@ mod wire {
 }
 
 pub const SHANNONS_PER_BYTE: u64 = 100_000_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapacityPolicy {
+    pub bond_per_byte: u64,
+    pub state_overhead: u64,
+}
+
+impl CapacityPolicy {
+    pub fn bond(self, encoded_len: usize) -> Result<u64> {
+        ensure!(self.bond_per_byte > 0, "zero Storage Bond price");
+        u64::try_from(encoded_len)?
+            .checked_add(self.state_overhead)
+            .and_then(|bytes| bytes.checked_mul(self.bond_per_byte))
+            .context("occupied Capacity overflow")
+    }
+
+    pub fn verify(self, cell: &Cell) -> Result<()> {
+        ensure!(
+            cell.capacity() >= self.bond(cell.as_slice().len())?,
+            "insufficient occupied Capacity"
+        );
+        Ok(())
+    }
+}
+
+impl Default for CapacityPolicy {
+    fn default() -> Self {
+        Self {
+            bond_per_byte: SHANNONS_PER_BYTE,
+            state_overhead: 0,
+        }
+    }
+}
 pub const MAX_TYPE_SCRIPTS: usize = 32;
+pub const MAX_SCRIPT_GROUPS: usize = 8_192;
 pub const MAX_SCRIPT_BYTES: usize = 16 * 1024;
 pub const MAX_TYPE_SCRIPT_BYTES: usize = 64 * 1024;
 pub const MAX_TRANSACTION_BYTES: usize = 512 * 1024;
@@ -124,10 +176,6 @@ impl Cell {
             script_bytes <= MAX_TYPE_SCRIPT_BYTES,
             "Type Script set exceeds byte limit"
         );
-        ensure!(
-            cell.capacity() >= cell.occupied_capacity()?,
-            "insufficient occupied capacity"
-        );
         Ok(cell)
     }
 
@@ -183,7 +231,7 @@ impl Cell {
     }
 
     pub fn occupied_capacity(&self) -> Result<u64> {
-        capacity_for_bytes(self.as_slice().len())
+        CapacityPolicy::default().bond(self.as_slice().len())
     }
 
     pub fn minimum_capacity(
@@ -202,19 +250,11 @@ impl Cell {
                 .context("Cell size overflow")?;
         }
         // The Bytes vector has a length prefix followed by the raw data.
-        capacity_for_bytes(
+        CapacityPolicy::default().bond(
             bytes
                 .checked_add(4)
                 .and_then(|size| size.checked_add(data_len))
                 .context("Cell size overflow")?,
-        )
-    }
-
-    pub fn commitment(&self, network_id: &Byte32, out_point: &OutPoint) -> Byte32 {
-        hash(
-            b"Fern live Cell\0",
-            network_id,
-            &[out_point.as_slice(), self.as_slice()],
         )
     }
 }
@@ -225,18 +265,9 @@ fn validate_script(script: &Script) -> Result<()> {
         "Script exceeds byte limit"
     );
     match ScriptHashType::try_from(script.hash_type())? {
-        ScriptHashType::Data
-        | ScriptHashType::Type
-        | ScriptHashType::Data1
-        | ScriptHashType::Data2 => Ok(()),
+        ScriptHashType::Data | ScriptHashType::Type => Ok(()),
         _ => bail!("unsupported Script hash type"),
     }
-}
-
-fn capacity_for_bytes(bytes: usize) -> Result<u64> {
-    u64::try_from(bytes)?
-        .checked_mul(SHANNONS_PER_BYTE)
-        .context("occupied capacity overflow")
 }
 
 #[derive(Clone, Debug)]
@@ -250,7 +281,66 @@ impl Transaction {
         header_deps: Vec<Byte32>,
         inputs: Vec<CellInput>,
         outputs: Vec<Cell>,
-        witnesses: Vec<Bytes>,
+        witnesses: Vec<GroupWitness>,
+    ) -> Result<Self> {
+        Self::build(cell_deps, header_deps, inputs, outputs, witnesses, None)
+    }
+
+    /// Attach the mint statement before signing any Cell inputs.
+    pub fn with_bridge_mint(
+        &self,
+        mint: protocol::BridgeMint,
+        certificate: Certificate,
+    ) -> Result<Self> {
+        ensure!(
+            self.operation().is_none() && self.witnesses().len() == 0,
+            "mint requires an unsigned ordinary transaction"
+        );
+        Self::build(
+            self.cell_deps().collect(),
+            self.header_deps().collect(),
+            self.inputs().collect(),
+            self.outputs().collect(),
+            self.witnesses().collect(),
+            Some((Operation::BridgeMint(mint), certificate)),
+        )
+    }
+
+    pub fn bridge_mint(
+        mint: protocol::BridgeMint,
+        certificate: Certificate,
+        cell_deps: Vec<CellDep>,
+        outputs: Vec<Cell>,
+    ) -> Result<Self> {
+        Self::build(
+            cell_deps,
+            Vec::new(),
+            Vec::new(),
+            outputs,
+            Vec::new(),
+            Some((Operation::BridgeMint(mint), certificate)),
+        )
+    }
+
+    /// Construct a certificate-only control transaction. It creates and spends no Cells.
+    pub fn control(operation: Operation, certificate: Certificate) -> Result<Self> {
+        Self::build(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Some((operation, certificate)),
+        )
+    }
+
+    fn build(
+        cell_deps: Vec<CellDep>,
+        header_deps: Vec<Byte32>,
+        inputs: Vec<CellInput>,
+        outputs: Vec<Cell>,
+        witnesses: Vec<GroupWitness>,
+        protocol: Option<(Operation, Certificate)>,
     ) -> Result<Self> {
         check_count(
             cell_deps.len(),
@@ -262,13 +352,20 @@ impl Transaction {
         let variable_size = outputs
             .iter()
             .map(|cell| cell.as_slice().len())
-            .chain(witnesses.iter().map(Bytes::len))
+            .chain(
+                protocol
+                    .iter()
+                    .map(|(_, certificate)| certificate.encoded_len()),
+            )
             .try_fold(0usize, |size, next| size.checked_add(next))
             .context("Transaction size overflow")?;
-        ensure!(
-            variable_size <= MAX_TRANSACTION_BYTES,
-            "Transaction exceeds byte limit"
-        );
+        check_witness_bytes(&witnesses, variable_size)?;
+        let (operation, certificate) = match protocol {
+            Some((operation, certificate)) => {
+                (Some(operation.encode()), Some(certificate.encode()))
+            }
+            None => (None, None),
+        };
         let raw = wire::RawTransaction::new_builder()
             .cell_deps(
                 wire::CellDepVec::new_builder()
@@ -292,12 +389,12 @@ impl Transaction {
             )
             .inputs(
                 wire::CellInputVec::new_builder()
-                    .set(
-                        inputs
-                            .into_iter()
-                            .map(|input| wire::CellInput::new_unchecked(input.as_bytes()))
-                            .collect(),
-                    )
+                    .set(inputs.into_iter().map(|input| input.encode()).collect())
+                    .build(),
+            )
+            .protocol(
+                wire::ProtocolOperationOpt::new_builder()
+                    .set(operation)
                     .build(),
             )
             .outputs(
@@ -306,18 +403,14 @@ impl Transaction {
                     .build(),
             )
             .build();
-        let witnesses = wire::BytesVec::new_builder()
-            .set(
-                witnesses
-                    .into_iter()
-                    .map(|value| wire::Bytes::new_unchecked(value.pack().as_bytes()))
-                    .collect(),
-            )
+        let witnesses = wire::GroupWitnessVec::new_builder()
+            .set(witnesses.iter().map(GroupWitness::encode).collect())
             .build();
         Self::from_entity(
             wire::Transaction::new_builder()
                 .raw(raw)
                 .witnesses(witnesses)
+                .certificate(wire::CertificateOpt::new_builder().set(certificate).build())
                 .build(),
         )
     }
@@ -344,11 +437,57 @@ impl Transaction {
             encoded.witnesses().len(),
         )?;
         let tx = Self { encoded };
-        let mut spent = HashSet::new();
-        for input in tx.inputs() {
-            ensure!(!input.previous_output().is_null(), "null input OutPoint");
+        ensure!(
+            tx.valid_before_height() != Some(0),
+            "expiry height must be positive"
+        );
+        match (raw.protocol().to_opt(), tx.encoded.certificate().to_opt()) {
+            (None, None) => ensure!(
+                !raw.inputs().is_empty(),
+                "ordinary Transaction requires an input"
+            ),
+            (Some(operation), Some(certificate)) => {
+                ensure!(
+                    tx.valid_before_height().is_none(),
+                    "protocol transaction cannot include an expiry"
+                );
+                let operation = Operation::decode(operation)?;
+                let certificate = Certificate::decode(certificate)?;
+                operation.validate(&certificate)?;
+                if matches!(operation, Operation::BridgeMint(_)) {
+                    ensure!(!raw.outputs().is_empty(), "Bridge Mint requires outputs");
+                } else {
+                    ensure!(
+                        raw.inputs().is_empty()
+                            && raw.outputs().is_empty()
+                            && raw.cell_deps().is_empty()
+                            && raw.header_deps().is_empty()
+                            && tx.encoded.witnesses().is_empty(),
+                        "control transaction must contain only its operation and certificate"
+                    );
+                }
+            }
+            _ => bail!("protocol operation and certificate must occur together"),
+        }
+        let mut previous = None;
+        for witness in tx.witnesses() {
+            witness.validate()?;
             ensure!(
-                spent.insert(input.previous_output()),
+                previous.is_none_or(|last| last < witness.group_index),
+                "Group Witness entries must be strictly increasing"
+            );
+            ensure!(
+                usize::from(witness.group_index) < MAX_SCRIPT_GROUPS,
+                "Group Witness index exceeds limit"
+            );
+            previous = Some(witness.group_index);
+        }
+        let mut spent = HashSet::new();
+        for input in raw.inputs() {
+            let input = CellInput::decode(input)?;
+            ensure!(!input.previous_output.is_null(), "null input OutPoint");
+            ensure!(
+                spent.insert(input.previous_output),
                 "duplicate input OutPoint"
             );
         }
@@ -392,6 +531,51 @@ impl Transaction {
         )
     }
 
+    pub fn valid_before_height(&self) -> Option<u64> {
+        self.encoded
+            .raw()
+            .valid_before_height()
+            .to_opt()
+            .map(|value| u64::from_le_bytes(value.as_slice().try_into().expect("Uint64")))
+    }
+
+    /// Set the exclusive height bound before signing the transaction.
+    pub fn with_valid_before_height(&self, height: u64) -> Result<Self> {
+        ensure!(height != 0, "expiry height must be positive");
+        ensure!(
+            self.operation().is_none() && self.witnesses().len() == 0,
+            "expiry requires an unsigned ordinary transaction"
+        );
+        let raw = self
+            .encoded
+            .raw()
+            .as_builder()
+            .valid_before_height(
+                wire::Uint64Opt::new_builder()
+                    .set(Some(wire::Uint64::new_unchecked(
+                        height.to_le_bytes().to_vec().into(),
+                    )))
+                    .build(),
+            )
+            .build();
+        Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
+    }
+
+    pub fn operation(&self) -> Option<Operation> {
+        self.encoded
+            .raw()
+            .protocol()
+            .to_opt()
+            .map(|operation| Operation::decode(operation).expect("validated operation"))
+    }
+
+    pub fn certificate(&self) -> Option<Certificate> {
+        self.encoded
+            .certificate()
+            .to_opt()
+            .map(Certificate::validated_entity)
+    }
+
     pub fn cell_deps(&self) -> impl ExactSizeIterator<Item = CellDep> {
         self.encoded
             .raw()
@@ -413,7 +597,7 @@ impl Transaction {
             .raw()
             .inputs()
             .into_iter()
-            .map(|input| CellInput::new_unchecked(input.as_bytes()))
+            .map(|input| CellInput::decode(input).expect("validated CellInput"))
     }
 
     pub fn input(&self, index: usize) -> Option<CellInput> {
@@ -421,7 +605,7 @@ impl Transaction {
             .raw()
             .inputs()
             .get(index)
-            .map(|input| CellInput::new_unchecked(input.as_bytes()))
+            .map(|input| CellInput::decode(input).expect("validated CellInput"))
     }
 
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = Cell> {
@@ -432,84 +616,85 @@ impl Transaction {
             .map(Cell::validated_entity)
     }
 
-    pub fn witnesses(&self) -> impl ExactSizeIterator<Item = Bytes> {
+    pub fn witnesses(&self) -> impl ExactSizeIterator<Item = GroupWitness> {
         self.encoded
             .witnesses()
             .into_iter()
-            .map(|witness| witness.raw_data())
+            .map(GroupWitness::decode)
     }
 
-    pub fn witness(&self, index: usize) -> Option<Bytes> {
-        self.encoded
-            .witnesses()
-            .get(index)
-            .map(|witness| witness.raw_data())
-    }
-
-    /// Sign the standard CKB secp256k1 witness layout over the network-bound Fern
-    /// transaction ID. The first witness must have its signature field zeroed.
-    pub fn lock_digest(
-        &self,
-        network_id: &Byte32,
-        input_indices: &[usize],
-        blanked_first_witness: &[u8],
-    ) -> Result<Byte32> {
-        let input_count = self.inputs().len();
-        ensure!(
-            !input_indices.is_empty()
-                && input_indices.windows(2).all(|pair| pair[0] < pair[1])
-                && input_indices.iter().all(|index| *index < input_count),
-            "invalid Lock Script Group input indices"
-        );
-        let mut hasher = new_blake2b();
-        hasher.update(self.id(network_id).as_slice());
-        hasher.update(&(blanked_first_witness.len() as u64).to_le_bytes());
-        hasher.update(blanked_first_witness);
-        for witness in input_indices[1..]
-            .iter()
-            .filter_map(|index| self.witness(*index))
-            .chain(self.witnesses().skip(input_count))
-        {
-            hasher.update(&(witness.len() as u64).to_le_bytes());
-            hasher.update(&witness);
+    pub fn witness(&self, group_index: u16) -> Option<GroupWitness> {
+        let entries = self.encoded.witnesses();
+        let mut lo = 0;
+        let mut hi = entries.len();
+        while lo < hi {
+            let middle = lo + (hi - lo) / 2;
+            let witness = GroupWitness::decode(entries.get(middle)?);
+            match witness.group_index.cmp(&group_index) {
+                std::cmp::Ordering::Less => lo = middle + 1,
+                std::cmp::Ordering::Greater => hi = middle,
+                std::cmp::Ordering::Equal => return Some(witness),
+            }
         }
-        let mut digest = [0; 32];
-        hasher.finalize(&mut digest);
-        Ok(digest.pack())
+        None
     }
 
-    pub fn with_witnesses(&self, witnesses: Vec<Bytes>) -> Result<Self> {
-        ensure!(witnesses.len() <= MAX_CELL_REFERENCES, "too many witnesses");
-        let size = witnesses
-            .iter()
-            .try_fold(self.encoded.raw().as_slice().len(), |size, witness| {
-                size.checked_add(witness.len())
-            })
-            .context("Transaction size overflow")?;
-        ensure!(
-            size <= MAX_TRANSACTION_BYTES,
-            "Transaction exceeds byte limit"
-        );
-        let witnesses = wire::BytesVec::new_builder()
-            .set(
-                witnesses
-                    .into_iter()
-                    .map(|value| wire::Bytes::new_unchecked(value.pack().as_bytes()))
-                    .collect(),
-            )
-            .build();
-        let encoded = self
-            .encoded
-            .clone()
-            .as_builder()
-            .witnesses(witnesses)
-            .build();
-        ensure!(
-            encoded.as_slice().len() <= MAX_TRANSACTION_BYTES,
-            "Transaction exceeds byte limit"
-        );
-        Ok(Self { encoded })
+    /// Standard Lock Script authorization binds the full group identity and
+    /// all proof data. Seals can be collected independently by multiple signers.
+    pub fn lock_digest(&self, network_id: &Byte32, lock: &Script) -> Byte32 {
+        let mut proof = new_blake2b();
+        proof.update(b"Fern group proofs\0");
+        for witness in self
+            .witnesses()
+            .filter(|witness| !witness.proof_data.is_empty())
+        {
+            proof.update(&witness.group_index.to_le_bytes());
+            proof.update(&(witness.proof_data.len() as u32).to_le_bytes());
+            proof.update(&witness.proof_data);
+        }
+        let mut proof_root = [0; 32];
+        proof.finalize(&mut proof_root);
+        hash(
+            b"Fern group lock authorization\0",
+            network_id,
+            &[
+                self.id(network_id).as_slice(),
+                &[ScriptGroupKind::Lock as u8],
+                lock.calc_script_hash().as_slice(),
+                &proof_root,
+            ],
+        )
     }
+
+    pub fn with_witnesses(&self, witnesses: Vec<GroupWitness>) -> Result<Self> {
+        check_witness_bytes(&witnesses, self.encoded.raw().as_slice().len())?;
+        let witnesses = wire::GroupWitnessVec::new_builder()
+            .set(witnesses.iter().map(GroupWitness::encode).collect())
+            .build();
+        Self::from_entity(
+            self.encoded
+                .clone()
+                .as_builder()
+                .witnesses(witnesses)
+                .build(),
+        )
+    }
+}
+
+fn check_witness_bytes(witnesses: &[GroupWitness], base: usize) -> Result<()> {
+    ensure!(
+        witnesses.len() <= MAX_SCRIPT_GROUPS,
+        "too many Group Witness entries"
+    );
+    let size = witnesses
+        .iter()
+        .try_fold(base, |size, witness| size.checked_add(witness.bytes()?))
+        .context("Transaction size overflow")?;
+    ensure!(
+        size <= MAX_TRANSACTION_BYTES,
+        "Transaction exceeds byte limit"
+    );
+    Ok(())
 }
 
 fn check_count(
@@ -524,7 +709,6 @@ fn check_count(
             && witnesses <= MAX_CELL_REFERENCES,
         "Transaction exceeds reference count limit"
     );
-    ensure!(inputs != 0, "ordinary Transaction requires an input");
     Ok(())
 }
 
@@ -558,57 +742,7 @@ pub struct ScriptGroup {
 #[derive(Clone, Debug)]
 pub struct LiveCell {
     pub cell: Cell,
-    pub origin: HeaderView,
-}
-
-#[derive(Clone, Copy)]
-pub struct BlockContext<'a> {
-    pub candidate: &'a HeaderView,
-    pub parent_median_time: u64,
-}
-
-impl BlockContext<'_> {
-    fn verify_since(&self, since: u64, origin: &HeaderView) -> Result<()> {
-        const RELATIVE: u64 = 1 << 63;
-        const METRIC: u64 = 0b11 << 61;
-        const RESERVED: u64 = 0x1f << 56;
-        const VALUE: u64 = (1 << 56) - 1;
-
-        ensure!((since & RESERVED) == 0, "invalid Since flags");
-        let relative = (since & RELATIVE) != 0;
-        let value = since & VALUE;
-        let mature = match (since & METRIC) >> 61 {
-            0 => {
-                let base = if relative { origin.number() } else { 0 };
-                self.candidate.number()
-                    >= base.checked_add(value).context("Since height overflow")?
-            }
-            1 => {
-                let increment = EpochNumberWithFraction::from_full_value_unchecked(value);
-                ensure!(
-                    increment.is_well_formed_increment(),
-                    "invalid Since epoch fraction"
-                );
-                let required = increment.normalize().to_rational();
-                let required = if relative {
-                    origin.epoch().to_rational() + required
-                } else {
-                    required
-                };
-                self.candidate.epoch().to_rational() >= required
-            }
-            2 => {
-                let base = if relative { origin.timestamp() } else { 0 };
-                let delay = value
-                    .checked_mul(1000)
-                    .context("Since milliseconds overflow")?;
-                self.parent_median_time >= base.checked_add(delay).context("Since time overflow")?
-            }
-            _ => bail!("invalid Since metric"),
-        };
-        ensure!(mature, "input Since lock is immature");
-        Ok(())
-    }
+    pub origin: Origin,
 }
 
 #[derive(Clone, Debug)]
@@ -618,13 +752,16 @@ pub struct ResolvedTransaction {
     inputs: Vec<LiveCell>,
     outputs: Vec<Cell>,
     cell_deps: Vec<LiveCell>,
-    headers: Vec<HeaderView>,
-    headers_by_hash: HashMap<Byte32, usize>,
+    headers: Vec<Header>,
+    headers_by_origin: HashMap<Byte32, usize>,
     cache_key: OnceLock<Byte32>,
     groups: Vec<ScriptGroup>,
     programs_by_data: HashMap<Byte32, usize>,
     programs_by_type: HashMap<Byte32, CodeMatch>,
     fee: u64,
+    capacity: CapacityPolicy,
+    resolved_cell_bytes: usize,
+    cell_reads: usize,
 }
 
 impl ResolvedTransaction {
@@ -635,33 +772,41 @@ impl ResolvedTransaction {
         transaction: Transaction,
         block: BlockContext<'_>,
         mut live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
-        mut committed_header: impl FnMut(&Byte32) -> Result<HeaderView>,
+        mut committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
         ensure!(
             network_id != Byte32::default(),
             "zero Fern network identity"
         );
+        ensure!(
+            transaction.operation().is_none(),
+            "protocol transaction requires its authenticated execution path"
+        );
+        ensure!(
+            transaction
+                .valid_before_height()
+                .is_none_or(|height| block.candidate.height < height),
+            "Transaction has expired"
+        );
         let mut budget = ResolutionBudget::default();
         let mut headers = Vec::new();
-        let mut headers_by_hash = HashMap::new();
+        let mut headers_by_origin = HashMap::new();
         for hash in transaction.header_deps() {
             let header = committed_header(&hash)?;
             ensure!(
-                header.hash() == hash
-                    && header.data().calc_header_hash() == hash
-                    && header.number() < block.candidate.number(),
+                header.id(&network_id) == hash && header.context.height < block.candidate.height,
                 "header dependency is not a committed ancestor"
             );
-            headers_by_hash.insert(hash, headers.len());
+            headers_by_origin.insert(header.context.id(&network_id), headers.len());
             headers.push(header);
         }
         let mut consumed = HashSet::new();
         let mut inputs = Vec::new();
         for input in transaction.inputs() {
-            let point = input.previous_output();
+            let point = input.previous_output;
             consumed.insert(point.clone());
             let record = budget.load(&point, &mut live_cell)?;
-            block.verify_since(input.since().unpack(), &record.origin)?;
+            block.verify_since(input.since, &record.origin)?;
             inputs.push(record);
         }
         let mut loaded_deps = HashSet::new();
@@ -698,6 +843,9 @@ impl ResolvedTransaction {
             }
         }
         let outputs: Vec<_> = transaction.outputs().collect();
+        for cell in &outputs {
+            block.capacity.verify(cell)?;
+        }
         let fee = sum_capacity(inputs.iter().map(|input| &input.cell))?
             .checked_sub(sum_capacity(outputs.iter())?)
             .context("outputs exceed input capacity")?;
@@ -720,6 +868,13 @@ impl ResolvedTransaction {
                     .push(index);
             }
         }
+        ensure!(groups.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
+        ensure!(
+            transaction
+                .witnesses()
+                .all(|witness| usize::from(witness.group_index) < groups.len()),
+            "Group Witness refers to an absent Script Group"
+        );
         let mut programs_by_data = HashMap::new();
         let mut programs_by_type = HashMap::new();
         for (index, cell) in cell_deps.iter().enumerate() {
@@ -747,12 +902,15 @@ impl ResolvedTransaction {
             outputs,
             cell_deps,
             headers,
-            headers_by_hash,
+            headers_by_origin,
             cache_key: OnceLock::new(),
             fee,
             groups: groups.into_values().collect(),
             programs_by_data,
             programs_by_type,
+            capacity: block.capacity,
+            resolved_cell_bytes: budget.bytes,
+            cell_reads: budget.references,
         })
     }
 
@@ -771,12 +929,12 @@ impl ResolvedTransaction {
     pub fn cell_deps(&self) -> &[LiveCell] {
         &self.cell_deps
     }
-    pub fn header(&self, index: usize) -> Option<&HeaderView> {
+    pub fn header(&self, index: usize) -> Option<&Header> {
         self.headers.get(index)
     }
 
-    pub fn header_by_hash(&self, hash: &Byte32) -> Option<&HeaderView> {
-        self.header(*self.headers_by_hash.get(hash)?)
+    pub fn header_by_origin(&self, hash: &Byte32) -> Option<&Header> {
+        self.header(*self.headers_by_origin.get(hash)?)
     }
 
     /// All VM-visible data and the full witnessed transaction, in resolution order.
@@ -786,15 +944,17 @@ impl ResolvedTransaction {
             let mut hash = new_blake2b();
             hash.update(b"Fern VM execution context\0");
             hash.update(self.network_id.as_slice());
+            hash.update(&self.capacity.bond_per_byte.to_le_bytes());
+            hash.update(&self.capacity.state_overhead.to_le_bytes());
             hash.update(self.transaction.commitment(&self.network_id).as_slice());
             for header in &self.headers {
-                hash.update(header.data().as_slice());
+                hash.update(&header.encode());
             }
             for cells in [&self.inputs, &self.cell_deps] {
                 hash.update(&(cells.len() as u64).to_le_bytes());
                 for live in cells {
                     hash.update(live.cell.hashes().content.as_slice());
-                    hash.update(live.origin.hash().as_slice());
+                    hash.update(&live.origin.encode());
                 }
             }
             let mut digest = [0; 32];
@@ -808,6 +968,18 @@ impl ResolvedTransaction {
     }
     pub fn fee(&self) -> u64 {
         self.fee
+    }
+
+    pub fn capacity_policy(&self) -> CapacityPolicy {
+        self.capacity
+    }
+
+    pub fn resolved_cell_bytes(&self) -> usize {
+        self.resolved_cell_bytes
+    }
+
+    pub fn cell_reads(&self) -> usize {
+        self.cell_reads
     }
 
     pub fn program_index(&self, script: &Script) -> Result<usize> {
@@ -885,14 +1057,14 @@ impl ResolutionBudget {
 
 #[cfg(test)]
 mod tests {
-    use ckb_types::core::HeaderBuilder;
+    use crate::block::{HeaderContext, StateCommitment};
 
     use super::*;
 
     fn script(key: u8) -> Script {
         Script::new_builder()
             .code_hash([key; 32])
-            .hash_type(ScriptHashType::Data2)
+            .hash_type(ScriptHashType::Data)
             .args(Bytes::from_static(b"args"))
             .build()
     }
@@ -910,7 +1082,16 @@ mod tests {
             cell.type_scripts().collect::<Vec<_>>(),
             vec![script(1), script(2)]
         );
-        assert!(Cell::new(capacity - 1, lock.clone(), types, data.clone()).is_err());
+        let underfunded = Cell::new(capacity - 1, lock.clone(), types, data.clone())?;
+        assert!(CapacityPolicy::default().verify(&underfunded).is_err());
+        assert!(
+            CapacityPolicy {
+                bond_per_byte: 1_000_000,
+                state_overhead: 80
+            }
+            .verify(&underfunded)
+            .is_ok()
+        );
         assert!(Cell::new(capacity, lock.clone(), vec![script(1), script(1)], data).is_err());
 
         let switched = wire::ScriptVec::new_builder()
@@ -926,16 +1107,6 @@ mod tests {
         assert!(Cell::from_slice(invalid.as_slice()).is_err());
         assert!(Cell::from_slice(&[cell.as_slice(), &[0]].concat()).is_err());
 
-        let alternative = Cell::new(capacity, lock, vec![script(3)], Bytes::new())?;
-        let point = OutPoint::new([1; 32].pack(), 0);
-        assert_ne!(
-            cell.commitment(&[1; 32].pack(), &point),
-            alternative.commitment(&[1; 32].pack(), &point)
-        );
-        assert_ne!(
-            cell.commitment(&[1; 32].pack(), &point),
-            cell.commitment(&[2; 32].pack(), &point)
-        );
         let ckb = ckb_types::packed::Transaction::default();
         assert!(Transaction::from_slice(ckb.as_slice()).is_err());
         Ok(())
@@ -955,24 +1126,51 @@ mod tests {
         let tx = Transaction::new(
             vec![],
             vec![],
-            vec![CellInput::new(point.clone(), 0)],
+            vec![CellInput::new(point.clone(), None)],
             vec![cell.clone()],
-            vec![Bytes::from_static(b"witness")],
+            vec![GroupWitness {
+                group_index: 0,
+                proof_data: Bytes::new(),
+                seal: Bytes::from_static(b"witness"),
+            }],
         )?;
-        let raw = tx.with_witnesses(vec![Bytes::from_static(b"forged")])?;
-        let second = OutPoint::new([2; 32].pack(), 0);
-        let third = OutPoint::new([3; 32].pack(), 0);
-        let cells = proof::Tree::live_cells(
-            network.clone(),
-            [
-                (&second, &missing_type),
-                (&point, &cell),
-                (&third, &missing_type),
-            ],
-        )?;
-        let proof = cells.prove(0)?;
-        assert!(proof.verify_live_cell(&network, &cells.root(), &point, &cell));
-        assert!(!proof.verify_live_cell(&network, &cells.root(), &point, &missing_type));
+        let raw = tx.with_witnesses(vec![GroupWitness {
+            group_index: 0,
+            proof_data: Bytes::new(),
+            seal: Bytes::from_static(b"forged"),
+        }])?;
+        let origin = Origin {
+            height: 7,
+            timestamp_ms: 11,
+            context_id: [8; 32].pack(),
+        };
+        let record = LiveCell {
+            cell,
+            origin: origin.clone(),
+        };
+        let tree = patricia::Patricia::new(network.clone(), patricia::Namespace::Cells);
+        let key = record::cell_key(&tree, &point);
+        let mut edit = tree.edit(tree.empty_root(), |_| Ok(None));
+        edit.set(key, Some(record::cell_value(&tree, &point, &record)))?;
+        let (_, proof) = edit.prove(&key)?;
+        assert!(record::verify_cell(
+            &tree,
+            &edit.root(),
+            &point,
+            Some(&record),
+            &proof
+        ));
+        let tampered = LiveCell {
+            cell: missing_type,
+            origin,
+        };
+        assert!(!record::verify_cell(
+            &tree,
+            &edit.root(),
+            &point,
+            Some(&tampered),
+            &proof
+        ));
         let transactions = proof::Tree::transactions(network.clone(), &[raw.clone(), tx.clone()])?;
         let proof = transactions.prove(1)?;
         assert!(proof.verify_transaction(&network, &transactions.root(), &tx));
@@ -988,21 +1186,35 @@ mod tests {
         let capacity = 100_000_000_000;
         let cell = Cell::new(capacity, script.clone(), vec![script.clone()], Bytes::new())?;
         let output = Cell::new(capacity, script.clone(), Vec::new(), Bytes::new())?;
-        let origin = HeaderBuilder::default()
-            .number(10u64)
-            .epoch(EpochNumberWithFraction::new(1, 0, 10))
-            .build();
-        let candidate = HeaderBuilder::default()
-            .number(12u64)
-            .epoch(EpochNumberWithFraction::new(1, 2, 10))
-            .build();
         let point = OutPoint::new([1; 32].pack(), 0);
         let network = [7; 32].pack();
+        let origin = Header {
+            context: HeaderContext {
+                height: 10,
+                timestamp_ms: 123,
+                parent: Byte32::default(),
+                transaction_root: Byte32::default(),
+            },
+            state: StateCommitment {
+                cell_root: Byte32::default(),
+                system_root: Byte32::default(),
+                history_root: Byte32::default(),
+            },
+            receipt_root: Byte32::default(),
+        };
+        let candidate = HeaderContext {
+            height: 12,
+            timestamp_ms: 124,
+            ..origin.context.clone()
+        };
         let resolve = |increment| {
             let tx = Transaction::new(
                 Vec::new(),
-                vec![origin.hash()],
-                vec![CellInput::new(point.clone(), (1u64 << 63) | increment)],
+                vec![origin.id(&network)],
+                vec![CellInput::new(
+                    point.clone(),
+                    Some(Since::RelativeBlocks(increment)),
+                )],
                 vec![output.clone()],
                 Vec::new(),
             )?;
@@ -1011,12 +1223,13 @@ mod tests {
                 tx,
                 BlockContext {
                     candidate: &candidate,
-                    parent_median_time: 0,
+                    parent_timestamp_ms: 0,
+                    capacity: Default::default(),
                 },
                 |_| {
                     Ok(LiveCell {
                         cell: cell.clone(),
-                        origin: origin.clone(),
+                        origin: Origin::new(&network, &origin.context),
                     })
                 },
                 |_| Ok(origin.clone()),

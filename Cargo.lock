@@ -1425,6 +1425,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "fern-bridge-wire",
+ "fern-ledger",
  "fern-stake",
  "hex",
  "jsonrpc-core",
@@ -1452,6 +1453,8 @@ dependencies = [
  "anyhow",
  "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
  "ckb-types",
+ "ed25519-dalek",
+ "fern-stake",
  "molecule",
  "molecule-codegen",
 ]

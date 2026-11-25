@@ -4,19 +4,22 @@ use anyhow::{Context, Result, ensure};
 use ckb_crypto::secp::Privkey;
 use ckb_hash::blake2b_256;
 use ckb_script::fern::{VerificationCache, verify};
-use ckb_system_scripts::BUNDLED_CELL;
 use ckb_types::{
     bytes::Bytes,
-    core::{EpochNumberWithFraction, HeaderBuilder, ScriptHashType},
-    packed::{Byte32, CellDep, CellInput, OutPoint, Script, WitnessArgs},
+    core::ScriptHashType,
+    packed::{Byte32, CellDep, OutPoint, Script},
     prelude::*,
 };
 use fern_ledger::{
-    BlockContext, Cell, LiveCell, ResolvedTransaction, ScriptGroupKind, Transaction,
+    BlockContext, Cell, CellInput, GroupWitness, LiveCell, Origin, ResolvedTransaction,
+    ScriptGroupKind, Transaction, block::HeaderContext,
 };
 
+#[path = "../../../contracts/test_support.rs"]
+mod contract;
+
 const CAPACITY: u64 = 100_000_000_000;
-const CYCLE_LIMIT: u64 = 10_000_000;
+const CYCLE_LIMIT: u64 = 100_000_000;
 
 struct Network {
     id: Byte32,
@@ -29,8 +32,7 @@ struct Network {
 impl Network {
     fn new() -> Result<Self> {
         let key = Privkey::from_slice(&[42; 32]);
-        let code = BUNDLED_CELL.get("specs/cells/secp256k1_blake160_sighash_all")?;
-        let data = BUNDLED_CELL.get("specs/cells/secp256k1_data")?;
+        let code = contract::native_lock(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))?;
         let key_hash = blake2b_256(key.pubkey()?.serialize());
         let lock = script(&code, &key_hash[..20]);
         let mut network = Self {
@@ -40,8 +42,7 @@ impl Network {
             cells: HashMap::new(),
             deps: Vec::new(),
         };
-        network.add_dep(Bytes::copy_from_slice(&code))?;
-        network.add_dep(Bytes::copy_from_slice(&data))?;
+        network.add_dep(code)?;
         Ok(network)
     }
 
@@ -58,7 +59,7 @@ impl Network {
     fn add_input(&mut self, cell: Cell) -> CellInput {
         let point = OutPoint::new([3; 32].pack(), self.cells.len() as u32);
         self.cells.insert(point.clone(), cell);
-        CellInput::new(point, 0)
+        CellInput::new(point, None)
     }
 
     fn output(&self, types: Vec<Script>, data: impl Into<Bytes>) -> Result<Cell> {
@@ -72,38 +73,37 @@ impl Network {
     }
 
     fn signed(&self, inputs: Vec<CellInput>, outputs: Vec<Cell>) -> Result<Transaction> {
-        let count = inputs.len();
         let tx = Transaction::new(self.deps.clone(), vec![], inputs, outputs, vec![])?;
-        let blank = WitnessArgs::new_builder()
-            .lock(Some(Bytes::from(vec![0; 65])).pack())
-            .build();
-        let mut witnesses = vec![Bytes::new(); count];
-        witnesses[0] = blank.as_bytes();
-        let tx = tx.with_witnesses(witnesses.clone())?;
-        let digest = tx.lock_digest(&self.id, &(0..count).collect::<Vec<_>>(), blank.as_slice())?;
+        let digest = tx.lock_digest(&self.id, &self.lock);
         let sig = self.key.sign_recoverable(&digest.unpack())?;
-        witnesses[0] = blank
-            .as_builder()
-            .lock(Some(Bytes::from(sig.serialize())).pack())
-            .build()
-            .as_bytes();
-        tx.with_witnesses(witnesses)
+        tx.with_witnesses(vec![GroupWitness {
+            group_index: 0,
+            proof_data: Bytes::new(),
+            seal: Bytes::from(sig.serialize()),
+        }])
     }
 
     fn resolve(&self, id: &Byte32, tx: Transaction) -> Result<Arc<ResolvedTransaction>> {
-        let origin = HeaderBuilder::default()
-            .epoch(EpochNumberWithFraction::new(0, 0, 100))
-            .build();
-        let candidate = HeaderBuilder::default()
-            .number(1u64)
-            .epoch(EpochNumberWithFraction::new(0, 1, 100))
-            .build();
+        let candidate = HeaderContext {
+            height: 1,
+            timestamp_ms: 0,
+            parent: Byte32::default(),
+            transaction_root: Byte32::default(),
+        };
+        let origin = Origin::new(
+            id,
+            &HeaderContext {
+                height: 0,
+                ..candidate.clone()
+            },
+        );
         let tx = ResolvedTransaction::resolve(
             id.clone(),
             tx,
             BlockContext {
                 candidate: &candidate,
-                parent_median_time: 0,
+                parent_timestamp_ms: 0,
+                capacity: Default::default(),
             },
             |point| {
                 let cell = self
@@ -116,10 +116,7 @@ impl Network {
                     origin: origin.clone(),
                 })
             },
-            |hash| {
-                ensure!(*hash == origin.hash(), "unknown test header");
-                Ok(origin.clone())
-            },
+            |_| anyhow::bail!("unknown test header"),
         )?;
         Ok(Arc::new(tx))
     }
@@ -128,7 +125,7 @@ impl Network {
 fn script(code: &[u8], args: &[u8]) -> Script {
     Script::new_builder()
         .code_hash(blake2b_256(code))
-        .hash_type(ScriptHashType::Data2)
+        .hash_type(ScriptHashType::Data)
         .args(Bytes::copy_from_slice(args))
         .build()
 }
@@ -139,7 +136,7 @@ fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/type_rules.c");
     let compiler = std::env::var_os("FERN_RISCV_CC").unwrap_or_else(|| "clang".into());
     let mut programs = Vec::new();
-    for rule in 1..=9 {
+    for rule in 1..=10 {
         let path = tmp.path().join(format!("rule-{rule}"));
         let output = Command::new(&compiler)
             .args([
@@ -285,7 +282,7 @@ fn identity_lifecycle_and_single_type_asset_are_executed() -> Result<()> {
     println!("single asset Type Script Group: {cycles} cycles");
 
     let funding = network.add_input(network.output(vec![], Bytes::new())?);
-    let identity = script(&binaries[3], funding.as_slice());
+    let identity = script(&binaries[3], funding.previous_output.as_slice());
     let lifecycle = script(&binaries[4], b"");
     let types = vec![lifecycle.clone(), identity.clone()];
     let create = network.signed(
@@ -293,7 +290,7 @@ fn identity_lifecycle_and_single_type_asset_are_executed() -> Result<()> {
         vec![network.output(types.clone(), vec![0])?],
     )?;
     verify(network.resolve(&network.id, create)?, CYCLE_LIMIT, false)?;
-    let wrong = script(&binaries[3], &[0; 44]);
+    let wrong = script(&binaries[3], &[0; 36]);
     let forge = network.signed(
         vec![funding],
         vec![network.output(vec![wrong, lifecycle], vec![0])?],
@@ -315,8 +312,8 @@ fn identity_lifecycle_and_single_type_asset_are_executed() -> Result<()> {
 fn spawn_and_exec_read_the_same_native_script_group() -> Result<()> {
     let mut network = Network::new()?;
     let binaries = build_contracts(&mut network)?;
-    // The first two dependencies are secp256k1 code and data.
-    let child_index = 9u32.to_le_bytes();
+    // The first dependency is the native secp256k1 Lock Script.
+    let child_index = 8u32.to_le_bytes();
     for rule in [7, 9] {
         let type_script = script(&binaries[rule - 1], &child_index);
         let cell = network.output(vec![type_script], Bytes::new())?;
@@ -324,5 +321,74 @@ fn spawn_and_exec_read_the_same_native_script_group() -> Result<()> {
         let tx = network.signed(vec![input], vec![cell])?;
         verify(network.resolve(&network.id, tx)?, CYCLE_LIMIT, true)?;
     }
+    Ok(())
+}
+
+#[test]
+fn native_witness_proofs_and_seals_are_bound_to_the_resolved_groups() -> Result<()> {
+    let mut network = Network::new()?;
+    let binaries = build_contracts(&mut network)?;
+    let proof_script = script(&binaries[9], b"");
+    let cell = network.output(vec![proof_script], Bytes::new())?;
+    let input = network.add_input(cell.clone());
+    let proof = GroupWitness {
+        group_index: 1,
+        proof_data: Bytes::copy_from_slice(&42u32.to_le_bytes()),
+        seal: Bytes::new(),
+    };
+    let tx = Transaction::new(
+        network.deps.clone(),
+        vec![],
+        vec![input],
+        vec![cell],
+        vec![proof.clone()],
+    )?;
+    let digest = tx.lock_digest(&network.id, &network.lock);
+    let seal = GroupWitness {
+        group_index: 0,
+        proof_data: Bytes::new(),
+        seal: Bytes::from(network.key.sign_recoverable(&digest.unpack())?.serialize()),
+    };
+    let signed = tx.with_witnesses(vec![seal.clone(), proof.clone()])?;
+    verify(
+        network.resolve(&network.id, signed.clone())?,
+        CYCLE_LIMIT,
+        true,
+    )?;
+    assert!(
+        signed
+            .with_witnesses(vec![proof.clone(), seal.clone()])
+            .is_err()
+    );
+    assert!(
+        signed
+            .with_witnesses(vec![seal.clone(), seal.clone()])
+            .is_err()
+    );
+    assert!(
+        signed
+            .with_witnesses(vec![GroupWitness {
+                group_index: 0,
+                proof_data: Bytes::new(),
+                seal: Bytes::new()
+            }])
+            .is_err()
+    );
+    let absent = signed.with_witnesses(vec![
+        seal.clone(),
+        GroupWitness {
+            group_index: 2,
+            ..proof.clone()
+        },
+    ])?;
+    assert!(network.resolve(&network.id, absent).is_err());
+    let tampered = signed.with_witnesses(vec![
+        seal,
+        GroupWitness {
+            proof_data: Bytes::copy_from_slice(&41u32.to_le_bytes()),
+            ..proof
+        },
+    ])?;
+    assert!(verify(network.resolve(&network.id, tampered)?, CYCLE_LIMIT, false).is_err());
     Ok(())
 }

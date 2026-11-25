@@ -11,6 +11,10 @@ anyhow.workspace = true
 ckb-hash.workspace = true
 ckb-types.workspace = true
 molecule.workspace = true
+fern-stake = { path = "../stake" }
 
 [build-dependencies]
 molecule-codegen = "=0.9.2"
+
+[dev-dependencies]
+ed25519-dalek.workspace = true

@@ -795,3 +795,13 @@ mod tests {
         }
     }
 }
+
+impl fern::socket::Handler for App {
+    fn dispatch(&self, request: request::Value) -> response::Value {
+        App::dispatch(self, request)
+    }
+
+    fn record_abci_flush(&self, received: Instant) {
+        App::record_abci_flush(self, received);
+    }
+}

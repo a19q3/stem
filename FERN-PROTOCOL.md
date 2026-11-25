@@ -35,25 +35,26 @@ struct Script {
 
 使用 Molecule 实现。Type Script 集合按完整规范编码做字节序排序。解码拒绝乱序、重复及超限编码，排序位置仅用于读取。代码标识、寻址方式、参数、所有 Type Script 和 Cell Data 都在输出原始字节中，资产身份因此独立于同一个 Cell 的抵押、监管或结算脚本。Cell 是消费和创建的原子单位。
 
-交易使用一张 schema。原始部分含 Cell Inputs（OutPoint 与可选 Fern Since）、完整输出 Cells、Cell Deps、Header Deps、可选的截止高度、按 Script Group 寻址的应用消息，以及可选的协议操作。Witness 区域承载按组寻址的验证材料与签名，并为协议操作保留证书字段。普通交易至少消费一个可用 Cell。Bridge Mint 和 Stake Snapshot 是唯一预定义的协议操作，使用同一套编码、哈希和提案路径。操作类型与公共参数进入原始交易，证书进入 Witness。快照操作的输入及输出必须为空。Bridge Mint 的所有实际输入与输出仍由常规脚本规则验证。
+交易使用一张 schema。原始部分含 Cell Inputs（OutPoint 与可选 Fern Since）、完整输出 Cells、Cell Deps、Header Deps、可选的截止高度、按 Script Group 寻址的应用消息，以及可选的协议操作。Witness 区域承载按组寻址的验证材料与签名，并为协议操作保留证书字段。普通交易至少消费一个可用 Cell。Bridge Mint、Stake Snapshot 和 Bridge Settlement 使用同一套编码、哈希和提案路径。原始交易中只允许一个操作，证书位于独立的 Witness 字段。Bridge Mint 的所有实际输入与输出仍由常规脚本规则验证。Stake Snapshot 和 Bridge Settlement 是控制交易，Cell 输入输出、Cell Deps、Header Deps 与普通 Witness 均为空。Bridge Settlement 的两种声明分别为已兑付提款核销和同一 L1 交易中的双金库储备调拨。
 
 ```text
 tx_id      = H("Fern transaction ID", network_id, canonical_raw_tx)
-tx_commit  = H("Fern witnessed transaction", network_id, canonical_full_tx)
-cell_leaf  = H("Fern Live Cell leaf", network_id, cell_key, out_point, canonical_live_cell_record)
+tx_commit  = H("Fern transaction commitment", network_id, canonical_full_tx)
+cell_leaf  = PatriciaLeaf(network_id, cell_key, live_cell_record)
 ```
 
-各域标识采用固定字节串。变长字段经 Molecule 或显式长度前缀编码。普通 OutPoint 是 `(tx_id, output_index)`。Genesis 分配使用单独的创世承诺和确定性编号，主网资金来自认证存款，测试 genesis 可显式配置测试配额，测试配额只能存在于关闭真实 L1 兑付的独立网络。
+各域标识采用固定字节串并以零字节结尾。变长字段经 Molecule 或显式长度前缀编码。普通 OutPoint 是 `(tx_id, output_index)`。Genesis 分配使用单独的创世承诺和确定性编号，主网资金来自认证存款，测试 genesis 可显式配置测试配额，测试配额只能存在于关闭真实 L1 兑付的独立网络。
 
 ### Witness、CoBuild 与 OTX
 
 ```text
 ScriptGroupId  = (role, script_hash)
-GroupMessage   = (group_id, ordered_actions)
-GroupWitness   = (group_id, proof_data, seal)
+GroupWitness   = (group_index: u16, proof_data, seal)
 ```
 
-原始交易最多为每个 Script Group 编码一个消息条目，条目可含多条 Action。每个 Witness 条目同样以角色和完整 Script 哈希唯一寻址，并按该键排序。条目只能指向实际推导的组。同一角色出现相同哈希但不同规范 Script 字节时，拒绝交易。无消息的交易依然执行全部组。完整交易签名绑定网络、组身份、原始交易哈希、解析后的依赖承诺和所有非签名见证材料。所有 seal 统一留空再计算签名摘要，签名加入后由全交易承诺覆盖。不同锁仍可定义自己的验签逻辑。
+组编号按角色和完整规范 Script 字节排序，从零开始。每组最多一个 Witness，条目严格递增。解析器拒绝重复、乱序、空条目以及指向未推导组的编号。无 Witness 需求的组省略条目，内核继续执行该组。应用操作消息与多方签署使用独立的 CoBuild 标准，普通支付无 Action 负载。
+
+标准锁的签名摘要绑定网络、Lock 角色、完整 Script 哈希、原始交易 ID 和所有非空 `proof_data` 的有序承诺。签名材料由完整交易承诺覆盖，独立签名人可分别填入各组的 seal。输入和依赖由原始交易中的 OutPoint 绑定。其他 Lock 可以定义自己的验签逻辑。
 
 CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。OTX 留作独立 Lock 与 SDK 签名标准，双方最终构造同一种 Fern 交易。OTX 的签名范围必须锁定可用输入、受保护输出、Action、依赖、费用限额和有效高度。结算脚本必须为每个承诺分配唯一的交付权益，避免同一输出重复满足多个订单。首轮共识接入使用完整交易签名，OTX 激活取决于独立签名与结算规范。 [CKB Transaction Co-Build 参考实现](https://github.com/cryptape/ckb-transaction-cobuild-poc)
 
@@ -89,7 +90,7 @@ enum Since {
 }
 ```
 
-以上四种值使用同一 Molecule 规范联合类型，时间值均为 Unix 毫秒或以毫秒表示的时长。每个输入可省略 Since。相对零块或零毫秒用省略表示，显式的相对零编码拒绝。Fern 不编码 epoch 分数锁。SDK 用固定的 `1 + epoch * blocks_per_epoch` 把 epoch 边界换算成高度，乘法和加法检查溢出。CKB L1 相对 `since` 仍按 L1 自有语义验证。 [CKB RFC 0017](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0017-tx-valid-since/0017-tx-valid-since.md)
+以上四种值使用同一 9 字节 Molecule 结构（1 字节标记和 8 字节小端数值），时间值均为 Unix 毫秒或以毫秒表示的时长。每个输入可省略 Since。相对零块或零毫秒用省略表示，显式的相对零编码拒绝。Fern 不编码 epoch 分数锁。SDK 用固定的 `1 + epoch * blocks_per_epoch` 把 epoch 边界换算成高度，乘法和加法检查溢出。CKB L1 相对 `since` 仍按 L1 自有语义验证。 [CKB RFC 0017](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0017-tx-valid-since/0017-tx-valid-since.md)
 
 令 `H` 为候选块高度，`T` 为前一已提交 Header 的共识时间。首个候选块使用 `T = genesis_time_ms`。创世 Cell 的创建高度为 0、创建时间为 genesis 时间，并随其创建上下文 ID 一起认证。
 
@@ -127,6 +128,8 @@ fee_required   = p_b × B + p_c × C + p_r × R + p_w × W
 | `W` | 规范状态差分字节，包含键及新记录或删除标记，涵盖相应的协议状态变化 |
 
 逻辑读写量按交易解析后的规范记录与状态差分计量。VM 重复读取已解析的记录时，相应执行开销计入 cycles。本地 RocksDB、树节点压缩与磁盘写入作为观测指标。费率和各独立资源限额由网络配置固定，所有计算使用 checked 整数。接受交易需满足 `fee_paid >= fee_required`，并同时通过所有独立预算。完整交易签名覆盖输入、输出及 Witness 材料，固定实际付费差额。代付方用同一交易的 Capacity 输入承担费用，并在签名前校验差额和自己的授权上限。
+
+**控制交易费用。** 合法的 Stake Snapshot 和 Bridge Settlement 支付零 Capacity，豁免普通费用公式。控制交易必须使用固定操作形状和超过三分之二的已固定签名人权重。每类操作独立限制每块操作数、规范交易字节、签名数及相应的状态读取与写入规模。协议先检查并占用自己的预算，再做签名验证。读取的 Registry 另有记录数量上限。两类控制交易的预算不互相借用，其字节亦计入整个区块的字节上限。普通交易无法使用豁免。Bridge Mint 继续按输入与认证入账增量核算容量。候选区块重复验证使用各自重新计算的预算。
 
 ### 零发行与手续费负债
 
@@ -172,7 +175,7 @@ CKB L1 Registry 用 Type ID 保证唯一性。Stake Cell 绑定 Registry、验�
 
 ### 快照窗口与 H+2
 
-快照承诺 Fern 网络、CKB genesis、CKB 锚点高度与哈希、Registry 身份及序号、完整 Registry 状态、前一已接受 Fern 快照及 L1 锚点、目标 epoch、guardian 代次，以及签署窗口的 Fern 锚点。观察者从可信 CKB 全节点验证 UTXO、质押容量、确认深度和链历史，持久化签过的 L1 锚点。Fern 共识依据已提交字节与签名验证快照。独立的快照签名域要求超过三分之二已授权 guardian 权重。
+快照承诺 Fern 网络、CKB genesis、CKB 锚点高度与哈希、Registry 身份及序号、完整 Registry 状态、前一已接受 Fern 快照及 L1 锚点、目标 epoch、guardian 代次，以及签署窗口的 Fern 锚点。 原生控制交易将目标 epoch、签署锚点 Header ID 与证书正文承诺写入原始交易。正文包含规范快照及整个 Registry。签名绑定网络和原始声明。快照正文的字节布局为两字节小端快照长度、规范快照、完整 Registry。通过验证后才允许替换候选覆盖层中的已接受快照。观察者从可信 CKB 全节点验证 UTXO、质押容量、确认深度和链历史，持久化签过的 L1 锚点。Fern 共识依据已提交字节与签名验证快照。独立的快照签名域要求超过三分之二已授权 guardian 权重。
 
 令 epoch 生效高度为 `A(e) = 1 + e × blocks_per_epoch`。对非 genesis epoch，网络固定整数 `W`，满足 `3 ≤ W < blocks_per_epoch`。签署锚点为已最终确定的 `A(e)−W−1` 区块。只能从下一块开始签发与提交，到 `A(e)−2` 截止，过期证书不得转用于其他 epoch。每个 epoch 最多接受一个快照。Registry 序号不可倒退，同序号只能对应相同承诺。后续快照必须延续前一已认证 L1 锚点。深重组跨过该锚点时停签新授权，并重新核验仍受锁定的质押和桥负债。已确定的 Fern 历史继续有效。
 
@@ -204,9 +207,23 @@ L1 验证真实 CometBFT canonical vote sign bytes。两票需对应同一 chain
 - **L1 兑付。** 金库保管人核对 Fern 最终性、执行结果及票据，合约约束通道的 nonce、实际收款输出与金额。金库轮换保持票据与资金可兑付。一个通道出现异常时停止该通道的新申请，并保留其队首票据及完整负债。其他通道继续处理各自的 nonce。
 - **对账。** 对 CKB 及各 UDT 分别维持 `可兑付 L1 储备 ≥ Fern 流通负债 + 未付的已提交提款 + 应付手续费`。此外，每个通道预留的 CKB Capacity 和 UDT 数量必须足以兑现该通道的待付款。申请把流通负债转成待付款，在同一提交中预留通道余额。经认证的 L1 兑付同步减记储备、待付款与预留。占用的金库底仓、外部交易费和质押资金分别计量。同一笔 CKB 不得计入多个通道可兑付余额。
 
+**认证 L1 核销和调拨。** Bridge Settlement 使用独立签名域。认证方须核验指定 L1 genesis、金库 Type ID、实际确认的交易、相关金库输入和输出、余额变化，以及本次确认锚沿已认证锚延伸。签名绑定网络、认证方代次、前后 L1 锚点和操作所有字段。它承诺完整的 Fern 提款票据标识，认证方比对 L1 收款输出、资产和金额。Fern 共识只读取已提交的签名人、L1 锚点、金库 OutPoint 及相关票据。
+
+- **已兑付提款核销。** 声明携带通道、当前 nonce、原票据标识及金库继任 OutPoint。必须匹配队首的已确认票据与先前金库输入。一次提交消耗待付款，推进 nonce，并按票据数值减记 L1 储备和预留余额。此动作不创建 Fern Capacity。
+- **储备调拨。** 声明携带源通道、目标通道、确定的 CKB Capacity，以及两个金库前后 OutPoint。两个金库在同一笔已确认的 L1 交易里被替换。源额扣减和目标额增加等量原子完成，各通道仍须覆盖原有预留，资产单位、待付款和出款 nonce 保持原值。跨通道只调拨原生 CKB Capacity。
+- **顺序与重放。** 认证以候选区块内先前操作形成的锚点及金库 OutPoint 为准。重复使用已经被核销的票据、旧金库输入或已被替换的认证代次均拒绝。跟踪全局认证 L1 锚点时，新结算声明需推进该锚点。
+
 Fern 验证者质押、存款认证、检查点认证和金库托管各自拥有独立权限。共识安全依赖各高度的 CometBFT 权重假设。L1 状态认证依赖 guardians 对 CKB 全节点的核验。实际提现仍遵守 L1 金库权限。
 
 ## 7. 状态承诺、执行回执与锚定快照
+
+五项逻辑承诺由三种认证数据结构产生，所有共识数据经同一个 RocksDB 提交路径持久化。
+
+| 数据结构 | 承诺及职责 | 持久化内容 |
+| --- | --- | --- |
+| Patricia 树 | Cell 根与系统状态根 | 当前规范记录与当前树的受影响节点，共用节点存储和缓存 |
+| 有序 Merkle 树 | 本块交易根与回执根 | 持久化规范交易和回执。树节点在计算或生成证明时构建 |
+| MMR | 历史 Header 根 | 当前叶数与峰值。完整历史证明索引由归档节点按需维护 |
 
 ```rust
 struct StateCommitment {
@@ -229,24 +246,48 @@ struct ExecutionCommitment {
 | `transaction_root` | 按区块顺序排列的完整交易，包含全部 Witness |
 | `receipt_root` | 同一顺序的确定性执行回执 |
 
-### 增量状态树和系统状态根
+### 共享 Patricia 存储
 
-Live Cells 用规范的二进制 Patricia 树。键为 `H("Fern Live Cell key", network_id, canonical_out_point)`，按最高位至最低位判定分支。分支在共同前缀之后第一个相异位分叉。节点哈希承诺前缀长度、规范前缀和有序子节点。叶子绑定完整键与规范记录。空树、分支和叶各用独立哈希域。给定同一键值集合，插入顺序与存储布局产生相同的根。
+Cell 根与系统状态根各自认证一棵当前状态树。两棵树使用同一套二进制 Patricia 算法、节点缓存及 RocksDB 节点存储。节点键带树标识。协议功能通过系统状态树中的固定命名空间寻址，无须为各功能分配单独的树或存储引擎。
+
+状态树按从最高位到最低位的顺序处理键。分支在共同前缀后的第一个相异位分叉，其哈希绑定前缀长度、规范前缀和有序子节点。空树、分支和叶使用独立的哈希域。同一规范键值集合产生相同的根。
 
 ```text
-record = (canonical_cell, creation_height, creation_time_ms, creation_context_id)
-leaf   = H("Fern Live Cell leaf", network_id, cell_key, canonical_out_point, canonical_record)
+cell_key = H("Fern state key", network_id, 0, canonical_out_point)
+record   = (canonical_out_point, creation_height, creation_time_ms, creation_context_id, canonical_cell)
+value    = H("Fern state record", network_id, 0, record)
+leaf     = H("Fern Patricia node", network_id, 0, 0, cell_key, value)
 ```
 
-创建高度和时间直接用于 `Since`。创建上下文 ID 绑定产生该 Cell 的高度、共识时间、父 Header ID 与交易根。每块只更新实际消费、创建的键及其受影响路径。快照安装时允许顺序重建整棵树，并用全集重建作为增量更新的测试对照。
+每条规范记录只存一份，按命名空间及键读取。Live Cell 记录附带其规范 OutPoint，快照恢复由此重算 Cell 键。持久化叶存键及叶哈希，生成证明时按键取记录并重算。创建高度和时间用于 `Since`，创建上下文 ID 绑定该块的高度、时间、父 Header ID 和交易根。每块批量更新发生变化的键及受影响路径，覆盖被替换的当前节点并移除失效路径。历史 Header 继续承诺各高度的状态根，历史状态证明由相应锚定快照或归档重放获得。
 
-系统状态根绑定独立的命名空间根，覆盖已使用的存款证书与认证方代次、桥储备、各通道 nonce、待兑付负债、应付手续费、质押快照、当前及已排定委员会、退休终止记录、认证方轮换、委员会历史和可引用的历史检查点。新记录的可引用检查点只指向此前已提交的 Header。协议状态记录与 Live Cells 共享一次原子提交。
+系统状态树统一使用有域分隔的键，记录存款防重放标记和认证方代次、桥储备、通道 nonce、待兑付负债、应付手续费、接受的质押快照、当前及排定的委员会、退休终止标记、认证方轮换、委员会历史和可引用检查点。按通道和 nonce 查找提款，按公钥和质押代次查找退休记录。历史检查点只引用此前已提交的 Header。
 
-### 历史 Header 累积器和执行回执
+### 永久防重放记录
 
-历史 Header 累积器使用 Merkle Mountain Range（MMR）。创世高度 0 的历史根承诺空序列。提交高度 `H` 时追加 `HeaderID(H−1)`，叶哈希同时绑定网络身份和叶对应的高度。高度 `H` 的历史根承诺从创世到 `H−1` 的 Header。历史根为 `H("Fern history root", network_id, leaf_count, ordered_peaks)`，峰值按从左到右编码。峰值数量和位置由叶数唯一确定，证明只接受规范顺序和指定高度。历史包含证明验证单个 Header，追加一致性证明验证后续历史完整延续已接受的前缀。 [MMR 包含与一致性证明](https://datatracker.ietf.org/doc/draft-ietf-scitt-receipts-mmr-profile/)
+SystemRoot 保留可查询的紧凑记录。存款键绑定 `(CKB genesis, L1 deposit OutPoint)`，覆盖认证方和金库轮换。退休键绑定 `(Stake Registry ID, 验证者公钥, stake_generation)`，覆盖注册代次与历史责任。键均有独立哈希域并绑定 Fern 网络。值以固定 8 字节编码记录使用或终止高度。候选覆盖层检查同时涵盖已提交记录和本块新记录。快照必须包含全部防重放记录并重建其认证根。历史正文、回执与证明索引继续按节点窗口裁剪。MMR 认证已提交 Header 的历史，快照恢复仍需要当前状态下可检索的防重放记录。
 
-交易根承诺包含 Witness 的规范交易。执行回执记录区块内交易位置、交易 ID、完整交易哈希、实际收取的费用、已计费资源与协议结果。提款等结果写入规范回执数据。交易与回执各使用有域分隔的有序 Merkle 树。递归构树时，左子树包含小于当前叶数的最大二次幂个叶，右子树包含其余叶。回执叶绑定高度和位置，根绑定叶数。证明某笔交易的提款或执行结果时，验证同一 Header 下对应位置的交易与回执。拒绝且未提交的交易没有链上回执。
+存款与退休各有独立的每块新增记录上限，存款流量不会占用退出记录的预留份额。以 32 字节哈希键和 8 字节值计，`N` 个区块的防重放逻辑数据增长上限为 `40 × N × (D + R)` 字节，`D` 和 `R` 分别是两类独立上限。这一上限排除 Patricia 节点、数据库元数据、备份和物理写放大。部署按预期寿命及实测放大安排持久空间。同一原子提交写入标记和已认证的累积计数，快照安装时对导出记录核验计数，裁剪按命名空间跳过这些键。若未来压缩这些记录，需另行证明新状态提供等价的防重放查找或拒绝条件。
+
+### 本块交易与极简回执
+
+```rust
+struct Receipt {
+    fee: u64,
+    cycles: u64,
+    protocol_result: Bytes,
+}
+```
+
+`fee` 为实际支付的 shannons，`cycles` 为按协议计费的 VM cycles，缓存命中沿用原计费。普通交易的 `protocol_result` 为空。提款、已接受的质押快照等协议效果才产生规范的额外结果。每个提交交易恰好对应一条回执，拒绝的交易不入块。
+
+完整交易和回执分别按区块顺序构建有域分隔的有序 Merkle 树，交易叶包含全部 Witness。构树递归时，左子树包含小于当前叶数的最大二次幂个叶，右子树包含其余叶。根承诺叶数，树形和路径共同确定位置。验证结果时，客户端校验同一原生 Header 下两份证明具有相同的叶数和交易位置。交易证明认证交易身份，回执正文无需重复编码位置和交易哈希。树节点在提交期间临时计算，用保留的交易或回执正文按需重建证明。
+
+### 历史 Header 累积器
+
+历史 Header 累积器使用 Merkle Mountain Range（MMR）。创世高度 0 的历史根承诺空序列。提交高度 `H` 时追加 `HeaderID(H−1)`，叶哈希绑定网络身份和对应高度。高度 `H` 的历史根承诺创世至 `H−1` 的 Header。`H("Fern history root", network_id, leaf_count, ordered_peaks)` 按从左到右编码峰值，其数量与位置由叶数确定。
+
+普通节点持久化叶数和峰值，通过合并同高度峰值完成追加。历史包含证明认证指定高度的 Header，追加一致性证明认证后续累积器延续同一前缀。归档索引提供证明所需的历史节点。 [MMR 包含与一致性证明](https://datatracker.ietf.org/doc/draft-ietf-scitt-receipts-mmr-profile/)
 
 ### Header 与 AppHash 的计算顺序
 
@@ -260,21 +301,32 @@ AppHash(H)     = H("Fern AppHash", network_id, H, HeaderID(H))
 
 执行前先确定交易根与区块上下文。执行时新建 Cell 只引用这个上下文 ID。执行完成后计算 Cell 根、系统状态根和回执根，再构造完整 Header。历史累积器本块追加的 Header 属于前一高度。三者依赖方向固定。CometBFT 的 `H+1` Header 认证高度 `H` 的 AppHash。轻客户端验证 `H+1` 的合法提交和相应委员会，然后用提供的 Fern Header 重算 AppHash 并比对。状态、交易及回执证明对照该 Fern Header 的承诺验证。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
 
-### 锚定快照、历史证明索引与裁剪
+### 原子提交、锚定快照与节点形态
 
-锚定快照提供高度 `H` 的原生 Header、对应的 BFT 认证、规范 Cell 与协议状态记录、历史累积器的叶数和峰值，以及继续验证所需的委员会交接及历史检查点。客户端从可信锚点核验 Header 和 AppHash，重建 Cell 根与系统状态根，用叶数和峰值核验历史根，全部匹配后原子安装。篡改 Cell 创建时间、通道负债、峰值或委员会材料均使恢复失败。已认证的回执根随 Header 保留。历史回执正文来自归档证明。
+`ProcessProposal` 与 `FinalizeBlock` 共享执行内核。如果候选块字节、父状态及共识上下文完全匹配，可复用该候选块的验证结果。`Commit` 为每个区块执行一次同步 RocksDB WriteBatch。规范 Cell 与协议记录、Patricia 变更路径、Header、累积器叶数及峰值、保留的交易与回执、提交点一起原子可见。该约束适用于 Fern 应用提交，CometBFT 保持自己的共识持久化路径。
 
-`ProcessProposal` 与 `FinalizeBlock` 共享执行内核。`Commit` 同步提交 Cells、更新的树路径、协议状态、Header、累积器叶数和峰值及提交点。普通节点按已验证的检查点及保留策略自动裁剪历史区块、回执和 Header 正文，保留当前及近期 Header、未结负债、委员会交接及继续验证所需的数据。归档节点维护完整历史与证明索引，索引可异步重建，节点出块无须等待归档索引写入。
+锚定快照从同一已提交高度的稳定读取视图导出规范 Cell 与协议记录、原生 Header、BFT 证明、MMR 叶数和峰值，以及恢复必需的委员会交接和检查点材料。快照导出规范状态记录，Patricia 节点由接收方重建。交易根和回执根随认证 Header 提供，旧区块的逐块 Merkle 证明由保存的交易与回执正文重建。客户端先验证 Header 和 AppHash，再重建 Cell 根与系统状态根，按峰值核验历史根，匹配后原子安装。创建元数据、待兑付负债、峰值或委员会材料被篡改都会使恢复失败。快照导出在提交路径之外运行。
 
-历史 Header Dep 以仍可引用的已认证检查点为锚，随交易提供 Header 与包含证明。最近已提交的父 Header 可直接从一致的当前状态读取。引用规则取决于协议定义的锚点和高度，各节点的本地裁剪进度不影响验证结果。钱包和 RPC 使用 Fern 原生地址与交易格式，支持按 Lock、Type、OutPoint 查询以及获取状态、交易、回执、提款和委员会证明。
+| 运行形态 | 保留与服务 |
+| --- | --- |
+| 普通节点，验证者默认 | 当前 Live Cells、协议状态与 Patricia 节点、MMR 叶数及峰值、近期 Header、交易和回执。按保留窗口自动裁剪，持续保留未结提款、委员会交接与继续共识所需材料 |
+| 归档节点 | 普通节点的全部能力，加完整 Header、交易和回执历史、锚定快照服务与可选历史证明索引。若从快照起步，需要用已认证的归档历史补齐早期正文 |
+
+历史证明索引从已提交归档记录异步构建或重建。RPC 查询索引也是可重建的派生数据，归档进度、索引进度和快照导出全部独立于区块提交。普通节点的裁剪规则由认证数据引用与保留窗口决定。在本地裁剪历史 Header 后，交易仍可随 Header Dep 附带指向可引用检查点的包含证明。父 Header 可直接从当前状态读取。两种节点按相同的共识规则验证这些引用。
+
+钱包和 RPC 使用 Fern 原生地址与交易格式，支持按 Lock、Type、OutPoint 查询，以及获取状态、交易、回执、提款和委员会证明。交易意图由 Lock 和 OTX 标准表达，内核继续验证精确 OutPoint、已签名输入和实际输出。
+
+### 空块与 H+1 证明
+
+空块依然追加父 Header，AppHash 因而继续变化。CometBFT v0.38.26 会在应用哈希改变后主动提议证明块，`create_empty_blocks=false` 或非零的空闲出块间隔都不能将这些证明块暂停。原生集成采用明确的常规出块配置，允许空块并关闭 `skip_timeout_commit`。空载节奏由部署的共识提交等待参数测量。区块头、历史峰值和一次原子提交仍是每个空块的工作内容。无交易时使用规范的空交易和空回执根。节点只有在已取得签名的后继 Header 时才向客户端提供高度 `H` 的 H+1 证明。停摆时，最后一个高度的应用根可能仍在等待后继 Header。 [CometBFT v0.38.26 证明块判定](https://github.com/cometbft/cometbft/blob/v0.38.26/consensus/state.go#L1098-L1126)
 
 ### CKB PoW 检查点锚定
 
-部署独立的 CKB Checkpoint Type ID Cell。每次更新消费上一 Checkpoint Cell，验证唯一继任者、严格递增的序号与 Fern 高度，以及上一检查点的 OutPoint 与承诺。新记录绑定 Fern 网络和 CKB genesis、Fern 高度及最终区块完整 Block ID、原生 Header ID、AppHash、历史根及叶数、承载该 AppHash 的后续 CometBFT Header 身份、当前和下一委员会承诺、质押快照承诺及委员会交接证明的摘要。
+部署独立的 CKB Checkpoint Type ID Cell。独立发布进程按网络配置的低频间隔收集已经提交的 Fern 证明并提交 L1 交易。每次更新消费上一 Checkpoint Cell，验证唯一继任者、严格递增的序号与 Fern 高度，以及上一检查点的 OutPoint 与承诺。新记录绑定 Fern 网络和 CKB genesis、Fern 高度及最终区块完整 Block ID、原生 Header ID、AppHash、历史根及叶数、承载该 AppHash 的后续 CometBFT Header 身份、当前和下一委员会承诺、质押快照承诺及委员会交接证明的摘要。
 
 锚定认证方独立于金库。它核验从上一锚到新锚的 Fern 最终性、对应 AppHash、新旧历史根的追加一致性、旧锚的 Header 在新根中的包含性及期间的每次委员会交接后，按专门签名域对记录签名。CKB 合约验证当前固定锚定认证方超过三分之二签名与继任顺序。轮换由旧、新集合分别认证。该首轮合约由认证方证明 Fern 历史，签名责任之外的证明仍需客户端独立复核。
 
-客户端从配置固定的 Checkpoint Type ID 与信任期内的 Fern 检查点起步。先用完整 CKB 节点或已验证的 CKB 轻客户端确认锚定交易包含在满足确认策略的有效 PoW 链上，再校验 Type ID 继任路径、Fern AppHash、新旧历史根的追加一致性、上一已接受锚的 Header 在新历史根中的包含性以及跨 epoch 的完整交接证明。证明缺失、历史与已接受锚冲突或超出信任期时，拒绝自动跟随。已确认的 CKB 记录给客户端一个可追溯的外部历史约束。Fern 最终性仍由 BFT 提交确定。历史包含证明和执行回执分别认证 Header 和该 Header 下的执行结果。CKB 深重组时冻结该锚定源的后续接受，保留先前已验证的 Fern 最终性判断。首轮委员会按已认证质押确定，PoW 熵抽样留作后续研究。 [CKB 轻客户端参考实现](https://github.com/nervosnetwork/ckb-light-client)
+客户端从配置固定的 Checkpoint Type ID 与信任期内的 Fern 检查点起步。先用完整 CKB 节点或已验证的 CKB 轻客户端确认锚定交易包含在满足确认策略的有效 PoW 链上，再校验 Type ID 继任路径、Fern AppHash、新旧历史根的追加一致性、上一已接受锚的 Header 在新历史根中的包含性以及跨 epoch 的完整交接证明。证明缺失、历史与已接受锚冲突或超出信任期时，拒绝自动跟随。已确认的 CKB 记录给客户端一个可追溯的外部历史约束。Fern 最终性仍由 BFT 提交确定。历史包含证明和执行回执分别认证 Header 和该 Header 下的执行结果。CKB 深重组时冻结该锚定源的后续接受，保留先前已验证的 Fern 最终性判断。发布延迟只影响新外部锚点的可用时刻，Fern 仍按正常 BFT 流程提交区块。首轮委员会按已认证质押确定。 [CKB 轻客户端参考实现](https://github.com/nervosnetwork/ckb-light-client)
 
 ## 8. 接入顺序与交付验收
 
@@ -282,10 +334,16 @@ AppHash(H)     = H("Fern AppHash", network_id, H, HeaderID(H))
 | --- | --- | --- |
 | P0 | Cell、VM、时间、签名和共识切换 | 四副本使用同一原生交易格式。删除 CKB Header 旧字段与 DAO 容量例外，验证创世、同块消费、过期高度、时间跳跃、重启和跨 epoch 的边界。钱包与 RPC 支持该格式。串行重放和并行验证结果一致，拒绝冲突及恶意提案 |
 | P0 | 质押终止、快照窗口和罚没 | 真实 L1 注册、增押、退出及双签。拒绝抢跑退休、先签后提交的旧快照、过期签名与退役认证方。在丧失法定人数的实网确认 L1 可冻结而 Fern 不发生强制换组 |
-| P0 | 状态与执行承诺、桥接守恒 | 真实 CKB 与 xUDT 往返、储备对账、金库轮换。多资产原子入队。小额聚合后达到 L1 最低容量才入队。某通道暂停时其他 nonce 正常推进，拒绝重复使用 Capacity。验证历史包含及追加一致性、回执位置、H+1 认证和锚定快照，拒绝被篡改的创建元数据与负债 |
+| P0 | 状态与执行承诺、桥接守恒 | 真实 CKB 与 xUDT 往返、储备对账、金库轮换。多资产原子入队。小额聚合后达到 L1 最低容量才入队。某通道暂停时其他 nonce 正常推进，拒绝重复使用 Capacity。验证空块 H+1 认证、历史包含及追加一致性、回执位置和锚定快照，拒绝被篡改的创建元数据与负债，并跨裁剪与恢复重测存款和退休代次重放 |
 | P1 | 裁剪、归档证明与 Capacity 定价 | 在不同 Live Cell 总量下固定每块变更量，分别测量状态树、回执树、历史累积器、读写放大与提交延迟。验证裁剪后的 Header Dep、证明重建、重启和状态同步。用结果确定开发网抵押成本 |
 | P1 | CKB Checkpoint Cell | 真实 L1 发布和轮换。验证客户端接受合法锚和交接证明，拒绝冲突、缺漏历史与失效分叉 |
 | P2 | 多维费率及净盈余分配 | 对齐确定性计量、费用上限、应付费收与真实 L1 出账，验证分配后的储备覆盖 |
+
+### 提交成本不变量
+
+固定每块交易数、交易字节、已计费资源和 Live Cell 及协议状态变更量时，Fern 的提交成本不得随历史总长度线性增长。Patricia 成本可以随当前状态规模和实际变更路径增长。MMR 追加只处理峰值合并。提交只访问本块解析的键、更新路径和由键查出的协议记录。禁止在提交时扫描 Live Cells 全集、历史 Header、退休记录或提款记录。每块只有一次应用数据库的原子同步提交，历史证明索引、RPC 索引、快照导出和 L1 发布不阻塞最终性。
+
+验收分别改变**当前状态规模**和**累计历史长度**。使用等规模、各自有效签名的交易负载，匹配状态变更量和缓存条件，测量 Patricia 触及节点、MMR 合并次数、逻辑读写、同步提交次数、提交延迟及全副本确认延迟。对照普通与归档节点、索引开启与关闭。快照全量重建与归档重放单独报告。
 
 压测分别运行 CKB 支付、单 Type Script、双 Type Script、多 Type Script、跨资产结算及委员会变更。按能力逐步提高投递速率至 1,000、2,000、3,000、5,000 TPS，记录 offered、admitted、finalized 和全副本可见速率、p50/p95/p99、客户端丢弃、CPU、RSS、物理写入、fsync、网络流量及积压。历史账本单独对照。
 
@@ -295,12 +353,14 @@ Many-to-Many 的边际成本采用控制实验。固定输入数量和数据、�
 
 | 项目 | 已验证 | 尚待集成 |
 | --- | --- | --- |
-| 原生执行 | `fern-ledger` 的 Molecule、组推导、当前按字节 Capacity、承诺和 Merkle 证明。独立 RISC-V 脚本与真实 secp256k1 签名通过，串行与四 worker 周期一致，Spawn/Exec 可读取原生组上下文 | `fern run` 的完整切换、组级 Witness、原生 RPC、简化 Since、可定价抵押、Patricia 状态树和统一承诺 |
-| CKB L1 质押 | 已部署 Type ID Registry。真实锁定和增押、拒绝过早提现，已执行 250 CKB 罚没及另一笔 200 CKB 未处罚质押的提现。监护方已完成轮换 | 代次与责任窗口清理、实际 CometBFT 历史认证、罚没延迟结算、网络级交接 |
-| 快照认证 | 三个真实 guardian 签名通过完整 Registry 校验，两个签名被拒，离线导出权重 250 | 快照窗口、退休终止记录、轮换生效、ABCI 更新及原生 genesis |
-| 历史证明与回执 | 当前独立账本已有交易及 Live Cell Merkle 包含证明 | 历史 Header 累积器、执行回执树、锚定快照、裁剪和历史证明索引 |
-| 四节点和桥 | 原账本四节点 CKB/xUDT 往返、金库轮换、重启、执行证明与状态同步。已拒绝会把提款重新归入 xUDT escrow 的收款人 | 在原生账本验证以上行为，接入独立提款通道与 CKB Checkpoint Cell |
+| 原生执行 | 四字段 Cell、规范 Type 集合、组级 Witness、BFT 时间锁、可定价抵押、RISC-V 验签和多组验证 | 默认 `fern run`、原生钱包和 RPC 的切换 |
+| CKB L1 质押 | 实际 CKB devnet 部署并锁定本金，立即罚没 250 CKB，另一笔 200 CKB 本金正常解除质押，完成 L1 认证方轮换 | 质押代次、责任记录清理、实际委员会证明驱动的退休、冻结及延迟罚没 |
+| 快照认证 | 三份实际 CKB guardian 签名构建原生 genesis，缺少一份时拒绝。原生应用持久化零费用快照和预算，在目标高度前两块导出更新 | 在真实 L1 周期与四节点委员会轮换之间运行完整闭环，接入退休终止记录与 guardian 轮换生效 |
+| 控制交易和防重放 | 结算校验覆盖阈值签名、金库继任、nonce、容量及永久键计数上限 | 原生桥的 L1 观察和签发、金库与提款状态、防重放持久化 |
+| 状态承诺和恢复 | RocksDB 原子提交两棵 Patricia 树及 MMR 峰值，验证交易与回执的同位置证明，普通和归档实例得到相同根，已认证 AppHash 可用于原生状态恢复 | ABCI state sync 传输、历史证明索引、CKB L1 检查点 |
+| 四节点验证 | 原生 ABCI 测试网提交真实签名支付和带两个 Type Script 的资产交易，拒绝删除输入的 Transfer Policy，四副本独立核验 H+1 签名。一台 CometBFT 进程和应用重启后同步至相同状态 | 原生 CKB/xUDT 双向桥、金库轮换、跨资产吞吐基线和远程状态同步 |
 
-本轮核对到的代码边界如下。`fern run` 仍由 CKB `HeaderBuilder` 构造 Header，并向 CKB `CapacityVerifier` 传入 DAO Type Hash。独立 `fern-ledger` 的 `Since` 仍解析 CKB 位字段，包含 epoch 分数和秒转毫秒逻辑。简化时间、原生 Header、移除 DAO 容量例外和新费用规则均为待接入的协议变更。 [现行 Header 构造](src/genesis.rs#L293) · [现行容量验证路径](src/engine.rs#L400) · [当前独立账本的 Since](ledger/src/lib.rs#L571)
+原生 ABCI 测试应用与四个真实 CometBFT v0.38.26 进程运行，测试覆盖支付及空块后的证明。默认运行入口仍使用前一套交易、桥和委员会路径。开发网快照恢复从外部已认证的 AppHash 开始。实际 CKB 质押测试使用本地开发链资产。 [构建与复现](OPERATIONS.md#exercise-the-native-cometbft-path) · [性能记录](BENCHMARKS.md)
 
-三个原生交易夹具的实测 VM 成本分别为单资产 1,938,965 cycles、身份与生命周期 1,931,200 cycles、五个 Type Groups 的跨资产结算 2,020,121 cycles。第三个夹具比第一个高约 4.2%。夹具还有业务、输入和输出结构等差异，边际开销仍待控制实验。原账本四节点控制组投递 64 TPS，768 笔均在四副本可见，实测最终确认为 56 TPS。全副本可见延迟 p50/p95/p99 分别为 2.86、6.47、6.97 秒，包含一次节点重启。尚无原生四节点或 1,000–5,000 TPS 的确认记录。 [架构和 ABI 实现](ARCHITECTURE.md) · [性能记录](BENCHMARKS.md) · [质押复现命令](OPERATIONS.md#exercise-the-ckb-stake-registry)
+
+原生组级签名夹具实测单资产 5,769,207 cycles，身份和生命周期 5,760,590 cycles，五个 Type Groups 的跨资产结算 5,835,417 cycles。普通支付体积为 Fern 467 B、CKB 460 B，三个组合 Type Script 的输出向量为 Fern 384 B、CKB 590 B。夹具测量涵盖序列化和 VM 执行，整链吞吐指标单独采集。 [性能记录](BENCHMARKS.md)
