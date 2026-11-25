@@ -659,6 +659,53 @@ that receipt has been spent, and requires the reference in a real
 RISC-V Type Script. It also tests rejection of a missing or modified
 record. [Run the Jolteon bridge fixture](#exercise-the-native-jolteon-path)
 
+### Verify security-domain capital and income
+
+Set the audit scope to the CKB genesis, Stem network, deployed Data2
+`code_hash`, complete domain Type Script hash `domain`, and an independently
+selected endpoint `through`. Use `{"cell":{"tx_hash":"0x…","index":"0x0"}}`
+for a domain Cell or `{"closure":"0x…"}` for a closure transaction. Use
+`--require-live` to require the selected Cell to still be live at the
+observing CKB node. Choose a confirmation depth for the network.
+
+```sh
+stem security-domain audit --l1-rpc "$ckb_rpc" --scope scope.json \
+  --confirmations "$depth" --proof-output history.json
+stem security-domain verify-audit --scope scope.json --proof history.json \
+  --anchors trusted-ckb-blocks.json
+```
+
+The online command can also print the verified report without exporting a
+proof file. The offline verifier requires a JSON object mapping decimal CKB
+heights to authenticated block hashes, including height zero and the block of
+each transaction in the proof. Obtain the hashes from a trusted CKB full node
+or another independently verified source on one canonical CKB chain. Use the
+proof's heights to identify the required anchors. The receipt of a proof from
+an indexer does not establish its Header hashes as trusted. Valid CKB
+execution supplies input-side guarantees such as escrow funding and the
+subject being live when the service ran.
+
+Both commands report capital and actual service payouts through the requested
+transition. Amounts are hexadecimal shannons. `capacity` includes the
+domain's occupied capacity. `locked_bond`, `slashed_bond` and `returned_bond`
+cover declared principal separately. `required_quorum_bond` uses the initial
+roster. `can_attest` indicates whether the remaining eligible capital can
+reach that quorum. Per-member `service_income` is the cumulative CKB credited
+to that member's payout Lock, including before any slash or retirement. The
+audit excludes buyer refunds, returned principal and the operator's reserve
+from service income.
+
+The offline report describes the selected historical endpoint. A later spend
+or a CKB reorganization may change the current view. The Rust API is
+`stem::security_audit::verify`. Proof size and verification cost grow with the
+number of domain transactions. Online collection defaults to 256 transactions
+and accepts up to 2,048 via `--max-transactions`. The offline CLI accepts proof
+files up to 64 MiB and 2,048 transactions.
+
+Run the standalone fixture above with `--audit-reorg` to reorg a confirmed
+closure on the disposable devnet and verify that the old proof fails against
+the replacement block hash.
+
 ### Exercise Intercell Messaging
 
 Build the native CKB `intercell-mailbox` binary and use the normal Jolteon bridge fixture with its `--intercell-mailbox` option. The deployer fixes the CKB genesis, the active Stem network, the mailbox owner Lock hash, and the same checkpoint used by genesis. The mailbox Type Script uses Data2 addressing and its arguments concatenate Type ID, CKB genesis, Stem network, owner Lock hash, Checkpoint code hash and Checkpoint Type ID, in that order. Initial data consists of a zero little-endian nonce and a zero 32-byte replay root. The deployment supplies the CKB genesis as its first Header Dep.

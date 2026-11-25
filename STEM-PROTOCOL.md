@@ -244,6 +244,8 @@ stake assets ∩ bridge reserve = ∅
 
 Stem 应用可以用已确认 CKB 回执的历史 L1 Cell Reference，验证其类型、请求身份与结果。Stem 仍通过现有 guardian 法定人数认证 CKB 观察与锚点，应用视野中的回执来源及该回执代表的业务规则必须另行固定。 [运行与复现](OPERATIONS.md#exercise-a-paid-ckb-security-domain)
 
+安全域审计可以固定 CKB genesis、Stem 网络、合约代码、完整域 Type Script 和目标 Cell 或关闭交易，验证从 Type ID 创建到目标的连续消费链。审计验证每笔 CKB 交易和见证的包含证明，分别统计锁定、罚没、返还本金和已发生的服务付款。签署者身份、证书权重、付款分配及回执与真实交易绑定。客户端需独立认证同一条有效 CKB 链的区块哈希，历史包含证明只描述所选状态。 [查询命令与信任边界](OPERATIONS.md#verify-security-domain-capital-and-income)
+
 ### 任期质押收益
 
 启用 CKB 质押的网络在 SystemRoot 记录当前任期的起点、累计费用基线、Registry 身份及承诺、实际投票委员会承诺。下一任期从高度 `A` 激活时，旧任期在执行完 `A−1` 后关闭，包含该块已收取的费用。该任期预算等于验证者与委托人基金对关闭时累计费用的分配额，减去该基金对期初累计费用的分配额。没有配置基金时预算为零。

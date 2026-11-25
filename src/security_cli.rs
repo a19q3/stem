@@ -1,3 +1,5 @@
+mod audit;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
@@ -24,6 +26,10 @@ use crate::{
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Audit a CKB domain through a specified Cell or closure.
+    Audit(audit::Collect),
+    /// Verify a portable audit against independently trusted CKB block hashes.
+    VerifyAudit(audit::Verify),
     /// Derive a unique CKB domain Type ID, bond encoding and minimum funding.
     Domain {
         #[arg(long)]
@@ -88,6 +94,8 @@ struct RequestDraft {
 impl Command {
     pub fn run(self) -> Result<()> {
         match self {
+            Self::Audit(args) => args.run(),
+            Self::VerifyAudit(args) => args.run(),
             Self::Domain { request } => make_domain(&request),
             Self::Request { request } => make_request(&request),
             Self::Sign {

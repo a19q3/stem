@@ -10,16 +10,14 @@ use ckb_types::{
     utilities::{MerkleProof, merkle_root},
 };
 
-/// Returns the historical output committed in the named block. The caller
-/// authenticates the block hash and chooses the confirmation policy. A
-/// transaction proof contains no later spend information.
-pub fn verify_output(
+/// Authenticate both the raw CKB transaction and its witnesses. The caller
+/// supplies the hash of an independently trusted CKB block.
+pub fn verify_transaction(
     trusted_block: &Byte32,
     header: &HeaderView,
-    point: &OutPoint,
     tx: &TransactionView,
     proof: &TransactionAndWitnessProof,
-) -> Result<(CellOutput, Bytes)> {
+) -> Result<()> {
     ensure!(
         &header.data().calc_header_hash() == trusted_block
             && proof.block_hash.as_bytes() == trusted_block.as_slice(),
@@ -27,10 +25,6 @@ pub fn verify_output(
     );
     let transaction = tx.data();
     let raw_hash = transaction.calc_tx_hash();
-    ensure!(
-        point.tx_hash() == raw_hash,
-        "CKB OutPoint transaction hash differs"
-    );
     let raw = &proof.transactions_proof;
     let witness = &proof.witnesses_proof;
     ensure!(
@@ -56,6 +50,24 @@ pub fn verify_output(
         ]) == header.transactions_root(),
         "CKB transaction or witness proof does not match the Header"
     );
+    Ok(())
+}
+
+/// Returns the historical output committed in the named block. The caller
+/// authenticates the block hash and chooses the confirmation policy. A
+/// transaction proof contains no later spend information.
+pub fn verify_output(
+    trusted_block: &Byte32,
+    header: &HeaderView,
+    point: &OutPoint,
+    tx: &TransactionView,
+    proof: &TransactionAndWitnessProof,
+) -> Result<(CellOutput, Bytes)> {
+    ensure!(
+        point.tx_hash() == tx.data().calc_tx_hash(),
+        "CKB OutPoint transaction hash differs"
+    );
+    verify_transaction(trusted_block, header, tx, proof)?;
     let index = usize::try_from(u32::from(point.index()))?;
     Ok((
         tx.output(index)

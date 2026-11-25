@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import secrets
 import subprocess
+import time
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -246,7 +247,139 @@ class Scenario:
         tx["witnesses"] = [witness(b"\x03")]
         return tx
 
-    def run(self):
+    def audit_scope(self, through):
+        return {"ckb_genesis": self.genesis, "network": self.network, "code_hash": self.code_hash,
+                "domain": self.domain["domain"], "through": through}
+
+    def audit(self, label, through, *, live=False):
+        base = self.args.output / f"security-audit-{label}"
+        scope, proof, anchors = [base.with_suffix(f".{kind}.json") for kind in ("scope", "proof", "anchors")]
+        request = self.audit_scope(through)
+        write_json(scope, request)
+        command = [self.args.binary, "security-domain", "audit", "--l1-rpc", self.l1.url,
+                   "--scope", scope, "--confirmations", "2", "--proof-output", proof]
+        if live:
+            command.append("--require-live")
+        started = time.monotonic()
+        report = json.loads(run(*command))
+        collection_seconds = time.monotonic() - started
+        history = json.loads(proof.read_text())
+        heights = {0, *(int(entry["header"]["number"], 16) for entry in history)}
+        hashes = {height: self.l1.call("get_block_hash", hex(height)) for height in sorted(heights)}
+        write_json(anchors, hashes)
+        verifier = [self.args.binary, "security-domain", "verify-audit", "--scope", scope,
+                    "--proof", proof, "--anchors", anchors]
+        started = time.monotonic()
+        assert report == json.loads(run(*verifier))
+        return {"report": report, "scope": request, "history": history, "trusted_blocks": hashes,
+                "proof_bytes": proof.stat().st_size, "collection_seconds": collection_seconds,
+                "verification_seconds": time.monotonic() - started,
+                "collect_command": [str(part) for part in command], "verify_command": [str(part) for part in verifier]}
+
+    def verify_audits(self, active, *, reorg):
+        def target(name, *, closure=False):
+            tx = self.committed[name]["hash"]
+            return {"closure": tx} if closure else {"cell": point(tx, 0)}
+
+        def amount(record, name):
+            return int(record[name], 16)
+
+        reports = {"active-live": active}
+        for label, name in (("open", "open-domain"), ("first-service", "serve-one"), ("slashed", "slash-one"),
+                            ("retired", "retire"), ("challenge", "slash-during-challenge"), ("closed", "close")):
+            reports[label] = self.audit(label, target(name, closure=label == "closed"))
+        served = ("serve-one", "serve-two")
+        signers = ((0, 1, 2), (0, 1, 3))
+        expected = {
+            "open": ("active", (), (), 0), "first-service": ("active", (), (), 1),
+            "slashed": ("active", (2,), (), 1), "active-live": ("active", (2,), (), 2),
+            "retired": ("retired", (2,), (), 2), "challenge": ("retired", (2, 3), (), 2),
+            "closed": ("closed", (2, 3), (0, 1), 2),
+        }
+        for label, entry in reports.items():
+            report = entry["report"]
+            state, slashed, returned, services = expected[label]
+            income = [0] * len(self.members)
+            for tx, members in zip(served[:services], signers[:services]):
+                for index, member in enumerate(members, 1):
+                    income[member] += int(self.transactions[tx]["outputs"][index]["capacity"], 16)
+            assert report["state"] == state and report["paid_services"] == services
+            assert amount(report, "service_income") == sum(income)
+            for i, member in enumerate(report["members"]):
+                assert member["public_key"] == hex_bytes(self.members[i][0])
+                assert member["beneficiary"] == self.members[i][2]["args"]
+                assert amount(member, "initial_bond") == self.bonds[i]
+                assert amount(member, "slashed_bond") == (self.bonds[i] if i in slashed else 0)
+                assert amount(member, "returned_bond") == (self.bonds[i] if i in returned else 0)
+                assert amount(member, "locked_bond") == (0 if i in slashed or i in returned else self.bonds[i])
+                assert amount(member, "service_income") == income[i]
+            assert amount(report, "slashed_bond") == sum(self.bonds[i] for i in slashed)
+            assert amount(report, "returned_bond") == sum(self.bonds[i] for i in returned)
+            locked = sum(self.bonds) - amount(report, "slashed_bond") - amount(report, "returned_bond")
+            assert amount(report, "locked_bond") == locked
+            eligible = locked if state == "active" else 0
+            assert amount(report, "eligible_bond") == eligible
+            quorum = sum(self.bonds) * 7500 // 10_000
+            assert amount(report, "required_quorum_bond") == quorum
+            assert report["can_attest"] == (eligible >= quorum)
+            assert amount(report, "capacity") == (locked + self.domain["occupied_shannons"] if state != "closed" else 0)
+
+        closed = reports["closed"]
+        rejects = {}
+
+        def reject(label, reason, *, scope=None, history=None, anchors=None, collect=None):
+            if collect is None:
+                command = closed["verify_command"].copy()
+            else:
+                online = active["collect_command"]
+                command = online[:online.index("--proof-output")]
+                for flag, value in collect.items():
+                    if flag in command:
+                        command[command.index(flag) + 1] = value
+                    else:
+                        command.append(flag)
+                        if value is not None:
+                            command.append(value)
+            for name, data in (("scope", scope), ("proof", history), ("anchors", anchors)):
+                if data is not None:
+                    path = self.args.output / f"security-audit-rejected-{label}.{name}.json"
+                    write_json(path, data)
+                    command[command.index("--" + name) + 1] = str(path)
+            attempt = subprocess.run(command, text=True, capture_output=True, timeout=30)
+            assert attempt.returncode and reason in attempt.stderr, (label, attempt)
+            rejects[label] = {"stderr": attempt.stderr, "command": command}
+
+        reject("omitted-service", "missing a predecessor", history=closed["history"][:1] + closed["history"][2:])
+        reject("truncated", "wrong transition", history=closed["history"][:-1])
+        tampered = copy.deepcopy(closed["history"])
+        encoded = binary(tampered[1]["transaction"])
+        tampered[1]["transaction"] = hex_bytes(encoded[:-1] + bytes([encoded[-1] ^ 1]))
+        reject("changed-witness", "transaction or witness proof", history=tampered)
+        reject("foreign-program", "scope mismatch", scope=dict(closed["scope"], code_hash=self.network))
+        reject("foreign-genesis", "wrong trusted CKB genesis", anchors={**closed["trusted_blocks"], 0: self.network})
+        reject("historical-as-live", "no longer live", collect={"--require-live": None})
+        reject("confirmation-depth", "required confirmations", collect={"--confirmations": "1000"})
+        reject("history-budget", "transaction budget exhausted", collect={"--max-transactions": "1"})
+        export = active["collect_command"]
+        existing = Path(export[export.index("--proof-output") + 1])
+        before = existing.read_bytes()
+        reject("existing-evidence", "publish new security audit proof", collect={"--proof-output": str(existing)})
+        assert existing.read_bytes() == before
+
+        orphaned = None
+        if reorg:
+            header = self.committed["close"]["inclusion"]["header"]
+            self.l1.call("truncate", header["parent_hash"])
+            self.l1.mine(5)
+            tip = int(self.l1.call("get_tip_block_number"), 16)
+            replacement = {height: self.l1.call("get_block_hash", hex(height))
+                           for height in closed["trusted_blocks"] if height <= tip}
+            assert replacement[int(header["number"], 16)] != header["hash"]
+            reject("orphaned-closure", "outside the trusted block", anchors=replacement)
+            orphaned = {"removed_header": header, "replacement_anchors": replacement}
+        return {"states": reports, "rejections": rejects, "reorganization": orphaned}
+
+    def run(self, *, audit_reorg=False):
         self.open_domain()
         self.reject_capital_reuse()
         r1 = self.open_request("query-one")
@@ -302,6 +435,8 @@ class Scenario:
         second = self.collect("post-slash", r2, (0, 1, 3))
         delivered = self.accept("serve-two", self.service(r2, second))
         self.head = point(delivered, 0)
+        self.l1.mine(2)
+        live_audit = self.audit("active-live", {"cell": self.head}, live=True)
         r3 = self.open_request("query-refund")
         valid_before_retire = self.collect("pre-retirement", r3, (0, 1, 3))
         self.retire()
@@ -322,7 +457,9 @@ class Scenario:
         refund["inputs"][0]["since"] = hex(r3["refund"])
         refund["witnesses"] = [witness(b"\x04")]
         refunded = self.accept("refund-after-closure", refund)
-        return {"chain_genesis": self.genesis, "domain": self.domain, "receipt": receipt,
+        self.l1.mine(2)
+        audits = self.verify_audits(live_audit, reorg=audit_reorg)
+        return {"audit": audits, "chain_genesis": self.genesis, "domain": self.domain, "receipt": receipt,
                 "closed": closed, "refund": refunded, "transactions": self.committed,
                 "rejections": self.rejections}
 
@@ -430,11 +567,12 @@ def main():
     for arg in ("binary", "l1", "contract", "output"):
         parser.add_argument(f"--{arg}", type=lambda path: Path(path).resolve(), required=True)
     parser.add_argument("--l1-port", type=int, default=27220)
+    parser.add_argument("--audit-reorg", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)
     try:
-        report = Scenario(args, l1, Fixtures(args), args.contract).run()
+        report = Scenario(args, l1, Fixtures(args), args.contract).run(audit_reorg=args.audit_reorg)
         write_json(args.output / "security-domain-report.json", report)
         print(f"CKB committed {len(report['transactions'])} security transactions; rejected {len(report['rejections'])}")
     finally:

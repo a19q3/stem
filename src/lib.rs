@@ -7,5 +7,6 @@ pub mod native_abci;
 mod native_query;
 #[cfg(unix)]
 pub mod native_store;
+pub mod security_audit;
 #[cfg(all(unix, feature = "comet-benchmark"))]
 pub mod socket;
