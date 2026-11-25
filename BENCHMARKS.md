@@ -1590,3 +1590,46 @@ native and comparison Stake Registry contracts cross-compiled for CKB-VM.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
 [Signed transactions, rejections and raw runs](benchmarks/2026-11-26-stem-delegation-liability.json.xz).
+
+## Bidirectional Intercell Messaging
+
+Revision `c9b0cc1` continued from `b0750bf` via `b13a38e`. Three
+local rounds used four native Jolteon replicas and CKB 0.210.0.
+The final round published the Stem execution checkpoint at height 20,
+delivered two Stem outbox messages on CKB, and finalized one CKB
+mailbox message plus its application Cell at Stem height 35. The CKB
+message output had already been spent by a subsequent send when
+guardians observed it. All four replicas agreed at height 38.
+
+| Operation in the final round | Signed transaction bytes | Cycles |
+| --- | ---: | ---: |
+| Stem → CKB, first delivery | 1,390 | 4,196,661 CKB estimate |
+| Stem → CKB, second delivery with a nonempty replay proof | 1,213 | 4,132,480 CKB estimate |
+| CKB mailbox send for the accepted message | 820 | 1,682,035 CKB estimate |
+| CKB → Stem, including three guardian signatures | 1,448 | 13,920,778 Stem receipt |
+
+The Stem delivery paid 7,812 shannons. The first two rows include the
+CKB transaction's Lock and mailbox verification. Finality checkpoint
+publication is a separate on-chain transaction. This fixture measures
+per-operation size and execution cost.
+
+The final round rejected a different CKB genesis Header, a wrong owner
+or receiver, a missing or alternate checkpoint, modified proof and
+payload bytes, a forged guardian signature, and an untyped CKB output
+certified by genuine guardians. CKB rejected the unchanged witness at
+a mailbox configured for a different Stem network. Both chains rejected
+duplicate consumption. The restarted Stem replica served the inbox
+proof and rejected replay with a fresh input. A real CKB fork
+replacement orphaned a message at an anchor that Stem had yet to adopt.
+Stem rejected its certificate and the guardian journal stopped signing
+for the orphaned anchor. The prior committed inbox record was still
+available.
+
+The archive includes all three message rounds, signed and rejected
+transactions, proof and checkpoint data, build fingerprints, and both
+rounds of CKB/xUDT, reference and stake/reward regressions. The release
+workspace passed 445 tests with 12 ignored. The Go proof suite and
+CometBFT comparison feature check passed.
+
+[Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
+[Raw runs, signed transactions and rejection evidence](benchmarks/2026-11-26-stem-intercell.json.xz).
