@@ -1,4 +1,5 @@
 #![no_std]
+pub mod asset;
 pub mod intercell;
 
 pub const HASH_SIZE: usize = 32;

@@ -330,6 +330,16 @@ CKB → Stem 的发送方由 Mailbox 的原有 CKB Lock 授权。合约令发送
 
 跨网络通用的消息身份和载荷编码与具体证明验证分离。当前启用 CKB 与 Stem 两种端点及证明路径。业务合约读取同笔交易的消息并决定自身状态变化，资产铸造、储备和提款沿各自协议路径验证。 [运行说明](OPERATIONS.md#exercise-intercell-messaging)
 
+### Stem 原生 UDT 往返结算
+
+应用 UDT 的 Type Script 以发行者的完整 Lock 哈希和 32 字节资产序列标识资产。Cell Data 是非零小端 `u128`。发行交易须消费发行者 Lock 的输入，普通交易逐组守恒。开放给 CKB 结算的资产由独立的 Stem Escrow Lock 托管。Escrow 脚本承诺资产的完整 Type Script 哈希、CKB genesis、Mailbox Type ID 和检查点。CKB 映射 UDT 的 Type Script 以该 Mailbox 的完整 Script 哈希标识资产。
+
+- **导出。** Stem 交易执行原资产的 Type Group，将精确金额锁入 Escrow，并通过该 Lock Group 发送 Intercell 消息。Escrow 脚本要求托管原币的增加额等于外部原币的减少额，两者均等于消息金额。Nonce 取当前组首个消费 OutPoint 的域隔离哈希前八字节，按小端解释。载荷是资产 ID、收款 Lock 哈希及小端 `u128` 金额，共 80 字节。CKB 的专用 Mailbox Lock 强制铸造指定数量的映射 UDT，且全部输出归消息指定的收款 Lock。Mailbox 同时打开原生 Jolteon 检查点中的消息，永久记录已投递 ID。
+- **返回。** CKB 交易由映射 UDT 持有人授权消费，Mailbox Lock 强制销毁与消息一致的数量。Stem 以 guardian 认证的、匹配父状态锚点的 Mailbox 历史输出核验返回消息。Escrow 只按已认证的金额减少持仓，并把全部释放原币支付给该消息指定的 Stem Lock。同一消息只能释放一次。部分兑回保留剩余原币，全部兑回返还至零本金状态。
+- **边界。** 双方托管 Cell 的 CKB Capacity 原额保留，独立输入支付交易费。结算交易中的该 UDT Cell 必须只携带该 UDT Type Script。存在附加规则的资产需等待明确的规则映射。直接向 Escrow 转账不会自动产生导出消息。已消费的 CKB 返回事务如果在确认深度外重组，其 Stem 兑付不会自动撤销。实际安全性依赖相同检查点、独立 guardian 法定人数和 CKB 确认策略。
+
+[运行说明](OPERATIONS.md#exercise-stem-native-udt-settlement)
+
 ## 7. 状态承诺、执行回执与锚定快照
 
 五项逻辑承诺由三种认证数据结构产生，所有共识数据经同一个 RocksDB 提交路径持久化。

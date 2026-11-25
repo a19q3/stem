@@ -384,6 +384,25 @@ For CKB delivery, query `/stem/intercell/outbox` with the message ID as hex `dat
 
 A Stem recipient can verify inclusion or absence at the finalized tip via `/stem/intercell/inbox` and `Store::verify_intercell`. The fixture captures failures and successful inclusion transactions in its output directory.
 
+### Exercise Stem native UDT settlement
+
+Build the following RISC-V contracts with the flags from the [Intercell exercise](#exercise-intercell-messaging). Use its bridge runner options and add the three UDT binaries. Include `--full-udt-return` with a fresh output directory to exercise release of the entire exported amount.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --bin stem-native-udt \
+  --bin stem-asset-escrow --bin ckb-stem-udt
+```
+
+Set `--export-udt` to `stem-native-udt`, `--asset-escrow` to `stem-asset-escrow`, and `--ckb-stem-udt` to `ckb-stem-udt`, in addition to `--intercell-mailbox`.
+
+The Stem UDT Type Script uses the issuer Lock hash followed by the asset series as args. The Stem escrow Lock args contain seven 32-byte values in order. These are the UDT Type Script hash, CKB genesis, Mailbox code hash, Mailbox Type ID, CKB UDT code hash, Checkpoint code hash and Checkpoint Type ID. Derive the Mailbox Type ID from its designated CKB creation input and output index. Then compute the complete Stem escrow Lock hash.
+
+On CKB, use the `ckb-stem-udt` code as the Mailbox's Lock with Data2 addressing. Its args are the Mailbox Type ID, the Stem escrow Lock hash, the Stem asset Type Script hash and the Mailbox code hash. Set the Mailbox policy owner to that Lock's complete Script hash. The CKB wrapped UDT Type Script uses the same program with one argument, the complete Mailbox Type Script hash. Use `stem intercell encode` with the 80-byte asset payload and the ordinary checkpoint and historical-reference workflow. The Rust `stem_bridge_wire::asset` module provides the payload encoding and derives the Stem export nonce from the custody OutPoint.
+
+Register and publish the actual route identities before sending funds. The fixture publishes all executable code Cells, creates the mailbox and custody bond, and saves both chains' signed transactions and proof records.
+
 ### Redeem fee revenue on CKB
 
 An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.

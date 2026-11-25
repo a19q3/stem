@@ -155,6 +155,12 @@ A CKB Mailbox is a Type ID state Cell with a pinned owner Lock and checkpoint id
 
 The reverse path uses an authenticated CKB historical output. Stem pins the Mailbox binary and requires the mailbox to use the genesis-bound checkpoint that also serves the bridge and configured Stake Registry. The recipient Lock authorizes the ordinary Stem transaction. Confirmation and ancestry depend on the guardian quorum and its journal. Incoming and outgoing records do not issue or reserve assets. The generic wire type is independent of the CKB proof and transaction formats.
 
+### Native UDT settlement over Intercell
+
+The Stem application UDT uses a complete issuer Lock hash and series identifier. Its Type Script enforces conservation outside issuer-authorized supply increases. The Stem escrow validates the precise token and Capacity deltas, the authorized Intercell action and the endpoint pair. The asset route derives the complete CKB Mailbox Script from its Type ID, the asset and escrow hashes, fixed code hashes and the shared checkpoint. A CKB wrapper identifies the route by that Mailbox Script hash. Its supply changes require consumption of the same Mailbox. The Mailbox's dedicated Lock constrains actual mint outputs or actual burned inputs, and the Mailbox Type Script authenticates the message and replay state. The CKB Lock and Type Script enforce both obligations in the same transaction.
+
+The app sends no money through the generic message handler. Native UDT stays in the escrow and moves under its Type Group. The CKB wrapped UDT can be transferred independently. A CKB burn updates the mailbox atomically, and Stem consumes the certified return once when moving the underlying UDT. Both escrow bonds stay fixed. The settlement path currently accepts only single-Type instances of the asset.
+
 ## Historical proofs and CKB checkpoints
 
 Archive replicas preserve committed Headers. The proof index follows those records in a separate RocksDB database and checks the predecessor ID and MMR root before advancing. It persists only derived history nodes and progress. Each index update is independent of the application's commit. An archive reader can generate inclusion and append-only proofs at earlier retained heights.
