@@ -2511,3 +2511,42 @@ and the Go proof suite and CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
 [Raw runs, included transactions and journal outcomes](benchmarks/2026-11-26-stem-publisher-auto-follow.json.xz).
+
+## Intercell delivery after checkpoint advancement
+
+Revision `11d7c01` adds CKB verification of an older Stem Outbox proof
+under the MMR of a later Jolteon checkpoint. Both rounds ran four Stem
+replicas and a CKB 0.210.0 devnet on one i9-13900H. The fixture saved
+two Outbox proofs, delivered the first message, added a third message
+to change the SystemRoot, then advanced the CKB checkpoint. The second
+message was delivered using its original Patricia proof and the new
+history path.
+
+| Checkpoint publication | Outbox → checkpoint height | Current proof B / cycles | Historical proof B / cycles | Agreed Stem height |
+| --- | ---: | ---: | ---: | ---: |
+| Direct CLI bundle | 21 → 26 | 1,565 / 5,860,883 | 1,973 / 5,912,701 | 50 |
+| Sparse publisher | 22 → 28 | 1,667 / 5,854,474 | 2,075 / 5,902,348 | 49 |
+
+Sizes cover the signed CKB transaction. Each pair uses the same
+transaction body, current Mailbox replay path, and CKB checkpoint.
+The control uses a fresh Patricia path for the same message. CKB
+`estimate_cycles` reports an increase of 47,874–51,818 cycles and both
+historical transactions add 408 bytes. Each historical transaction
+was committed and its CKB transaction and witness inclusion checked.
+The controls were estimated only. These two pairs do not measure
+long-gap or cross-epoch history paths.
+
+Both rounds recorded 29 expected rejections, including a stale Outbox
+path without history, a path built for the wrong checkpoint, and
+changed historical Header, frontier and sibling bytes. They also
+verified wrong-network rejection, one-time consumption, CKB reorg and
+redelivery, guardian rejection of an orphaned anchor, and Stem replica
+recovery. Separate CKB devnet regressions covered CKB and xUDT
+withdrawals, native UDT full return, original Spore return and
+redeposit, native compound object return, historical and live-at-anchor
+CKB references, fee fund payouts and CKB-backed stake and rewards.
+The release workspace passed 457 tests with 14 ignored. The Go proof
+suite and frozen CometBFT comparison feature check passed.
+
+[Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
+[Raw proofs, rejections, commands and binary fingerprints](benchmarks/2026-11-26-stem-intercell-history.json.xz).
