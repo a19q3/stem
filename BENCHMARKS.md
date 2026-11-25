@@ -1359,3 +1359,50 @@ error in the shared sparse proof module, and all completed devnet runs.
 
 [Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
 [Run evidence and build logs](benchmarks/2026-11-25-stem-stake-rewards.json.xz).
+
+## Individual stake reward redemption
+
+Revision `a4b1a81`, with the historical quote experiment at `7beaf30`
+as the baseline. Three Stem replicas and CKB 0.210.0 devnet collected
+800 CKB in bridged fees at Stem height 7. The fixture allocated 520 CKB
+to the validators and delegators fund. One validator bonded 250 CKB,
+and one delegator funded separate 40 and 60 CKB positions with the same
+CKB Lock. Both positions counted in epoch 0. Its 1,250 basis-point
+validator commission was 18.57142857 CKB.
+
+| CKB recipient | Positions | CKB paid | Stem claim bytes | CKB release proof bytes | Estimated CKB release cycles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Validator's Stake Cell owner | 1 | 389.99999999 | 569 | 996 | 1,934,804 |
+| Delegator | 2 | 130.00000000 | 865 | 690 | 1,886,050 |
+
+The 52 CKB share was below the beneficiary's 61 CKB minimum output.
+Bundling it with the 78 CKB share produced one valid CKB output. The
+successor validator finalized the claims at heights 30 and 36. The
+vault used the same CKB checkpoint as the Stake Registry to verify both
+handoffs and release both claims. The CKB releases were reconciled into
+Stem at heights 34 and 40. All three replicas returned the same Header
+at height 40. The numeric cycle costs are the CKB RPC estimates on the
+transactions subsequently included on devnet.
+
+Final liquid reserve was 27,748.00000001 CKB and circulating Capacity
+was 27,468 CKB. Pending payouts were zero. Unallocated reserve was
+280.00000001 CKB, which includes the other three fund allocations and
+one shannon of rounding residue. Neither the bond nor the delegations'
+principal funded the rewards.
+
+The runner rejected a forged principal, wrong Lock, inflated amount,
+below-minimum claim, aggregate validator-fund bypass and replays with
+different transaction contents. Rebundling a position after confirmed
+CKB payment was rejected. Direct CKB validation also rejected a changed
+recipient, changed proof and missing checkpoint. A four-replica
+control without staking reconciled all four fixed fund recipients at
+agreed height 43.
+
+The archive includes the first failed Rust build, the fixture import
+error, the completed separate-checkpoint run and the final
+shared-checkpoint run. The release workspace passed 441 tests with 12
+ignored. The Go proof suite, CometBFT comparison build check and
+RISC-V contract checks passed.
+
+[Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
+[Raw evidence and run logs](benchmarks/2026-11-25-stem-stake-reward-claims.json.xz).
