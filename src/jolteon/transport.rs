@@ -4,7 +4,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, ensure};
@@ -26,6 +26,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(6);
 pub struct Incoming {
     pub frame: Frame,
     pub reply: Option<oneshot::Sender<Vec<u8>>>,
+    pub submit_received_at: Option<Instant>,
 }
 
 pub(super) struct Inbox {
@@ -225,11 +226,13 @@ async fn receive(
                 "unsupported client request"
             );
             let (sender, receiver) = oneshot::channel();
+            let submit_received_at = (frame.kind == wire::SUBMIT).then(Instant::now);
             incoming
                 .application
                 .send(Incoming {
                     frame,
                     reply: Some(sender),
+                    submit_received_at,
                 })
                 .await?;
             let response = timeout(IO_TIMEOUT, receiver).await??;
@@ -245,7 +248,13 @@ async fn receive(
         } else {
             &incoming.control
         };
-        queue.send(Incoming { frame, reply: None }).await?;
+        queue
+            .send(Incoming {
+                frame,
+                reply: None,
+                submit_received_at: None,
+            })
+            .await?;
     }
 }
 
@@ -317,6 +326,7 @@ mod tests {
                 ..Frame::default()
             },
             reply: None,
+            submit_received_at: None,
         };
         app_tx.try_send(event(wire::RELAY_TX))?;
         for _ in 0..=CONTROL_BURST {

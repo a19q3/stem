@@ -909,9 +909,25 @@ uses it for the history index. Status samples include current and high
 views, observed timeout certificates, and the most recent view whose
 proposal failed the local timestamp window.
 
+The load driver submits at the configured rate through one bounded
+queue. Set `STEM_STORAGE_SENDERS` to set both the number of workers
+and the queue capacity. Each planned submission reports when it was
+queued and attempted, when TCP connected, when the full frame was
+written, and when a complete reply was received. A successful
+admission requires a matching transaction digest. The report counts
+unattempted submissions, transport write failures, full frame writes
+and positive admissions separately. The `submission_us` fields
+summarize each measured stage. The connect stage includes building
+the request frame. A write timestamp marks the local socket write.
+
 The `admission` status counters report client requests, received
 transaction relays, Store checks, accumulated check microseconds and
-local relay retry attempts.
+local relay retry attempts. The `client_queue` histogram starts when
+the server decodes a complete submission and ends when the replica
+starts handling it. The `client_service` histogram ends when the
+reply is encoded. Each reports cumulative microseconds and counts
+with inclusive upper bounds of 1, 10, 100, 500 and 2,000 ms and
+a final overflow bucket.
 Use start and end deltas in load tests. The fixed-state comparison
 isolates verification of signed AMM commands over a single tip.
 

@@ -11,7 +11,7 @@ use ckb_db::internal::{Direction, IteratorMode, Options, ReadOnlyDB, prelude::*}
 use ckb_types::prelude::*;
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
-use stem::jolteon::{Client, verify_finality};
+use stem::jolteon::{Client, SubmissionProgress, verify_finality};
 use stem_ledger::{
     Transaction,
     block::{Header, Receipt},
@@ -65,12 +65,18 @@ fn concurrent_admission_checks_each_signed_wire_identity() -> Result<()> {
                 let tx = if index % 2 == 0 { &signed } else { &unsigned };
                 scope.spawn(move || {
                     gate.wait();
-                    first.submit(tx)
+                    let mut progress = SubmissionProgress::default();
+                    let result = first.submit_with_progress(tx, &mut progress);
+                    (result, progress)
                 })
             })
             .collect::<Vec<_>>();
         for (index, attempt) in attempts.into_iter().enumerate() {
-            let result = attempt.join().expect("admission submitter");
+            let (result, progress) = attempt.join().expect("admission submitter");
+            let connected = progress.connected_at.context("connected submission")?;
+            let written = progress.frame_written_at.context("written submission")?;
+            let read = progress.response_read_at.context("admission response")?;
+            assert!(connected <= written && written <= read);
             if index % 2 == 0 {
                 assert_eq!(result?, ckb_hash::blake2b_256(signed.as_slice()));
             } else {
@@ -96,6 +102,8 @@ fn concurrent_admission_checks_each_signed_wire_identity() -> Result<()> {
     }
     let admission = values[0].admission.context("admission metrics")?;
     assert_eq!(admission.client_requests, 12);
+    assert_eq!(admission.client_queue.buckets.iter().sum::<u64>(), 12);
+    assert_eq!(admission.client_service.buckets.iter().sum::<u64>(), 12);
     assert!(
         admission.checks <= 7,
         "valid duplicates should use the admitted entry"

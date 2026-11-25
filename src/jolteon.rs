@@ -36,7 +36,10 @@ use mempool::Mempool;
 use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
-pub use client::{AdmissionMetrics, Certificate, Client, QueryResult, Status};
+pub use client::{
+    AdmissionLatency, AdmissionMetrics, Certificate, Client, QueryResult, Status,
+    SubmissionProgress,
+};
 
 const STATE: &[u8] = b"state";
 const BODY: &[u8] = b"body";
@@ -1287,10 +1290,21 @@ impl Replica {
     fn handle(&mut self, event: Incoming) -> Result<()> {
         let frame = event.frame;
         if let Some(reply) = event.reply {
+            let started = event.submit_received_at.map(|received| {
+                let started = Instant::now();
+                self.admission
+                    .client_queue
+                    .observe(started.duration_since(received));
+                started
+            });
             let result = self
                 .client(frame.kind, frame.body)
                 .unwrap_or_else(|error| json!({"error": format!("{error:#}")}));
-            let _ = reply.send(serde_json::to_vec(&result)?);
+            let bytes = serde_json::to_vec(&result)?;
+            if let Some(started) = started {
+                self.admission.client_service.observe(started.elapsed());
+            }
+            let _ = reply.send(bytes);
             return Ok(());
         }
         let peer = u16::try_from(frame.sender)?;

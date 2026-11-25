@@ -3,7 +3,7 @@
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail, ensure};
@@ -20,6 +20,31 @@ pub struct Client {
     timeout: Duration,
 }
 
+/// Local transport milestones for one submission, including failed requests.
+#[derive(Debug, Default)]
+pub struct SubmissionProgress {
+    pub connected_at: Option<Instant>,
+    pub frame_written_at: Option<Instant>,
+    pub response_read_at: Option<Instant>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct AdmissionLatency {
+    pub elapsed_us: u64,
+    pub buckets: [u64; 6],
+}
+
+impl AdmissionLatency {
+    pub const UPPER_BOUNDS_US: [u64; 5] = [1_000, 10_000, 100_000, 500_000, 2_000_000];
+
+    pub(super) fn observe(&mut self, elapsed: Duration) {
+        let micros = elapsed.as_micros().try_into().unwrap_or(u64::MAX);
+        let bucket = Self::UPPER_BOUNDS_US.partition_point(|bound| *bound < micros);
+        self.buckets[bucket] = self.buckets[bucket].saturating_add(1);
+        self.elapsed_us = self.elapsed_us.saturating_add(micros);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
 pub struct AdmissionMetrics {
     pub client_requests: u64,
@@ -28,6 +53,10 @@ pub struct AdmissionMetrics {
     pub verification_us: u64,
     #[serde(default)]
     pub relay_retry_attempts: u64,
+    #[serde(default)]
+    pub client_queue: AdmissionLatency,
+    #[serde(default)]
+    pub client_service: AdmissionLatency,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -105,7 +134,26 @@ impl Client {
 
     /// A successful reply confirms admission. Fetch a finality proof for confirmation.
     pub fn submit(&self, transaction: &Transaction) -> Result<Hash32> {
-        let Admission { admitted } = self.request(wire::SUBMIT, transaction.as_slice().to_vec())?;
+        self.submit_inner(transaction, None)
+    }
+
+    /// Submit once and record the transport milestones reached by the request.
+    pub fn submit_with_progress(
+        &self,
+        transaction: &Transaction,
+        progress: &mut SubmissionProgress,
+    ) -> Result<Hash32> {
+        *progress = SubmissionProgress::default();
+        self.submit_inner(transaction, Some(progress))
+    }
+
+    fn submit_inner(
+        &self,
+        transaction: &Transaction,
+        progress: Option<&mut SubmissionProgress>,
+    ) -> Result<Hash32> {
+        let Admission { admitted } =
+            self.request_with_progress(wire::SUBMIT, transaction.as_slice().to_vec(), progress)?;
         let id = ckb_hash::blake2b_256(transaction.as_slice());
         ensure!(
             hex::decode(admitted)? == id,
@@ -140,6 +188,15 @@ impl Client {
     }
 
     fn request<T: DeserializeOwned>(&self, kind: u32, body: Vec<u8>) -> Result<T> {
+        self.request_with_progress(kind, body, None)
+    }
+
+    fn request_with_progress<T: DeserializeOwned>(
+        &self,
+        kind: u32,
+        body: Vec<u8>,
+        mut progress: Option<&mut SubmissionProgress>,
+    ) -> Result<T> {
         let frame = wire::Frame {
             sender: wire::CLIENT,
             kind,
@@ -149,10 +206,16 @@ impl Client {
         .encode_to_vec();
         ensure!(frame.len() <= wire::MAX_FRAME, "oversized request");
         let mut socket = TcpStream::connect_timeout(&self.address, self.timeout)?;
+        if let Some(progress) = progress.as_deref_mut() {
+            progress.connected_at = Some(Instant::now());
+        }
         socket.set_write_timeout(Some(self.timeout))?;
         socket.set_read_timeout(Some(self.timeout))?;
         socket.write_all(&(frame.len() as u32).to_be_bytes())?;
         socket.write_all(&frame)?;
+        if let Some(progress) = progress.as_deref_mut() {
+            progress.frame_written_at = Some(Instant::now());
+        }
         let mut length = [0; 4];
         socket.read_exact(&mut length)?;
         let length = u32::from_be_bytes(length) as usize;
@@ -162,6 +225,9 @@ impl Client {
         );
         let mut bytes = vec![0; length];
         socket.read_exact(&mut bytes)?;
+        if let Some(progress) = progress {
+            progress.response_read_at = Some(Instant::now());
+        }
         match serde_json::from_slice(&bytes).context("invalid replica response")? {
             Response::Failure { error } => bail!("{error}"),
             Response::Success(response) => Ok(response),

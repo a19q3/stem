@@ -3,6 +3,7 @@ use std::{
     fs,
     path::PathBuf,
     process::Command,
+    sync::{Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -11,7 +12,7 @@ use anyhow::ensure;
 use ckb_types::prelude::*;
 use serde::Serialize;
 use serde_json::{Value, json};
-use stem::jolteon::{Client, Status};
+use stem::jolteon::{Client, Status, SubmissionProgress};
 use stem_ledger::light::FinalityVerifier;
 use stem_stake::Member;
 
@@ -77,13 +78,44 @@ impl Load {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 struct Delivery {
     id: String,
     planned_us: u64,
+    queued_us: Option<u64>,
+    started_us: Option<u64>,
+    connected_us: Option<u64>,
     offered_us: Option<u64>,
+    response_us: Option<u64>,
     acknowledged_us: Option<u64>,
     error: Option<String>,
+}
+
+const DISPATCH_GRACE_US: u64 = 250_000;
+
+impl Delivery {
+    fn expired(&self, now: u64, offer_end: u64) -> bool {
+        now >= offer_end || now > self.planned_us + DISPATCH_GRACE_US
+    }
+
+    fn submit(&mut self, client: &Client, tx: &Transaction, start: Instant, offer_end: u64) {
+        let now = micros(start);
+        if self.expired(now, offer_end) {
+            self.error = Some("queue deadline".into());
+            return;
+        }
+        self.started_us = Some(now);
+        let mut progress = SubmissionProgress::default();
+        let result = client.submit_with_progress(tx, &mut progress);
+        let elapsed = |at: Instant| at.duration_since(start).as_micros() as u64;
+        self.connected_us = progress.connected_at.map(elapsed);
+        self.offered_us = progress.frame_written_at.map(elapsed);
+        self.response_us = progress.response_read_at.map(elapsed);
+        match result {
+            Ok(_) => self.acknowledged_us = Some(micros(start)),
+            Err(error) => self.error = Some(format!("{error:#}")),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -217,6 +249,8 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let start = Instant::now();
     let offer_us = load.seconds * 1_000_000;
     let end_us = (load.seconds + load.drain) * 1_000_000;
+    let (dispatch, pending) = mpsc::sync_channel::<(usize, Delivery)>(load.senders);
+    let pending = Mutex::new(pending);
     let (deliveries, samples, failures) = thread::scope(|scope| {
         let observer = scope.spawn(|| {
             let mut samples = Vec::new();
@@ -241,41 +275,54 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             (samples, failures)
         });
         let senders: Vec<_> = (0..load.senders)
-            .map(|sender| {
-                let clients = &clients;
-                let jobs = &jobs;
-                scope.spawn(move || {
-                    (sender..jobs.len())
-                        .step_by(load.senders)
-                        .map(|index| {
-                            let planned_us = (index as u64 * 1_000_000) / load.rate as u64;
-                            let when = start + Duration::from_micros(planned_us);
-                            thread::sleep(when.saturating_duration_since(Instant::now()));
-                            let mut row = Delivery {
-                                id: jobs[index].0.clone(),
-                                planned_us,
-                                offered_us: None,
-                                acknowledged_us: None,
-                                error: None,
-                            };
-                            let now = micros(start);
-                            if now >= offer_us || now > planned_us + 250_000 {
-                                row.error = Some("client deadline".into());
-                            } else {
-                                row.offered_us = Some(now);
-                                row.error = clients[index % clients.len()]
-                                    .submit(&jobs[index].1)
-                                    .err()
-                                    .map(|error| format!("{error:#}"));
-                                row.acknowledged_us = Some(micros(start));
-                            }
-                            row
-                        })
-                        .collect::<Vec<_>>()
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut rows = Vec::new();
+                    loop {
+                        let request = pending.lock().expect("dispatch queue").recv();
+                        let Ok((index, mut row)) = request else {
+                            break;
+                        };
+                        row.submit(
+                            &clients[index % clients.len()],
+                            &jobs[index].1,
+                            start,
+                            offer_us,
+                        );
+                        rows.push(row);
+                    }
+                    rows
                 })
             })
             .collect();
         let mut rows = Vec::new();
+        for (index, (id, _)) in jobs.iter().enumerate() {
+            let planned_us = index as u64 * 1_000_000 / load.rate as u64;
+            let when = start + Duration::from_micros(planned_us);
+            thread::sleep(when.saturating_duration_since(Instant::now()));
+            let now = micros(start);
+            let mut row = Delivery {
+                id: id.clone(),
+                planned_us,
+                ..Delivery::default()
+            };
+            if row.expired(now, offer_us) {
+                row.error = Some("dispatch deadline".into());
+                rows.push(row);
+            } else {
+                row.queued_us = Some(now);
+                match dispatch.try_send((index, row)) {
+                    Ok(()) => {}
+                    Err(mpsc::TrySendError::Full((_, mut row))) => {
+                        row.queued_us = None;
+                        row.error = Some("dispatch queue full".into());
+                        rows.push(row);
+                    }
+                    Err(mpsc::TrySendError::Disconnected(_)) => panic!("no load senders"),
+                }
+            }
+        }
+        drop(dispatch);
         for sender in senders {
             rows.extend(sender.join().expect("load submitter"));
         }
@@ -283,6 +330,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         let (samples, failures) = observer.join().expect("replica observer");
         (rows, samples, failures)
     });
+    ensure!(deliveries.len() == work, "incomplete client dispatch trace");
     let after = capture(&replicas, &clients, load.measured)?;
     let common_height = samples
         .last()
@@ -339,13 +387,21 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         verifier.verify(&certificate.proof, false)?.header() == &final_header,
         "finality differs from sampled Header"
     );
+    let attempted = deliveries
+        .iter()
+        .filter(|row| row.started_us.is_some())
+        .count();
     let offered = deliveries
         .iter()
         .filter(|row| row.offered_us.is_some())
         .count();
+    let offered_in_window = deliveries
+        .iter()
+        .filter(|row| row.offered_us.is_some_and(|at| at <= offer_us))
+        .count();
     let admitted = deliveries
         .iter()
-        .filter(|row| row.offered_us.is_some() && row.error.is_none())
+        .filter(|row| row.acknowledged_us.is_some())
         .count();
     let offered_ids: HashSet<_> = deliveries
         .iter()
@@ -358,35 +414,39 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     );
     let admitted_in_window = deliveries
         .iter()
-        .filter(|row| {
-            row.error.is_none() && row.acknowledged_us.is_some_and(|time| time <= offer_us)
-        })
+        .filter(|row| row.acknowledged_us.is_some_and(|time| time <= offer_us))
         .count();
     let visible_without_ack = deliveries
         .iter()
-        .filter(|row| row.error.is_some() && seen.contains_key(&row.id))
+        .filter(|row| row.acknowledged_us.is_none() && seen.contains_key(&row.id))
         .count();
     let in_window = seen.values().filter(|&&time| time <= offer_us).count();
-    let mut visibility: Vec<_> = deliveries
-        .iter()
-        .filter_map(|row| Some(seen.get(&row.id)?.saturating_sub(row.offered_us?)))
-        .collect();
-    visibility.sort_unstable();
-    let percentile = |p: usize| {
-        visibility
-            .get((p * visibility.len()).div_ceil(100).saturating_sub(1))
-            .copied()
+    let stages = |from: fn(&Delivery) -> Option<u64>, to: fn(&Delivery) -> Option<u64>| {
+        percentiles(
+            deliveries
+                .iter()
+                .filter_map(|row| Some(to(row)? - from(row)?)),
+        )
     };
     let final_time = seen.values().copied().max().unwrap_or(0).max(offer_us);
     let summary = json!({
-        "planned": work, "offered": offered, "admitted": admitted, "visible": seen.len(),
-        "client_drops": work - offered, "visible_during_offer": in_window,
-        "offer_tps": offered as f64 / load.seconds as f64,
+        "planned": work, "attempted": attempted, "offered": offered, "admitted": admitted, "visible": seen.len(),
+        "client_drops": work - attempted, "transport_write_failures": attempted - offered, "visible_during_offer": in_window,
+        "offered_during_window": offered_in_window, "offer_tps": offered_in_window as f64 / load.seconds as f64,
         "admitted_during_offer": admitted_in_window, "visible_without_ack": visible_without_ack,
         "admission_tps": admitted_in_window as f64 / load.seconds as f64,
         "visibility_tps": in_window as f64 / load.seconds as f64,
         "finalized_tps_with_drain": seen.len() as f64 * 1_000_000.0 / final_time as f64,
-        "latency_us": {"p50": percentile(50), "p95": percentile(95), "p99": percentile(99)},
+        "latency_us": percentiles(deliveries.iter().filter_map(|row| {
+            Some(seen.get(&row.id)?.saturating_sub(row.offered_us?))
+        })),
+        "submission_us": {
+            "dispatch": stages(|r| Some(r.planned_us), |r| r.queued_us),
+            "queue": stages(|r| r.queued_us, |r| r.started_us),
+            "connect": stages(|r| r.started_us, |r| r.connected_us),
+            "write": stages(|r| r.connected_us, |r| r.offered_us),
+            "response": stages(|r| r.offered_us, |r| r.response_us),
+        },
     });
     fs::write(
         output.join("report.json"),
@@ -442,6 +502,13 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         "no replicated load evidence"
     );
     Ok(())
+}
+
+fn percentiles(from: impl Iterator<Item = u64>) -> Value {
+    let mut samples: Vec<_> = from.collect();
+    samples.sort_unstable();
+    let at = |p: usize| samples.get((p * samples.len()).div_ceil(100).saturating_sub(1));
+    json!({"p50": at(50), "p95": at(95), "p99": at(99)})
 }
 
 fn payments(fixture: &mut Fixture, work: usize) -> Result<Vec<Transaction>> {

@@ -169,7 +169,10 @@ one pass through the committee in the same epoch. Finality and expiry
 remove the relay entry with the transaction. The next epoch's first
 retry uses the new roster. Proposals carry full transaction bytes for
 execution on every voting replica. Node status records client and
-relayed requests, Store checks, check time and relay retries.
+relayed requests, Store checks, check time and relay retries. Submission
+timing separates the wait from a decoded request to the replica's
+handler from the time spent building its admission or rejection reply.
+Both are local counters and use fixed latency buckets.
 
 The application includes the next epoch, activation height and ordered roster in the authenticated `stake/announced` record at height `A−2`. The final execution height for the outgoing validators is `A−1`. Before starting the successor, the old epoch certifies an adjacent parent and seal pair. The seal commits the same boundary Header in a separate domain. After a timeout, the seal can extend an earlier seal for that boundary, preserving the adjacent-view finality rule. Only executed blocks advance the Header history. The boundary execution, handoff proof and new vote journal commit in one RocksDB batch. Signed handoffs and certified payloads remain available to a replica that rejoins across a committee change.
 
