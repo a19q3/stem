@@ -1135,3 +1135,37 @@ suite passed 439 tests, with 12 ignored. The Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#redeem-fee-revenue-on-ckb) ·
 [Raw reports, failures and fingerprints](benchmarks/2026-11-25-stem-fee-funds.json.xz).
+
+## Fixed-precision fee calibration
+
+Four local Jolteon replicas finalized 32 signed ordinary payments at 140
+shannons each. Each transaction used one input, two outputs, one Cell Dep,
+and the standard native secp256k1 Lock. The signed transaction was 312 B.
+The 139-shannon variant of the first payment hit its paid cycle limit.
+All four replicas agreed at height 15 and the fee tally proof reported
+4,480 shannons. The fee schedule used the following integer rates in
+millionths of a shannon per unit.
+
+| Deterministic resource | Rate |
+| --- | ---: |
+| Encoded byte | 200,000 |
+| VM cycle | 35 |
+| Cell read | 500,000 |
+| Cell read byte | 100 |
+| Cell write byte | 16,000 |
+| Cell deletion | 1,000,000 |
+
+The initial 17,000 rate for a Cell write byte rejected even the 140-shannon
+variant. Both rounds are archived. The successful schedule is 30.17% of the
+464-shannon CKB reference for this comparison. The reference uses 464 bytes
+and the 1,000 shannons/kB default relay rate. The experiment does not sample
+CKB mainnet fees or estimate a production security budget.
+
+After updating the genesis commitment for the new price unit, the CKB
+devnet regression again settled all four fee payouts and reconciled the
+reserve across four replicas at height 49. The Rust workspace release
+suite passed 439 tests, with 12 ignored. The opt-in four-replica Polytype,
+sponsored OTX, atomic Lineage and Keeper test also passed at height 32.
+
+[Reproduction](OPERATIONS.md#calibrate-native-resource-prices) ·
+[Both attempts and the CKB regression](benchmarks/2026-11-25-stem-resource-pricing.json.xz).

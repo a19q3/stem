@@ -32,5 +32,6 @@ available. Published network evidence contains public genesis and proof data.
 | Jolteon time, long-gap recovery, anchored snapshot and 128-member CKB relay | [Recovery report](../BENCHMARKS.md#jolteon-clock-and-long-gap-recovery), [relay report](../BENCHMARKS.md#128-member-checkpoint-through-ckb-p2p), [18 runs](2026-11-25-stem-clock-recovery-ckb-relay.json.xz) |
 | Default Jolteon runner, ordinary retention and CKB regression | [Report](../BENCHMARKS.md#default-jolteon-runtime-and-ordinary-retention), [raw runs](2026-11-25-stem-default-jolteon.json.xz) |
 | CKB fee fund settlement and bridge regression | [Report](../BENCHMARKS.md#ckb-fee-fund-settlement), [raw runs including the failed attempt](2026-11-25-stem-fee-funds.json.xz) |
+| Fixed-precision resource pricing | [Report](../BENCHMARKS.md#fixed-precision-fee-calibration), [both attempts and CKB regression](2026-11-25-stem-resource-pricing.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
