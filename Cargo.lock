@@ -721,7 +721,6 @@ dependencies = [
 name = "ckb-script"
 version = "1.2.1"
 dependencies = [
- "anyhow",
  "byteorder",
  "ckb-chain-spec",
  "ckb-crypto",
@@ -738,12 +737,9 @@ dependencies = [
  "ckb-vm",
  "daggy",
  "faster-hex 2.0.0",
- "fern-ledger",
- "lru",
  "molecule",
  "proptest",
  "rand 0.8.6",
- "rayon",
  "serde",
  "tempfile",
  "tiny-keccak",
@@ -860,8 +856,6 @@ dependencies = [
 [[package]]
 name = "ckb-vm"
 version = "0.24.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08410cfd9154507730d9c2e3de50952361143c48ea738e2ab92adcfb3eba8771"
 dependencies = [
  "byteorder",
  "bytes",
@@ -878,8 +872,6 @@ dependencies = [
 [[package]]
 name = "ckb-vm-definitions"
 version = "0.24.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7933435dd0330ad7d152c60012e8621748fb86751304cb0edf7b2d1bab32e28c"
 dependencies = [
  "paste",
 ]
@@ -1342,13 +1334,13 @@ dependencies = [
  "ckb-db",
  "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
  "ckb-jsonrpc-types",
- "ckb-script",
  "ckb-types",
  "clap",
  "ed25519-dalek",
  "fern-bridge-wire",
  "fern-ledger",
  "fern-stake",
+ "fern-vm",
  "hex",
  "prost",
  "rayon",
@@ -1385,6 +1377,22 @@ dependencies = [
  "ed25519-dalek",
  "prost",
  "tendermint-proto",
+]
+
+[[package]]
+name = "fern-vm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ckb-crypto",
+ "ckb-hash 1.1.1 (git+https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3)",
+ "ckb-script",
+ "ckb-types",
+ "ckb-vm",
+ "fern-ledger",
+ "lru",
+ "rayon",
+ "tempfile",
 ]
 
 [[package]]

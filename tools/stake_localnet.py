@@ -69,7 +69,7 @@ def vote(i, validator):
 def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False):
     commitment = EMPTY if withdrawn else ckb_hash(b"Fern CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
-    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + bytes([frozen]) + commitment,
+    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + bytes([frozen]) + meta[32:48] + commitment,
             fields + meta)
 
 
@@ -285,7 +285,7 @@ class Scenario:
         def certify(domain, limit=3):
             return lambda old, new: proof(self.authority, message(domain, old, new), limit)
 
-        active = owner + le(25, 8) + le(0, 8) + EMPTY
+        active = owner + le(1, 8) + le(0, 8) + EMPTY
         results["activated"] = self.change(
             "activate", 3, key, mk_record(key, amount, 0, None, active),
             certify(b"Fern CKB Stake activation\0"))
@@ -304,7 +304,7 @@ class Scenario:
             since=(1 << 63), expected="ValidationFailure")
         penalty = ckb_hash(b"Fern CometBFT double vote\0" + self.network
                            + le(len(CHAIN), 4) + CHAIN + key + le(42, 8) + le(0, 4) + bytes([2]))
-        frozen = owner + le(25, 8) + le(0, 8) + penalty
+        frozen = owner + le(1, 8) + le(0, 8) + penalty
         votes = vote(0, validator) + vote(1, validator)
         frozen_record = mk_record(key, amount, 0, 6, frozen, frozen=True)
         results["forged_vote_rejected"] = self.change(
@@ -319,7 +319,7 @@ class Scenario:
         results["slash_before_retirement_rejected"] = self.change(
             "slash-before-retirement", 8, key, mk_record(key, 0, 0, 6, frozen, frozen=True),
             fee=amount + FEE, expected="ValidationFailure")
-        retired = owner + le(25, 8) + le(61, 8) + penalty
+        retired = owner + le(1, 8) + le(61, 8) + penalty
         retired_record = mk_record(key, amount, 0, 6, retired, frozen=True)
         results["minority_retirement_rejected"] = self.change(
             "minority-retirement", 4, key, retired_record,
@@ -381,6 +381,22 @@ class Scenario:
         results["final_sequence"] = self.sequence
         results["slash_inclusion"] = self.l1.prove_committed(results["slashed"])
         results["withdrawal_inclusion"] = self.l1.prove_committed(results["withdrawn"])
+        observed = results["snapshot_after_freeze"]["registry"]
+        height = observed["height"]
+        self.l1.call("truncate", self.l1.call("get_block_hash", hex(height - 1)))
+        self.l1.mine(3)
+        replacement = self.l1.call("get_block_hash", hex(height))
+        if replacement == observed["block_hash"]:
+            raise AssertionError("CKB test node reproduced the original anchor")
+        results["reorganized_anchor_rejected"] = reject_cli(
+            "previous L1 anchor was reorganized",
+            self.args.binary, "stake", "observe",
+            "--request", self.args.output / "frozen-observe.json",
+            "--l1-rpc", self.l1.url,
+            "--journal", self.args.output / "stake-journal-0",
+            "--key-file", self.args.output / "stake-observer-0.key",
+        )
+        results["replacement_l1_hash"] = replacement
         return results
 
 

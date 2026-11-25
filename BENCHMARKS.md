@@ -511,7 +511,7 @@ The current fixtures use CKB-VM assembly and reuse, independently compiled RISC-
 | Identity and lifecycle update | 2 | 5,760,590 | 1,931,200 |
 | Two-asset settlement with collateral and transfer policy | 5 | 5,835,417 | 2,020,121 |
 
-Run `cargo test --locked -p ckb-script --features vm-reuse --test fern_native -- --nocapture`. Serial and four-worker validation charge identical cycles for the settlement fixture. The tests exercise cache-hit cycle accounting, Spawn, Exec and native Witness parsing. The lock change and the different signatures across fixtures are part of the current cycle measurements.
+Run `cargo test --locked -p fern-vm --test native -- --nocapture`. Serial and four-worker validation charge identical cycles for the settlement fixture. The tests exercise cache-hit cycle accounting, Spawn, Exec and native Witness parsing. The lock change and the different signatures across fixtures are part of the current cycle measurements.
 
 The native four-node test committed a signed payment at height 2 and a two-Type-Script transfer at height 3, after rejecting an attempted removal of its input Transfer Policy. The composed transfer charged 5,783,509 VM cycles. The test verified the signed AppHash at height 4 on all replicas and compared the restarted replica's Header at height 6. This is a correctness run. A fifth node restored a native state snapshot and caught up to height 9 using CometBFT state sync. [Reproduce the four-node test](OPERATIONS.md#exercise-the-native-cometbft-path)
 
@@ -561,3 +561,16 @@ Both columns are actual complete Molecule transactions. They contain the same in
 | Ten UDT outputs, same Lock | 2,421 | 1,015 | −58.1% |
 
 The test decodes the candidate and reconstructs the output Scripts, Capacity and Cell Data. These fixtures place the dictionary in the raw transaction and preserve the byte count of the seal. The candidate is a test schema. Fern continues to accept the existing canonical transaction encoding. Run `cargo test --locked -p fern-ledger measure_transaction_script_dictionary -- --nocapture`. [Historical CKB Script Table proposal](https://talk.nervos.org/t/cell-model-changes-preview-in-v0-19-0/3349)
+
+## Fern VM worker comparison
+
+After extracting the Fern VM crate, two fresh four-node release runs offered the same mix of 512 cross-asset settlement transactions at 64 TPS. Each transaction had five Type Groups and one native secp256k1 Lock Group. The runs used the identical release executables and cycle limits. Each network generated its own genesis and signatures.
+
+| VM workers per replica | Admitted / confirmed | Confirmed TPS | p50/p95/p99 (s) | CPU (s) | RSS (MB) | Writes (MB) | P2P rx/tx (MB) |
+| ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| 1 | 512 / 512 | 34.21 | 4.12/7.11/7.48 | 29.86 | 381.4 | 73.28 | 10.59/10.59 |
+| 4 | 512 / 512 | 33.90 | 4.26/7.24/7.49 | 34.89 | 431.9 | 75.12 | 10.78/10.78 |
+
+Both runs recorded zero client drops. The four-worker run used more CPU time and memory with similar confirmation throughput under this block budget. The test supports `FERN_TEST_VM_WORKERS` to repeat both profiles. The full signed RISC-V VM fixtures still charge 5,769,207, 5,760,590 and 5,835,417 cycles respectively on the vendored backend. The upstream suite passed 164 tests.
+
+The [worker measurements and CKB checkpoint evidence](benchmarks/2026-11-25-fern-vm-and-checkpoint.json.xz) include per-transaction data, the binary fingerprints, both CKB checkpoint inclusion proofs, signed CometBFT successors, a historical Header proof, and a CKB devnet reorganization that stopped Stake Snapshot signing.

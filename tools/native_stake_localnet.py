@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import CKB, Fixtures, L1, binary, ckb_hash, hex_bytes, le, script_hash
 from localnet import Rpc, run, write_json
+import checkpoint_localnet
 from native_bridge_localnet import start, wait_for
 from stake_localnet import CHAIN, DELAY, EMPTY, Scenario, mk_record, proof, signable
 
@@ -80,7 +81,7 @@ def stake_round(args, l1, scenario, fixture):
     try:
         for n, home in enumerate(homes):
             app = args.output / f"app-{n}"
-            nodes.append(start(args, [args.binary, "run", "--home", app, "--genesis", spec_path], f"fern-{n}.log"))
+            nodes.append(start(args, [args.binary, "run", "--home", app, "--genesis", spec_path, "--archive"], f"fern-{n}.log"))
             wait_for(lambda: (app / "abci.sock").is_socket(), f"Fern node {n}")
             nodes.append(start(args, [args.comet, "start", "--home", home, "--proxy_app", f"unix://{app / 'abci.sock'}",
                 "--rpc.laddr", f"tcp://127.0.0.1:{args.comet_port + n}",
@@ -121,6 +122,7 @@ def stake_round(args, l1, scenario, fixture):
 
         first, joined = snapshot(1, genesis[0]["registry"])
         progress(11)
+        first_checkpoint = checkpoint_localnet.capture(args, clients[0], progress, 11) if args.checkpoint else None
         if committee(10) != {old_key: 250} or committee(11) != {old_key: 250, new_key: 400}:
             raise AssertionError("CKB stake did not take effect at the CometBFT H+2 boundary")
         exit_requested = scenario.change("request-live-exit", 2, old_key, mk_record(old_key, low, 0, 2, original))
@@ -129,11 +131,12 @@ def stake_round(args, l1, scenario, fixture):
         if committee(20) != {old_key: 250, new_key: 400} or committee(21) != {new_key: 400}:
             raise AssertionError("CKB exit did not alter the expected CometBFT height")
         handoffs = args.output / "handoffs.json"
-        write_json(handoffs, [
+        transitions = [
             {"commit": clients[0].call("commit", height=h - 1),
              "members": clients[0].call("validators", height=h)["validators"]}
             for h in (11, 21)
-        ])
+        ]
+        write_json(handoffs, transitions)
         final = args.output / "retirement-successor.json"
         write_json(final, clients[0].call("commit", height=22))
         projected = header(clients[0], 21)
@@ -143,6 +146,12 @@ def stake_round(args, l1, scenario, fixture):
                            + ckb_hash(b"Fern Header\0" + scenario.network + projected))
         validated = run(args.proof_verifier, "-genesis", homes[0] / "config/genesis.json", "-handoffs", handoffs,
                         "-commit", final, "-height", "21", "-app-hash", app_hash.hex())
+        checkpoint_report = None
+        if args.checkpoint:
+            second_checkpoint = checkpoint_localnet.capture(args, clients[0], progress, 23)
+            checkpoint_report = checkpoint_localnet.publish(
+                args, scenario, spec_path, homes[0] / "config/genesis.json",
+                transitions, first_checkpoint, second_checkpoint)
         retired = owner + le(1, 8) + le(21, 8) + EMPTY
         retirement = scenario.change("retire-excluded", 4, old_key, mk_record(old_key, low, 0, 2, retired),
                                      certificate(b"Fern CKB Stake retirement\0"))
@@ -152,7 +161,7 @@ def stake_round(args, l1, scenario, fixture):
         return {"initial_registration": registered, "incoming_registration": incoming, "stake_join": joined,
                 "exit_requested": exit_requested, "stake_exit": excluded, "retirement": retirement,
                 "unbonded": released, "unbonded_shannons": low, "l1_proof": l1.prove_committed(released),
-                "committee_proof": validated}
+                "committee_proof": validated, "checkpoint": checkpoint_report}
     finally:
         for client in clients:
             client.close()
@@ -170,6 +179,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("binary", "l1", "comet", "stake-registry", "proof-verifier", "output"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve(), required=True)
+    parser.add_argument("--checkpoint", type=lambda path: Path(path).resolve())
     parser.add_argument("--l1-port", type=int, default=43300)
     parser.add_argument("--comet-port", type=int, default=43310)
     args = parser.parse_args()
@@ -180,6 +190,8 @@ def main():
         result = stake_round(args, l1, Scenario(args, l1, fixture), fixture)
         write_json(args.output / "native-stake-report.json", result)
         print(result["committee_proof"], f"unbonded {result['unbonded_shannons']} shannons")
+        if result["checkpoint"]:
+            print(f"published CKB checkpoints at Fern heights {[item['height'] for item in result['checkpoint']['publications']]}")
     finally:
         l1.stop()
 

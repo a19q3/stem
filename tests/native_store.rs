@@ -124,6 +124,69 @@ impl Fixture {
 }
 
 #[test]
+fn parallel_waves_preserve_receipts_conflicts_and_block_cycles() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let points = [10u8, 11, 12].map(|id| OutPoint::new([id; 32].pack(), 0));
+    for point in &points {
+        fixture.spec.development_cells.push((
+            point.clone(),
+            Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?,
+        ));
+    }
+    let txs = points
+        .iter()
+        .map(|point| fixture.signed(point.clone(), None, FUND - FEE, None))
+        .collect::<Result<Vec<_>>>()?;
+    let directory = tempfile::tempdir()?;
+    let serial = Store::open(
+        &directory.path().join("serial"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    let expected = serial.prepare(&txs, TIME, false)?;
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    let parallel = Store::open(
+        &directory.path().join("parallel"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    let actual = workers.install(|| parallel.prepare(&txs, TIME, true))?;
+    assert_eq!(expected.receipts(), actual.receipts());
+    assert_eq!(expected.header(), actual.header());
+
+    let duplicate = [txs[0].clone(), txs[0].clone()];
+    assert!(
+        workers
+            .install(|| parallel.prepare(&duplicate, TIME, true))
+            .is_err()
+    );
+    let invalid = [txs[0].with_witnesses(vec![])?, txs[1].clone()];
+    assert!(
+        workers
+            .install(|| parallel.prepare(&invalid, TIME, true))
+            .is_err()
+    );
+    assert!(parallel.live_cell(&points[0])?.is_some());
+
+    let charged: u64 = actual.receipts().iter().map(|receipt| receipt.cycles).sum();
+    fixture.spec.limits.transaction_cycles = charged / 2;
+    fixture.spec.limits.block_cycles = charged - 1;
+    let limited = Store::open(
+        &directory.path().join("limited"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    assert!(limited.prepare(&txs[..2], TIME, false).is_ok());
+    assert!(limited.prepare(&txs, TIME, false).is_err());
+    assert!(
+        workers
+            .install(|| limited.prepare(&txs, TIME, true))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     let fixture = Fixture::new()?;
     let path = tempfile::tempdir()?;

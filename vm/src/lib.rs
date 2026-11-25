@@ -14,24 +14,15 @@ use fern_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, bl
 use lru::LruCache;
 use rayon::prelude::*;
 
-#[cfg(all(has_asm, feature = "vm-reuse"))]
-use crate::reusable_asm::{ReusableMachine as FernMachine, allocate_core};
-#[cfg(not(all(has_asm, feature = "vm-reuse")))]
-use crate::types::Machine as FernMachine;
-use crate::{
-    Scheduler,
-    cost_model::transferred_byte_cycles,
-    syscalls::{
-        Close, CurrentCycles, ExecV2, INDEX_OUT_OF_BOUND, ITEM_MISSING, InheritedFd,
-        LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, LOAD_CELL_SYSCALL_NUMBER,
-        LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, LOAD_HEADER_SYSCALL_NUMBER,
-        LOAD_INPUT_BY_FIELD_SYSCALL_NUMBER, LOAD_INPUT_SYSCALL_NUMBER,
-        LOAD_SCRIPT_HASH_SYSCALL_NUMBER, LOAD_SCRIPT_SYSCALL_NUMBER,
-        LOAD_TRANSACTION_SYSCALL_NUMBER, LOAD_TX_HASH_SYSCALL_NUMBER, LOAD_WITNESS_SYSCALL_NUMBER,
-        LoadCellData, Pipe, ProcessID, Read, SUCCESS, Spawn, VMVersion, Wait, Write,
-        utils::store_data,
-    },
-    types::{DataPieceId, RunMode, ScriptContext, ScriptVersion, VmContext, VmId},
+use ckb_script::runtime::{
+    Close, CurrentCycles, DataPieceId, ExecV2, INDEX_OUT_OF_BOUND, ITEM_MISSING, InheritedFd,
+    LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, LOAD_CELL_SYSCALL_NUMBER,
+    LOAD_HEADER_BY_FIELD_SYSCALL_NUMBER, LOAD_HEADER_SYSCALL_NUMBER,
+    LOAD_INPUT_BY_FIELD_SYSCALL_NUMBER, LOAD_INPUT_SYSCALL_NUMBER, LOAD_SCRIPT_HASH_SYSCALL_NUMBER,
+    LOAD_SCRIPT_SYSCALL_NUMBER, LOAD_TRANSACTION_SYSCALL_NUMBER, LOAD_TX_HASH_SYSCALL_NUMBER,
+    LOAD_WITNESS_SYSCALL_NUMBER, LoadCellData, Pipe, ProcessID, Read, RunMode, SUCCESS,
+    ScriptContext, ScriptVersion, Spawn, VMVersion, VmContext, VmId, Wait, Write, scheduler,
+    store_data, transferred_byte_cycles,
 };
 
 const INPUT: u64 = 1;
@@ -156,6 +147,16 @@ impl DataSource<DataPieceId> for GroupContext {
 /// Verify the automatically derived Lock and Type Script Groups.
 /// The same transaction cycle budget applies whether groups run serially or in parallel.
 pub fn verify(tx: Arc<ResolvedTransaction>, max_cycles: u64, parallel: bool) -> Result<u64> {
+    verify_groups(tx, max_cycles, parallel, &[], |_, _| {})
+}
+
+fn verify_groups(
+    tx: Arc<ResolvedTransaction>,
+    max_cycles: u64,
+    parallel: bool,
+    estimates: &[Option<u64>],
+    mut observe: impl FnMut(usize, u64),
+) -> Result<u64> {
     let transaction_id = tx.transaction().id(tx.network_id());
     let run = |group, limit| execute_group(Arc::clone(&tx), &transaction_id, group, limit);
     let mut total = 0;
@@ -169,14 +170,26 @@ pub fn verify(tx: Arc<ResolvedTransaction>, max_cycles: u64, parallel: bool) -> 
         let end = (start + workers).min(group_count);
         let remaining = max_cycles - total;
         if end - start == 1 {
-            total = charge(total, run(start, remaining)?, max_cycles)?;
+            let cycles = run(start, remaining)?;
+            total = charge(total, cycles, max_cycles)?;
+            observe(start, cycles);
             continue;
         }
 
-        let speculative_limit = remaining / (end - start) as u64;
+        let equal_share = remaining / (end - start) as u64;
         let results: Vec<_> = (start..end)
             .into_par_iter()
-            .map(|group| run(group, speculative_limit))
+            .map(|group| {
+                let limit = estimates
+                    .get(group)
+                    .copied()
+                    .flatten()
+                    .map_or(equal_share, |cycles| {
+                        cycles.saturating_mul(2).max(equal_share)
+                    })
+                    .min(remaining);
+                run(group, limit)
+            })
             .collect();
         for (index, result) in results.into_iter().enumerate() {
             let cycles = match result {
@@ -186,17 +199,24 @@ pub fn verify(tx: Arc<ResolvedTransaction>, max_cycles: u64, parallel: bool) -> 
                 other => other?,
             };
             total = charge(total, cycles, max_cycles)?;
+            observe(start + index, cycles);
         }
     }
     Ok(total)
 }
 
-/// Caches successful verification with the measured cycle charge.
-pub struct VerificationCache(Mutex<LruCache<Byte32, u64>>);
+/// Caches verified transactions and remembers recent Script Group costs for scheduling.
+pub struct VerificationCache {
+    verified: Mutex<LruCache<Byte32, u64>>,
+    estimates: Mutex<LruCache<(u8, Byte32), u64>>,
+}
 
 impl VerificationCache {
     pub fn new(capacity: usize) -> Self {
-        Self(Mutex::new(LruCache::new(capacity)))
+        Self {
+            verified: Mutex::new(LruCache::new(capacity)),
+            estimates: Mutex::new(LruCache::new(capacity)),
+        }
     }
 
     pub fn verify(
@@ -206,13 +226,44 @@ impl VerificationCache {
         parallel: bool,
     ) -> Result<u64> {
         let key = tx.script_cache_key().clone();
-        let found = self.0.lock().expect("VM cache lock").get(&key).copied();
+        let found = self
+            .verified
+            .lock()
+            .expect("VM cache lock")
+            .get(&key)
+            .copied();
         if let Some(cycles) = found {
             return charge(0, cycles, max_cycles);
         }
 
-        let cycles = verify(tx, max_cycles, parallel)?;
-        self.0.lock().expect("VM cache lock").put(key, cycles);
+        let cycles = if tx.groups().len() < 2 {
+            verify(tx, max_cycles, parallel)?
+        } else {
+            let groups: Vec<_> = tx
+                .groups()
+                .iter()
+                .map(|group| (group.kind as u8, group.script.calc_script_hash()))
+                .collect();
+            let estimated = if parallel {
+                let mut cache = self.estimates.lock().expect("VM estimates lock");
+                groups.iter().map(|id| cache.get(id).copied()).collect()
+            } else {
+                Vec::new()
+            };
+            let mut measured = Vec::with_capacity(groups.len());
+            let cycles = verify_groups(tx, max_cycles, parallel, &estimated, |index, cost| {
+                measured.push((index, cost));
+            })?;
+            let mut cache = self.estimates.lock().expect("VM estimates lock");
+            for (index, cost) in measured {
+                cache.put(groups[index].clone(), cost);
+            }
+            cycles
+        };
+        self.verified
+            .lock()
+            .expect("VM cache lock")
+            .put(key, cycles);
         Ok(cycles)
     }
 }
@@ -242,11 +293,7 @@ fn execute_group(
         transaction_id: transaction_id.clone(),
         script_hash: script_hash.clone(),
     };
-    let mut scheduler = Scheduler::<_, _, FernMachine>::new(context, syscalls, ());
-    #[cfg(all(has_asm, feature = "vm-reuse"))]
-    {
-        scheduler.core_allocator = Some(allocate_core);
-    }
+    let mut scheduler = scheduler(context, syscalls, ());
     let result = scheduler
         .run(RunMode::LimitCycles(limit))
         .with_context(|| format!("{kind:?} Script Group {script_hash:#x}"))?;

@@ -12,6 +12,10 @@ pub const MAX_UPDATE_BYTES: usize = 2 + 32 * MAX_SUFFIX + 2 * (4 + MAX_MEMBERS *
 pub const ZERO_OUT_POINT: [u8; 36] = [0; 36];
 const FIXED_BYTES: usize = 8 + 7 * 32 + 2 * 68;
 
+pub fn stake_snapshot_commitment(network: &Hash32, snapshot: &[u8]) -> Hash32 {
+    digest(b"Fern checkpoint Stake Snapshot\0", &[network, snapshot])
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Domain {
     pub network: Hash32,

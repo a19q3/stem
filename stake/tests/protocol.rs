@@ -104,6 +104,8 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
             activation_epoch: 0,
             exit_epoch: (i == 1).then_some(1),
             frozen: false,
+            first_active_height: 1,
+            first_inactive_height: 0,
             stake_cell_hash: [i as u8 + 1; 32],
         })
         .collect();
@@ -115,6 +117,14 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         Registry::new(domain.fern_network_id, 0, [14; 32], duplicate),
         Err(Error::Encoding)
     );
+    let mut not_eligible = records.clone();
+    not_eligible[0].first_active_height = 0;
+    not_eligible[1].first_active_height = 11;
+    not_eligible[2].exit_epoch = Some(1);
+    not_eligible[2].first_inactive_height = 11;
+    let limited = Registry::new(domain.fern_network_id, 0, [14; 32], not_eligible)?;
+    assert_eq!(config.select(&limited, 0), Err(Error::Committee));
+    assert_eq!(config.select(&limited, 1), Err(Error::Committee));
     let snapshot = StakeSnapshot {
         domain,
         registry: RegistryAnchor {

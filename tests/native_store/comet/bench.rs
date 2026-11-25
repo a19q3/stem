@@ -247,6 +247,7 @@ impl Benchmark {
         };
         let report = json!({
             "workload": self.workload, "requested_tps": self.rate, "transactions": self.count,
+            "vm_workers_per_replica": vm_workers().parse::<u32>()?,
             "offered": offered, "admitted": admitted, "finalized_all_replicas": confirmed.len(), "client_drops": drops,
             "offered_tps": offered as f64 / offered_duration, "admitted_tps": admitted as f64 / offered_duration,
             "finalized_tps": confirmed.len() as f64 / finalized_at.max(offered_duration),

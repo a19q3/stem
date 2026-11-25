@@ -38,6 +38,8 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         activation_epoch,
         exit_epoch,
         frozen: false,
+        first_active_height: 1,
+        first_inactive_height: 0,
         stake_cell_hash: validator_pubkey,
     };
     let registry = Registry::new(

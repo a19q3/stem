@@ -1,6 +1,8 @@
 #[cfg(unix)]
 mod bridge_cli;
 #[cfg(unix)]
+mod checkpoint_cli;
+#[cfg(unix)]
 mod ckb_wallet;
 #[cfg(unix)]
 mod l1;
@@ -56,6 +58,11 @@ enum Command {
         #[command(subcommand)]
         command: stake_cli::StakeCommand,
     },
+    /// Prepare CKB checkpoints and query native history proofs.
+    Checkpoint {
+        #[command(subcommand)]
+        command: checkpoint_cli::CheckpointCommand,
+    },
     /// Validate native application genesis and print its Fern Header ID.
     GenesisHash {
         #[arg(long)]
@@ -96,6 +103,7 @@ fn main() -> Result<()> {
         Command::CkbWallet { command } => command.run(),
         Command::Bridge { command } => command.run(),
         Command::Stake { command } => command.run(),
+        Command::Checkpoint { command } => command.run(),
         Command::GenesisHash { genesis } => {
             use ckb_types::prelude::Entity;
             let spec = native_spec::load(&genesis)?;

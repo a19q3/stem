@@ -16,10 +16,10 @@ ckb-crypto.workspace = true
 ckb-db.workspace = true
 ckb-hash.workspace = true
 ckb-jsonrpc-types.workspace = true
-ckb-script = { workspace = true, features = ["vm-reuse"] }
 fern-bridge-wire = { path = "bridge-wire" }
 fern-ledger = { path = "ledger" }
 fern-stake = { path = "stake" }
+fern-vm = { path = "vm" }
 ckb-types.workspace = true
 ed25519-dalek.workspace = true
 clap = { workspace = true, features = ["derive"] }
@@ -34,9 +34,9 @@ tendermint-proto = "=0.40.4"
 tempfile.workspace = true
 
 [workspace]
-members = ["bridge-wire", "ledger", "stake", "vendor/ckb-script"]
+members = ["bridge-wire", "ledger", "stake", "vm", "vendor/ckb-script"]
 default-members = ["."]
-exclude = ["contracts", "vendor/ckb-script/fuzz"]
+exclude = ["contracts", "vendor/ckb-script/fuzz", "vendor/ckb-vm", "vendor/ckb-vm/definitions", "vendor/ckb-vm/fuzz"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -53,13 +53,13 @@ ckb-hash = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a
 ckb-jsonrpc-types = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
 ckb-logger = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
 ckb-resource = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
-ckb-script = { path = "vendor/ckb-script" }
+ckb-script = { path = "vendor/ckb-script", default-features = false }
 ckb-store = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
 ckb-test-chain-utils = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
 ckb-traits = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
 ckb-types = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
 ckb-verification = { git = "https://github.com/nervosnetwork/ckb", rev = "119598b0a1146a569068ac80bdba7eb5f6292fd3" }
-ckb-vm = { version = "=0.24.15", default-features = false }
+ckb-vm = { path = "vendor/ckb-vm", version = "=0.24.15", default-features = false }
 clap = "=4.4"
 daggy = "0.8.0"
 ed25519-dalek = "2.1"
@@ -77,6 +77,9 @@ sha2 = "0.10"
 tempfile = "3"
 tiny-keccak = "2.0"
 tokio = "1.35.0"
+
+[patch.crates-io]
+ckb-vm = { path = "vendor/ckb-vm" }
 
 [patch."https://github.com/nervosnetwork/ckb"]
 ckb-script = { path = "vendor/ckb-script" }

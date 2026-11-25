@@ -20,7 +20,7 @@ pub type ValidatorKey = [u8; 32];
 
 pub const MAX_TOTAL_VOTING_POWER: u64 = (i64::MAX / 8) as u64;
 pub const MAX_RECORDS: usize = 256;
-const RECORD_BYTES: usize = 32 + 8 + 8 + 1 + 8 + 1 + 32;
+const RECORD_BYTES: usize = 32 + 8 + 8 + 1 + 8 + 1 + 8 + 8 + 32;
 const REGISTRY_HEADER: usize = 32 + 8 + 32 + 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +57,8 @@ pub struct StakeData {
     pub activation_epoch: u64,
     pub exit_epoch: Option<u64>,
     pub frozen: bool,
+    pub first_active_height: i64,
+    pub first_inactive_height: i64,
     pub stake_cell_hash: Hash32,
 }
 
@@ -82,8 +84,15 @@ impl Registry {
         let mut bonded_sum = 0u64;
         for entry in &records {
             if last.is_some_and(|previous| previous >= entry.validator_pubkey)
+                || entry.first_active_height < 0
+                || entry.first_inactive_height < 0
+                || (entry.first_inactive_height != 0
+                    && entry.first_inactive_height <= entry.first_active_height)
+                || (entry.frozen && entry.first_active_height == 0)
                 || (entry.stake_cell_hash == [0; 32]
-                    && (entry.exit_epoch.is_none() || entry.bonded_amount != 0))
+                    && ((!entry.frozen && entry.exit_epoch.is_none())
+                        || entry.first_inactive_height == 0
+                        || entry.bonded_amount != 0))
                 || entry
                     .exit_epoch
                     .is_some_and(|exit| exit <= entry.activation_epoch)
@@ -131,7 +140,9 @@ impl Registry {
                     1 => true,
                     _ => return Err(Error::Encoding),
                 },
-                stake_cell_hash: record[58..90].try_into().unwrap(),
+                first_active_height: i64::from_le_bytes(record[58..66].try_into().unwrap()),
+                first_inactive_height: i64::from_le_bytes(record[66..74].try_into().unwrap()),
+                stake_cell_hash: record[74..106].try_into().unwrap(),
             });
         }
         Self::new(network, sequence, guardian_generation, records)
@@ -150,6 +161,8 @@ impl Registry {
             data.push(u8::from(entry.exit_epoch.is_some()));
             data.extend_from_slice(&entry.exit_epoch.unwrap_or(0).to_le_bytes());
             data.push(u8::from(entry.frozen));
+            data.extend_from_slice(&entry.first_active_height.to_le_bytes());
+            data.extend_from_slice(&entry.first_inactive_height.to_le_bytes());
             data.extend_from_slice(&entry.stake_cell_hash);
         }
         data
@@ -439,11 +452,15 @@ impl StakeConfig {
 
     pub fn select(&self, registry: &Registry, epoch: u64) -> Result<Vec<Member>> {
         self.validate()?;
+        let height = i64::try_from(self.effective_height(epoch)?).map_err(|_| Error::Overflow)?;
         let mut eligible: Vec<_> = registry
             .records
             .iter()
             .filter(|stake| {
                 !stake.frozen
+                    && stake.first_active_height > 0
+                    && stake.first_active_height <= height
+                    && stake.first_inactive_height == 0
                     && stake.bonded_amount >= self.minimum_bond
                     && stake.activation_epoch <= epoch
                     && stake.exit_epoch.is_none_or(|exit| epoch < exit)

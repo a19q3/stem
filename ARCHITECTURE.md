@@ -18,7 +18,9 @@ The Cell and system roots use the same incremental Patricia implementation. Each
 
 ## CKB-VM host
 
-The native host fixes CKB-VM to version 2 and reuses the vendored process scheduler and the assembly allocation pool where available. Spawn, Exec, and their children see the same script group and immutable data. Serial and parallel group execution share one transaction cycle budget. Parallel batches divide the remaining budget for speculation and retry a cycle-limited group against the remaining budget in deterministic order.
+The [Fern VM crate](vm) owns the native ABI, verification cache and Group execution. The RISC-V backend is the exact upstream CKB-VM v0.24.15 source at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Fern uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)
+
+The block verifier resolves transactions and stages their state transitions in proposal order. Its single bounded Rayon pool runs verified contexts in waves, sharing workers across transactions and using idle slots for Script Groups. A local bounded LRU estimates Group costs from previously successful runs. Estimation changes only the initial local budget used by speculative execution. A Group that hits it is retried against the exact remaining budget in canonical order. The verifier charges every observed cycle in transaction order and discards the full block overlay if a transaction or block limit fails.
 
 Calls retain the CKB buffer convention. `a0` is the buffer pointer, `a1` points to its length, and `a2` is the byte offset. Cell sources in `a4` are Input 1, Output 2, Cell Dep 3, Group Input `0x0100000000000001`, and Group Output `0x0100000000000002`. `a3` selects the Cell or group index. Errors use CKB's 1 for an out-of-range index and 2 for an absent item.
 
@@ -59,4 +61,12 @@ This is guardian authentication of a trusted CKB full node's state. Guardians al
 
 Each native lane pins a separate L1 vault Type ID. A mint certificate binds the sorted deposit OutPoints, observed vault predecessor and successor, exact Capacity and xUDT increments, and all native transaction outputs. Deposits use permanent SystemRoot keys. The wrapped RISC-V UDT receives mint rights only for the current authenticated Type Group. Native burns reserve a known amount and assign a contiguous lane nonce. The Burn Cell still participates in every applicable Type Group before it is removed from the live set. The payout reconciler verifies the native transaction and receipt proofs, the signed CometBFT successor and the confirmed L1 release.
 
-Fern fees extinguish redeemable Capacity. The CKB coins remain in custody and appear as surplus. Stake Cells are separate L1 resources. Guardians and custody operators have independent permissions. Current limitations include compact stake history, automatic guardian rotation across both layers, observing L1 vault rotations and rebalances, and a CKB checkpoint publisher.
+Fern fees extinguish redeemable Capacity. The CKB coins remain in custody and appear as surplus. Stake Cells are separate L1 resources. Guardians and custody operators have independent permissions. Current limitations include compact stake history, guardian rotation across both staking layers, automatic retirement publication and a continuously running CKB checkpoint broadcaster.
+
+## Historical proofs and CKB checkpoints
+
+Archive replicas preserve committed Headers. The proof index follows those records in a separate RocksDB database and checks the predecessor ID and MMR root before advancing. It persists only derived history nodes and progress. Each index update is independent of the application's commit. An archive reader can generate inclusion and append-only proofs at earlier retained heights.
+
+The CKB Checkpoint Type ID contract verifies the incumbent authority's quorum, strict sequence and height, the actual predecessor OutPoint and an exact MMR extension. The extension starts by appending the old published Header itself to its prior peaks. Authority rotation requires both independent quorums. The signed record also binds the complete Fern Block ID and signed successor Block ID, the successor's current and next committee hashes, the authority-verified Stake Snapshot and the verified handoff bundle. AppHash is derived from the network, height and recorded Fern Header ID.
+
+The off-chain preparer authenticates the Fern genesis and the CometBFT successor, verifies its handoffs, and checks the Patricia Stake Snapshot proof independently. On CKB, the checkpoint authority certifies the successor and handoff interpretation. Clients still need a trusted view of the CKB chain, and can independently recheck the available Fern bundle.

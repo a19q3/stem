@@ -17,6 +17,10 @@ use super::*;
 #[path = "comet/bench.rs"]
 mod bench;
 
+fn vm_workers() -> String {
+    std::env::var("FERN_TEST_VM_WORKERS").unwrap_or_else(|_| "2".into())
+}
+
 const GENESIS_TIME: &str = "2025-01-01T00:00:00Z";
 const GENESIS_MS: u64 = 1_735_689_600_000;
 
@@ -228,7 +232,7 @@ impl Node {
                 .arg(spec)
                 .args([
                     "--workers",
-                    "2",
+                    &vm_workers(),
                     "--abci-response-queue",
                     "16",
                     "--snapshot-interval",

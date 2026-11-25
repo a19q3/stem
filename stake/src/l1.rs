@@ -69,10 +69,17 @@ impl StakeCell {
             return Err(Error::Encoding);
         }
         let cell = Self::decode(metadata)?;
-        if cell.commitment() != record.stake_cell_hash || record.frozen != (cell.penalty != EMPTY) {
+        if !cell.matches_record(record) {
             return Err(Error::Identity);
         }
         Ok(cell)
+    }
+
+    fn matches_record(self, record: &StakeData) -> bool {
+        self.first_active_height == record.first_active_height
+            && self.first_inactive_height == record.first_inactive_height
+            && record.frozen == (self.penalty != EMPTY)
+            && self.commitment() == record.stake_cell_hash
     }
 
     pub fn commitment(self) -> Hash32 {
@@ -381,6 +388,8 @@ impl ChangeContext<'_> {
         if self.new
             != Some((
                 StakeData {
+                    first_active_height: cell.first_active_height,
+                    first_inactive_height: cell.first_inactive_height,
                     stake_cell_hash: cell.commitment(),
                     ..before
                 },
@@ -400,9 +409,7 @@ impl ChangeContext<'_> {
 
 fn matches_cell(record: Option<StakeData>, cell: Option<(StakeData, StakeCell)>) -> bool {
     match (record, cell) {
-        (Some(record), Some((stake, body))) => {
-            record == stake && record.stake_cell_hash == body.commitment()
-        }
+        (Some(record), Some((stake, body))) => record == stake && body.matches_record(&record),
         (Some(record), None) => record.stake_cell_hash == EMPTY,
         (None, None) => true,
         _ => false,

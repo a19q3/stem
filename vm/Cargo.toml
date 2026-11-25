@@ -1,0 +1,21 @@
+[package]
+name = "fern-vm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+ckb-script = { workspace = true, default-features = false, features = ["detect-asm", "vm-reuse"] }
+ckb-types.workspace = true
+ckb-vm.workspace = true
+fern-ledger = { path = "../ledger" }
+lru.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+ckb-crypto.workspace = true
+ckb-hash.workspace = true
+tempfile.workspace = true

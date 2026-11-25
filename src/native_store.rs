@@ -5,7 +5,6 @@ use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{DB, Options, WriteBatch, WriteOptions, prelude::*};
-use ckb_script::fern::VerificationCache;
 use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
@@ -19,6 +18,7 @@ use fern_ledger::{
     protocol::Operation,
     record,
 };
+use fern_vm::VerificationCache;
 use rayon::prelude::*;
 
 mod bridge;

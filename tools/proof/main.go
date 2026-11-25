@@ -191,16 +191,18 @@ func run() error {
 		if err := block.ValidateBasic(); err != nil || !block.IsComplete() {
 			return errors.New("signed successor lacks the prior complete Block ID")
 		}
-		encoded, err := cmtjson.Marshal(map[string]any{
-			"block": block, "successor": signed.Commit.BlockID,
-			"committee": signed.ValidatorsHash, "next_committee": signed.NextValidatorsHash,
-			"handoffs": hex.EncodeToString(handoffHash[:]),
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Block         types.BlockID `json:"block"`
+			Successor     types.BlockID `json:"successor"`
+			Committee     string        `json:"committee"`
+			NextCommittee string        `json:"next_committee"`
+			Handoffs      string        `json:"handoffs"`
+		}{
+			Block: block, Successor: signed.Commit.BlockID,
+			Committee:     hex.EncodeToString(signed.ValidatorsHash),
+			NextCommittee: hex.EncodeToString(signed.NextValidatorsHash),
+			Handoffs:      hex.EncodeToString(handoffHash[:]),
 		})
-		if err != nil {
-			return err
-		}
-		_, err = os.Stdout.Write(encoded)
-		return err
 	}
 	fmt.Printf("verified height=%d successor=%d app_hash=%x\n", *height, signed.Height, appHash)
 	return nil

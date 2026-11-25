@@ -459,6 +459,8 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         activation_epoch: 0,
         exit_epoch: None,
         frozen: false,
+        first_active_height: 1,
+        first_inactive_height: 0,
         stake_cell_hash: [6; 32],
     };
     let registry = Registry::new(domain.fern_network_id, 1, generation, vec![record])?;

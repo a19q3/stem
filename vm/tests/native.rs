@@ -3,7 +3,6 @@ use std::{collections::HashMap, path::Path, process::Command, sync::Arc};
 use anyhow::{Context, Result, ensure};
 use ckb_crypto::secp::Privkey;
 use ckb_hash::blake2b_256;
-use ckb_script::fern::{VerificationCache, verify};
 use ckb_types::{
     bytes::Bytes,
     core::ScriptHashType,
@@ -14,8 +13,9 @@ use fern_ledger::{
     BlockContext, Cell, CellInput, GroupWitness, LiveCell, Origin, ResolvedTransaction,
     ScriptGroupKind, Transaction, block::HeaderContext,
 };
+use fern_vm::{VerificationCache, verify};
 
-#[path = "../../../contracts/test_support.rs"]
+#[path = "../../contracts/test_support.rs"]
 mod contract;
 
 const CAPACITY: u64 = 100_000_000_000;
@@ -32,7 +32,7 @@ struct Network {
 impl Network {
     fn new() -> Result<Self> {
         let key = Privkey::from_slice(&[42; 32]);
-        let code = contract::native_lock(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))?;
+        let code = contract::native_lock(&Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))?;
         let key_hash = blake2b_256(key.pubkey()?.serialize());
         let lock = script(&code, &key_hash[..20]);
         let mut network = Self {
@@ -132,8 +132,7 @@ fn script(code: &[u8], args: &[u8]) -> Script {
 
 fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
     let tmp = tempfile::tempdir()?;
-    let source =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/type_rules.c");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/examples/type_rules.c");
     let compiler = std::env::var_os("FERN_RISCV_CC").unwrap_or_else(|| "clang".into());
     let mut programs = Vec::new();
     for rule in 1..=10 {

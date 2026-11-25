@@ -24,10 +24,6 @@ ckb-traits.workspace = true
 byteorder.workspace = true
 ckb-types.workspace = true
 ckb-hash.workspace = true
-fern-ledger = { path = "../../ledger" }
-rayon.workspace = true
-lru.workspace = true
-anyhow.workspace = true
 ckb-vm.workspace = true
 faster-hex.workspace = true
 ckb-logger = { workspace = true, optional = true }

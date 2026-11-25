@@ -19,7 +19,7 @@ go build -o target/fern-tools/fern-loadgen tools/loadgen/main.go
 
 The Fern genesis JSON requires `chain_id`, a 32-byte `network_id`, `genesis_time_ms`, storage-bond terms, and explicit byte, cycle, read and write limits. A stake-backed genesis supplies `stake.trust` and `stake.observations` from CKB guardians, a signing window, and snapshot limits. The `development_validators` and `development_cells` fields are for fixture networks. A bridged spec pins the CKB genesis and anchor, the vault Type IDs and initial OutPoints, wrapped code, payout Lock templates, and the bridge guardian set.
 
-Compute `fern genesis-hash --genesis fern.json`. Set CometBFT `app_state.fern_genesis` to this hex value, set the same chain ID and genesis time, and use the exact Fern genesis committee. Start Fern in a private home and set CometBFT's ABCI address to the absolute socket path.
+Compute `fern genesis-hash --genesis fern.json`. Set CometBFT `app_state.fern_genesis` to this hex value without the `0x` prefix, set the same chain ID and genesis time, and use the exact Fern genesis committee. Start Fern in a private home and set CometBFT's ABCI address to the absolute socket path.
 
 ```sh
 target/release/fern run --home /path/to/fern-home --genesis fern.json --workers 2
@@ -32,12 +32,14 @@ Ordinary replicas prune execution bodies and recent Header indices after `--hist
 ## Exercise the native CometBFT path
 
 ```sh
-cargo test --locked -p fern-ledger measure_canonical_payment_and_combined_output_bytes -- --nocapture
-cargo test --locked -p ckb-script --features vm-reuse --test fern_native -- --nocapture
+cargo test --locked -p fern-ledger encoding_tests -- --nocapture
+cargo test --locked -p fern-vm --test native -- --nocapture
 FERN_TEST_COMET=target/fern-tools/cometbft \
   cargo test --locked --test native_store four_node_native_finality_restart_and_app_hash \
   -- --ignored --nocapture
 ```
+
+The backend can also run its imported upstream test suite with `cargo test --manifest-path vendor/ckb-vm/Cargo.toml --features detect-asm`. The Fern workspace pins its backend and definitions to the source in that directory.
 
 The four-node test prints its evidence directory. It generates a fresh network, starts four validators, exercises signed payments and a two-Type-Script transfer, restarts a replica and joins a fifth node using remote snapshots. It leaves the test configuration, logs, headers and commit certificates in the evidence directory.
 
@@ -80,3 +82,13 @@ python3 tools/native_stake_localnet.py \
 ```
 
 The first runner checks the L1 contract's registration, increase, freeze, retirement, penalty, withdrawal and guardian rotation. The second uses actual L1 observations to initialize a CometBFT committee, add and remove a validator at H+2, verify both signed handoffs, and unbond the removed validator. Use the emitted evidence directories to inspect transaction proofs and exact block heights.
+
+## Exercise CKB Checkpoint publication
+
+Add `--checkpoint "$contracts_dir/checkpoint"` to the native stake runner. It builds an archive index, verifies signed Fern successors and committee handoffs, and prepares two Checkpoint Type ID transactions for the CKB devnet. The update rotates the checkpoint authority with both quorums. The runner also submits invalid transactions to check that CKB rejects a minority certificate, missing rotation signatures and a corrupted history extension.
+
+For independent publication, use an archive Fern replica started with `--archive`. Capture its `/fern/stake-snapshot` response with `prove=true`, write the decoded proof JSON, and obtain the signed successor at the returned height plus one. The deployment configuration pins the Fern network, CKB genesis, Checkpoint Type Script and initial authority generation. Run `fern checkpoint prepare --help` for the proof bundle inputs. For an update, supply the confirmed predecessor's canonical OutPoint and Cell Data. The resulting signing message binds the pinned domain, actual predecessor and canonical Cell record. Verify the predecessor and its confirmations on a trusted CKB node before authorizing publication.
+
+The CKB Type Script uses Data2 with the 32-byte Type ID, 32-byte Fern network, 32-byte CKB genesis and 32-byte initial authority generation, in that order. The Lock uses the same code with the 32-byte complete Type Script hash followed by zero. Put the encoded publication certificate in the input WitnessArgs `input_type` of the checkpoint input, or of input zero when creating the Cell. The certificate starts with the little-endian u16 MMR suffix count and corresponding hashes. Then encode the incumbent authority and signatures. For each authority, write a u16 member count, sorted 32-byte Ed25519 keys with little-endian u64 weight, a u16 vote count, and sorted u16 signer indices with 64-byte signatures. A rotation appends a second authority certificate. The L1 script enforces a maximum of 16 members for each authority.
+
+Use `fern checkpoint verify` with pinned trust parameters before broadcasting through the CKB wallet. `fern checkpoint history` indexes committed Headers in a separate RocksDB database and produces an MMR inclusion path. Authenticate the target Header's history root before consuming its proofs. The archive index needs retained data from genesis. CKB depth and reorganization monitoring are the publisher's responsibility.
