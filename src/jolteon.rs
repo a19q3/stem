@@ -37,7 +37,7 @@ use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
 pub use client::{
-    AdmissionLatency, AdmissionMetrics, Certificate, Client, QueryResult, Status,
+    AdmissionMetrics, Certificate, Client, ExecutionMetrics, LatencyHistogram, QueryResult, Status,
     SubmissionProgress,
 };
 
@@ -163,6 +163,7 @@ struct Replica {
     requests: HashMap<Point, Instant>,
     mempool: Mempool,
     admission: AdmissionMetrics,
+    execution: ExecutionMetrics,
     rejected: u64,
     timeout_views: VecDeque<u64>,
     last_untimely_view: u64,
@@ -360,6 +361,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 requests: HashMap::new(),
                 mempool: Mempool::default(),
                 admission: AdmissionMetrics::default(),
+                execution: ExecutionMetrics::default(),
                 rejected: 0,
                 timeout_views: VecDeque::new(),
                 last_untimely_view: 0,
@@ -661,6 +663,7 @@ impl Replica {
                 "execution timestamp must advance"
             );
             if candidate.execution.is_none() {
+                let started = Instant::now();
                 let transactions = proposal
                     .wire
                     .transactions
@@ -672,6 +675,7 @@ impl Replica {
                         state.prepare(&transactions, proposal.header.context.timestamp_ms, true)
                     })
                 })?;
+                self.execution.candidate_verify.observe(started.elapsed());
                 ensure!(
                     prepared.header() == &proposal.header,
                     "candidate execution differs from the signed Header"
@@ -817,9 +821,11 @@ impl Replica {
                 retired.push(announced..end);
             }
             records.push((STATE.to_vec(), self.journal.encode_to_vec()));
+            let started = Instant::now();
             self.store
                 .commit_certified(&prepared, &records, &retired)
                 .context(StorageFault)?;
+            self.execution.commit.observe(started.elapsed());
             self.finalized = *point;
             if let Some(change) = prepared.committee_change() {
                 self.pending = Some(change.clone());
@@ -1154,6 +1160,7 @@ impl Replica {
             if at <= parent_header.context.timestamp_ms {
                 return Ok(());
             }
+            let started = Instant::now();
             let (transactions, execution) = self.workers.install(|| {
                 self.store.on_branch(&batches, |state| {
                     let selected =
@@ -1162,6 +1169,7 @@ impl Replica {
                     Ok((selected, prepared))
                 })
             })?;
+            self.execution.proposal.observe(started.elapsed());
             if !can_vote_at(at) {
                 return Ok(());
             }
@@ -1447,6 +1455,7 @@ impl Replica {
                 "mempool_transactions": self.mempool.len(),
                 "mempool_bytes": self.mempool.bytes(),
                 "admission": self.admission,
+                "execution": self.execution,
             })),
             wire::SUBMIT => {
                 let id = self.insert_tx(&body, true)?;

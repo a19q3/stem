@@ -29,12 +29,12 @@ pub struct SubmissionProgress {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
-pub struct AdmissionLatency {
+pub struct LatencyHistogram {
     pub elapsed_us: u64,
     pub buckets: [u64; 6],
 }
 
-impl AdmissionLatency {
+impl LatencyHistogram {
     pub const UPPER_BOUNDS_US: [u64; 5] = [1_000, 10_000, 100_000, 500_000, 2_000_000];
 
     pub(super) fn observe(&mut self, elapsed: Duration) {
@@ -54,9 +54,16 @@ pub struct AdmissionMetrics {
     #[serde(default)]
     pub relay_retry_attempts: u64,
     #[serde(default)]
-    pub client_queue: AdmissionLatency,
+    pub client_queue: LatencyHistogram,
     #[serde(default)]
-    pub client_service: AdmissionLatency,
+    pub client_service: LatencyHistogram,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct ExecutionMetrics {
+    pub proposal: LatencyHistogram,
+    pub candidate_verify: LatencyHistogram,
+    pub commit: LatencyHistogram,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -81,6 +88,8 @@ pub struct Status {
     pub mempool_transactions: usize,
     pub mempool_bytes: usize,
     pub admission: Option<AdmissionMetrics>,
+    #[serde(default)]
+    pub execution: ExecutionMetrics,
 }
 
 #[derive(Debug, Deserialize)]
