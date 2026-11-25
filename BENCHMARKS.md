@@ -394,7 +394,9 @@ The solver attached all three authorizations with the output indices
 derived from the assembled transaction. The committed transaction
 charged 5,876,118 VM cycles and confirmed on all four validators and
 the restored observer. The same runner registered a Lineage and advanced
-its head with the original UDT script still present.
+its head with the original UDT script still present. The separate proof
+tool verified each replica's signed successor. The [raw record](benchmarks/2026-11-25-stem-lineage.json)
+includes the certificates, lifecycle proof responses and build fingerprint.
 
 The local release workload below uses eight signed head updates per
 block over 25 blocks, a real RISC-V marker and UDT script, and fresh
@@ -404,9 +406,9 @@ Headers and charged cycles. Signature creation is outside the timer.
 
 | Explicit OutPoint workload | Serial p50 | Four-worker p50 | Mean cycles per block |
 | --- | ---: | ---: | ---: |
-| Eight independent Lineages | 3.407 ms | 2.919 ms | 15,573,424 |
-| Eight pre-built successors of one head | 3.444 ms | 1.694 ms | 15,573,424 |
-| One atomic transaction updating eight Lineages | 1.437 ms | 0.996 ms | 2,040,725 |
+| Eight independent Lineages | 3.659 ms | 2.355 ms | 15,573,424 |
+| Eight pre-built successors of one head | 3.512 ms | 1.717 ms | 15,573,424 |
+| One atomic transaction updating eight Lineages | 1.495 ms | 1.066 ms | 2,040,725 |
 
 The one-head workload pre-signs every exact successor. Its results
 include repeated working-set reuse and parallel verification of fixed
