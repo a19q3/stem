@@ -37,6 +37,19 @@ pub enum Wallet {
         #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
         network: H256,
     },
+    /// Compute a native Lock authorization digest for an external signer.
+    Digest {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        network: H256,
+        #[arg(long)]
+        transaction: PathBuf,
+        #[arg(long)]
+        context: PathBuf,
+        #[arg(long)]
+        group_index: u16,
+        #[arg(long)]
+        lock: PathBuf,
+    },
     /// Discover Live Cells by complete Lock or Type Script hash.
     Find {
         #[arg(long)]
@@ -193,6 +206,27 @@ impl Wallet {
                 let encoded: JsonBytes = serde_json::from_slice(&json)?;
                 let tx = Transaction::from_slice(encoded.as_bytes())?;
                 return print_json(&H256::from(tx.id(&network.pack())));
+            }
+            Self::Digest {
+                network,
+                transaction,
+                context,
+                group_index,
+                lock,
+            } => {
+                let network = network.pack();
+                let raw: JsonBytes = read_json_limited(&transaction, 2 * 1024 * 1024)?;
+                let tx = Transaction::from_slice(raw.as_bytes())?;
+                let lock: Script = read_json_limited(&lock, 64 * 1024)?;
+                let context = ResolvedSigningContext::load(&context, &network)?;
+                let digest = tx.signing_digest(
+                    &network,
+                    group_index,
+                    &lock.into(),
+                    |point| context.cell(point),
+                    |id| context.header(id),
+                )?;
+                return print_json(&H256::from(digest));
             }
             Self::Find {
                 database,

@@ -24,6 +24,7 @@ mod authorization;
 pub mod block;
 pub mod history;
 pub mod keeper;
+pub mod light;
 pub mod lineage;
 mod message;
 pub mod patricia;

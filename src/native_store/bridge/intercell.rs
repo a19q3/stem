@@ -133,15 +133,6 @@ impl Store {
         record: Option<&[u8]>,
         proof: &Proof,
     ) -> bool {
-        record.is_none_or(|raw| {
-            Message::decode(raw).is_some_and(|message| {
-                message.id() == *id
-                    && if inbound {
-                        message.destination
-                    } else {
-                        message.source
-                    } == network.as_slice()
-            })
-        }) && Self::verify_system_record(network, header, &record_key(inbound, id), record, proof)
+        stem_ledger::light::verify_intercell(network, header, inbound, id, record, proof)
     }
 }

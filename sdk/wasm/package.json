@@ -1,0 +1,14 @@
+{
+  "name": "@stem-network/wasm",
+  "version": "0.1.0",
+  "description": "Native Stem transaction construction and Jolteon proof verification",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./stem_wasm.d.ts",
+      "import": "./stem_wasm.js"
+    }
+  },
+  "files": ["stem_wasm.js", "stem_wasm.d.ts", "stem_wasm_bg.wasm", "stem_wasm_bg.wasm.d.ts", "README.md", "LICENSE"]
+}

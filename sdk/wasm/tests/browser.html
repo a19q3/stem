@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Stem WASM verification</title>
+<pre id="result">waiting</pre>
+<script type="module">
+import init from "./stem_wasm.js";
+import { run } from "./smoke.mjs";
+
+const result = document.querySelector("#result");
+try {
+    const start = performance.now();
+    await init();
+    const initMs = performance.now() - start;
+    const fixtures = await Promise.all(["fixture.json", "handoff.json"].map(async (file) => (await fetch(file)).json()));
+    result.textContent = JSON.stringify({ engine: navigator.userAgent, init_ms: initMs, ...run(...fixtures) });
+    result.dataset.result = "pass";
+} catch (error) {
+    result.textContent = String(error.stack ?? error);
+    result.dataset.result = "fail";
+}
+</script>
+</html>

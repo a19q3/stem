@@ -1477,35 +1477,15 @@ pub fn verify_finality(
     raw: &[u8],
     terminal: bool,
 ) -> Result<Header> {
-    let network = store.network().unpack();
-    let genesis = store.genesis_id().unpack();
-    let mut committee = Committee::new(network, genesis, 0, &members(store)?)?;
-    let mut previous_height = 0;
-    for raw in handoffs {
-        let (change, boundary, _) = committee.verify_handoff(raw)?;
-        ensure!(
-            boundary.height() > previous_height,
-            "handoffs must advance execution height"
-        );
-        committee = Committee::at_anchor(
-            network,
-            genesis,
-            change.epoch,
-            boundary.id(),
-            &change.members,
-        )?;
-        previous_height = boundary.height();
+    let mut verifier = stem_ledger::light::FinalityVerifier::new(
+        store.network().clone(),
+        store.genesis_id().clone(),
+        &members(store)?,
+    )?;
+    for handoff in handoffs {
+        verifier.accept_handoff(handoff)?;
     }
-    let finalized = if terminal {
-        committee.verify_handoff(raw)?.1
-    } else {
-        committee.verify_finality(raw)?
-    };
-    ensure!(
-        finalized.height() > previous_height,
-        "proof predates its committee's activation"
-    );
-    Header::decode(finalized.as_bytes())
+    Ok(verifier.verify(raw, terminal)?.header().clone())
 }
 
 fn proposal_key(epoch: u64, point: Point) -> Vec<u8> {

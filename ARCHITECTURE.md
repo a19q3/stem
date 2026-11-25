@@ -183,6 +183,17 @@ The bridge anchor record commits CKB height and hash plus the Stem adoption heig
 
 A fee-exempt `L1AnchorUpdate` lets the bridge guardian quorum advance the anchor during periods without deposits or settlements. It uses a distinct signing domain and shares the bridge guardian journal for reorg detection. Each update extends the exact accepted predecessor and charges its separate operation, byte and signature budget. Only the anchor record changes. Vault OutPoints, reserve accounting and nonce state remain stable. A transaction can read the new anchor once it is in the parent state.
 
+## Browser verification
+
+The browser SDK links the same Strand transaction codec, Patricia and receipt
+proofs, and storage-independent Jolteon verifier used by the native CLI.
+A client pins the network, genesis execution ID and initial committee, then
+checks handoffs in proof order. A verified Header authenticates transaction
+and state proof inputs. A signing context verifies every supplied Live Cell
+against one finalized root and accepts Header Deps only from the same trust
+anchor. The SDK computes the native authorization digest, and the caller
+supplies the group's seal. [Build and verify](sdk/wasm/README.md)
+
 ## Application security domains
 
 A CKB Type ID cell holds independently funded service positions. Its policy fixes the CKB and Stem identities, the eligible roster, the original bond denominator and the application challenge interval. Active domains deliver paid observations of a specified CKB Live Cell. The CKB transaction opens that precise Cell Dep, recomputes its commitment, checks a weighted Ed25519 certificate and divides the buyer's escrow among signers and one typed receipt. Domain and request consumption bind the receipt to a single initial escrow. The holder can later consume the receipt while its historical inclusion remains provable.

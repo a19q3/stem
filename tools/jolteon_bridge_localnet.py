@@ -565,6 +565,7 @@ def main():
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
     parser.add_argument("--exercise-publisher", action="store_true", help="use the sparse publisher for Intercell checkpoints")
+    parser.add_argument("--wasm-fixture", action="store_true", help="export live wallet and proof inputs from the generic Intercell round")
     parser.add_argument("--reference-script", type=lambda path: Path(path).resolve())
     parser.add_argument("--security-domain", type=lambda path: Path(path).resolve(),
                         help="consume a real CKB security receipt through a native L1 reference")
@@ -582,6 +583,8 @@ def main():
             not all((args.stem_native_object, args.object_policy, args.ckb_stem_object, args.intercell_mailbox))
             or args.export_udt or args.stem_spore):
         parser.error("Native object settlement requires its three binaries and the Intercell mailbox")
+    if args.wasm_fixture and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
+        parser.error("--wasm-fixture uses the generic Intercell mailbox fixture")
     if args.exercise_publisher and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
         parser.error("--exercise-publisher uses the generic Intercell mailbox fixture")
     if args.full_udt_return and not args.export_udt:

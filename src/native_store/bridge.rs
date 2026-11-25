@@ -36,7 +36,6 @@ const LANE: &[u8] = b"bridge/lane/";
 const DEPOSIT: &[u8] = b"bridge/deposit/";
 const FUND_POLICY: &[u8] = b"fees/fund-policy";
 const FUND_PAYOUTS: &[u8] = b"fees/fund-payouts";
-const VAULT_REVENUE: &[u8] = b"fees/vault-revenue";
 const FUND_PENDING: &[u8] = b"fees/fund-pending/";
 
 pub struct BridgeGenesis {
@@ -170,7 +169,7 @@ impl StagedBridge {
                 };
                 let revenue = VaultRevenue::decode(
                     &parent
-                        .read(VAULT_REVENUE)?
+                        .read(VaultRevenue::KEY)?
                         .context("missing vault revenue record")?,
                 )?;
                 let weights = revenue
@@ -191,7 +190,7 @@ impl StagedBridge {
                     "per-vault revenue differs from extinguished fees"
                 );
                 self.records
-                    .insert(VAULT_REVENUE.to_vec(), Some(revenue.encode().to_vec()));
+                    .insert(VaultRevenue::KEY.to_vec(), Some(revenue.encode().to_vec()));
             }
             self.records
                 .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
@@ -303,7 +302,7 @@ impl Bridge {
                 })
                 .collect(),
         )?;
-        records.insert(VAULT_REVENUE.to_vec(), Some(revenue.encode().to_vec()));
+        records.insert(VaultRevenue::KEY.to_vec(), Some(revenue.encode().to_vec()));
 
         config.extend_from_slice(&u32::try_from(spec.recipient_locks.len())?.to_le_bytes());
         let recipient_locks = spec
@@ -1080,7 +1079,7 @@ impl Store {
     }
 
     pub fn prove_vault_revenue(&self) -> Result<(VaultRevenue, super::Proof)> {
-        let (record, proof) = self.prove_system(VAULT_REVENUE)?;
+        let (record, proof) = self.prove_system(VaultRevenue::KEY)?;
         let record = record.context("vault revenue is not configured")?;
         Ok((VaultRevenue::decode(&record)?, proof))
     }
@@ -1094,7 +1093,7 @@ impl Store {
         Self::verify_system_record(
             network,
             header,
-            VAULT_REVENUE,
+            VaultRevenue::KEY,
             Some(&revenue.encode()),
             proof,
         )

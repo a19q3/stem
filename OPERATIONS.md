@@ -813,6 +813,32 @@ The Stem escrow arguments use the original complete identity Type hash, CKB gene
 
 Approval and ownership have their own inputs and signatures. The fixture uses a single approval key under two network-specific Locks and distinct owner keys. It archives successful and rejected transactions through creation, export, CKB transfer, verified burn and restoration, including attempts to remove the independent policy or pay the remote escrow Lock.
 
+### Exercise the browser SDK
+
+Build the ES module and TypeScript declarations with the [SDK build
+instructions](sdk/wasm/README.md). Run the generic [Intercell devnet
+fixture](#exercise-intercell-messaging) with `--wasm-fixture` and keep its
+`wasm-fixture.json`. Run the [CKB-backed stake fixture](#exercise-ckb-delegation)
+with `--publish-checkpoint --delegation --retire --slash --reward-accounting`
+to capture two real handoffs.
+
+```sh
+sdk_dir=/tmp/stem-wasm-package
+cp sdk/wasm/tests/{smoke.mjs,node.mjs,browser.html,types.ts} "$sdk_dir/"
+cp "$intercell_run/wasm-fixture.json" "$sdk_dir/fixture.json"
+python3 sdk/wasm/tests/handoff.py --binary "$stem_binary" \
+  --run "$stake_run" --output "$sdk_dir/handoff.json"
+node "$sdk_dir/node.mjs"
+tsc --strict --noEmit --target ES2022 --lib ES2022,DOM,ESNext.Disposable \
+  --module ESNext --moduleResolution bundler "$sdk_dir/types.ts"
+python3 -m http.server 33800 --bind 127.0.0.1 --directory "$sdk_dir"
+```
+
+Open [the local fixture](http://127.0.0.1:33800/browser.html) to run the
+same proofs in a browser. The result element records `data-result="pass"`
+on success. The fixture compares browser-built transaction and seal bytes
+to the transaction actually finalized by the nodes.
+
 ### Verify per-vault revenue
 
 Query `/stem/vault-revenue` with `prove=true` and empty data at the current

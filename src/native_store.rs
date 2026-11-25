@@ -46,6 +46,8 @@ pub use staking::{StakeGenesis, stake_registry_policy};
 pub use state_snapshot::{SnapshotReader, StateSnapshot};
 pub use stem_ledger::protocol::{FeeFundDestination, FeeFundPolicy};
 
+use stem_ledger::light::EXTINGUISHED_FEES_KEY as FEE_KEY;
+
 const MARKER: &[u8] = b"\0stem/native-spec";
 const TIP: &[u8] = b"\0stem/tip";
 const HISTORY: &[u8] = b"\0stem/history";
@@ -54,7 +56,6 @@ const HEADER: u8 = b'h';
 const HEADER_ID: u8 = b'i';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
-const FEE_KEY: &[u8] = b"fees/extinguished";
 #[derive(Debug)]
 struct StateReadFault;
 
@@ -943,14 +944,7 @@ impl Store {
         record: Option<&[u8]>,
         proof: &Proof,
     ) -> bool {
-        let tree = Patricia::new(network.clone(), Namespace::System);
-        let key = tree.record_key(name);
-        tree.verify(
-            &as_key(&header.state.system_root),
-            &key,
-            record.map(|value| tree.value_hash(value)).as_ref(),
-            proof,
-        )
+        stem_ledger::light::verify_system_record(network, header, name, record, proof)
     }
 
     fn stage_stake(&self) -> Result<Option<StagedStake>> {

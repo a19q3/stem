@@ -19,6 +19,8 @@ pub struct VaultRevenueEntry {
 pub struct VaultRevenue(Vec<VaultRevenueEntry>);
 
 impl VaultRevenue {
+    pub const KEY: &'static [u8] = b"fees/vault-revenue";
+
     pub fn new(entries: Vec<VaultRevenueEntry>) -> Result<Self> {
         ensure!(
             !entries.is_empty()

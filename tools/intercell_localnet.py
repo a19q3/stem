@@ -9,6 +9,7 @@ from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, 
 from localnet import run, write_json
 from native_bridge_localnet import cell, signing_cell, start, wait_for
 from stake_localnet import witness
+from wasm_sdk_fixture import finish_fixture, signing_fixture
 
 EMPTY = bytes(32)
 MESSAGE_SEND = 0xff00
@@ -141,7 +142,14 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     change = [cell(part - FEE, native_lock)]
     rejected["stem_cross_network"] = stem_reject(sign_stem("foreign", inputs[0], change, bad_network), "network mismatch")
     rejected["stem_sender_lock"] = stem_reject(sign_stem("wrong-sender", inputs[0], change, bad_sender), "sender or network mismatch")
-    stems = [stem_commit(sign_stem(f"send-{i}", inputs[i], change, message)) for i, message in enumerate(outgoing)]
+    wasm_fixture = None
+    stems = []
+    for i, message in enumerate(outgoing):
+        signed = sign_stem(f"send-{i}", inputs[i], change, message)
+        if i == 0 and args.wasm_fixture:
+            unsigned = json.loads((args.output / "intercell-send-0-draft.json").read_text())
+            wasm_fixture = signing_fixture(args, client, spec_path, [inputs[i], mint["lock_dep"]], unsigned, signed)
+        stems.append(stem_commit(signed))
     rejected["stem_nonce_payload_substitution"] = stem_reject(
         sign_stem("send-replay", inputs[2], change, alternative_body), "nonce already used")
 
@@ -157,6 +165,9 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     proof_height = proofs[0][0]
     for i, (_, proof) in enumerate(proofs):
         assert proof["record"] == outgoing[i]["record"]
+    if wasm_fixture:
+        finish_fixture(args, client, wasm_fixture, stems[0], outgoing[0], proof_height, proofs[0][1])
+
     def anchor_checkpoint(label, height, *, probe=False):
         if publisher is None:
             return relay.advance(height, secp, probe=probe)

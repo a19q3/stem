@@ -103,6 +103,11 @@ enum Command {
         #[arg(long, default_value_t = 256)]
         history_window: u64,
     },
+    /// Export the trusted genesis and initial Jolteon committee for light clients.
+    JolteonTrust {
+        #[arg(long)]
+        genesis: PathBuf,
+    },
     /// Verify a two-chain execution proof and any preceding committee handoffs.
     JolteonProof {
         #[arg(long)]
@@ -323,6 +328,39 @@ fn main() -> Result<()> {
                 node_retention(archive, history_window),
             )?;
             stem::jolteon::run(store, key, config, initialize)
+        }
+        Command::JolteonTrust { genesis } => {
+            use ckb_types::prelude::Entity;
+            use stem_stake::{Member, jolteon::CommitteeChange};
+
+            let spec = native_spec::load(&genesis)?;
+            let directory = tempfile::tempdir()?;
+            let store = stem::native_store::Store::open(
+                directory.path(),
+                &spec,
+                stem::native_store::Retention::Archive,
+            )?;
+            let members = store
+                .genesis_validators()
+                .iter()
+                .map(|(key, power)| {
+                    Ok(Member {
+                        key: *key,
+                        power: u64::try_from(*power)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let roster = CommitteeChange {
+                epoch: 0,
+                activation_height: 1,
+                members,
+            }
+            .encode();
+            bridge_cli::print_json(&serde_json::json!({
+                "network_id": format!("0x{}", hex::encode(store.network().as_slice())),
+                "genesis_id": format!("0x{}", hex::encode(store.genesis_id().as_slice())),
+                "initial_committee": format!("0x{}", hex::encode(roster)),
+            }))
         }
         Command::JolteonProof {
             genesis,
