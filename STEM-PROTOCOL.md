@@ -246,7 +246,7 @@ L1 验证真实 CometBFT canonical vote sign bytes。两票需对应同一 chain
 - **入桥。** L1 存款归集、确认之后，由存款 guardians 认证存款 OutPoint、金库、金额、Stem 收款 Lock、L1 锚点和网络。Stem 只对未使用过的证书授予准确的容量与资产增量。所有实际输入、输出与相关 Type Groups 仍按原生规则处理。
 - **原子申请。** 一个 Burn Cell 对应一张票据。原生 CKB 的 Burn Cell 无桥接 UDT，xUDT Burn Cell 只承载一种已注册的桥接 UDT 和它自己的 CKB Capacity。多个资产用同笔交易中的多个 Burn Cells 提出申请。多个 Type Script 仍能约束同一个 Burn Cell。每个 Burn Cell 的全部 Capacity 只计入本票据的 L1 支付金额一次。合约将原生 CKB、UDT 数量和附带的 L1 Capacity 分开验证。票据沿交易输出索引顺序在各自通道分配连续 nonce。所有票据与通道预算共同提交，实际 L1 兑付分别进行。
 - **小额聚合。** 多个小额 Stem Cell 可按同一资产通道和同一 L1 收款脚本合并为一个 Burn Cell。每个输入照常签名和验证。达到 L1 输出最低 Capacity 后才可受理并分配 nonce。聚合在 Stem 交易内完成。
-- **入队校验。** 验证 L1 收款模板和参数、准确输出及其 occupied Capacity、原生资产配置和足够的通道可用余额。拒绝会被 L1 金库解释为存款或 escrow 的收款脚本。校验失败则整笔申请拒绝。若通道需要更多 CKB Capacity，先完成已认证的 L1 储备调拨，再受理新申请。
+- **入队校验。** 验证 L1 收款模板和参数、准确输出及其 occupied Capacity、原生资产配置和足够的通道可用余额。收款 Lock 的完整 Molecule 编码最多 4,096 字节，使待付款证明始终落在合约接收上限内。拒绝会被 L1 金库解释为存款或 escrow 的收款脚本。校验失败则整笔申请拒绝。若通道需要更多 CKB Capacity，先完成已认证的 L1 储备调拨，再受理新申请。
 - **L1 兑付。** 中继者在 CKB 交易中引用金库预先绑定的直接检查点 Cell，并提交待付款记录的 SystemRoot Patricia 证明。金库合约从该已验证 Header 读取 SystemRoot，核验网络、通道、当前 nonce、收款 Lock、CKB Capacity、xUDT 数量和票据标识。交易消费原金库并创建同一 Type ID 的继任金库，推进 nonce。费用由独立 CKB 输入支付。轮换保持资金可兑付及原有 nonce。一个通道出现异常时保留其队首票据及完整负债，其他通道继续处理各自的 nonce。
 - **对账。** 对 CKB 及各 UDT 分别维持 `可兑付 L1 储备 ≥ Stem 流通负债 + 未付的已提交提款 + 应付手续费`。此外，每个通道预留的 CKB Capacity 和 UDT 数量必须足以兑现该通道的待付款。申请把流通负债转成待付款，在同一提交中预留通道余额。经认证的 L1 兑付同步减记储备、待付款与预留。占用的金库底仓、外部交易费和质押资金分别计量。同一笔 CKB 不得计入多个通道可兑付余额。
 
