@@ -40,6 +40,10 @@ A Strand Lineage intent embeds an ordered actor set and fee cap in its raw trans
 
 The common Lineage authorization preflight recovers the actor keys, verifies the fee Lock and charges recovery cycles before executing application code. This path also authorizes Keeper registration and validates again at wake time. Syscall 2126 source 2 exposes one verified 32-byte actor ID at the chosen index. Source 0 masks the payer field for sponsored intents so the Executor cannot vary its output based on the subsequently chosen fee Lock. The example bilateral Executor compares the two actor IDs with the two stored reserve owners before proposing a two-asset settlement.
 
+A Lineage batch carries two to eight fully signed commands. Every business signature binds a network-scoped ordered plan, and each fee Lock authorizes its own payer and amount. The plan hashes normalized member terms without circular commitments to sponsor selection or the plan ID itself. The consensus entry point compares the plan to all submitted bindings before executing any member.
+
+The Store stages each member through the existing Lineage transaction path. A journal records the previous values of affected Live Cell and Lineage overlay entries. A failed member restores those entries in reverse order and leaves the initial block budget intact. Members share a transaction cycle ceiling. The first member covers the batch envelope's extra byte charge. Finality commits one batch and one aggregate receipt. Individual output OutPoints derive from each signed member, and the batch inclusion proof authenticates those members.
+
 ### Keeper scheduling
 
 The Keeper uses height buckets and an ordered index of timed reservations in the same SystemRoot and atomic commit. Each reservation uses the same exclusive fee OutPoint record and complete Lock authorization. Timed entries commit a target time and an exclusive execution expiry. The index holds up to 32 fixed-size entries, with command bodies in individual state records. A block reads the compact index and loads bodies only for selected attempts. Independent slot limits keep a timed burst from delaying exact-height reservations.

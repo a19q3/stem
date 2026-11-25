@@ -227,6 +227,7 @@ impl Outcome {
 }
 
 pub const MAX_ACTORS: usize = 8;
+pub const MAX_BATCH_MEMBERS: usize = 8;
 pub const SEAL_LEN: usize = 65;
 
 /// Public identity in the application authorization namespace.
@@ -245,6 +246,7 @@ pub fn actor_id(compressed_key: &[u8; 33]) -> Byte32 {
 pub struct Intent {
     pub actors: Vec<Byte32>,
     pub max_fee: u64,
+    pub batch: Option<Byte32>,
 }
 
 impl Intent {
@@ -256,6 +258,12 @@ impl Intent {
             "invalid or unordered Lineage business actors"
         );
         ensure!(self.max_fee > 0, "Lineage fee cap must be positive");
+        ensure!(
+            self.batch
+                .as_ref()
+                .is_none_or(|id| *id != Byte32::default()),
+            "Lineage batch plan cannot be zero"
+        );
         Ok(())
     }
 
@@ -269,6 +277,15 @@ impl Intent {
             .max_fee(
                 wire::CompactUint64::new_builder()
                     .set(self.max_fee.into())
+                    .build(),
+            )
+            .batch(
+                wire::LineageBatchPlanOpt::new_builder()
+                    .set(
+                        self.batch
+                            .as_ref()
+                            .map(|id| wire::Byte32::new_unchecked(id.as_bytes())),
+                    )
                     .build(),
             )
             .build()
@@ -286,6 +303,10 @@ impl Intent {
                 .map(|actor| Byte32::new_unchecked(actor.as_bytes()))
                 .collect(),
             max_fee: intent.max_fee().as_reader().value().try_into()?,
+            batch: intent
+                .batch()
+                .to_opt()
+                .map(|id| Byte32::new_unchecked(id.as_bytes())),
         };
         intent.validate()?;
         Ok(intent)

@@ -14,12 +14,29 @@ pub(crate) enum Command {
         #[arg(long)]
         key_file: PathBuf,
     },
+    /// Bind several unsigned Lineage intents to one ordered atomic plan.
+    Plan {
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long, required = true)]
+        member: Vec<PathBuf>,
+    },
+    /// Encode the fully signed members of an atomic plan.
+    Batch {
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long, required = true)]
+        member: Vec<PathBuf>,
+    },
     /// Sign the business terms independently of a fee Cell.
     SignBusiness {
         #[arg(long)]
         genesis: PathBuf,
         #[arg(long)]
         transaction: PathBuf,
+        /// Reviewed output of `wallet lineage plan` for a batch member.
+        #[arg(long)]
+        plan: Option<PathBuf>,
         #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
         executor_hash: H256,
         #[arg(long)]
@@ -45,6 +62,9 @@ pub(crate) enum Command {
         genesis: PathBuf,
         #[arg(long)]
         transaction: PathBuf,
+        /// Reviewed output of `wallet lineage plan` for a batch member.
+        #[arg(long)]
+        plan: Option<PathBuf>,
         /// Authenticated fee and Executor Cells in native signing-context JSON.
         #[arg(long)]
         context: PathBuf,
@@ -94,6 +114,13 @@ struct BusinessSeal {
     seal: JsonBytes,
 }
 
+#[derive(Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct Plan {
+    plan: H256,
+    members: Vec<JsonBytes>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Target {
@@ -111,6 +138,7 @@ impl Command {
                 let business = request.business.map(|intent| ledger::Intent {
                     actors: intent.actors.iter().map(Pack::pack).collect(),
                     max_fee: intent.max_fee,
+                    batch: None,
                 });
                 let fee_input = match request.fee_input {
                     Some(point) => point.into(),
@@ -167,14 +195,42 @@ impl Command {
                         .try_into()?,
                 )));
             }
+            Self::Plan { genesis, member } => {
+                let network = native_spec::load(&genesis)?.network;
+                let drafts = read_members(&member)?;
+                let plan = Transaction::lineage_batch_plan(&network, &drafts)?;
+                let bound = drafts
+                    .iter()
+                    .map(|draft| {
+                        Ok(encode_transaction(
+                            &draft.with_lineage_batch_plan(plan.clone())?,
+                        ))
+                    })
+                    .collect::<Result<_>>()?;
+                return print_json(&Plan {
+                    plan: H256::from(plan),
+                    members: bound,
+                });
+            }
+            Self::Batch { genesis, member } => {
+                let network = native_spec::load(&genesis)?.network;
+                let members = read_members(&member)?;
+                Transaction::verify_lineage_batch_plan(&network, &members)?;
+                for child in &members {
+                    stem_vm::executor::verify_business_actors(child, &network)?;
+                }
+                Transaction::new_lineage_batch(members)?
+            }
             Self::SignBusiness {
                 genesis,
                 transaction,
+                plan,
                 executor_hash,
                 key_file,
             } => {
                 let spec = native_spec::load(&genesis)?;
                 let tx = load_transaction(&transaction)?;
+                check_plan(&tx, &spec.network, plan.as_deref())?;
                 let intent = tx.lineage_intent().context("expected a Lineage intent")?;
                 ensure!(
                     tx.lineage_command().expect("validated intent").executor
@@ -238,6 +294,7 @@ impl Command {
             Self::Sign {
                 genesis,
                 transaction,
+                plan,
                 context,
                 code,
                 executor_hash,
@@ -250,6 +307,7 @@ impl Command {
                     "Lineages are disabled in this genesis"
                 );
                 let tx = load_transaction(&transaction)?;
+                check_plan(&tx, &spec.network, plan.as_deref())?;
                 let command = tx.lineage_command().context("expected a Lineage command")?;
                 ensure!(
                     tx.witnesses().len() == 0,
@@ -297,8 +355,56 @@ impl Command {
                 }])?
             }
         };
-        print_json(&JsonBytes::from_vec(transaction.as_slice().to_vec()))
+        print_json(&encode_transaction(&transaction))
     }
+}
+
+fn encode_transaction(tx: &Transaction) -> JsonBytes {
+    JsonBytes::from_vec(tx.as_slice().to_vec())
+}
+
+fn read_members(paths: &[PathBuf]) -> Result<Vec<Transaction>> {
+    ensure!(
+        (2..=ledger::MAX_BATCH_MEMBERS).contains(&paths.len()),
+        "Lineage plan needs two to eight members"
+    );
+    paths.iter().map(|path| load_transaction(path)).collect()
+}
+
+fn check_plan(tx: &Transaction, network: &packed::Byte32, path: Option<&Path>) -> Result<()> {
+    let Some(id) = tx.lineage_intent().and_then(|intent| intent.batch.as_ref()) else {
+        ensure!(
+            path.is_none(),
+            "plan supplied for a standalone Lineage command"
+        );
+        return Ok(());
+    };
+    let path = path.context("batch-bound Lineage command requires the reviewed --plan")?;
+    let plan: Plan = read_json_limited(path, 2 * stem_ledger::MAX_TRANSACTION_BYTES + 4096)?;
+    ensure!(
+        plan.plan.as_bytes() == id.as_slice(),
+        "Lineage plan identity mismatch"
+    );
+    ensure!(
+        (2..=ledger::MAX_BATCH_MEMBERS).contains(&plan.members.len()),
+        "invalid Lineage plan member count"
+    );
+    let members = plan
+        .members
+        .iter()
+        .map(|bytes| Transaction::from_slice(bytes.as_bytes()))
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        &Transaction::verify_lineage_batch_plan(network, &members)? == id,
+        "Lineage plan does not match its members"
+    );
+    let digest = tx.lineage_intent_digest(network)?;
+    for member in members {
+        if member.lineage_intent_digest(network)? == digest {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("Lineage command is absent from the reviewed plan")
 }
 
 fn load_transaction(path: &Path) -> Result<Transaction> {

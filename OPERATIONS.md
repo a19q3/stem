@@ -375,6 +375,22 @@ Use `lineage::Outcome::decode` on the authenticated receipt protocol result. Pos
 
 **Sponsored Lineage intent.** Use `stem wallet lineage actor --key-file KEY` to derive each business ID. Include `"business":{"actors":[…],"max_fee":2000}` with sorted actor IDs in the Lineage build request. Bind at least one target to an exact version. The business draft may omit `fee_input` and `fee`. Each party reviews the full business payload and uses `stem wallet lineage sign-business --genesis SPEC --transaction DRAFT --executor-hash HASH --key-file KEY`. The collector then runs `stem wallet lineage assemble --genesis SPEC --transaction DRAFT --fee-input OUTPOINT_JSON --fee SHANNONS --seal PARTY_A_JSON --seal PARTY_B_JSON`. Only the fee payer seals the assembled transaction with `stem wallet lineage sign`. For Keeper, set `execute_at` or `execute_after_ms` before collecting the business seals and reserve the fully authorized transaction.
 
+**Atomic Lineage batch.** Build each unsigned business intent, then run the following command in the order all parties will review.
+
+```sh
+stem wallet lineage plan --genesis SPEC --member A.json --member B.json > plan.json
+jq '.members[0]' plan.json > bound-a.json
+jq '.members[1]' plan.json > bound-b.json
+```
+
+Each actor signs the appropriate bound draft with `wallet lineage sign-business --plan plan.json`. Assemble each command separately with its business seals and fee Cell. Each fee payer signs its assembled member with `wallet lineage sign --plan plan.json`. Combine the signed commands in the reviewed order.
+
+```sh
+stem wallet lineage batch --genesis SPEC --member signed-a.json --member signed-b.json > batch.json
+```
+
+Submit `batch.json` through the ordinary transaction interface. Publish signed members inside the batch so their plan can be verified at execution. Use the batch's transaction and receipt proof to authenticate the complete signed members. A member's output 0 is its sponsor's refund, and its other output indices follow the member's signed target order. Verify the resulting Live Cells and the registry Head at each member's own transaction ID. Use newly built drafts and seals when starting a network with the updated Lineage Intent encoding.
+
 **Keeper.** Enable `keeper` in the genesis JSON of a Lineage-enabled network. The local time-enabled fixture uses `{"max_delay":64,"per_height":4,"reservation_fee":2000,"time":{"per_height":2,"max_delay_ms":60000}}`. Its timings and limits are experimental. Set either `execute_at` to a block height or `execute_after_ms` to an absolute Unix millisecond timestamp in the Lineage request, with an exclusive `valid_before_height`. Provide enough height slack for the parent Header to reach the timestamp and for competing reservations to clear.
 
 The trigger is part of the signed Strand bytes. Rebuild and sign any pending development commands using the current schema. Sign the bounded command first. Include its hex bytes in an ordinary wallet build request under `"keeper":{"schedule":"0x…"}` and sign the carrier with its own funding inputs. The carrier pays the reservation charge and regular resource fee. The reserved command runs when selected by the committed queue.

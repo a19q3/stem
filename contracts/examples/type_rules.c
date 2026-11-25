@@ -131,6 +131,17 @@ static int verify(void) {
     return len != sizeof(message) || le32(message + 2) != 1 ||
            message[6] != 7 || message[7] != 0 || le32(message + 8) != 4 ||
            !eq(message + 12, (const byte *)"open", 4);
+#elif RULE == 13
+    /* The fixed-supply reserve fixture can be registered but cannot update. */
+    byte before[65], after[65];
+    len = sizeof(before);
+    if (inputs != 1 || outputs != 1 ||
+        load(LOAD_DATA, before, &len, 0, GROUP_INPUT, 0) || len != sizeof(before))
+        return 36;
+    len = sizeof(after);
+    if (load(LOAD_DATA, after, &len, 0, GROUP_OUTPUT, 0) || len != sizeof(after))
+        return 37;
+    return eq(before, after, sizeof(before)) ? 0 : 38;
 #elif RULE == 4
     /* Identity args are a specific 36-byte creating OutPoint. The input is
        consumed once, so it cannot create a second instance of this identity. */

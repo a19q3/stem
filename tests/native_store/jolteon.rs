@@ -23,6 +23,7 @@ use super::{
     intent::{Swap, altered_action},
     keeper,
     lineage::{DynamicLineage, FixtureLineage},
+    lineage_batch::BatchFixture,
 };
 
 const WAIT: Duration = Duration::from_secs(20);
@@ -107,6 +108,7 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     let action_swap = Swap::fund_with_actions(&mut fixture, &output)?;
     let lineage = FixtureLineage::fund(&mut fixture)?;
     let dynamic = DynamicLineage::fund_using(&mut fixture, &lineage, 5, 2, None)?;
+    let batch_markets = BatchFixture::fund(&mut fixture, &lineage)?;
     keeper::fund_carriers(&mut fixture, 2)?;
     fixture.spec.keeper.as_mut().unwrap().time = Some(stem::native_store::KeeperTimePolicy {
         per_height: 2,
@@ -231,6 +233,20 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         &dynamic.signed(&fixture, 2, &[0, 1], (0, 2), 0)?,
         Some(Outcome::Rejected),
     )?;
+    for registration in batch_markets.registrations(&fixture)? {
+        submit("Lineage batch reserve registration", &registration, None)?;
+    }
+    let bad_batch = batch_markets.sdk_batch(&fixture, 501)?;
+    let batch_rejections = clients
+        .iter()
+        .map(|replica| {
+            let error = replica.submit(&bad_batch).unwrap_err().to_string();
+            assert!(error.contains("Lineage Executor rejected"), "{error}");
+            error
+        })
+        .collect::<Vec<_>>();
+    let good_batch = batch_markets.wallet_batch(&fixture, &spec, &output.join("lineage-batch"))?;
+    submit("atomic Lineage batch", &good_batch, Some(Outcome::Applied))?;
     let due = clients[0].status()?.height + 15;
     let scheduled = dynamic.scheduled(&fixture, 3, (2, 2), 4, due)?;
     submit(
@@ -347,12 +363,41 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
             Ok(payload)
         })
         .collect::<Result<Vec<_>>>()?;
+    let mut batch_heads = Vec::new();
+    for member in good_batch.lineage_batch().unwrap() {
+        let child_id = member.id(network);
+        for (index, target) in member.lineage_command().unwrap().targets.iter().enumerate() {
+            let mut replicas = Vec::new();
+            for client in &clients {
+                let query = client.query("/stem/lineage", 0, target.id.as_slice(), true)?;
+                let payload: Value = serde_json::from_slice(&query.value)?;
+                let head = Head::decode(&bytes(&payload, "record")?)?;
+                assert_eq!(head.version, 1);
+                assert_eq!(
+                    head.out_point,
+                    OutPoint::new(child_id.clone(), index as u32 + 1)
+                );
+                assert!(Store::verify_lineage(
+                    network,
+                    &client.header(query.height)?,
+                    &target.id,
+                    Some(&head),
+                    &Proof::decode(&bytes(&payload, "proof")?)?,
+                ));
+                replicas.push(json!({"height": query.height, "proof": payload}));
+            }
+            batch_heads
+                .push(json!({"id": hex::encode(target.id.as_slice()), "replicas": replicas}));
+        }
+    }
     fs::write(
         output.join("native-composition.json"),
         serde_json::to_vec_pretty(&json!({
             "rejected_policy_removal": invalid, "executions": executions,
             "otx_actions": {"fragment_index": fragment_index, "final_index": final_index,
                 "rejections": action_rejections, "invalid_transaction": hex::encode(altered.as_slice())},
+            "lineage_batch": {"rejections": batch_rejections, "heads": batch_heads,
+                "rejected_transaction": hex::encode(bad_batch.as_slice())},
             "keeper_wake_height": due, "keeper_wake": wake, "heads": heads,
             "timed": {"requested_ms": target, "parent_ms": timestamp, "height": timed_height,
                 "pending": pending, "agenda": agenda, "consumed": consumed,
@@ -360,7 +405,7 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         }))?,
     )?;
     println!(
-        "four native replicas verified Polytype, sponsored OTX, atomic Lineage and Keeper at heights {due} and {timed_height}"
+        "four native replicas verified Polytype, sponsored OTX, atomic Lineage batches and Keeper at heights {due} and {timed_height}"
     );
     Ok(())
 }

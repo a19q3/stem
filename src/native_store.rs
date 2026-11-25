@@ -311,6 +311,48 @@ struct Overlay {
     keeper: keeper::Stage,
 }
 
+#[derive(Default)]
+struct LineageBatchJournal {
+    live: OverlayUndo<OutPoint, LiveCell>,
+    lineages: OverlayUndo<Byte32, stem_ledger::lineage::Head>,
+}
+
+struct OverlayUndo<K, V>(Vec<(K, Option<Option<V>>)>);
+
+impl<K, V> Default for OverlayUndo<K, V> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<K: Clone + Ord, V> OverlayUndo<K, V> {
+    fn write(
+        &mut self,
+        map: &mut BTreeMap<K, Option<V>>,
+        changes: impl IntoIterator<Item = (K, Option<V>)>,
+    ) {
+        for (key, value) in changes {
+            let previous = map.insert(key.clone(), value);
+            self.0.push((key, previous));
+        }
+    }
+
+    fn revert(self, map: &mut BTreeMap<K, Option<V>>) {
+        for (key, previous) in self.0.into_iter().rev() {
+            if let Some(value) = previous {
+                map.insert(key, value);
+            } else {
+                map.remove(&key);
+            }
+        }
+    }
+}
+
+struct LineageBatchMember<'a> {
+    journal: &'a mut LineageBatchJournal,
+    extra_bytes: u64,
+}
+
 impl Prepared {
     pub fn header(&self) -> &Header {
         &self.next
@@ -1408,17 +1450,119 @@ impl Store {
         staged_command: Option<lineage::Materialized>,
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
     ) -> Result<Receipt> {
+        if let Some(members) = tx.lineage_batch() {
+            return self.stage_lineage_batch(tx, members, context, origin, budget, overlay);
+        }
+        ensure!(
+            tx.lineage_intent()
+                .is_none_or(|intent| intent.batch.is_none()),
+            "batch-bound Lineage intent cannot execute alone"
+        );
+        self.stage_transaction(
+            tx,
+            context,
+            origin,
+            budget,
+            overlay,
+            staged_command,
+            verify,
+            None,
+        )
+    }
+
+    fn stage_lineage_batch(
+        &self,
+        tx: &Transaction,
+        members: &[Transaction],
+        context: &HeaderContext,
+        origin: &Origin,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+    ) -> Result<Receipt> {
+        Transaction::verify_lineage_batch_plan(&self.network, members)?;
+        let payload_bytes = members
+            .iter()
+            .map(|member| member.as_slice().len() as u64)
+            .sum::<u64>();
+        let extra_bytes = (tx.as_slice().len() as u64)
+            .checked_sub(payload_bytes)
+            .context("invalid Lineage batch byte accounting")?;
         let mut next = *budget;
-        charge(
-            &mut next.bytes,
-            tx.as_slice().len() as u64,
-            "block transaction bytes",
-        )?;
+        next.cycles = next.cycles.min(self.limits.transaction_cycles);
+        let mut journal = LineageBatchJournal::default();
+        let result = (|| {
+            let mut receipt = Receipt {
+                fee: 0,
+                cycles: 0,
+                protocol_result: stem_ledger::lineage::Outcome::Applied.encode(),
+            };
+            for (index, member) in members.iter().enumerate() {
+                let item = self
+                    .stage_transaction(
+                        member,
+                        context,
+                        origin,
+                        &mut next,
+                        overlay,
+                        None,
+                        |resolved, limit| self.cache.verify(resolved, limit, false),
+                        Some(LineageBatchMember {
+                            journal: &mut journal,
+                            extra_bytes: if index == 0 { extra_bytes } else { 0 },
+                        }),
+                    )
+                    .with_context(|| format!("Lineage batch member {index}"))?;
+                receipt.fee = receipt
+                    .fee
+                    .checked_add(item.fee)
+                    .context("Lineage batch fee overflow")?;
+                receipt.cycles = receipt
+                    .cycles
+                    .checked_add(item.cycles)
+                    .context("Lineage batch cycles overflow")?;
+            }
+            next.cycles = budget
+                .cycles
+                .checked_sub(receipt.cycles)
+                .context("Lineage batch exceeds the block cycle budget")?;
+            Ok(receipt)
+        })();
+        if result.is_ok() {
+            *budget = next;
+        } else {
+            journal.live.revert(&mut overlay.live);
+            journal.lineages.revert(&mut overlay.lineages);
+        }
+        result
+    }
+
+    fn stage_transaction(
+        &self,
+        tx: &Transaction,
+        context: &HeaderContext,
+        origin: &Origin,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        staged_command: Option<lineage::Materialized>,
+        verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
+        batch: Option<LineageBatchMember<'_>>,
+    ) -> Result<Receipt> {
+        let tx_bytes =
+            tx.as_slice().len() as u64 + batch.as_ref().map_or(0, |item| item.extra_bytes);
+        let mut next = *budget;
+        charge(&mut next.bytes, tx_bytes, "block transaction bytes")?;
         let materialized = if staged_command.is_some() {
             staged_command
         } else {
             self.materialize_lineage(tx, context, overlay, next)?
         };
+        ensure!(
+            batch.is_none()
+                || materialized
+                    .as_ref()
+                    .is_some_and(|command| command.executed),
+            "Lineage Executor rejected the batch member"
+        );
         let Overlay {
             live,
             stake,
@@ -1647,7 +1791,7 @@ impl Store {
                 self.fees
                     .cycle_budget(
                         &resolved,
-                        tx.as_slice().len() as u64,
+                        tx_bytes,
                         budget.reads - next.reads,
                         budget.read_bytes - next.read_bytes,
                         budget.write_bytes - next.write_bytes,
@@ -1674,6 +1818,7 @@ impl Store {
                     .verify(Arc::new(resolved), validation_limit, false)
                 {
                     Ok(cycles) => cycles,
+                    Err(error) if batch.is_some() => return Err(error),
                     Err(_) => {
                         let reads_attempted = reads - command.reads;
                         let bytes_attempted = read_bytes - command.read_bytes;
@@ -1682,7 +1827,7 @@ impl Store {
                             reads_attempted,
                             bytes_attempted,
                         )?;
-                        return self.stage(
+                        return self.stage_transaction(
                             tx,
                             context,
                             origin,
@@ -1690,6 +1835,7 @@ impl Store {
                             overlay,
                             Some(refund),
                             verify,
+                            None,
                         );
                     }
                 }
@@ -1703,18 +1849,26 @@ impl Store {
         };
         charge(&mut next.cycles, cycles, "block VM cycles")?;
 
-        live.extend(concrete.inputs().map(|input| (input.previous_output, None)));
-        live.extend(outputs);
-        lineages.extend(lineage_changes);
-        if let Some(change) = keeper_change {
-            keeper.apply(change);
-        }
         let protocol_result = materialized.as_ref().map_or_else(
             || changes.protocol_result.clone(),
             |command| stem_ledger::lineage::Outcome::from_applied(command.executed).encode(),
         );
-        if let Some(bridge) = bridge.as_mut() {
-            bridge.apply(changes);
+        let cell_changes = concrete
+            .inputs()
+            .map(|input| (input.previous_output, None))
+            .chain(outputs);
+        if let Some(member) = batch {
+            member.journal.live.write(live, cell_changes);
+            member.journal.lineages.write(lineages, lineage_changes);
+        } else {
+            live.extend(cell_changes);
+            lineages.extend(lineage_changes);
+            if let Some(change) = keeper_change {
+                keeper.apply(change);
+            }
+            if let Some(bridge) = bridge.as_mut() {
+                bridge.apply(changes);
+            }
         }
         *budget = next;
         Ok(Receipt {

@@ -548,11 +548,23 @@
       "item": "Bytes"
     },
     {
+      "name": "LineageBatchMembers",
+      "kind": "dense_vector",
+      "item": "Bytes"
+    },
+    {
+      "name": "LineageBatchPlanOpt",
+      "kind": "optional",
+      "item": "Byte32"
+    },
+    {
       "name": "LineageIntent",
-      "kind": "sequence",
+      "kind": "flagged",
+      "flag_bytes": 1,
       "fields": [
         { "name": "actors", "type": "Byte32Vec" },
-        { "name": "max_fee", "type": "CompactUint64" }
+        { "name": "max_fee", "type": "CompactUint64" },
+        { "name": "batch", "type": "LineageBatchPlanOpt", "bit": 0 }
       ]
     },
     {

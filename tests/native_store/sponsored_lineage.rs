@@ -24,11 +24,22 @@ impl SponsoredLineage {
         registry: &FixtureLineage,
         fees: usize,
     ) -> Result<Self> {
-        let mut dynamic = DynamicLineage::fund_with_prefix(fixture, registry, fees, 2, None, 235)?;
+        Self::fund_at(fixture, registry, fees, 235, [90, 91])
+    }
+
+    pub(super) fn fund_at(
+        fixture: &mut Fixture,
+        registry: &FixtureLineage,
+        fees: usize,
+        prefix: u8,
+        actor_seeds: [u8; 2],
+    ) -> Result<Self> {
+        let mut dynamic =
+            DynamicLineage::fund_with_prefix(fixture, registry, fees, 2, None, prefix)?;
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
         let executable = super::contract::native_contract(workspace, "stem-lineage-match")?;
         let asset = super::contract::native_contract(workspace, "stem-lineage-reserve-udt")?;
-        let asset_dep = OutPoint::new([236; 32].pack(), 2);
+        let asset_dep = OutPoint::new([prefix + 1; 32].pack(), 2);
         let program = |data: Bytes| {
             Cell::new(
                 Cell::minimum_capacity(&fixture.lock, &[], data.len())?,
@@ -64,7 +75,7 @@ impl SponsoredLineage {
             })
             .collect();
 
-        let [a, b] = [90u8, 91].map(|seed| -> Result<_> {
+        let [a, b] = actor_seeds.map(|seed| -> Result<_> {
             let key = Privkey::from_slice(&[seed; 32]);
             let actor = actor_id(key.pubkey()?.serialize().as_slice().try_into()?);
             Ok((actor, key))
@@ -120,7 +131,7 @@ impl SponsoredLineage {
         self.order.map(|i| self.dynamic.ids[i].clone())
     }
 
-    fn draft(&self, version: u64, x: u128, y: u128) -> Result<Transaction> {
+    pub(super) fn draft(&self, version: u64, x: u128, y: u128) -> Result<Transaction> {
         let payload = [x.to_le_bytes(), y.to_le_bytes()].concat().into();
         Transaction::new_lineage_command(
             self.dynamic.deps.clone(),
@@ -148,10 +159,11 @@ impl SponsoredLineage {
         .with_lineage_intent(Intent {
             actors: self.keys.iter().map(|(id, _)| id.clone()).collect(),
             max_fee: 2 * FEE,
+            batch: None,
         })
     }
 
-    fn business_seal(&self, fixture: &Fixture, tx: &Transaction) -> Result<Bytes> {
+    pub(super) fn business_seal(&self, fixture: &Fixture, tx: &Transaction) -> Result<Bytes> {
         let digest = tx.lineage_intent_digest(&fixture.spec.network)?.unpack();
         let mut sealed = Vec::new();
         for (_, key) in &self.keys {

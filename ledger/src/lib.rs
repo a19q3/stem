@@ -302,6 +302,7 @@ pub struct Transaction {
     encoded: wire::Transaction,
     lineage_command: Option<Arc<lineage::Command>>,
     lineage_intent: Option<Arc<lineage::Intent>>,
+    lineage_batch: Option<Arc<[Transaction]>>,
     keeper_trigger: Option<keeper::Trigger>,
     keeper: Option<keeper::Action>,
 }
@@ -369,14 +370,14 @@ impl Transaction {
     }
 
     pub fn fee_claim(claim: protocol::FeeClaim) -> Result<Self> {
-        Self::claim(Operation::FeeClaim(claim))
+        Self::without_certificate(Operation::FeeClaim(claim))
     }
 
     pub fn reward_claim(claim: protocol::RewardClaim) -> Result<Self> {
-        Self::claim(Operation::RewardClaim(claim))
+        Self::without_certificate(Operation::RewardClaim(claim))
     }
 
-    fn claim(operation: Operation) -> Result<Self> {
+    fn without_certificate(operation: Operation) -> Result<Self> {
         Self::build(
             Vec::new(),
             Vec::new(),
@@ -498,10 +499,11 @@ impl Transaction {
             .map(lineage::Intent::decode)
             .transpose()?
             .map(Arc::new);
-        let tx = Self {
+        let mut tx = Self {
             encoded,
             lineage_command,
             lineage_intent,
+            lineage_batch: None,
             keeper_trigger,
             keeper,
         };
@@ -537,18 +539,25 @@ impl Transaction {
                     "protocol transaction cannot include an expiry or Group Messages"
                 );
                 let operation = Operation::decode(operation)?;
-                if matches!(
-                    operation,
-                    Operation::FeeClaim(_) | Operation::RewardClaim(_)
-                ) {
-                    ensure!(
-                        certificate.is_none(),
-                        "fee claims cannot carry a certificate"
-                    );
-                } else {
-                    let certificate =
-                        certificate.context("protocol operation requires a certificate")?;
-                    operation.validate(&Certificate::decode(certificate)?)?;
+                match &operation {
+                    Operation::LineageBatch(members) => {
+                        ensure!(
+                            certificate.is_none(),
+                            "Lineage batch cannot carry a certificate"
+                        );
+                        tx.lineage_batch = Some(Self::decode_lineage_batch(members)?);
+                    }
+                    Operation::FeeClaim(_) | Operation::RewardClaim(_) => {
+                        ensure!(
+                            certificate.is_none(),
+                            "fee claims cannot carry a certificate"
+                        );
+                    }
+                    _ => {
+                        let certificate =
+                            certificate.context("protocol operation requires a certificate")?;
+                        operation.validate(&Certificate::decode(certificate)?)?;
+                    }
                 }
                 if matches!(operation, Operation::BridgeMint(_)) {
                     ensure!(
@@ -602,6 +611,10 @@ impl Transaction {
             let command = tx
                 .lineage_command()
                 .context("business authorization requires a Lineage command")?;
+            ensure!(
+                intent.batch.is_none() || tx.keeper_trigger.is_none(),
+                "batch-bound Lineage intents cannot be scheduled individually"
+            );
             ensure!(
                 command.fee <= intent.max_fee
                     && command
@@ -813,6 +826,122 @@ impl Transaction {
         self.lineage_intent.as_deref()
     }
 
+    /// Encode a group of fully sealed, batch-bound Lineage intents in signed order.
+    pub fn new_lineage_batch(members: Vec<Transaction>) -> Result<Self> {
+        ensure!(
+            (2..=lineage::MAX_BATCH_MEMBERS).contains(&members.len()),
+            "Lineage batch member count is outside bounds"
+        );
+        let payload = members
+            .into_iter()
+            .map(|tx| tx.encoded.as_bytes())
+            .collect();
+        Self::without_certificate(Operation::LineageBatch(payload))
+    }
+
+    pub fn lineage_batch(&self) -> Option<&[Self]> {
+        self.lineage_batch.as_deref()
+    }
+
+    fn decode_lineage_batch(members: &[Bytes]) -> Result<Arc<[Self]>> {
+        let mut fees = HashSet::new();
+        let mut heads = HashSet::new();
+        members
+            .iter()
+            .map(|bytes| {
+                let wire = wire::Transaction::from_slice(bytes)?;
+                ensure!(
+                    wire.raw().protocol().to_opt().is_none(),
+                    "Lineage batches require non-nested command members"
+                );
+                let member = Self::from_entity(wire)?;
+                ensure!(
+                    member
+                        .lineage_intent()
+                        .is_some_and(|intent| intent.batch.is_some())
+                        && member.witnesses().len() == 1,
+                    "Lineage batch member requires batch-bound business and fee seals"
+                );
+                ensure!(
+                    fees.insert(member.input(0).expect("validated command").previous_output),
+                    "duplicate Lineage batch fee Cell"
+                );
+                let command = member.lineage_command().expect("validated intent");
+                ensure!(
+                    command
+                        .targets
+                        .iter()
+                        .all(|target| heads.insert(target.id.clone())),
+                    "overlapping Lineage batch targets"
+                );
+                Ok(member)
+            })
+            .collect::<Result<Arc<_>>>()
+    }
+
+    /// Bind this unsigned sponsored command to a plan before collecting its business seals.
+    pub fn with_lineage_batch_plan(&self, plan: Byte32) -> Result<Self> {
+        let mut intent = self
+            .lineage_intent()
+            .context("batch plan requires a Lineage intent")?
+            .clone();
+        intent.batch = Some(plan);
+        self.with_lineage_intent(intent)
+    }
+
+    /// Each leaf excludes only sponsor selection and the plan ID, which would be circular.
+    pub fn lineage_batch_plan(network: &Byte32, members: &[Self]) -> Result<Byte32> {
+        ensure!(
+            (2..=lineage::MAX_BATCH_MEMBERS).contains(&members.len()),
+            "Lineage batch member count is outside bounds"
+        );
+        let mut heads = HashSet::new();
+        let mut leaves = Vec::with_capacity(1 + members.len() * 32);
+        leaves.push(members.len() as u8);
+        for member in members {
+            ensure!(
+                member.keeper_trigger().is_none(),
+                "scheduled command cannot enter a Lineage batch"
+            );
+            let mut intent = member
+                .lineage_intent()
+                .context("batch plan requires a Lineage intent")?
+                .clone();
+            intent.batch = None;
+            let terms = member.normalized_lineage_terms(&intent);
+            let command = member.lineage_command().expect("validated intent");
+            ensure!(
+                command
+                    .targets
+                    .iter()
+                    .all(|target| heads.insert(target.id.clone())),
+                "overlapping Lineage batch targets"
+            );
+            leaves.extend_from_slice(
+                hash(
+                    b"Stem Lineage batch member terms\0",
+                    network,
+                    &[terms.as_slice()],
+                )
+                .as_slice(),
+            );
+        }
+        Ok(hash(b"Stem Lineage batch plan\0", network, &[&leaves]))
+    }
+
+    /// Match every member's binding to the exact signed order and contents.
+    pub fn verify_lineage_batch_plan(network: &Byte32, members: &[Self]) -> Result<Byte32> {
+        let plan = Self::lineage_batch_plan(network, members)?;
+        ensure!(
+            members.iter().all(|member| member
+                .lineage_intent()
+                .and_then(|intent| intent.batch.as_ref())
+                == Some(&plan)),
+            "Lineage batch differs from the signed plan"
+        );
+        Ok(plan)
+    }
+
     pub fn lineage_seals(&self) -> Bytes {
         self.encoded.lineage_seals().raw_data()
     }
@@ -875,13 +1004,19 @@ impl Transaction {
     }
 
     pub fn lineage_intent_digest(&self, network: &Byte32) -> Result<Byte32> {
-        ensure!(self.lineage_intent().is_some(), "expected a Lineage intent");
-        // Normalize only the fields delegated to the sponsor. The complete
-        // remaining canonical RawTransaction stays inside the business scope.
+        let intent = self.lineage_intent().context("expected a Lineage intent")?;
+        let raw = self.normalized_lineage_terms(intent);
+        Ok(hash(
+            b"Stem Lineage business authorization\0",
+            network,
+            &[raw.as_slice()],
+        ))
+    }
+
+    fn normalized_lineage_terms(&self, intent: &lineage::Intent) -> wire::RawTransaction {
         let mut terms = self.lineage_command().expect("validated intent").clone();
         terms.fee = 0;
-        let raw = self
-            .encoded
+        self.encoded
             .raw()
             .as_builder()
             .inputs(wire::CellInputVec::new_builder().build())
@@ -890,12 +1025,12 @@ impl Transaction {
                     .set(Some(terms.encode()))
                     .build(),
             )
-            .build();
-        Ok(hash(
-            b"Stem Lineage business authorization\0",
-            network,
-            &[raw.as_slice()],
-        ))
+            .lineage_intent(
+                wire::LineageIntentOpt::new_builder()
+                    .set(Some(intent.encode()))
+                    .build(),
+            )
+            .build()
     }
 
     pub fn lineage_signing_digest(&self, network: &Byte32, fee_cell: &Cell) -> Result<Byte32> {

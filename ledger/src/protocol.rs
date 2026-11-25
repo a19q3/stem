@@ -93,6 +93,7 @@ pub enum Operation {
     FeeClaim(FeeClaim),
     RewardClaim(RewardClaim),
     L1AnchorUpdate(L1AnchorUpdate),
+    LineageBatch(Vec<Bytes>),
 }
 
 impl Operation {
@@ -162,6 +163,13 @@ impl Operation {
             Self::FeeClaim(claim) => (5, claim.encode().as_bytes()),
             Self::RewardClaim(claim) => (6, claim.encode().as_bytes()),
             Self::L1AnchorUpdate(anchor) => (7, anchor.payload()),
+            Self::LineageBatch(members) => (
+                8,
+                wire::LineageBatchMembers::new_builder()
+                    .set(members.iter().cloned().map(bytes).collect())
+                    .build()
+                    .as_bytes(),
+            ),
         };
         wire::ProtocolOperation::new_builder()
             .kind(kind.into())
@@ -226,6 +234,19 @@ impl Operation {
             7 => Ok(Self::L1AnchorUpdate(L1AnchorUpdate::decode_payload(
                 &payload,
             )?)),
+            8 => {
+                let members = wire::LineageBatchMembers::from_slice(&payload)?;
+                ensure!(
+                    (2..=crate::lineage::MAX_BATCH_MEMBERS).contains(&members.len()),
+                    "Lineage batch member count is outside bounds"
+                );
+                Ok(Self::LineageBatch(
+                    members
+                        .into_iter()
+                        .map(|member| member.raw_data())
+                        .collect(),
+                ))
+            }
             _ => bail!("unknown protocol operation"),
         }
     }
@@ -265,7 +286,9 @@ impl Operation {
                     "unexpected L1 anchor certificate body"
                 );
             }
-            Self::FeeClaim(_) | Self::RewardClaim(_) => bail!("fee claims do not use certificates"),
+            Self::FeeClaim(_) | Self::RewardClaim(_) | Self::LineageBatch(_) => {
+                bail!("this protocol operation does not use certificates")
+            }
         }
         Ok(())
     }
@@ -279,6 +302,7 @@ impl Operation {
             Self::FeeClaim(_) | Self::RewardClaim(_) => {
                 bail!("fee claims have a separate block allowance")
             }
+            Self::LineageBatch(_) => bail!("Lineage batches use the ordinary block budget"),
         })
     }
 }

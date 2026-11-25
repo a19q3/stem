@@ -87,6 +87,14 @@ Lineage Intent 允许最多八位业务参与者先签署同一组操作，再�
 
 Executor 通过 syscall 2126 的 source 2 按索引读取已验证参与者 ID。应用必须把业务参与者与实际输入状态中的权限绑定。在付费方可替换的 Intent 中，Executor 读取的付款身份字段为零，避免业务结果取决于参与者签名之后选定的代付方。业务后继经过原有所有 Lock 与 Type Groups。双边结算示例用两份业务签名匹配两枚储备的所有者，用两个 UDT Type Groups 分别验证两种资产的守恒。
 
+#### 原子组合多条 Lineage Intent
+
+Solver 可以组合 2–8 条各自授权的 Lineage Intent。按计划给定的顺序，将网络、成员数量及每个成员的规范化业务条款分域哈希。计算成员条款时，移除计划 ID 和付款 OutPoint，并将实际费用归零。每个业务签名把相同的计划 ID 写回自己的完整条款。每位代付方按原有路径签署自己的费用、付款 Cell 和业务签名。代付方仍可在业务签名之后选择。
+
+提交封套携带所有已签成员。节点重算计划，拒绝拆开提交、改变顺序、替换成员、重复付款 OutPoint、目标 Head 重叠、嵌套批次和带 Keeper 触发条件的成员。每位签名人可以单独检查成员和计划。执行仍使用当前 Head、各成员自己的 Executor、依赖、业务签名、费用 Lock 和全部原有 Lock 与 Type Groups。
+
+节点在同一候选区块顺序验证成员，原子提交涉及的 Cell 和 Lineage 记录。任一成员未获授权、预算不足、应用失败或 Script Group 拒绝，整笔批次无效，先前成员的临时状态和手续费全部撤销。批次共用一个交易 cycles 上限，并按完整封套计量区块字节。封套额外字节由首位成员承担资源费，仍受其签署的费用上限约束。批次回执承诺实际费用和 cycles 合计。每个成员的退款及后继使用该成员的交易 ID 与原输出序号，客户端从批次交易证明取得完整成员，再验证对应 Live Cell 和 Lineage 路径。
+
 ### Native Keeper
 
 Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_height` 和正数预约费 `reservation_fee`。可选的 `keeper.time` 固定每块时间预约份额 `per_height` 和最长等待 `max_delay_ms`。两种执行份额合计不超过每块 16 笔，并为用户交易保留区块资源。Keeper 复用 Lineage 执行。签署包含 `execute_at` 或 `execute_after_ms` 的一条 Lineage 命令，再由普通 Cell 交易提交命令和预约费。Strand 编码使用一个固定的域标签和一个小端整数，两种触发条件只能选其一。命令字节上限为 8 KiB。预约时验证实际付款 Lock、执行费签名及所有业务签名。高度预约和时间预约共享相同的付款 OutPoint 占用记录。配对 OTX 签名无法授权新增预约或取消。
