@@ -64,4 +64,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Sustained Keeper load and finalized admission expiry | [Report](../BENCHMARKS.md#sustained-keeper-load-and-admission-expiry), [4- and 16-replica traces, rejections and controls](2026-11-26-stem-keeper-load.json.xz) |
 
+| Competing CKB checkpoint publishers and canonical adoption | [Report](../BENCHMARKS.md#ckb-checkpoint-publisher-handoff), [signed transactions, rejected probes and reruns](2026-11-26-stem-checkpoint-adoption.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

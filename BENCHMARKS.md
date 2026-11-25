@@ -2236,3 +2236,54 @@ delivery reorg, and reached common Stem height 45 after restart.
 
 [Reproduction](OPERATIONS.md#wallet-and-proofs) ·
 [Raw RPC observations, proofs, controls and regressions](benchmarks/2026-11-26-stem-keeper-load.json.xz).
+
+## CKB checkpoint publisher handoff
+
+Revision `01df462` ran two publishers with separate fee keys and
+journals on a real CKB 0.210.0 devnet. Three Jolteon replicas ran the
+CKB Stake Registry fixture on one i9-13900H host. It included two
+committee handoffs. The final run used two confirming CKB blocks
+after inclusion.
+
+Publisher A bootstrapped at Stem height 10 and submitted the second
+handoff at height 20. CKB rejected publisher B's competing transaction
+under its fee replacement policy. B then adopted the confirmed spend,
+published the height-25 checkpoint with its independently funded
+Cell and adopted its own confirmed pending transaction after a new CLI
+invocation. A adopted B's checkpoint. A manually constructed the
+height-26 update with the checkpoint input, output and witness at
+index 1 and added 1 CKB to its Capacity. B adopted this update, then
+published height 27 from that OutPoint while preserving the additional
+Capacity and spending its own earlier change. A fresh journal adopted
+all four predecessors in one invocation from the pinned seed.
+
+| Final run | Stem height | Checkpoint witness bytes | Estimated CKB-VM cycles |
+| --- | ---: | ---: | ---: |
+| A creates checkpoint and publishes first handoff | 10 | 1,398 | 6,231,684 |
+| A publishes second handoff | 20 | 1,218 | 6,226,380 |
+| B publishes with its own wallet | 25 | 885 | 6,112,987 |
+| B publishes after the index-1 successor | 27 | 819 | 6,052,125 |
+
+B took 15.6 ms of local CLI wall time to adopt the winning spend.
+The fresh journal verified and adopted four updates in 13.7 ms.
+Each figure is a single local sample including process startup,
+RPC and journal I/O. CKB mining and confirmation wait time are
+outside these samples.
+
+The final round recorded nine expected failures. These covered
+shallow depth, a valid foreign checkpoint, a skipped handoff, a
+missing bootstrap, unknown or unrelated transactions, the competing
+spend, and both ordinary publication and adoption after the confirmed
+anchor was reorganized. A sequence with a valid prefix and an unknown
+tail left the journal unchanged, as verified by the subsequent adoption.
+The preceding attempted run checked the foreign Type ID before reaching
+the required depth. Its early depth rejection and the initial
+successful run are preserved alongside the corrected run.
+
+The existing single-publisher shallow reorg and retry, funded
+committee handoff, and four-replica bidirectional Intercell devnet
+fixtures passed. The release workspace passed 456 tests with 14
+ignored. Go proof tests and the CometBFT comparison build passed.
+
+[Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
+[Signed transactions, inclusion proofs, rejection traces and commands](benchmarks/2026-11-26-stem-checkpoint-adoption.json.xz).
