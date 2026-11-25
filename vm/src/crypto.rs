@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{cell::RefCell, sync::OnceLock};
 
 use ckb_script::runtime::SUCCESS;
 use ckb_vm::{
@@ -6,6 +6,7 @@ use ckb_vm::{
     memory::Memory,
     registers::{A0, A1, A2, A7},
 };
+use lru::LruCache;
 use secp256k1::{
     Message, Secp256k1, VerifyOnly,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -14,6 +15,14 @@ use secp256k1::{
 pub const SECP256K1_RECOVER: u64 = 2121;
 pub const SECP256K1_RECOVERY_CYCLES: u64 = 1_900_000;
 const INVALID_SIGNATURE: u8 = 4;
+
+const RECOVERY_CACHE_ENTRIES: usize = 512;
+type RecoveryKey = ([u8; 65], [u8; 32]);
+
+thread_local! {
+    static RECOVERED: RefCell<LruCache<RecoveryKey, [u8; 33]>> =
+        RefCell::new(LruCache::new(RECOVERY_CACHE_ENTRIES));
+}
 
 pub(crate) struct Recover;
 
@@ -32,8 +41,9 @@ impl<M: SupportMachine> Syscalls<M> for Recover {
         machine.add_cycles(SECP256K1_RECOVERY_CYCLES)?;
         let signature = machine.memory_mut().load_bytes(signature, 65)?;
         let digest = machine.memory_mut().load_bytes(digest, 32)?;
-        let digest = Message::from_digest(digest.as_ref().try_into().expect("32-byte digest"));
-        let status = match recover(&signature, &digest) {
+        let signature = signature.as_ref().try_into().expect("65-byte signature");
+        let digest = digest.as_ref().try_into().expect("32-byte digest");
+        let status = match recover_cached(signature, digest) {
             Some(key) => {
                 machine.memory_mut().store_bytes(destination, &key)?;
                 SUCCESS
@@ -43,6 +53,20 @@ impl<M: SupportMachine> Syscalls<M> for Recover {
         machine.set_register(A0, M::REG::from_u8(status));
         Ok(true)
     }
+}
+
+/// Local reuse of successful, pure recoveries. Current-cell and group
+/// authorization still run in the caller, and the syscall always charges.
+fn recover_cached(seal: [u8; 65], digest: [u8; 32]) -> Option<[u8; 33]> {
+    let key = (seal, digest);
+    RECOVERED.with_borrow_mut(|cache| {
+        if let Some(public_key) = cache.get(&key) {
+            return Some(*public_key);
+        }
+        let public_key = recover(&seal, &Message::from_digest(digest))?;
+        cache.put(key, public_key);
+        Some(public_key)
+    })
 }
 
 fn recover(seal: &[u8], digest: &Message) -> Option<[u8; 33]> {
@@ -76,6 +100,85 @@ mod tests {
         }
         let key = VerifyingKey::recover_from_prehash(digest, &signature, recovery_id).ok()?;
         key.to_encoded_point(true).as_bytes().try_into().ok()
+    }
+
+    fn sign(key: &SigningKey, digest: &[u8; 32]) -> [u8; 65] {
+        let (signature, id) = key.sign_prehash_recoverable(digest).unwrap();
+        let mut seal = [0; 65];
+        seal[..64].copy_from_slice(&signature.to_bytes());
+        seal[64] = id.to_byte();
+        seal
+    }
+
+    #[test]
+    fn cached_recovery_keys_cover_digest_compact_seal_and_recovery_id() {
+        let key = SigningKey::from_bytes((&[14; 32]).into()).unwrap();
+        let digest = [9; 32];
+        let seal = sign(&key, &digest);
+        let expected = reference(&seal, &digest).unwrap();
+        assert_eq!(recover_cached(seal, digest), Some(expected));
+        assert_eq!(recover_cached(seal, digest), Some(expected));
+
+        let changed_digest = [21; 32];
+        assert_ne!(recover_cached(seal, changed_digest), Some(expected));
+        assert_eq!(
+            recover_cached(seal, changed_digest),
+            reference(&seal, &changed_digest)
+        );
+
+        let mut changed_seal = seal;
+        changed_seal[32..64].fill(0);
+        assert_eq!(recover_cached(changed_seal, digest), None);
+
+        let mut changed_id = seal;
+        changed_id[64] ^= 1;
+        assert_ne!(recover_cached(changed_id, digest), Some(expected));
+        assert_eq!(
+            recover_cached(changed_id, digest),
+            reference(&changed_id, &digest)
+        );
+    }
+
+    #[test]
+    #[ignore = "controlled native recovery cache microbenchmark"]
+    fn measure_signature_recovery_reuse() {
+        use std::time::Instant;
+
+        const SAMPLES: usize = 1_000;
+        let key = SigningKey::from_bytes((&[19; 32]).into()).unwrap();
+        let mut cases = Vec::with_capacity(SAMPLES);
+        for number in 0..SAMPLES {
+            let mut digest = [0; 32];
+            digest[..8].copy_from_slice(&(number as u64).to_le_bytes());
+            cases.push((sign(&key, &digest), digest));
+        }
+        let mut durations = [
+            Vec::with_capacity(SAMPLES),
+            Vec::with_capacity(SAMPLES),
+            Vec::with_capacity(SAMPLES),
+        ];
+        for (seal, digest) in cases {
+            let message = Message::from_digest(digest);
+            let start = Instant::now();
+            let reference = recover(&seal, &message);
+            durations[0].push(start.elapsed().as_nanos());
+            let start = Instant::now();
+            let miss = recover_cached(seal, digest);
+            durations[1].push(start.elapsed().as_nanos());
+            let start = Instant::now();
+            let hit = recover_cached(seal, digest);
+            durations[2].push(start.elapsed().as_nanos());
+            assert_eq!(hit, reference);
+            assert_eq!(miss, reference);
+        }
+        let percentiles = durations.map(|mut durations| {
+            durations.sort_unstable();
+            [50, 95, 99].map(|p| durations[(SAMPLES * p).div_ceil(100) - 1])
+        });
+        println!(
+            "recovery samples={SAMPLES} uncached_ns={:?} miss_ns={:?} hit_ns={:?} fixed_cycles={SECP256K1_RECOVERY_CYCLES}",
+            percentiles[0], percentiles[1], percentiles[2],
+        );
     }
 
     #[test]

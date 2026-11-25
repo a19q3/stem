@@ -492,3 +492,28 @@ an isolated checkout of `5b716db`.
 cargo test --locked --release -p stem-vm reusable_executor_matches_portable
 cargo test --locked --release -p stem-vm measure_executor_backends -- --ignored --nocapture
 ```
+
+### Repeated native signature recovery
+
+A single-thread microbenchmark compared 1,000 distinct valid signatures
+using the same recovery implementation without caching, with one
+cache miss per signature, and with an immediately repeated cache hit.
+The cache holds 512 successful recoveries per worker and keys on the
+full seal and digest. All three paths returned the same key in every
+sample. Wall times below exclude VM setup and instruction dispatch.
+
+| Path | Host recovery p50/p95/p99 |
+| --- | ---: |
+| No cache | 23.385 / 26.937 / 32.540 µs |
+| Cache miss | 21.927 / 23.680 / 26.784 µs |
+| Cache hit | 0.033 / 0.044 / 0.050 µs |
+
+The uncached call ran immediately before each measured miss. The
+difference between those two rows does not isolate cache overhead.
+Every VM syscall still charges 1,900,000 cycles, and the Lock Script
+still checks ownership. This benchmark does not estimate cache hit
+rates or network throughput.
+
+```sh
+cargo test --locked --release -p stem-vm measure_signature_recovery_reuse -- --ignored --nocapture
+```
