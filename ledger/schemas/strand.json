@@ -387,6 +387,16 @@
       ]
     },
     {
+      "name": "L1AnchorUpdate",
+      "kind": "sequence",
+      "fields": [
+        { "name": "l1_genesis", "type": "Byte32" },
+        { "name": "authority", "type": "Byte32" },
+        { "name": "previous_anchor", "type": "L1Anchor" },
+        { "name": "anchor", "type": "L1Anchor" }
+      ]
+    },
+    {
       "name": "ProtocolOperationOpt",
       "kind": "optional",
       "item": "ProtocolOperation"

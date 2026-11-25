@@ -163,7 +163,11 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
             "rejections": {"unearned": unearned, "overclaim": wrong_amount, "dust": dust, "replay": replay}}
 
 
-def reference_round(args, l1, fixture, spec, spec_path, mint, client):
+def reference_round(args, l1, fixture, spec, spec_path, lane, mint, client):
+    def query(path, data="0x"):
+        reply = client.query(path, data=data, prove=True)
+        return json.loads(bytes.fromhex(reply["value"]))
+
     anchor_query = client.query("/stem/bridge-anchor", prove=True)
     anchor = json.loads(bytes.fromhex(anchor_query["value"]))
     assert anchor["height"] == mint["confirmed_height"] and anchor["hash"] == mint["confirmed_hash"]
@@ -221,11 +225,11 @@ def reference_round(args, l1, fixture, spec, spec_path, mint, client):
         write_json(args.output / f"reference-{label}-signed.json", encoded)
         return encoded
 
-    part = mint["payment_capacity"] // 2
-    split = sign("split", mint["payment"], [cell(part, native_lock), cell(part - FEE, native_lock)])
+    part = mint["payment_capacity"] // 3
+    split = sign("split", mint["payment"], [cell(part, native_lock), cell(part, native_lock), cell(part - FEE, native_lock)])
     split_tx = client.call("broadcast_tx_commit", tx=split)
     assert split_tx["check_tx"]["code"] == 0, split_tx
-    live_input, history_input = point("0x" + split_tx["hash"], 0), point("0x" + split_tx["hash"], 1)
+    live_input, history_input, refresh_input = [point("0x" + split_tx["hash"], index) for index in range(3)]
     live_votes, live_file = attest("live", live_point, True)
     old_votes, old_file = attest("historical", spent_point, False)
     historical_live_votes, historical_live_file = attest("historical-vault", live_point, False)
@@ -250,8 +254,9 @@ def reference_round(args, l1, fixture, spec, spec_path, mint, client):
 
     l1.mine(2)
     newer = anchor["height"] + 1
-    _, future_file = attest("other-anchor", live_point, True, newer, l1.call("get_block_hash", hex(newer)))
-    history_outputs = output(old_votes[0]["record"], 0, part - 2 * FEE)
+    future_hash = l1.call("get_block_hash", hex(newer))
+    future_votes, future_file = attest("other-anchor", live_point, True, newer, future_hash)
+    history_outputs = output(old_votes[0]["record"], 0, part - FEE)
     errors["uncommitted_anchor"] = reject(sign("uncommitted-anchor", history_input, history_outputs, future_file),
                                           "committed CKB anchor")
     expiry = anchor["adopted_at"] + spec["limits"]["header_dep_age"]
@@ -260,6 +265,57 @@ def reference_round(args, l1, fixture, spec, spec_path, mint, client):
     submit_history = sign("accepted-history", history_input, history_outputs, old_file)
     history = client.call("broadcast_tx_commit", tx=submit_history)
     assert history["check_tx"]["code"] == 0, history
+
+    def attest_anchor(height, predecessor, rejected=None):
+        values = []
+        for index, key in enumerate(fixture.guardian_keys[:3]):
+            command = [args.binary, "bridge", "attest-anchor", "--genesis", spec_path,
+                       "--l1-rpc", l1.url, "--previous-height", str(predecessor["height"]),
+                       "--previous-hash", predecessor["hash"], "--height", str(height),
+                       "--journal", args.output / f"journal-{index}", "--key-file", key]
+            if rejected:
+                result = subprocess.run(command, text=True, capture_output=True)
+                assert result.returncode and rejected in result.stderr, result
+                return result.stderr
+            values.append(json.loads(run(*command)))
+        return values
+
+    def assemble_anchor(label, values):
+        path = args.output / f"anchor-{label}-votes.json"
+        write_json(path, values)
+        tx = json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", path))
+        write_json(args.output / f"anchor-{label}-transaction.json", tx)
+        return tx
+
+    errors["unconfirmed_refresh"] = attest_anchor(int(l1.call("get_tip_block_number"), 16), anchor,
+                                                  rejected="insufficient confirmations")
+    approvals = attest_anchor(newer, anchor)
+    errors["minority_refresh"] = reject(assemble_anchor("minority", approvals[:2]), "Quorum")
+    by_signer = {vote["signer"]: vote["signature"] for vote in future_votes}
+    wrong_domain = [dict(vote, signature=by_signer[vote["signer"]]) for vote in approvals]
+    errors["reference_signature_replay"] = reject(assemble_anchor("wrong-domain", wrong_domain), "Signature")
+    update = assemble_anchor("accepted", approvals)
+    backing_before = query("/stem/bridge-backing")
+    lane_before = query("/stem/bridge-lane", lane)
+    fees_before = query("/stem/extinguished-fees")
+    advanced = client.call("broadcast_tx_commit", tx=update)
+    assert advanced["check_tx"]["code"] == 0, advanced
+    fresh = query("/stem/bridge-anchor")
+    assert (fresh["height"], fresh["hash"], fresh["adopted_at"]) == (newer, future_hash, advanced["height"])
+    errors["refresh_replay"] = reject(update, "does not extend the accepted anchor")
+    backing_after = query("/stem/bridge-backing")
+    lane_after = query("/stem/bridge-lane", lane)
+    fees_after = query("/stem/extinguished-fees")
+    assert backing_before["record"] == backing_after["record"]
+    assert lane_before["record"] == lane_after["record"]
+    assert fees_before["extinguished_shannons"] == fees_after["extinguished_shannons"]
+    errors["superseded_anchor"] = reject(
+        sign("superseded", refresh_input, output(old_votes[0]["record"], 0, part - 2 * FEE), old_file),
+        "committed CKB anchor")
+    refreshed_tx = sign("refreshed-live", refresh_input,
+        output(future_votes[0]["record"], 1, part - 2 * FEE), future_file)
+    refreshed = client.call("broadcast_tx_commit", tx=refreshed_tx)
+    assert refreshed["check_tx"]["code"] == 0, refreshed
 
     def execution(tx):
         location = client.locations[tx["hash"]]
@@ -279,7 +335,6 @@ def reference_round(args, l1, fixture, spec, spec_path, mint, client):
             raise AssertionError("oversized receipt number")
 
         fee, cycles = number(), number()
-        assert cycles >= 12_000_000
         return {"fee": fee, "cycles": cycles, "proof": evidence}
 
     ancestor = l1.call("get_block_hash", hex(anchor["height"] - 1))
@@ -288,9 +343,18 @@ def reference_round(args, l1, fixture, spec, spec_path, mint, client):
     replacement = l1.call("get_block_hash", hex(anchor["height"]))
     assert replacement != anchor["hash"]
     errors["reorganized_observation"] = attest("reorganized", spent_point, False, rejected="anchor was reorganized")
+    errors["reorganized_refresh"] = attest_anchor(newer + 1, fresh, rejected="anchor was reorganized")
+    executions = [execution(tx) for tx in (live_tx, history, refreshed)]
+    assert all(result["cycles"] >= 12_000_000 for result in executions)
+    update_receipt = execution(advanced)
+    assert update_receipt["fee"] == update_receipt["cycles"] == 0
     return {"anchor": anchor, "live": live_tx, "historical": history, "split": split_tx,
-            "live_execution": execution(live_tx), "historical_execution": execution(history),
-            "accepted_transaction_bytes": [len(binary(submit_live)), len(binary(submit_history))],
+            "live_execution": executions[0], "historical_execution": executions[1], "refreshed_execution": executions[2],
+            "accepted_transaction_bytes": [len(binary(tx)) for tx in (submit_live, submit_history, refreshed_tx)],
+            "refresh": {"anchor": fresh, "transaction": advanced, "bytes": len(binary(update)), "execution": update_receipt,
+                        "live": refreshed, "backing_before": backing_before, "backing_after": backing_after,
+                        "lane_before": lane_before, "lane_after": lane_after,
+                        "fees_before": fees_before, "fees_after": fees_after},
             "expiry": expiry, "replacement_anchor": replacement, "rejections": errors,
             "historical_out_point": spent_point, "historical_inclusion": historical_inclusion}
 
@@ -332,7 +396,7 @@ def bridge_round(args, l1, fixture, children):
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
     if args.reference_script:
-        report["references"] = reference_round(args, l1, fixture, spec, spec_path, mint, client)
+        report["references"] = reference_round(args, l1, fixture, spec, spec_path, lane, mint, client)
     elif args.fee_funds:
         report["fee_funds"] = fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay)
     else:

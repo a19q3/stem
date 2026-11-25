@@ -182,7 +182,7 @@ impl Staking {
         };
         Ok(StagedStake {
             state: StakeState::decode(&accepted, &announced, applied_sequence)?,
-            budget: BlockBudget::new(zero, self.limits, zero),
+            budget: BlockBudget::new(zero, self.limits, zero, zero),
             authority,
             rotation: None,
             retirements: BTreeMap::new(),

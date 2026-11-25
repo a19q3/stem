@@ -11,9 +11,9 @@ use stem_ledger::{
     Transaction,
     protocol::{
         BlockBudget, BridgeBacking, BridgeLedger, FeeClaim, FeeFund, FeeFundDestination,
-        FeeFundPolicy, FeePayouts, L1Anchor, Lane, Limits, PendingWithdrawal, RewardClaim,
-        SettlementChanges, VerifiedMint, l1_reference::VerifiedL1References, reward_balance_key,
-        reward_claim_key,
+        FeeFundPolicy, FeePayouts, L1Anchor, L1AnchorUpdate, Lane, Limits, PendingWithdrawal,
+        RewardClaim, SettlementChanges, VerifiedMint, l1_reference::VerifiedL1References,
+        reward_balance_key, reward_claim_key,
     },
     replay,
 };
@@ -48,6 +48,7 @@ pub struct BridgeGenesis {
     pub reserved_recipient_locks: Vec<Script>,
     pub mint_limits: Limits,
     pub settlement_limits: Limits,
+    pub anchor_limits: Limits,
     pub deposits_per_block: u32,
     pub fee_funds: Option<[FeeFundDestination; 4]>,
 }
@@ -80,6 +81,7 @@ pub(super) struct Bridge {
     reserved_locks: Vec<Script>,
     mint_limits: Limits,
     settlement_limits: Limits,
+    anchor_limits: Limits,
     deposits_per_block: u32,
     fee_funds: Option<FeeFundPolicy>,
 }
@@ -190,7 +192,7 @@ impl Bridge {
         ] {
             config.extend_from_slice(id.as_slice());
         }
-        for limit in [spec.mint_limits, spec.settlement_limits] {
+        for limit in [spec.mint_limits, spec.settlement_limits, spec.anchor_limits] {
             config.extend_from_slice(&limit.operations.to_le_bytes());
             config.extend_from_slice(&limit.bytes.to_le_bytes());
             config.extend_from_slice(&limit.signatures.to_le_bytes());
@@ -272,6 +274,7 @@ impl Bridge {
             reserved_locks: spec.reserved_recipient_locks.clone(),
             mint_limits: spec.mint_limits,
             settlement_limits: spec.settlement_limits,
+            anchor_limits: spec.anchor_limits,
             deposits_per_block: spec.deposits_per_block,
             fee_funds: None,
         };
@@ -307,7 +310,12 @@ impl Bridge {
         };
         StagedBridge {
             records: Records::new(),
-            budget: BlockBudget::new(self.mint_limits, zero, self.settlement_limits),
+            budget: BlockBudget::new(
+                self.mint_limits,
+                zero,
+                self.settlement_limits,
+                self.anchor_limits,
+            ),
             deposits_remaining: self.deposits_per_block,
             claimed_funds: 0,
         }
@@ -704,6 +712,36 @@ impl Bridge {
         append_ticket(&mut ticket, &receipt)?;
         changes.protocol_result = ticket.into();
         Ok(changes)
+    }
+
+    pub fn advance_anchor(
+        &self,
+        store: &Store,
+        state: &StagedBridge,
+        tx: &Transaction,
+        update: L1AnchorUpdate,
+        height: u64,
+    ) -> Result<BridgeChanges> {
+        let mut budget = state.budget.clone();
+        budget.charge(tx)?;
+        let view = View {
+            store,
+            staged: &state.records,
+        };
+        update.verify(
+            store.network(),
+            &self.l1_genesis,
+            &view.anchor()?,
+            &self.authority,
+            &tx.certificate().context("missing L1 anchor certificate")?,
+        )?;
+        let record = encode_anchor(&update.anchor, height);
+        Ok(BridgeChanges {
+            budget: Some(budget),
+            records: Records::from([(ANCHOR.to_vec(), Some(record))]),
+            protocol_result: update.anchor.hash.as_bytes(),
+            ..Default::default()
+        })
     }
 
     pub fn settle(

@@ -345,7 +345,19 @@ stem bridge attach-references --genesis STEM_GENESIS --transaction draft.json \
 
 Collect strictly more than two-thirds of guardian weight in the input JSON array for each requested OutPoint. Save the returned transaction and sign it through the ordinary full Lock path. Use syscall 2130 and decode its Strand `L1Reference` at index `a3`. Applications can check the observation kind, CKB genesis and anchor, OutPoint, full Molecule CellOutput and Data. If the accepted CKB anchor advances, collect signatures against the new anchor. A live record expires after the Stem Header Dep horizon measured from adoption of the anchor.
 
-Compile `stem-l1-reference` with the [RISC-V contract build flags](#build). Run `tools/jolteon_bridge_localnet.py` with the native CKB bridge options and `--reference-script /path/to/stem-l1-reference`. The fixture deposits the real sample Type Script into Stem, verifies both reference kinds, checks expiry and replaces the observed CKB fork.
+During a bridge lull, advance the anchor using the exact accepted predecessor and a strictly higher CKB height that already meets the network's confirmation depth. Use the same private guardian journal as for mint and settlement observations.
+
+```sh
+stem bridge attest-anchor --genesis STEM_GENESIS --l1-rpc CKB_RPC \
+  --previous-height PREVIOUS_HEIGHT --previous-hash PREVIOUS_HASH --height CONFIRMED_HEIGHT \
+  --journal bridge-journal --key-file guardian.key
+stem bridge advance-anchor --observations anchor-votes.json
+```
+
+Collect strictly more than two-thirds of bridge guardian weight in `anchor-votes.json` and submit the returned signed control transaction. Genesis requires `bridge.anchor_limits` with integer operation, byte and signature budgets. Once the update finalizes, use the new anchor for observations and regenerate any pending mint or settlement certificates tied to its predecessor. This flow leaves the vault untouched.
+
+
+Compile `stem-l1-reference` with the [RISC-V contract build flags](#build). Run `tools/jolteon_bridge_localnet.py` with the native CKB bridge options and `--reference-script /path/to/stem-l1-reference`. The fixture deposits the real sample Type Script into Stem, verifies both reference kinds, checks expiry, refreshes the anchor without moving any vault Cells and replaces the observed CKB fork.
 
 ### Redeem fee revenue on CKB
 

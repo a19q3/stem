@@ -11,8 +11,8 @@ use stem_ledger::{
     BlockContext, GroupWitness, ResolvedTransaction, Transaction,
     block::{Header, HeaderContext, StateCommitment},
     protocol::{
-        BlockBudget, BridgeLedger, BridgeSettlement, Certificate, L1Anchor, Lane, Limits,
-        Operation, PendingWithdrawal, SettlementAction, SettlementChanges, StakeSnapshot,
+        BlockBudget, BridgeLedger, BridgeSettlement, Certificate, L1Anchor, L1AnchorUpdate, Lane,
+        Limits, Operation, PendingWithdrawal, SettlementAction, SettlementChanges, StakeSnapshot,
         VaultUpdate, settlement_digest,
     },
     replay::{InsertionBudget, Key},
@@ -98,7 +98,7 @@ fn fees_and_resource_caps_are_independent_for_control_transactions() -> Result<(
         )
         .is_err()
     );
-    let mut budget = BlockBudget::new(limits(0), limits(1), limits(1));
+    let mut budget = BlockBudget::new(limits(0), limits(1), limits(1), limits(0));
     budget.charge(&tx)?;
     assert!(budget.charge(&tx).is_err());
 
@@ -109,6 +109,7 @@ fn fees_and_resource_caps_are_independent_for_control_transactions() -> Result<(
             ..limits(1)
         },
         limits(1),
+        limits(0),
     );
     assert!(zero_signature_budget.charge(&tx).is_err());
     let mut zero_byte_budget = BlockBudget::new(
@@ -118,8 +119,102 @@ fn fees_and_resource_caps_are_independent_for_control_transactions() -> Result<(
             ..limits(1)
         },
         limits(1),
+        limits(0),
     );
     assert!(zero_byte_budget.charge(&tx).is_err());
+    Ok(())
+}
+
+#[test]
+fn independent_anchor_budget_and_signatures_bind_the_predecessor_and_network() -> Result<()> {
+    let network = hash(9);
+    let authority_key = SigningKey::from_bytes(&[30; 32]);
+    let authority = Authority::new(
+        [4; 32],
+        &[Member {
+            key: authority_key.verifying_key().to_bytes(),
+            power: 1,
+        }],
+    )?;
+    let anchor = L1AnchorUpdate {
+        l1_genesis: hash(3),
+        authority: hash(4),
+        previous_anchor: L1Anchor {
+            height: 42,
+            hash: hash(16),
+        },
+        anchor: L1Anchor {
+            height: 43,
+            hash: hash(17),
+        },
+    };
+    let certificate = Certificate::new(
+        Bytes::new(),
+        vec![Attestation {
+            guardian: 0,
+            signature: authority_key
+                .sign(anchor.digest(&network).as_slice())
+                .to_bytes(),
+        }],
+    )?;
+    let tx = Transaction::control(
+        Operation::L1AnchorUpdate(anchor.clone()),
+        certificate.clone(),
+    )?;
+    assert_eq!(
+        Transaction::from_slice(tx.as_slice())?.operation(),
+        Some(Operation::L1AnchorUpdate(anchor.clone()))
+    );
+    anchor.verify(
+        &network,
+        &anchor.l1_genesis,
+        &anchor.previous_anchor,
+        &authority,
+        &certificate,
+    )?;
+    assert!(
+        anchor
+            .verify(
+                &network,
+                &anchor.l1_genesis,
+                &anchor.anchor,
+                &authority,
+                &certificate
+            )
+            .is_err()
+    );
+    assert!(
+        anchor
+            .verify(
+                &hash(11),
+                &anchor.l1_genesis,
+                &anchor.previous_anchor,
+                &authority,
+                &certificate
+            )
+            .is_err()
+    );
+    let mut malformed = anchor.clone();
+    malformed.anchor.hash = malformed.previous_anchor.hash.clone();
+    assert!(Transaction::control(Operation::L1AnchorUpdate(malformed), certificate).is_err());
+
+    let mut budget = BlockBudget::new(limits(0), limits(1), limits(0), limits(1));
+    budget.charge(&tx)?;
+    assert!(budget.charge(&tx).is_err());
+    budget.charge(&Transaction::control(
+        Operation::StakeSnapshot(StakeSnapshot {
+            epoch: 4,
+            signing_anchor: hash(9),
+            commitment: hash(8),
+        }),
+        Certificate::new(
+            Bytes::from_static(b"snapshot fixture"),
+            vec![Attestation {
+                guardian: 0,
+                signature: [1; 64],
+            }],
+        )?,
+    )?)?;
     Ok(())
 }
 
@@ -159,7 +254,7 @@ fn authenticated_settlement_consumes_receipts_and_preserves_reserved_capacity() 
         })
         .collect();
     let authority = Authority::new(generation, &committee)?;
-    let mut budget = BlockBudget::new(limits(0), limits(1), limits(16));
+    let mut budget = BlockBudget::new(limits(0), limits(1), limits(16), limits(0));
 
     let source = hash(7);
     let destination = hash(8);
@@ -335,7 +430,7 @@ fn authenticated_settlement_consumes_receipts_and_preserves_reserved_capacity() 
         capacity: 16,
     };
     let unfunded = sign(&statement, 3, &network)?;
-    let mut fresh_budget = BlockBudget::new(limits(0), limits(1), limits(16));
+    let mut fresh_budget = BlockBudget::new(limits(0), limits(1), limits(16), limits(0));
     assert!(
         SettlementChanges::verify(
             &unfunded,
@@ -547,7 +642,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         authority: &authority,
         config: &config,
     };
-    let mut budget = BlockBudget::new(limits(0), limits(4), limits(0));
+    let mut budget = BlockBudget::new(limits(0), limits(4), limits(0), limits(0));
     let tx = sign(statement.clone(), body.clone(), 3)?;
     let verified = context.verify(&tx, &mut budget)?;
     let (accepted, committee) = (verified.accepted, verified.eligible);
@@ -672,7 +767,7 @@ fn native_mint_authenticates_exact_capacity_and_outputs() -> Result<()> {
         ..deposit.clone()
     };
     assert!(Transaction::bridge_mint(dup, certificate, vec![], vec![valid]).is_err());
-    let mut budget = BlockBudget::new(limits(4), limits(0), limits(0));
+    let mut budget = BlockBudget::new(limits(4), limits(0), limits(0), limits(0));
     assert!(
         VerifiedMint::verify(
             &inflated,

@@ -32,6 +32,7 @@ use crate::{
     native_spec,
 };
 
+mod anchor;
 mod payout;
 mod reference;
 mod vault;
@@ -92,6 +93,13 @@ pub enum BridgeCommand {
     AttestReference(reference::AttestReference),
     /// Attach verified CKB reference certificates to an unsigned Stem transaction.
     AttachReferences(reference::AttachReferences),
+    /// Attest a confirmed CKB anchor without a vault transaction.
+    AttestAnchor(anchor::AttestAnchor),
+    /// Assemble a CKB anchor update for permissionless submission.
+    AdvanceAnchor {
+        #[arg(long)]
+        observations: PathBuf,
+    },
     /// Assemble a native settlement from guardian attestations.
     Settle {
         #[arg(long)]
@@ -200,6 +208,8 @@ impl BridgeCommand {
             Self::AttestVault(args) => args.run(),
             Self::AttestReference(args) => args.run(),
             Self::AttachReferences(args) => args.run(),
+            Self::AttestAnchor(args) => args.run(),
+            Self::AdvanceAnchor { observations } => anchor::assemble(&observations),
             Self::Settle { observations } => payout::settlement(&observations),
             Self::Deposit {
                 genesis,

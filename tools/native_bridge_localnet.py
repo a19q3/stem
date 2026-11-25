@@ -189,7 +189,9 @@ def bridge_configuration(args, l1, fixture, vault, token, network):
         "lanes": [{"vault_type": vault["type"], "vault": point(vault["vault"], 0)}],
         "recipient_locks": [{"example": fixture.friend_lock}],
         "reserved_recipient_locks": [vault["lock"]],
-        "mint_limits": maximum, "settlement_limits": maximum, "deposits_per_block": 32,
+        "mint_limits": maximum, "settlement_limits": maximum,
+        "anchor_limits": {"operations": 1, "bytes": 65536, "signatures": 32},
+        "deposits_per_block": 32,
     }
     if token:
         bridge["lanes"].append({

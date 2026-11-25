@@ -82,6 +82,7 @@ struct Bridge {
     reserved_recipient_locks: Vec<JsonScript>,
     mint_limits: OperationLimits,
     settlement_limits: OperationLimits,
+    anchor_limits: OperationLimits,
     deposits_per_block: u32,
     fee_funds: Option<[FundDestination; 4]>,
 }
@@ -234,6 +235,7 @@ fn load_bridge(bridge: Bridge) -> Result<BridgeGenesis> {
             .collect(),
         mint_limits: bridge.mint_limits.into(),
         settlement_limits: bridge.settlement_limits.into(),
+        anchor_limits: bridge.anchor_limits.into(),
         deposits_per_block: bridge.deposits_per_block,
         fee_funds: bridge.fee_funds.map(|funds| {
             funds.map(|fund| FeeFundDestination {

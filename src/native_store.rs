@@ -1432,7 +1432,10 @@ impl Store {
         if matches!(
             operation,
             Some(
-                Operation::BridgeSettlement(_) | Operation::FeeClaim(_) | Operation::RewardClaim(_)
+                Operation::BridgeSettlement(_)
+                    | Operation::FeeClaim(_)
+                    | Operation::RewardClaim(_)
+                    | Operation::L1AnchorUpdate(_)
             )
         ) {
             let (bridge, stage) = self
@@ -1444,6 +1447,9 @@ impl Store {
                 Some(Operation::FeeClaim(claim)) => bridge.claim_fee(self, stage, tx, claim)?,
                 Some(Operation::RewardClaim(claim)) => {
                     bridge.claim_reward(self, stage, tx, claim)?
+                }
+                Some(Operation::L1AnchorUpdate(update)) => {
+                    bridge.advance_anchor(self, stage, tx, update, context.height)?
                 }
                 _ => bridge.settle(self, stage, tx, context.height)?,
             };

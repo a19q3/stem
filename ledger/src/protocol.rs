@@ -13,6 +13,7 @@ use crate::{Transaction, hash, wire};
 
 mod backing;
 mod fees;
+mod l1_anchor;
 pub mod l1_reference;
 mod mint;
 mod reward_claim;
@@ -20,6 +21,7 @@ mod settlement;
 mod snapshot;
 pub use backing::BridgeBacking;
 pub use fees::{FeeClaim, FeeFund, FeeFundDestination, FeeFundPolicy, FeePayout, FeePayouts};
+pub use l1_anchor::L1AnchorUpdate;
 pub use mint::{MintObservation, VerifiedMint, mint_digest};
 pub use reward_claim::{
     RewardClaim, RewardEpochProof, RewardPosition, reward_balance_key, reward_claim_key,
@@ -90,6 +92,7 @@ pub enum Operation {
     BridgeSettlement(BridgeSettlement),
     FeeClaim(FeeClaim),
     RewardClaim(RewardClaim),
+    L1AnchorUpdate(L1AnchorUpdate),
 }
 
 impl Operation {
@@ -158,6 +161,7 @@ impl Operation {
             }
             Self::FeeClaim(claim) => (5, claim.encode().as_bytes()),
             Self::RewardClaim(claim) => (6, claim.encode().as_bytes()),
+            Self::L1AnchorUpdate(anchor) => (7, anchor.payload()),
         };
         wire::ProtocolOperation::new_builder()
             .kind(kind.into())
@@ -219,6 +223,9 @@ impl Operation {
             }
             5 => Ok(Self::FeeClaim(FeeClaim::decode(&payload)?)),
             6 => Ok(Self::RewardClaim(RewardClaim::decode(&payload)?)),
+            7 => Ok(Self::L1AnchorUpdate(L1AnchorUpdate::decode_payload(
+                &payload,
+            )?)),
             _ => bail!("unknown protocol operation"),
         }
     }
@@ -251,6 +258,13 @@ impl Operation {
                     "settlement certificate has unexpected body"
                 );
             }
+            Self::L1AnchorUpdate(anchor) => {
+                anchor.validate()?;
+                ensure!(
+                    certificate.body().is_empty(),
+                    "unexpected L1 anchor certificate body"
+                );
+            }
             Self::FeeClaim(_) | Self::RewardClaim(_) => bail!("fee claims do not use certificates"),
         }
         Ok(())
@@ -261,6 +275,7 @@ impl Operation {
             Self::BridgeMint(_) => Class::Mint,
             Self::StakeSnapshot(_) => Class::StakeSnapshot,
             Self::BridgeSettlement(_) => Class::BridgeSettlement,
+            Self::L1AnchorUpdate(_) => Class::L1AnchorUpdate,
             Self::FeeClaim(_) | Self::RewardClaim(_) => {
                 bail!("fee claims have a separate block allowance")
             }
@@ -467,6 +482,7 @@ enum Class {
     Mint,
     StakeSnapshot,
     BridgeSettlement,
+    L1AnchorUpdate,
 }
 
 /// Resource caps apply even when the sender owes zero fees.
@@ -483,14 +499,21 @@ pub struct BlockBudget {
     mint: Limits,
     stake_snapshot: Limits,
     settlement: Limits,
+    l1_anchor: Limits,
 }
 
 impl BlockBudget {
-    pub fn new(mint: Limits, stake_snapshot: Limits, settlement: Limits) -> Self {
+    pub fn new(
+        mint: Limits,
+        stake_snapshot: Limits,
+        settlement: Limits,
+        l1_anchor: Limits,
+    ) -> Self {
         Self {
             mint,
             stake_snapshot,
             settlement,
+            l1_anchor,
         }
     }
 
@@ -504,6 +527,7 @@ impl BlockBudget {
             Class::Mint => &mut self.mint,
             Class::StakeSnapshot => &mut self.stake_snapshot,
             Class::BridgeSettlement => &mut self.settlement,
+            Class::L1AnchorUpdate => &mut self.l1_anchor,
         };
         let updated = Limits {
             operations: available

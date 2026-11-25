@@ -128,6 +128,7 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         reserved_recipient_locks: vec![reserved.clone()],
         mint_limits: protocol,
         settlement_limits: protocol,
+        anchor_limits: protocol,
         deposits_per_block: 4,
         fee_funds: Some(std::array::from_fn(|index| FeeFundDestination {
             basis_points: [6500, 1500, 1000, 1000][index],

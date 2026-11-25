@@ -145,6 +145,8 @@ An ordinary Strand transaction can commit to up to four ordered reference certif
 
 The bridge anchor record commits CKB height and hash plus the Stem adoption height. The host bounds live-reference age in accepted Stem heights. Guardians sign historical records only after verifying CKB creation inclusion. For live-at-anchor records they also read the live Cell at a stable descendant CKB tip and verify it matches the historical output. Reference signing has a separate journal and signing domain. L1 facts depend on the configured guardian quorum and confirmation depth.
 
+A fee-exempt `L1AnchorUpdate` lets the bridge guardian quorum advance the anchor during periods without deposits or settlements. It uses a distinct signing domain and shares the bridge guardian journal for reorg detection. Each update extends the exact accepted predecessor and charges its separate operation, byte and signature budget. Only the anchor record changes. Vault OutPoints, reserve accounting and nonce state remain stable. A transaction can read the new anchor once it is in the parent state.
+
 ## Historical proofs and CKB checkpoints
 
 Archive replicas preserve committed Headers. The proof index follows those records in a separate RocksDB database and checks the predecessor ID and MMR root before advancing. It persists only derived history nodes and progress. Each index update is independent of the application's commit. An archive reader can generate inclusion and append-only proofs at earlier retained heights.

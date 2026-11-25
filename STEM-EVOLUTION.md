@@ -24,7 +24,7 @@
 | 16 | DevFund / Ecosystem Fund | 已接入四类手续费分配、提款排队、防重放、L1 实付与认证对账。启用质押后，验证者与委托人的已累积份额计入认证负债，兑付时按原额转入待兑。其余基金使用创世固定的收款 Lock。逐金库收入归属与运营支出认证待实现。 |
 | 17 | CKB 直接验证 Stem 最终性 | Jolteon 原生检查点使用 CKB Type ID，验证交接和稀疏历史连续性。创世强制每座金库与 Registry 共用检查点，已用真实 L1 替代金库验证拒绝。真实开发网已验证 CKB 与 xUDT 无许可兑付、退休和双签罚没。128 委员普通检查点通过 CKB 默认交易池的双节点 P2P 中继及打包，估算 359,104,558 cycles。大型委员会的竞争负载与自动锚定待继续验证。 |
 | 18 | Intercell Messaging | CKB 和 xUDT 通道已实跑无许可兑付中继，Stem 仍经 guardians 认证 CKB 确认与核销。通用跨链消息及反向证明认证待实现。 |
-| 19 | L1 Cell Reference | Rust 与 CLI 使用可信 CKB Header、交易及见证 Merkle 路径核验历史输出。原生交易可附 guardian 法定人数认证的历史或锚点存活记录，StemVM 通过独立 syscall 读取。引用有确认深度、共识锚点、新鲜度和资源计费约束。实时 CKB 存活仍由观察者核验。 |
+| 19 | L1 Cell Reference | Rust 与 CLI 使用可信 CKB Header、交易及见证 Merkle 路径核验历史输出。原生交易可附 guardian 法定人数认证的历史或锚点存活记录，StemVM 通过独立 syscall 读取。引用有确认深度、共识锚点、新鲜度和资源计费约束。独立锚点更新有单独签名域和区块预算，允许在桥接空闲时更新引用。实时 CKB 存活仍由观察者核验。 |
 | 20 | UDT / Spore 结算 | CKB 与 xUDT 双向路径已用实际 devnet 复验。Stem 原生 UDT 和 Spore 导出需独立身份、生命周期和供应规则。 |
 | 21 | CKB PoW Entropy | 独立工具从固定锚点与确认后继推导域隔离种子。CKB devnet 重复值一致，拒绝错误锚点和确认不足。未进入领导者或委员会选择。 |
 
