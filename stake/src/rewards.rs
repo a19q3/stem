@@ -124,6 +124,15 @@ impl EpochRewards {
         committee: &CommitteeChange,
         subject: RewardSubject<'_>,
     ) -> Result<RewardQuote> {
+        self.bind(network, registry, committee)?.quote(subject)
+    }
+
+    pub fn bind<'a>(
+        self,
+        network: &Hash32,
+        registry: &'a Registry,
+        committee: &'a CommitteeChange,
+    ) -> Result<RewardTerms<'a>> {
         if self.end_height == 0
             || committee.epoch != self.epoch
             || committee.activation_height != self.start_height
@@ -133,20 +142,39 @@ impl EpochRewards {
         {
             return Err(Error::Anchor);
         }
+        let total_power = committee.members.iter().try_fold(0u64, |total, member| {
+            total.checked_add(member.power).ok_or(Error::Overflow)
+        })?;
+        Ok(RewardTerms {
+            record: self,
+            registry,
+            committee,
+            total_power,
+        })
+    }
+}
+
+pub struct RewardTerms<'a> {
+    record: EpochRewards,
+    registry: &'a Registry,
+    committee: &'a CommitteeChange,
+    total_power: u64,
+}
+
+impl RewardTerms<'_> {
+    pub fn quote(&self, subject: RewardSubject<'_>) -> Result<RewardQuote> {
         let validator = match subject {
             RewardSubject::Validator { validator, .. } => validator,
             RewardSubject::Delegation { id, .. } => id.validator,
         };
-        let member = committee
+        let member = self
+            .committee
             .members
             .binary_search_by_key(&validator, |entry| entry.key)
-            .map(|i| committee.members[i])
+            .map(|i| self.committee.members[i])
             .map_err(|_| Error::Committee)?;
-        let stake = registry.record(&validator).ok_or(Error::Identity)?;
-        let total_power = committee.members.iter().try_fold(0u64, |total, member| {
-            total.checked_add(member.power).ok_or(Error::Overflow)
-        })?;
-        let gross = portion(self.budget, member.power, total_power)?;
+        let stake = self.registry.record(&validator).ok_or(Error::Identity)?;
+        let gross = portion(self.record.budget, member.power, self.total_power)?;
         let self_reward = portion(gross, stake.bonded_amount, stake.total_bond()?)?;
         let delegated_reward = gross - self_reward;
         let commission = portion(delegated_reward, u64::from(stake.commission_bps), 10_000)?;
@@ -167,10 +195,16 @@ impl EpochRewards {
                 principal,
                 proof,
             } => {
-                if id.registry != self.registry || principal > stake.delegated_amount {
+                if id.registry != self.record.registry || principal > stake.delegated_amount {
                     return Err(Error::Identity);
                 }
-                delegation::verify(network, id, &stake.delegation_root, principal, proof)?;
+                delegation::verify(
+                    &self.registry.network_id(),
+                    id,
+                    &stake.delegation_root,
+                    principal,
+                    proof,
+                )?;
                 let amount = portion(
                     delegated_reward - commission,
                     principal,

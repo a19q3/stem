@@ -70,7 +70,7 @@ def wait_for(func, label, seconds=20):
     raise RuntimeError(f"timed out waiting for {label}")
 
 
-def deploy(args, l1, fixture, network, funding_point=None):
+def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=None):
     genesis = l1.call("get_block_by_number", "0x0")
     faucet, groups = genesis["transactions"][:2]
     index, funds = next((i, out) for i, out in enumerate(faucet["outputs"]) if out["lock"]["args"] == FAUCET_ARG)
@@ -87,24 +87,41 @@ def deploy(args, l1, fixture, network, funding_point=None):
     amounts = [(len(code) + 200) * CKB for code in codes]
     programs = len(args.native_lock.read_bytes()) + (len(args.wrapped.read_bytes()) if args.xudt else 0)
     funding = (programs + 20_000) * CKB
-    checkpoint = args.direct_checkpoint.read_bytes()
-    checkpoint_capacity, relay_funding, authorization = (len(checkpoint) + 200) * CKB, 8_000 * CKB, 300 * CKB
-    change = int(funds["capacity"], 16) - sum(amounts) - funding - checkpoint_capacity - 2 * relay_funding - authorization - FEE
+    authorization = 300 * CKB
+    change = int(funds["capacity"], 16) - sum(amounts) - funding - authorization - FEE
+    checkpoint_outputs, checkpoint_data = [], []
+    if checkpoint_anchor is None:
+        checkpoint = args.direct_checkpoint.read_bytes()
+        checkpoint_capacity, relay_funding = (len(checkpoint) + 200) * CKB, 8_000 * CKB
+        change -= checkpoint_capacity + 2 * relay_funding
+        checkpoint_outputs = [output(checkpoint_capacity, fixture.standard), output(relay_funding, fixture.standard)]
+        checkpoint_data = [hex_bytes(checkpoint), "0x"]
+    custody_index = 4 + len(checkpoint_outputs)
+    outputs = [output(c, fixture.standard) for c in amounts + [funding, change]]
+    outputs += checkpoint_outputs + [output(authorization, custody)]
+    data = [hex_bytes(code) for code in codes] + ["0x", "0x"] + checkpoint_data + ["0x"]
+    if checkpoint_anchor is None:
+        outputs.append(output(relay_funding, fixture.standard))
+        data.append("0x")
     deployment = transaction(
-        [funding_point], [output(c, fixture.standard) for c in amounts + [funding, change, checkpoint_capacity, relay_funding]]
-        + [output(authorization, custody), output(relay_funding, fixture.standard)],
-        [hex_bytes(code) for code in codes] + ["0x", "0x", hex_bytes(checkpoint), "0x", "0x", "0x"], [secp],
+        [funding_point], outputs, data, [secp],
     )
     deployed = l1.send(fixture.sign("deploy", deployment, [wallet_group(0, [fixture.faucet])]))
     vault_code = dependency(point(deployed, 0))
     deposit_code = dependency(point(deployed, 1))
     deposit_hash = hex_bytes(ckb_hash(codes[1]))
     type_id = hex_bytes(ckb_hash(le(0, 8) + binary(deployed) + le(2, 4) + le(0, 8)))
-    anchor = {
-        "hash": hex_bytes(ckb_hash(checkpoint)), "id": ckb_hash(le(0, 8) + binary(deployed) + le(5, 4) + le(0, 8)),
-        "code": dependency(point(deployed, 4)), "seed": point(deployed, 5),
-        "network": network, "genesis": genesis["header"]["hash"],
-    }
+    anchor = checkpoint_anchor
+    foreign_anchor = None
+    if anchor is None:
+        anchor = {
+            "hash": hex_bytes(ckb_hash(checkpoint)), "id": ckb_hash(le(0, 8) + binary(deployed) + le(5, 4) + le(0, 8)),
+            "code": dependency(point(deployed, 4)), "seed": point(deployed, 5),
+            "network": network, "genesis": genesis["header"]["hash"],
+        }
+        foreign_anchor = dict(anchor, id=ckb_hash(le(0, 8) + binary(deployed) + le(7, 4) + le(0, 8)),
+                              seed=point(deployed, 7))
+    assert anchor["network"] == network and anchor["genesis"] == genesis["header"]["hash"]
     policy = binary(anchor["hash"]) + anchor["id"] + binary(anchor["genesis"]) + binary(network)
     vault_type = script(hex_bytes(ckb_hash(codes[0])), hex_bytes(binary(type_id) + policy), "data2")
     vault_hash = hex_bytes(script_hash(vault_type))
@@ -119,9 +136,8 @@ def deploy(args, l1, fixture, network, funding_point=None):
         "vault_hash": vault_hash, "lock": lock, "reserve": reserve, "funding": funding - reserve - FEE,
         "secp": secp, "multisig": multisig, "vault_code": vault_code, "deposit_code": deposit_code,
         "change_point": point(deployed, 3), "change": change, "anchor": anchor,
-        "custody": custody, "custody_cell": point(deployed, 6), "authorization": authorization,
-        "foreign_anchor": dict(anchor, id=ckb_hash(le(0, 8) + binary(deployed) + le(7, 4) + le(0, 8)),
-                               seed=point(deployed, 7)),
+        "custody": custody, "custody_cell": point(deployed, custody_index), "authorization": authorization,
+        "foreign_anchor": foreign_anchor,
     }
 
 
@@ -312,7 +328,7 @@ def redeem_withdrawal(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc
     proof = json.loads(query("/stem/execution", data=hex_bytes(le(index, 4)), prove="true"))
     proof["transaction"] = hex_bytes(bytes.fromhex(proof["transaction"]))
     proof["receipt"] = hex_bytes(bytes.fromhex(proof["receipt"]))
-    commit, finality_arguments, verification = relay.audit_burn(f"{name}-burn", height, header)
+    commit, finality_arguments, verification, handoffs = relay.audit_burn(f"{name}-burn", height, header)
     fee_cell = l1.call("get_live_cell", fee_input, True)["cell"]["output"]
     before = int(l1.call("get_live_cell", input_vault, True)["cell"]["output"]["capacity"], 16)
     response = comet_rpc.call(
@@ -405,6 +421,8 @@ def redeem_withdrawal(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc
         "previous_l1_height": previous_anchor["confirmed_height"], "previous_l1_hash": previous_anchor["confirmed_hash"],
         "header": hex_bytes(header), "commit": commit.name, **proof,
     }
+    if handoffs is not None:
+        request["handoffs"] = handoffs.name
     request_file = args.output / f"{name}-payout-request.json"
     write_json(request_file, request)
     ancestry_rejection = None

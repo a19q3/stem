@@ -366,13 +366,21 @@ impl Transaction {
     }
 
     pub fn fee_claim(claim: protocol::FeeClaim) -> Result<Self> {
+        Self::claim(Operation::FeeClaim(claim))
+    }
+
+    pub fn reward_claim(claim: protocol::RewardClaim) -> Result<Self> {
+        Self::claim(Operation::RewardClaim(claim))
+    }
+
+    fn claim(operation: Operation) -> Result<Self> {
         Self::build(
             Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
-            Some((Operation::FeeClaim(claim), None)),
+            Some((operation, None)),
         )
     }
 
@@ -500,7 +508,10 @@ impl Transaction {
                     "protocol transaction cannot include an expiry or Group Messages"
                 );
                 let operation = Operation::decode(operation)?;
-                if matches!(operation, Operation::FeeClaim(_)) {
+                if matches!(
+                    operation,
+                    Operation::FeeClaim(_) | Operation::RewardClaim(_)
+                ) {
                     ensure!(
                         certificate.is_none(),
                         "fee claims cannot carry a certificate"

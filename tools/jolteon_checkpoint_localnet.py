@@ -92,6 +92,15 @@ class Relay:
         proof_file = self.root / f"{label}-raw-proof.json"
         write_json(proof_file, finality["proof"])
         command = [self.args.binary, "jolteon-proof", "--genesis", self.spec, "--proof", proof_file]
+        prior = [self.client.handoff(epoch)["proof"] for epoch in range(finality["epoch"])]
+        handoffs_file = None
+        if prior:
+            for epoch, handoff in enumerate(prior):
+                path = self.root / f"authenticated-handoff-{epoch}.json"
+                write_json(path, handoff)
+                command += ["--handoff", path]
+            handoffs_file = self.args.output / f"{label}-handoffs.json"
+            write_json(handoffs_file, ["0x" + proof for proof in prior])
         if finality["handoff"]:
             command.append("--terminal")
         bundle = {"proof": hex_bytes(bytes.fromhex(finality["proof"])), "terminal": finality["handoff"]}
@@ -106,7 +115,7 @@ class Relay:
             assert bytes.fromhex(checked["header"]) == header
         path = self.args.output / f"{label}-finality.json"
         write_json(path, bundle)
-        return path, [], checked
+        return path, [], checked, handoffs_file
 
     def report(self):
         return {"checkpoint_type": hex_bytes(script_hash(self.type)), "publications": self.publications,

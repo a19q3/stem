@@ -71,7 +71,7 @@ class Relay:
                            + ckb_hash(b"Stem Header\0" + binary(self.network) + header))
         verified = run(self.args.proof_verifier, "-genesis", self.comet_genesis, "-commit", path,
                        "-height", str(height), "-app-hash", app_hash.hex())
-        return path, ["--comet-genesis", self.comet_genesis, "--proof-verifier", self.args.proof_verifier], verified
+        return path, ["--comet-genesis", self.comet_genesis, "--proof-verifier", self.args.proof_verifier], verified, None
 
     def export(self, label, entries):
         source = self.root / f"{label}-source.json"

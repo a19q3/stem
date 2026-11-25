@@ -457,6 +457,12 @@ impl Store {
                 spec.development_cells.is_empty(),
                 "a bridged network cannot assign development Capacity"
             );
+            if let Some(stake) = &spec.stake {
+                ensure!(
+                    config.l1_genesis.as_slice() == stake.statement.domain.ckb_genesis,
+                    "bridge and Stake Registry must use the same CKB genesis"
+                );
+            }
             let (bridge, records) = Bridge::initialize(config)?;
             for (name, value) in records {
                 let value = value.context("bridge genesis is missing a record value")?;
@@ -705,6 +711,35 @@ impl Store {
                 header,
                 &stem_stake::rewards::epoch_key(record.epoch),
                 Some(&record.encode()),
+                proof,
+            )
+    }
+
+    pub fn prove_stake_reward_claim(
+        &self,
+        epoch: u64,
+        kind: u8,
+        id: &[u8; 32],
+    ) -> Result<(Option<Vec<u8>>, Proof)> {
+        ensure!(kind <= 1, "invalid stake reward position kind");
+        self.prove_system(&stem_ledger::protocol::reward_claim_key(epoch, kind, id))
+    }
+
+    pub fn verify_stake_reward_claim(
+        network: &Byte32,
+        header: &Header,
+        epoch: u64,
+        kind: u8,
+        id: &[u8; 32],
+        record: Option<&[u8; 40]>,
+        proof: &Proof,
+    ) -> bool {
+        kind <= 1
+            && Self::verify_system_record(
+                network,
+                header,
+                &stem_ledger::protocol::reward_claim_key(epoch, kind, id),
+                record.map(|bytes| bytes.as_slice()),
                 proof,
             )
     }
@@ -1347,7 +1382,9 @@ impl Store {
         }
         if matches!(
             operation,
-            Some(Operation::BridgeSettlement(_) | Operation::FeeClaim(_))
+            Some(
+                Operation::BridgeSettlement(_) | Operation::FeeClaim(_) | Operation::RewardClaim(_)
+            )
         ) {
             let (bridge, stage) = self
                 .bridge
@@ -1356,6 +1393,9 @@ impl Store {
                 .context("native bridge is not configured")?;
             let changes = match operation {
                 Some(Operation::FeeClaim(claim)) => bridge.claim_fee(self, stage, tx, claim)?,
+                Some(Operation::RewardClaim(claim)) => {
+                    bridge.claim_reward(self, stage, tx, claim)?
+                }
                 _ => bridge.settle(self, stage, tx)?,
             };
             let protocol_result = changes.protocol_result.clone();

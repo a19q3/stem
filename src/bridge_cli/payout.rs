@@ -224,13 +224,26 @@ impl AttestPayout {
                 let bridge = spec.bridge.as_ref().context("native bridge disabled")?;
                 let funds = bridge.fee_funds.as_ref().context("fee funds disabled")?;
                 ensure!(
-                    find_lane(bridge, &request.lane.pack())?.l1_type.is_none(),
-                    "fee claim requires the native CKB lane"
+                    spec.stake.is_none()
+                        || claim.fund != stem_ledger::protocol::FeeFund::Validators,
+                    "stake-backed validator payouts require a reward claim"
                 );
-                Some((claim.amount, &funds[claim.fund as usize].recipient))
+                Some((claim.amount, funds[claim.fund as usize].recipient.clone()))
+            }
+            Some(stem_ledger::protocol::Operation::RewardClaim(claim)) => {
+                ensure!(spec.stake.is_some(), "CKB staking is disabled");
+                Some((claim.amount, claim.recipient))
             }
             Some(_) => anyhow::bail!("this protocol operation cannot issue a withdrawal ticket"),
         };
+        if fund_claim.is_some() {
+            let bridge = spec.bridge.as_ref().context("native bridge disabled")?;
+            ensure!(
+                bridge.fee_funds.is_some()
+                    && find_lane(bridge, &request.lane.pack())?.l1_type.is_none(),
+                "fee claim requires the native CKB lane"
+            );
+        }
         let tx_id = raw.id(&spec.network);
         let expected_lane = request.lane.as_bytes();
         let mut data = receipt.protocol_result.as_ref();
@@ -255,9 +268,9 @@ impl AttestPayout {
             let capacity = u64::from_le_bytes(item[76..84].try_into()?);
             let units = u128::from_le_bytes(item[84..100].try_into()?);
             let recipient = Script::from_slice(&item[100..])?;
-            if let Some((amount, destination)) = fund_claim {
+            if let Some((amount, destination)) = &fund_claim {
                 ensure!(
-                    capacity == amount
+                    capacity == *amount
                         && units == 0
                         && &recipient == destination
                         && item[72..76] == [0; 4],

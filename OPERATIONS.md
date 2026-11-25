@@ -318,7 +318,7 @@ stem bridge withdrawal-witness --genesis STEM_GENESIS --lane LANE --nonce NONCE 
   --header AUTHENTICATED_HEADER.json --proof WITHDRAWAL_QUERY_VALUE.json
 ```
 
-The vault Type Script args are five 32-byte values in order. They encode the vault Type ID, direct checkpoint code hash, direct checkpoint Type ID, CKB genesis hash and Stem network ID. Use the intended checkpoint creation input and output index to commit its Type ID before writing the Stem genesis. The checkpoint bootstraps with the resulting Stem genesis AppHash. Keep the seed under deployment control through bootstrap, and pin the committed checkpoint's genesis committee, Stem genesis AppHash, chain ID and network before accepting deposits. Vault locks use the same executable with the vault Type Script hash followed by the 20-byte CKB multisig identifier. Consolidation, reserve movement and rotation require a separate input authorized by that multisig.
+The vault Type Script args are five 32-byte values in order. They encode the vault Type ID, direct checkpoint code hash, direct checkpoint Type ID, CKB genesis hash and Stem network ID. Use the intended checkpoint creation input and output index to commit its Type ID before writing the Stem genesis. The checkpoint bootstraps with the resulting Stem genesis AppHash. Keep the seed under deployment control through bootstrap, and pin the committed checkpoint's genesis committee, Stem genesis AppHash, chain ID and network before accepting deposits. In a Stake Registry network, deploy all vaults against the same CKB checkpoint that gates retirement. This makes the committee handoff available to vaults before the retiring collateral can unlock. Vault locks use the same executable with the vault Type Script hash followed by the 20-byte CKB multisig identifier. Consolidation, reserve movement and rotation require a separate input authorized by that multisig.
 
 The runner also reconciles the recognized balance and liabilities against the amounts minted and paid on both lanes. The final report includes the ABCI backing record and path. Store and snapshot tests independently authenticate the path and reject altered amounts.
 
@@ -337,6 +337,8 @@ The result authenticates the selected output at creation. It provides no authori
 An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.
 
 Request `/stem/fee-funds` with `prove=true` at the current finalized height. Authenticate its `policy_record`, `payout_record` and cumulative fee tally against the finalized Header using `Store::verify_fee_fund_policy`, `Store::verify_fee_payouts` and `Store::verify_extinguished_fees`. The two Strand fund records can be decoded with `stem_ledger::protocol::{FeeFundPolicy, FeePayouts}`. Supply the chosen account's `queued_shannons` as a decimal integer. The result is a JSON hex transaction suitable for the ordinary submission endpoint.
+
+For a Stake Registry network, fund 0 uses individual reward claims. The first fund entry supplies its allocation rate. Its available amount is an aggregate ceiling that includes open-epoch earnings and rounding residue. The other fund entries also supply their fixed payout Locks. [Verify closed-epoch stake rewards](#verify-closed-epoch-stake-rewards)
 
 ```sh
 stem bridge claim-fees --fund 3 --amount 8000000000 --claimed-before 0
@@ -453,7 +455,13 @@ Query `/stem/stake-reward-epoch` with `prove=true` and the eight-byte little-end
 stem stake reward-quote --network "$STEM_NETWORK" --header header.json --request reward.json
 ```
 
-The response gives the CKB recipient Lock hash, the share in shannons and any commission. The command accepts the authenticated Header supplied by the caller. Authenticate it before quoting. Individual quote proofs do not create a withdrawal. The [aggregate fund flow](#redeem-fee-revenue-on-ckb) is the current way to release fee revenue on CKB.
+The response gives the CKB recipient Lock hash, share, commission and stable position ID with its role. Build a claim with integer `amount` in shannons, `recipient` as the complete CKB JSON Lock, and an `epochs` list. Each entry contains `epoch`, the historical `registry` and `committee` bytes and `subjects` in the same shape as the quote request. All subject hashes must match the provided Lock, which must be supported by the network's withdrawal policy. A claim can combine up to eight epochs and 32 positions. Use the sum of their complete unpaid shares and ensure it meets the Lock's CKB occupied Capacity.
+
+```sh
+stem stake claim-rewards --request claim.json
+```
+
+Broadcast the resulting transaction. Relay the pending receipt through the ordinary [checkpoint and fund payout flow](#redeem-fee-revenue-on-ckb). For guardian reconciliation following a committee change, supply the epoch handoff proofs along with the finalized execution proof. Query `/stem/stake-reward-claim` with `prove=true` and concatenate the little-endian eight-byte epoch, one-byte role and 32-byte position ID. A present record holds the 32-byte transaction ID and the little-endian u64 amount. Authenticate the result with `Store::verify_stake_reward_claim`. The record proves the claim was queued. The corresponding L1 payment and Stem settlement can be audited by its native lane nonce.
 
 To exercise the complete verification path on devnet, use the same command and contract paths as the delegation exercise, with a fresh output directory and these additional options.
 
@@ -463,7 +471,7 @@ To exercise the complete verification path on devnet, use the same command and c
   --native-lock "$native_dir/stem-lock" --wrapped "$native_dir/bridge-udt"
 ```
 
-The runner bridges actual CKB, pays the experimental 800 CKB fee, verifies the closed epoch and the two participant quotes, and rejects a forged historical principal. It also checks that a following epoch with no paid fees adds no new budget.
+The runner bridges actual CKB, pays the experimental 800 CKB fee, verifies the closed epoch and validates each historical entitlement. It combines two small awards for a delegation beneficiary, redeems two native CKB withdrawals and reconciles the reserve. It rejects a forged historical principal and verifies that a following epoch with no paid fees adds no new budget.
 
 ## Exercise CKB Checkpoint publication
 

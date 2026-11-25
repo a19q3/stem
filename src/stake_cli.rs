@@ -17,14 +17,18 @@ use ed25519_dalek::Signer;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use stem::native_store::Store;
-use stem_ledger::{block::Header, patricia::Proof, protocol::ARRIVING_GUARDIAN};
+use stem_ledger::{
+    block::Header,
+    patricia::Proof,
+    protocol::{ARRIVING_GUARDIAN, RewardClaim, RewardEpochProof, RewardPosition},
+};
 use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, MAX_RECORDS, Member, Registry,
     RegistryAnchor, StakeConfig, StakeDomain, StakeSnapshot,
     delegation::{DelegationTree, PrincipalChange},
     jolteon::CommitteeChange,
     l1::{DelegationId, GuardianProof, Policy, StakeCell, guardian_generation},
-    rewards::{EpochRewards, RewardSubject},
+    rewards::EpochRewards,
 };
 
 use crate::{
@@ -94,6 +98,28 @@ pub enum StakeCommand {
         #[arg(long)]
         request: PathBuf,
     },
+    /// Assemble a permissionless payout to the proved CKB beneficiary.
+    ClaimRewards {
+        #[arg(long)]
+        request: PathBuf,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RewardClaimRequest {
+    amount: u64,
+    recipient: JsonScript,
+    epochs: Vec<ClaimEpoch>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimEpoch {
+    epoch: u64,
+    registry: JsonBytes,
+    committee: JsonBytes,
+    subjects: Vec<RewardQuoteSubject>,
 }
 
 #[derive(Deserialize)]
@@ -118,6 +144,29 @@ enum RewardQuoteSubject {
         principal: u64,
         proof: JsonBytes,
     },
+}
+
+impl RewardQuoteSubject {
+    fn position(self) -> Result<RewardPosition> {
+        Ok(match self {
+            Self::Validator {
+                validator,
+                metadata,
+            } => RewardPosition::Validator {
+                key: validator.as_bytes().try_into()?,
+                metadata: metadata.into_bytes(),
+            },
+            Self::Delegation {
+                identity,
+                principal,
+                proof,
+            } => RewardPosition::Delegation {
+                id: DelegationId::decode(identity.as_bytes())?,
+                principal,
+                proof: proof.into_bytes(),
+            },
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -320,6 +369,34 @@ impl StakeCommand {
                                   "proof": JsonBytes::from_vec(proof)}))
             }
             Self::Snapshot { observations } => build_native_snapshot(&observations),
+            Self::ClaimRewards { request } => {
+                let request: RewardClaimRequest = read_json_limited(&request, 2 * 1024 * 1024)?;
+                let mut epochs = request
+                    .epochs
+                    .into_iter()
+                    .map(|epoch| {
+                        let mut positions = epoch
+                            .subjects
+                            .into_iter()
+                            .map(RewardQuoteSubject::position)
+                            .collect::<Result<Vec<_>>>()?;
+                        positions.sort_by_key(RewardPosition::id);
+                        Ok(RewardEpochProof {
+                            epoch: epoch.epoch,
+                            registry: epoch.registry.into_bytes(),
+                            committee: epoch.committee.into_bytes(),
+                            positions,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                epochs.sort_by_key(|epoch| epoch.epoch);
+                let claim = stem_ledger::Transaction::reward_claim(RewardClaim {
+                    amount: request.amount,
+                    recipient: request.recipient.into(),
+                    epochs,
+                })?;
+                print_json(&JsonBytes::from_vec(claim.as_slice().to_vec()))
+            }
             Self::RewardQuote {
                 network,
                 header,
@@ -336,32 +413,17 @@ impl StakeCommand {
                 );
                 let registry = Registry::decode(request.registry.as_bytes())?;
                 let committee = CommitteeChange::decode(request.committee.as_bytes())?;
-                let subject = match &request.subject {
-                    RewardQuoteSubject::Validator {
-                        validator,
-                        metadata,
-                    } => RewardSubject::Validator {
-                        validator: validator.as_bytes().try_into()?,
-                        metadata: metadata.as_bytes(),
-                    },
-                    RewardQuoteSubject::Delegation {
-                        identity,
-                        principal,
-                        proof,
-                    } => RewardSubject::Delegation {
-                        id: DelegationId::decode(identity.as_bytes())?,
-                        principal: *principal,
-                        proof: proof.as_bytes(),
-                    },
-                };
+                let position = request.subject.position()?;
                 let quote = record.quote(
                     &network.as_bytes().try_into()?,
                     &registry,
                     &committee,
-                    subject,
+                    position.subject(),
                 )?;
+                let (kind, id) = position.id();
                 print_json(
-                    &json!({"epoch": record.epoch, "recipient_lock_hash": H256::from(quote.owner),
+                    &json!({"epoch": record.epoch, "kind": kind, "position_id": H256::from(id),
+                    "recipient_lock_hash": H256::from(quote.owner),
                     "shannons": quote.amount, "commission_shannons": quote.commission}),
                 )
             }

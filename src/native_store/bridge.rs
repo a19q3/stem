@@ -11,12 +11,16 @@ use stem_ledger::{
     Transaction,
     protocol::{
         BlockBudget, BridgeBacking, BridgeLedger, FeeClaim, FeeFund, FeeFundDestination,
-        FeeFundPolicy, FeePayouts, L1Anchor, Lane, Limits, PendingWithdrawal, SettlementChanges,
-        VerifiedMint,
+        FeeFundPolicy, FeePayouts, L1Anchor, Lane, Limits, PendingWithdrawal, RewardClaim,
+        SettlementChanges, VerifiedMint, reward_claim_key,
     },
     replay,
 };
-use stem_stake::{Authority, Member};
+use stem_stake::{
+    Authority, Member, Registry,
+    jolteon::CommitteeChange,
+    rewards::{EpochRewards, epoch_key},
+};
 
 use super::Store;
 
@@ -518,6 +522,97 @@ impl Bridge {
         tx: &Transaction,
         claim: FeeClaim,
     ) -> Result<BridgeChanges> {
+        ensure!(
+            claim.fund != FeeFund::Validators || store.staking.is_none(),
+            "the stake-backed validator fund requires individual reward proofs"
+        );
+        let policy = self.fee_funds.as_ref().context("fee funds are disabled")?;
+        self.queue_fee_payout(
+            store,
+            state,
+            tx,
+            claim,
+            &policy.funds[claim.fund as usize].recipient,
+        )
+    }
+
+    pub fn claim_reward(
+        &self,
+        store: &Store,
+        state: &StagedBridge,
+        tx: &Transaction,
+        claim: RewardClaim,
+    ) -> Result<BridgeChanges> {
+        ensure!(store.staking.is_some(), "CKB staking is disabled");
+        ensure!(self.fee_funds.is_some(), "fee funds are disabled");
+        let fund = FeeFund::Validators;
+        ensure!(
+            state.claimed_funds & (1 << fund as u8) == 0,
+            "fee fund already claimed in this block"
+        );
+        self.check_recipient(&claim.recipient)?;
+        let owner = claim.recipient.calc_script_hash();
+        let view = View {
+            store,
+            staged: &state.records,
+        };
+        let network = store.network().unpack();
+        let mut unclaimed = Vec::new();
+        let mut total = 0u64;
+        for epoch in &claim.epochs {
+            let raw = store
+                .system_record(&epoch_key(epoch.epoch))?
+                .context("stake reward epoch is not closed")?;
+            let record = EpochRewards::decode(&raw)?;
+            let registry = Registry::decode(&epoch.registry)?;
+            let committee = CommitteeChange::decode(&epoch.committee)?;
+            let terms = record.bind(&network, &registry, &committee)?;
+            for position in &epoch.positions {
+                let (kind, id) = position.id();
+                let key = reward_claim_key(epoch.epoch, kind, &id);
+                ensure!(
+                    view.read(&key)?.is_none(),
+                    "stake reward position already claimed"
+                );
+                let quote = terms.quote(position.subject())?;
+                ensure!(
+                    quote.owner == owner.as_slice(),
+                    "reward recipient does not own the position"
+                );
+                ensure!(quote.amount != 0, "stake reward position has no earnings");
+                total = total
+                    .checked_add(quote.amount)
+                    .context("reward claim amount overflow")?;
+                unclaimed.push((key, quote.amount));
+            }
+        }
+        ensure!(
+            total == claim.amount,
+            "reward claim amount differs from the authenticated earnings"
+        );
+        let debit = FeeClaim {
+            fund,
+            amount: total,
+            claimed_before: view.fee_payouts()?.fund(fund).queued,
+        };
+        let mut changes = self.queue_fee_payout(store, state, tx, debit, &claim.recipient)?;
+        let tx_id = tx.id(store.network());
+        for (key, amount) in unclaimed {
+            let mut record = tx_id.as_slice().to_vec();
+            record.extend_from_slice(&amount.to_le_bytes());
+            changes.records.insert(key, Some(record));
+        }
+        Ok(changes)
+    }
+
+    fn queue_fee_payout(
+        &self,
+        store: &Store,
+        state: &StagedBridge,
+        tx: &Transaction,
+        claim: FeeClaim,
+        recipient: &Script,
+    ) -> Result<BridgeChanges> {
         let policy = self.fee_funds.as_ref().context("fee funds are disabled")?;
         let bit = 1 << claim.fund as u8;
         ensure!(
@@ -531,7 +626,7 @@ impl Bridge {
         let destination = &policy.funds[claim.fund as usize];
         let output = CellOutput::new_builder()
             .capacity(claim.amount)
-            .lock(destination.recipient.clone())
+            .lock(recipient.clone())
             .build();
         ensure!(
             !output.is_lack_of_capacity(Capacity::zero())?,
@@ -553,7 +648,7 @@ impl Bridge {
                 index: 0,
                 capacity: claim.amount,
                 units: 0,
-                recipient: &destination.recipient,
+                recipient,
             },
         )?;
         changes

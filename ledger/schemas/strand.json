@@ -335,6 +335,44 @@
       ]
     },
     {
+      "name": "RewardPosition",
+      "kind": "sequence",
+      "fields": [
+        { "name": "kind", "type": "byte" },
+        { "name": "identity", "type": "Bytes" },
+        { "name": "metadata", "type": "Bytes" }
+      ]
+    },
+    {
+      "name": "RewardPositionVec",
+      "kind": "dense_vector",
+      "item": "RewardPosition"
+    },
+    {
+      "name": "RewardEpochProof",
+      "kind": "sequence",
+      "fields": [
+        { "name": "epoch", "type": "CompactUint64" },
+        { "name": "registry", "type": "Bytes" },
+        { "name": "committee", "type": "Bytes" },
+        { "name": "positions", "type": "RewardPositionVec" }
+      ]
+    },
+    {
+      "name": "RewardEpochProofVec",
+      "kind": "dense_vector",
+      "item": "RewardEpochProof"
+    },
+    {
+      "name": "RewardClaim",
+      "kind": "sequence",
+      "fields": [
+        { "name": "amount", "type": "CompactUint64" },
+        { "name": "recipient", "type": "Bytes" },
+        { "name": "epochs", "type": "RewardEpochProofVec" }
+      ]
+    },
+    {
       "name": "ProtocolOperation",
       "kind": "sequence",
       "fields": [

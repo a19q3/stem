@@ -11,7 +11,7 @@ import subprocess
 
 from bridge_localnet import CKB, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, point, script, write_key
 from jolteon_checkpoint_localnet import Relay
-from jolteon_localnet import FINALITY, HEADER, QUERY, STATUS, SUBMIT, evidence_keys, rpc, write_configuration
+from jolteon_localnet import FINALITY, HANDOFF, HEADER, QUERY, STATUS, SUBMIT, evidence_keys, rpc, write_configuration
 from localnet import run, write_json
 from native_bridge_localnet import (bridge_configuration, cell, deploy, deploy_token, deposit_and_mint, lane_proof,
                                     reconcile_backing, redeem_withdrawal, signing_cell, start, stem_id,
@@ -33,6 +33,9 @@ class Client:
 
     def finality(self, height):
         return rpc(self.port, FINALITY, struct.pack("<Q", height))
+
+    def handoff(self, epoch):
+        return rpc(self.port, HANDOFF, struct.pack("<Q", epoch))
 
     def query(self, path, *, data="0x", height=0, prove=False):
         query = json.dumps(dict(path=path, data=data, height=int(height), prove=prove)).encode()

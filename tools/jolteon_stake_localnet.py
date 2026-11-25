@@ -10,13 +10,13 @@ import time
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, script_hash, write_key
+from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, point, script_hash, write_key
 from jolteon_bridge_localnet import Client, fee_payment
 from jolteon_checkpoint_localnet import Relay
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, STATUS, SUBMIT, rpc, write_configuration
 from jolteon_slash_localnet import evidence as slash_evidence
 from localnet import run, write_json
-from native_bridge_localnet import bridge_configuration, deploy, deposit_and_mint, start, wait_for
+from native_bridge_localnet import bridge_configuration, deploy, deposit_and_mint, redeem_withdrawal, start, wait_for
 from stake_localnet import CHAIN, DELAY, EMPTY, Scenario, mk_record, proof, signable
 
 
@@ -51,9 +51,12 @@ def confirm_positions(args, scenario, relay, validator, genesis, next_registry):
     checkpoint = relay.advance(height, scenario.secp)
     wrong = scenario.delegation("claim-preexisting-activation", 16, validator, label="top-up",
         application=first, checkpoint=checkpoint, funded_by_owner=False, expected="error code 23")
+    applications = [("holder", first), ("top-up", following), ("second", following)]
+    if args.reward_accounting:
+        applications.append(("genesis-fragment", first))
     confirmed = [scenario.delegation(f"activate-{label}", 16, validator, label=label, application=application,
         checkpoint=checkpoint, funded_by_owner=False)
-        for label, application in (("holder", first), ("top-up", following), ("second", following))]
+        for label, application in applications]
     return {"first": first, "next": following, "confirmations": confirmed, "wrong_interval_rejected": wrong}
 
 
@@ -67,7 +70,7 @@ def reward_epoch(client, verify, epoch):
     return json.loads(bytes.fromhex(response["value"])), checked
 
 
-def reward_quotes(args, scenario, client, verify, genesis, committee, key, metadata, delegator):
+def reward_quotes(args, scenario, client, verify, genesis, committee, key, metadata, delegations):
     epoch, checked = reward_epoch(client, verify, 0)
     assert int(epoch["budget"], 16) == 520 * CKB, epoch
     header = args.output / "reward-authenticated-header.json"
@@ -83,22 +86,109 @@ def reward_quotes(args, scenario, client, verify, genesis, committee, key, metad
                    "--header", header, "--request", request]
         return json.loads(run(*command))
 
-    operator = quote("operator", {"kind": "validator", "validator": hex_bytes(public(key)), "metadata": hex_bytes(metadata)})
-    subject = {"kind": "delegation", "identity": delegator["identity"],
-               "principal": delegator["proof"]["principal"], "proof": delegator["proof"]["proof"]}
-    delegate = quote("delegate", subject)
+    validator = {"kind": "validator", "validator": hex_bytes(public(key)), "metadata": hex_bytes(metadata)}
+    subjects = [{"kind": "delegation", "identity": entry["identity"], "principal": entry["proof"]["principal"],
+                 "proof": entry["proof"]["proof"]} for entry in delegations]
+    operator = quote("operator", validator)
+    delegates = [quote(f"delegate-{index}", subject) for index, subject in enumerate(subjects)]
     assert operator["shannons"] == 38_999_999_999 and operator["commission_shannons"] == 1_857_142_857
-    assert delegate["shannons"] == 13_000_000_001 and operator["shannons"] + delegate["shannons"] == 520 * CKB
+    assert [delegate["shannons"] for delegate in delegates] == [5_200_000_000, 7_800_000_000]
+    assert operator["shannons"] + sum(delegate["shannons"] for delegate in delegates) == 520 * CKB - 1
     assert operator["recipient_lock_hash"] == hex_bytes(script_hash(scenario.fixture.standard))
-    assert delegate["recipient_lock_hash"] == hex_bytes(script_hash(scenario.fixture.friend_lock))
+    assert all(delegate["recipient_lock_hash"] == hex_bytes(script_hash(scenario.fixture.friend_lock))
+               for delegate in delegates)
     forged = args.output / "reward-forged-position.json"
+    subject = subjects[0]
     write_json(forged, dict(common, subject=dict(subject, principal=subject["principal"] - 1)))
     bad = subprocess.run([args.binary, "stake", "reward-quote", "--network", hex_bytes(scenario.network),
                           "--header", header, "--request", forged], text=True, capture_output=True)
     assert bad.returncode != 0 and "Sequence" in bad.stderr, bad.stderr
-    return {"height": checked["height"], "epoch": epoch, "operator": operator, "delegate": delegate,
+    return {"height": checked["height"], "epoch": epoch, "operator": operator, "delegates": delegates,
             "authenticated_header": checked,
             "inflated_or_altered_principal_rejected": bad.stderr}
+
+
+def reward_payouts(args, l1, fixture, vault, spec, spec_path, lane, client, relay, rewards):
+    quotes = rewards["quotes"]
+    mint = rewards["mint"]
+
+    def proved(path, data="0x"):
+        reply = client.query(path, data=data, prove=True)
+        return json.loads(bytes.fromhex(reply["value"]))
+
+    def request(recipient, positions):
+        entries = [json.loads((args.output / f"reward-{name}.json").read_text()) for name, _ in positions]
+        return {"amount": sum(quote["shannons"] for _, quote in positions), "recipient": recipient,
+                "epochs": [{"epoch": 0, "registry": entries[0]["registry"], "committee": entries[0]["committee"],
+                            "subjects": [entry["subject"] for entry in entries]}]}
+
+    def build_claim(name, claims):
+        draft = args.output / f"reward-{name}-claim.json"
+        write_json(draft, claims)
+        return json.loads(run(args.binary, "stake", "claim-rewards", "--request", draft))
+
+    def rejected(tx, message):
+        reply = client.call("broadcast_tx_sync", tx=tx)
+        assert reply["code"] == 1 and message in reply["log"], reply
+        return reply["log"]
+
+    validator = [("operator", quotes["operator"])]
+    delegation = [(f"delegate-{index}", quote) for index, quote in enumerate(quotes["delegates"])]
+    operator_claim = request(fixture.standard, validator)
+    delegation_claim = request(fixture.friend_lock, delegation)
+    permissions = {
+        "aggregate": rejected(json.loads(run(args.binary, "bridge", "claim-fees", "--fund", "0",
+            "--amount", str(520 * CKB), "--claimed-before", "0")), "requires individual reward proofs"),
+        "wrong_recipient": rejected(build_claim("wrong-recipient", dict(delegation_claim, recipient=fixture.standard)),
+                                    "reward recipient does not own the position"),
+        "wrong_amount": rejected(build_claim("wrong-amount", dict(delegation_claim, amount=delegation_claim["amount"] + 1)),
+                                 "differs from the authenticated earnings"),
+        "dust": rejected(build_claim("dust", request(fixture.friend_lock, delegation[:1])),
+                         "below L1 occupied Capacity"),
+    }
+    forged = json.loads((args.output / "reward-forged-position.json").read_text())["subject"]
+    groups = delegation_claim["epochs"]
+    permissions["forged_principal"] = rejected(
+        build_claim("altered-principal", dict(delegation_claim, epochs=[
+            dict(groups[0], subjects=[forged, groups[0]["subjects"][1]])
+        ])), "Sequence")
+    payouts = []
+    input_vault, fee_input = point(mint["l1_consolidation"], 0), point(mint["l1_consolidation"], 1)
+    previous = mint
+    for nonce, (label, claim, positions) in enumerate((("validator", operator_claim, validator),
+                                                       ("delegator", delegation_claim, delegation))):
+        tx = build_claim(label, claim)
+        sent = client.call("broadcast_tx_commit", tx=tx)
+        assert sent["check_tx"]["code"] == 0, sent
+        alternate = build_claim(f"{label}-replay", dict(claim, amount=claim["amount"] + 1))
+        permissions[f"{label}_replay"] = rejected(alternate, "already claimed")
+        # The permanent claim marker survives the L1 settlement.
+        payout = redeem_withdrawal(args, l1, fixture, vault, spec, spec_path, lane, client, relay,
+            name=f"reward-{label}", burned=sent, recipient=claim["recipient"], capacity=claim["amount"],
+            units=b"", nonce=nonce, input_vault=input_vault, fee_input=fee_input, previous_anchor=previous)
+        output = l1.call("get_transaction", payout["l1_payout"])["transaction"]["outputs"][0]
+        assert output["lock"] == claim["recipient"] and int(output["capacity"], 16) == claim["amount"]
+        marks = []
+        for _, quote in positions:
+            key = hex_bytes(le(quote["epoch"], 8) + bytes([quote["kind"]]) + binary(quote["position_id"]))
+            mark = proved("/stem/stake-reward-claim", key)
+            assert mark["record"] == hex_bytes(binary(sent["hash"]) + le(quote["shannons"], 8))
+            marks.append(mark)
+        payouts.append({"payout": payout, "positions": marks, "transaction_bytes": len(binary(tx))})
+        input_vault, fee_input = point(payout["l1_payout"], 1), point(payout["l1_payout"], 2)
+        previous = payout
+    permissions["rebundled_after_l1_payment"] = rejected(
+        build_claim("rebundled-replay", request(fixture.friend_lock, delegation[1:])), "already claimed")
+    funds, backing = proved("/stem/fee-funds"), proved("/stem/bridge-backing")
+    allocated = 520 * CKB - 1
+    validator_account = funds["accounts"][0]
+    assert int(validator_account["queued_shannons"], 16) == int(validator_account["paid_shannons"], 16) == allocated
+    assert int(backing["liquid_shannons"], 16) == mint["capacity"] - allocated
+    assert int(backing["circulating_shannons"], 16) == mint["capacity"] - 800 * CKB
+    assert int(backing["pending_shannons"], 16) == 0
+    assert int(backing["unallocated_shannons"], 16) == 280 * CKB + 1
+    return {"payouts": payouts, "rejections": permissions, "funds": funds, "backing": backing,
+            "bridge_checkpoints": relay.report()}
 
 
 def exercise_reductions(args, l1, scenario, relay, key, incoming, registry, requested, joined):
@@ -340,7 +430,7 @@ def run_epochs(args, l1, scenario, fixture):
 
     registered_old, activated_old, old_meta = activate(old, low, 0)
     delegation = None
-    genesis_position = None
+    genesis_positions = []
     if args.delegation:
         key = public(old)
         wrong_owner = scenario.delegation("unauthorized-delegation", 9, key, 100 * CKB,
@@ -351,12 +441,16 @@ def run_epochs(args, l1, scenario, fixture):
             expected="error code 23", wrong_identity=True)
         wrong_proof = scenario.delegation("invalid-delegation-principal-proof", 9, key, 100 * CKB,
             expected="error code 23", wrong_principal_proof=True)
-        start_bond = scenario.delegation("first-delegation", 9, key, 100 * CKB)
+        start_bond = scenario.delegation("first-delegation", 9, key, (40 if args.reward_accounting else 100) * CKB)
         delegation = {"bond": start_bond, "rejections": {"unauthorized": wrong_owner, "inflated": fake_weight,
                       "identity": wrong_identity, "principal_proof": wrong_proof}}
         if args.reward_accounting:
-            identity = scenario.delegations["holder"][0]["identity"]
-            genesis_position = {"identity": identity, "proof": scenario.delegation_proof("epoch-zero-holder", identity)}
+            delegation["genesis_fragment"] = scenario.delegation("second-genesis-delegation", 9, key,
+                60 * CKB, label="genesis-fragment")
+            for label in ("holder", "genesis-fragment"):
+                identity = scenario.delegations[label][0]["identity"]
+                genesis_positions.append({"identity": identity,
+                    "proof": scenario.delegation_proof(f"epoch-zero-{label}", identity)})
     genesis = scenario.observe("initial", 0, count=3)
     verified, _ = scenario.verify_genesis_snapshot(genesis)
     genesis_committee = verified["validators"]
@@ -383,7 +477,7 @@ def run_epochs(args, l1, scenario, fixture):
     if args.reward_accounting:
         args.xudt = None
         funding = dict(scenario.code["out_point"], index="0x2")
-        vault = deploy(args, l1, fixture, hex_bytes(scenario.network), funding)
+        vault = deploy(args, l1, fixture, hex_bytes(scenario.network), funding, checkpoint_anchor=scenario.checkpoint)
         bridge, lane = bridge_configuration(args, l1, fixture, vault, None, hex_bytes(scenario.network))
         bridge["fee_funds"] = [{"basis_points": share, "recipient": dict(
             fixture.standard, args=hex_bytes(ckb_hash(f"reward-fixture-{index}".encode())[:20]))}
@@ -485,7 +579,7 @@ def run_epochs(args, l1, scenario, fixture):
             delegation["activation"] = confirm_positions(args, scenario, relay, public(old), genesis[0]["registry"], original)
         if rewards:
             rewards["quotes"] = reward_quotes(args, scenario, stake_client, verify, genesis[0], genesis_committee,
-                old, old_meta, genesis_position)
+                old, old_meta, genesis_positions)
         if args.partial_reduction:
             key = public(old)
             failed = scenario.delegation("unauthorized-reduction", 12, key, 65 * CKB,
@@ -603,6 +697,14 @@ def run_epochs(args, l1, scenario, fixture):
             exit_case = (old, old_meta, low, 11 if args.replace else 21, early) if args.retire else None
             checkpoints, exit_report = publish_checkpoints(args, l1, scenario, relay, spec,
                 stake_client, verified["height"], exit_case, active_freeze)
+        if rewards:
+            rewards["payments"] = reward_payouts(args, l1, fixture, vault, network_spec, spec, lane,
+                stake_client, relay, rewards)
+            paid_height = max(int(item["payout"]["settlement"]["height"]) for item in rewards["payments"]["payouts"])
+            for key in keys:
+                progress(key, paid_height, 2)
+            rewards["payments"]["agreed"] = header(incoming, paid_height)
+            assert all(header(key, paid_height) == rewards["payments"]["agreed"] for key in keys)
         restored = None
         if args.snapshot_restore:
             proc = processes[public(observer)]

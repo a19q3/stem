@@ -14,11 +14,13 @@ use crate::{Transaction, hash, wire};
 mod backing;
 mod fees;
 mod mint;
+mod reward_claim;
 mod settlement;
 mod snapshot;
 pub use backing::BridgeBacking;
 pub use fees::{FeeClaim, FeeFund, FeeFundDestination, FeeFundPolicy, FeePayout, FeePayouts};
 pub use mint::{MintObservation, VerifiedMint, mint_digest};
+pub use reward_claim::{RewardClaim, RewardEpochProof, RewardPosition, reward_claim_key};
 pub use settlement::{BridgeLedger, Lane, PendingWithdrawal, SettlementChanges};
 pub use snapshot::{
     ARRIVING_GUARDIAN, SnapshotContext, VerifiedSnapshot, snapshot_body, snapshot_commitment,
@@ -84,6 +86,7 @@ pub enum Operation {
     StakeSnapshot(StakeSnapshot),
     BridgeSettlement(BridgeSettlement),
     FeeClaim(FeeClaim),
+    RewardClaim(RewardClaim),
 }
 
 impl Operation {
@@ -151,6 +154,7 @@ impl Operation {
                 (kind, payload)
             }
             Self::FeeClaim(claim) => (5, claim.encode().as_bytes()),
+            Self::RewardClaim(claim) => (6, claim.encode().as_bytes()),
         };
         wire::ProtocolOperation::new_builder()
             .kind(kind.into())
@@ -211,6 +215,7 @@ impl Operation {
                 }))
             }
             5 => Ok(Self::FeeClaim(FeeClaim::decode(&payload)?)),
+            6 => Ok(Self::RewardClaim(RewardClaim::decode(&payload)?)),
             _ => bail!("unknown protocol operation"),
         }
     }
@@ -243,7 +248,7 @@ impl Operation {
                     "settlement certificate has unexpected body"
                 );
             }
-            Self::FeeClaim(_) => bail!("fee claims do not use certificates"),
+            Self::FeeClaim(_) | Self::RewardClaim(_) => bail!("fee claims do not use certificates"),
         }
         Ok(())
     }
@@ -253,7 +258,9 @@ impl Operation {
             Self::BridgeMint(_) => Class::Mint,
             Self::StakeSnapshot(_) => Class::StakeSnapshot,
             Self::BridgeSettlement(_) => Class::BridgeSettlement,
-            Self::FeeClaim(_) => bail!("fee claims have a separate block allowance"),
+            Self::FeeClaim(_) | Self::RewardClaim(_) => {
+                bail!("fee claims have a separate block allowance")
+            }
         })
     }
 }
