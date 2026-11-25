@@ -215,7 +215,7 @@ def stake_round(args, l1, scenario, fixture):
             penalty = ckb_hash(b"Stem CometBFT double vote\0" + scenario.network + le(len(CHAIN), 4)
                                + CHAIN + old_key + le(height, 8) + le(round_, 4) + b"\x02")
             current_record = original[:48] + penalty
-            frozen_record = mk_record(old_key, low, 0, 2, current_record, frozen=True)
+            frozen_record = mk_record(old_key, low, 0, 2, current_record, frozen=True, fault_height=height)
             rejected["modified_vote"] = scenario.change(
                 "modified-double-vote", 6, old_key, frozen_record,
                 lambda *_: votes[:-1] + bytes([votes[-1] ^ 1]), expected="ValidationFailure")

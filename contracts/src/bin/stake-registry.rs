@@ -19,9 +19,10 @@ use stem_contracts::load_checkpoint;
 use stem_stake::{
     Attestation, Hash32, MAX_RECORDS, Member, Registry, StakeData,
     l1::{
-        Action, BOND_DELEGATION, ChangeContext, DelegationAction, DelegationId, GuardianProof,
-        Policy, SLASH_DELEGATION, StakeCell, WITHDRAW_DELEGATION, delegation_amount,
-        verify_delegation, verify_rotation,
+        Action, BOND_DELEGATION, CONFIRM_REDUCTION, ChangeContext, DelegationAction,
+        DelegationBond, DelegationId, GuardianProof, Policy, REDUCE_DELEGATION,
+        RegistryApplication, SLASH_DELEGATION, SLASH_REDUCTION, StakeCell, WITHDRAW_DELEGATION,
+        WITHDRAW_REDUCTION, verify_delegation, verify_rotation,
     },
 };
 #[cfg(not(feature = "jolteon"))]
@@ -136,10 +137,7 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
         )?);
     }
 
-    if matches!(
-        operation,
-        BOND_DELEGATION | WITHDRAW_DELEGATION | SLASH_DELEGATION
-    ) {
+    if is_delegation_operation(operation) {
         return verify_delegation_transition(script, &policy, &old, &new, operation, payload);
     }
 
@@ -248,9 +246,15 @@ fn verify_delegation_transition(
     old: &Registry,
     new: &Registry,
     operation: u8,
-    args: &[u8],
+    payload: &[u8],
 ) -> Result<(), Error> {
+    let (args, witness) = payload
+        .split_at_checked(DelegationId::SIZE)
+        .ok_or(Error::Encoding)?;
     let id = DelegationId::decode(args)?;
+    if !matches!(operation, CONFIRM_REDUCTION | SLASH_REDUCTION) && !witness.is_empty() {
+        return Err(Error::Encoding);
+    }
     let lock = registry_lock(script, &policy.registry_id);
     if id.registry != policy.registry_id || id.owner == lock.calc_script_hash().as_slice() {
         return Err(Error::Stake);
@@ -266,15 +270,27 @@ fn verify_delegation_transition(
         .map(|index| read_delegation(&lock, index, Source::Output))
         .transpose()?;
     let action = match (operation, before, after) {
-        (BOND_DELEGATION, before, Some(after)) => DelegationAction::Bond {
-            before: before.map_or(0, |(amount, _)| amount),
-            after: after.0,
-            owner_authorized: inputs_authorize(&id.owner)?,
-        },
-        (WITHDRAW_DELEGATION, Some((amount, occupied)), None) => {
+        (BOND_DELEGATION, before, Some((after, _))) => {
+            let previous = before.map_or(DelegationBond::default(), |(before, _)| before);
+            if previous.pending != 0
+                || after
+                    != (DelegationBond {
+                        active: after.active,
+                        ..previous
+                    })
+            {
+                return Err(Error::Stake);
+            }
+            DelegationAction::Bond {
+                before: previous.active,
+                after: after.active,
+                owner_authorized: inputs_authorize(&id.owner)?,
+            }
+        }
+        (WITHDRAW_DELEGATION, Some((bond, occupied)), None) if bond.pending == 0 => {
             pay_delegator(
                 &id.owner,
-                amount.checked_add(occupied).ok_or(Error::Capacity)?,
+                bond.active.checked_add(occupied).ok_or(Error::Capacity)?,
             )?;
             let stake_args = [&id.registry[..], &id.validator[..]].concat();
             let stake_hash = with_args(script, &stake_args).calc_script_hash();
@@ -284,16 +300,123 @@ fn verify_delegation_transition(
             // CKB associates this Header with the actual Stake Cell dependency.
             let header = load_header(stake, Source::CellDep)?;
             DelegationAction::Withdraw {
-                amount,
+                amount: bond.active,
                 retired_block: header.raw().number().unpack(),
                 since: load_input_since(input.ok_or(Error::Stake)?, Source::Input)?,
             }
         }
-        (SLASH_DELEGATION, Some((amount, occupied)), None) => {
+        (SLASH_DELEGATION, Some((bond, occupied)), None) if bond.pending == 0 => {
             pay_delegator(&id.owner, occupied)?;
             DelegationAction::Slash {
-                amount,
+                amount: bond.active,
                 fee: fee()?,
+            }
+        }
+        (REDUCE_DELEGATION, Some((before, _)), Some((after, _))) => {
+            if before.pending != 0
+                || after.pending == 0
+                || before.total()? != after.total()?
+                || after.requested_sequence != new.sequence()
+                || after.cutoff_height != 0
+            {
+                return Err(Error::Stake);
+            }
+            DelegationAction::Reduce {
+                amount: after.pending,
+                owner_authorized: inputs_authorize(&id.owner)?,
+            }
+        }
+        (CONFIRM_REDUCTION, Some((before, _)), Some((after, _))) => {
+            let (sequence, witness) = witness.split_at_checked(8).ok_or(Error::Encoding)?;
+            let (record, path) = witness
+                .split_at_checked(RegistryApplication::SIZE)
+                .ok_or(Error::Encoding)?;
+            let sequence = u64::from_le_bytes(sequence.try_into().unwrap());
+            let record = RegistryApplication::decode(record)?;
+            if before.pending == 0
+                || before.cutoff_height != 0
+                || after
+                    != (DelegationBond {
+                        cutoff_height: record.effective_height,
+                        ..before
+                    })
+            {
+                return Err(Error::Stake);
+            }
+            let checkpoint = load_checkpoint(
+                &policy.checkpoint,
+                &policy.ckb_genesis,
+                &policy.network_id,
+                Some(policy.chain_id),
+            )?
+            .ok_or(Error::Stake)?;
+            record.verify(
+                policy,
+                checkpoint.state,
+                sequence,
+                before.requested_sequence,
+                path,
+            )?;
+            let request = load_header(input.ok_or(Error::Stake)?, Source::Input)?;
+            let request_height: u64 = request.raw().number().unpack();
+            if request_height > record.l1_anchor.height || !has_l1_anchor(record.l1_anchor)? {
+                return Err(Error::Stake);
+            }
+            DelegationAction::ConfirmReduction
+        }
+        (WITHDRAW_REDUCTION | SLASH_REDUCTION, Some((before, occupied)), after) => {
+            if before.pending == 0 || before.cutoff_height == 0 {
+                return Err(Error::Stake);
+            }
+            let returned_capacity = if before.active == 0 && after.is_none() {
+                occupied
+            } else if before.active != 0
+                && after.is_some_and(|(bond, _)| {
+                    bond == (DelegationBond {
+                        active: before.active,
+                        ..DelegationBond::default()
+                    })
+                })
+            {
+                0
+            } else {
+                return Err(Error::Stake);
+            };
+            if operation == WITHDRAW_REDUCTION {
+                pay_delegator(
+                    &id.owner,
+                    before
+                        .pending
+                        .checked_add(returned_capacity)
+                        .ok_or(Error::Capacity)?,
+                )?;
+                DelegationAction::WithdrawReduction {
+                    amount: before.pending,
+                    cutoff: before.cutoff_height,
+                    since: load_input_since(input.ok_or(Error::Stake)?, Source::Input)?,
+                }
+            } else {
+                if returned_capacity != 0 {
+                    pay_delegator(&id.owner, returned_capacity)?;
+                }
+                let historical_evidence = if witness.is_empty() {
+                    false
+                } else {
+                    verify_reduction_evidence(
+                        policy,
+                        old,
+                        &id.validator,
+                        before.cutoff_height,
+                        witness,
+                    )?;
+                    true
+                };
+                DelegationAction::SlashReduction {
+                    amount: before.pending,
+                    cutoff: before.cutoff_height,
+                    fee: fee()?,
+                    historical_evidence,
+                }
             }
         }
         _ => return Err(Error::Stake),
@@ -301,17 +424,89 @@ fn verify_delegation_transition(
     Ok(verify_delegation(policy, old, new, &id.validator, action)?)
 }
 
-fn read_delegation(lock: &Script, index: usize, source: Source) -> Result<(u64, u64), Error> {
+fn has_l1_anchor(anchor: stem_stake::Anchor) -> Result<bool, Error> {
+    for index in 0.. {
+        match load_header(index, Source::HeaderDep) {
+            Ok(header) if header.calc_header_hash().as_slice() == anchor.hash => {
+                let height: u64 = header.raw().number().unpack();
+                return Ok(height == anchor.height);
+            }
+            Ok(_) => {}
+            Err(SysError::IndexOutOfBound) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!()
+}
+
+fn verify_reduction_evidence(
+    policy: &Policy<'_>,
+    registry: &Registry,
+    validator: &Hash32,
+    cutoff: u64,
+    proof: &[u8],
+) -> Result<(), Error> {
+    let record = registry.record(validator).ok_or(Error::Stake)?;
+    let cutoff: i64 = cutoff.try_into().map_err(|_| Error::Stake)?;
+    let end = if record.first_inactive_height == 0 {
+        cutoff
+    } else {
+        cutoff.min(record.first_inactive_height)
+    };
+    let liability = stem_stake::Liability {
+        validator: *validator,
+        first_active_height: record.first_active_height,
+        first_inactive_height: Some(end),
+    };
+    #[cfg(feature = "jolteon")]
+    {
+        let checkpoint = load_checkpoint(
+            &policy.checkpoint,
+            &policy.ckb_genesis,
+            &policy.network_id,
+            None,
+        )?
+        .ok_or(Error::Stake)?;
+        stem_stake::jolteon::evidence::verify(
+            &checkpoint.policy,
+            &checkpoint.tip,
+            &liability,
+            proof,
+        )?;
+    }
+    #[cfg(not(feature = "jolteon"))]
+    {
+        let (first, second) = proof
+            .split_at_checked(SignedVote::SIZE)
+            .ok_or(Error::Encoding)?;
+        DoubleVote {
+            first: SignedVote::decode(first)?,
+            second: SignedVote::decode(second)?,
+        }
+        .verify(&policy.network_id, policy.chain_id, &liability)?;
+    }
+    Ok(())
+}
+
+fn is_delegation_operation(operation: u8) -> bool {
+    (BOND_DELEGATION..=SLASH_REDUCTION).contains(&operation)
+}
+
+fn read_delegation(
+    lock: &Script,
+    index: usize,
+    source: Source,
+) -> Result<(DelegationBond, u64), Error> {
     if load_cell_lock(index, source)? != *lock {
         return Err(Error::Stake);
     }
     let data = load_cell_data(index, source)?;
-    let amount = delegation_amount(&data)?;
+    let bond = DelegationBond::decode(&data)?;
     let occupied = load_cell_occupied_capacity(index, source)?;
-    if occupied.checked_add(amount) != Some(load_cell_capacity(index, source)?) {
+    if occupied.checked_add(bond.total()?) != Some(load_cell_capacity(index, source)?) {
         return Err(Error::Capacity);
     }
-    Ok((amount, occupied))
+    Ok((bond, occupied))
 }
 
 fn pay_delegator(owner: &Hash32, minimum: u64) -> Result<(), Error> {
@@ -424,11 +619,7 @@ fn verify_delegation_type(script: &Script, args: &[u8]) -> Result<(), Error> {
     type_id::check_type_id(DelegationId::NONCE_OFFSET, 32)?;
     let witness = registry_witness(script, id.registry)?;
     let (code, subject) = witness.split_first().ok_or(Error::Encoding)?;
-    if !matches!(
-        *code,
-        BOND_DELEGATION | WITHDRAW_DELEGATION | SLASH_DELEGATION
-    ) || subject != args
-    {
+    if !is_delegation_operation(*code) || subject.get(..DelegationId::SIZE) != Some(args) {
         return Err(Error::Stake);
     }
     Ok(())

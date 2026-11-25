@@ -429,9 +429,21 @@ python3 tools/jolteon_stake_localnet.py \
   --publish-checkpoint --retire --delegation --output /tmp/stem-delegation
 ```
 
-`stem stake delegation-script` takes the Registry Type Script JSON, the validator key, the beneficiary CKB Lock hash, the JSON first `CellInput` and the output index. Put the resulting Script on the funded delegation output with the Registry Lock and eight bytes of little-endian principal as its Cell Data. Add the principal to the output's occupied CKB Capacity. Creation and top-up require a funding input authorized by the beneficiary. A relayer can submit retirement settlement using a separate fee input.
+`stem stake delegation-script` takes the Registry Type Script JSON, the validator key, the beneficiary CKB Lock hash, the JSON first `CellInput` and the output index. Put the resulting Script on the funded output with the Registry Lock. Its Cell Data consists of four little-endian `u64` values in order: active principal, pending principal, reduction request Registry sequence and confirmed Stem exclusion height. The initial values are the principal followed by three zeros. Add active and pending principal to the output's occupied CKB Capacity. Creation and top-up require a funding input authorized by the beneficiary. A relayer can submit retirement settlement using a separate fee input.
 
-The Registry input witness contains operation `0x09` for creation or top-up, `0x0a` for unbonded withdrawal or `0x0b` for penalty settlement, followed by the complete 128-byte delegation Script args. Update the target validator's final eight-byte `delegated_amount` field by the exact principal delta. Every Registry witness names a single delegation position. For an unbonded withdrawal add the live retired validator Stake Cell and its creation block as Cell and Header Deps, and set the delegation input's absolute block `since` to the retirement block height plus the configured delay. The payout must go to the beneficiary Lock as a plain CKB Cell. A penalty settlement pays at least the delegated principal as a CKB transaction fee and returns the occupied Capacity to that Lock.
+The Registry input witness contains operation `0x09` for creation or top-up, `0x0a` for unbonded withdrawal on full validator retirement or `0x0b` for its penalty settlement, followed by the complete 128-byte delegation Script args. Update the target validator's `delegated_amount` (the first of the Registry record's final two little-endian `u64` totals) by the exact principal delta. Every Registry witness names a single delegation position. For an unbonded withdrawal on full validator retirement add the live retired validator Stake Cell and its creation block as Cell and Header Deps, and set the delegation input's absolute block `since` to the retirement block height plus the configured delay. The payout must go to the beneficiary Lock as a plain CKB Cell. A penalty settlement pays at least the forfeited principal as a CKB transaction fee and returns the occupied Capacity to that Lock if the position closes.
+
+For an in-term exercise, run the following command with the same binary and contract paths, using a fresh output directory. Include `--reduction-slash` for the historical double-vote case. Use `--reduction-reorg` on a separate disposable devnet to replace the observed CKB block and verify rejection of both the orphaned and substituted anchors.
+
+```sh
+python3 tools/jolteon_stake_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb \
+  --stake-registry "$native_dir/stake-registry" \
+  --direct-checkpoint "$native_dir/jolteon-checkpoint" \
+  --publish-checkpoint --delegation --partial-reduction --output /tmp/stem-delegation-reduction
+```
+
+The in-term operations use the same 128-byte identifier. Use `0x0c` to move an owner-authorized amount from active delegation to unbonding. Put the resulting Registry sequence and zero cutoff in the successor. Use `0x0d` to confirm the cutoff with the authenticated checkpoint. Append the applied sequence, prior applied sequence, effective Stem height and CKB observation block height as little-endian `u64` values, then the 32-byte CKB observation block hash and the Patricia proof. Query `/stem/stake-registry-application` with the Registry ID and little-endian applied sequence to obtain the fields and proof. Supply CKB Header Deps for the request Cell and the snapshot observation block. Use `0x0e` to settle after the successor's relative CKB `since` delay. Use `0x0f` to settle a pending penalty, appending a historical double-vote witness and the pinned checkpoint dependency if the Registry's existing fault is outside the position's liability interval.
 
 ## Exercise CKB Checkpoint publication
 

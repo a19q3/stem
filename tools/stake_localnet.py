@@ -47,11 +47,11 @@ def witness(payload):
     return hex_bytes(b"".join(le(value, 4) for value in (size, 16, 16, size, len(payload))) + payload)
 
 
-def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False, *, delegated=0):
+def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False, *, fault_height=0):
     commitment = EMPTY if withdrawn else ckb_hash(b"Stem CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
-    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + bytes([frozen])
-            + meta[32:48] + commitment + le(delegated, 8),
+    return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + le(fault_height or int(frozen), 8)
+            + meta[32:48] + commitment + bytes(16),
             fields + meta)
 
 
@@ -172,7 +172,11 @@ class Scenario:
             records.pop(key)
         elif new_record is not None:
             if key in records:
-                new_record = (new_record[0][:-8] + records[key][0][-8:], new_record[1])
+                old_bytes = records[key][0]
+                raw = new_record[0]
+                if number != 6:
+                    raw = raw[:57] + old_bytes[57:65] + raw[65:]
+                new_record = (raw[:-16] + old_bytes[-16:], new_record[1])
             records[key] = new_record
         state = self.encode(self.sequence + 1, records, next_authority, root)
         payload = bytes([number])
@@ -242,7 +246,8 @@ class Scenario:
         return self.registry_tx
 
     def delegation(self, name, operation, validator, amount=0, *, label="holder", expected=None,
-                   separate_owner=False, funded_by_owner=True, wrong_recipient=False, registry_delta=None, since=None):
+                   separate_owner=False, funded_by_owner=True, wrong_recipient=False, registry_delta=None,
+                   since=None, application=None, checkpoint=None, evidence=b"", omit_l1_anchor=False):
         prior = self.delegations.get(label)
         owner_lock = self.fixture.owner_lock if separate_owner else self.fixture.friend_lock
         if prior is None:
@@ -254,33 +259,54 @@ class Scenario:
                 "--registry-type", registry_path, "--validator", hex_bytes(validator),
                 "--owner", hex_bytes(script_hash(owner_lock)), "--first-input", input_path,
                 "--output-index", "1"))
-            previous_amount = 0
+            active, pending, requested, cutoff = (0, 0, 0, 0)
         else:
-            stake_type, previous_amount, _, owner_lock = prior
+            stake_type, (active, pending, requested, cutoff), _, owner_lock = prior
         args = binary(stake_type["args"])
-        occupied = (8 + 33 + len(binary(self.lock["args"])) + 33 + len(args) + 8) * CKB
+        occupied = (8 + 33 + len(binary(self.lock["args"])) + 33 + len(args) + 32) * CKB
         records = self.records.copy()
         record, own_data = records[validator]
-        delta = amount - previous_amount if registry_delta is None else registry_delta
-        records[validator] = (record[:-8] + le(int.from_bytes(record[-8:], "little") + delta, 8), own_data)
-        next_state = self.encode(self.sequence + 1, records)
         inputs = [point(self.registry_tx, 0)]
-        outputs = [output(self.registry_capacity, self.lock, self.registry_type)]
-        data = [hex_bytes(next_state)]
         deps = [self.secp, self.code]
         headers = []
-        payment = 0
+        suffix = b""
+        fee, payment = FEE, 0
         if prior:
             inputs.append(prior[2])
+        next_position = None
         if operation == 9:
-            outputs.append(output(occupied + amount, self.lock, stake_type))
-            data.append(hex_bytes(le(amount, 8)))
-            fee = FEE
+            next_position = (amount, pending, requested, cutoff)
+            active_delta, pending_delta = amount - active, 0
+        elif operation == 12:
+            next_position = (active - amount, amount, self.sequence + 1, 0)
+            active_delta, pending_delta = -amount, amount
+        elif operation == 13:
+            next_position = (active, pending, requested, application["effective_height"])
+            active_delta, pending_delta = 0, 0
+            deps.append(checkpoint)
+            source = self.l1.prove_committed(prior[2]["tx_hash"])["header"]["hash"]
+            headers = [source]
+            if not omit_l1_anchor and application["l1_hash"] != source:
+                headers.append(application["l1_hash"])
+            suffix = b"".join(le(application[field], 8) for field in
+                             ("sequence", "previous_sequence", "effective_height", "l1_height"))
+            suffix += binary(application["l1_hash"]) + binary(application["proof"])
+        elif operation in (14, 15):
+            active_delta, pending_delta = 0, -pending
+            next_position = (active, 0, 0, 0) if active else None
+            payment = 0 if active else occupied
+            if operation == 14:
+                payment += pending
+                if since is None:
+                    since = (1 << 63) | DELAY
+            else:
+                fee += pending
+                suffix = evidence
+                if checkpoint:
+                    deps.append(checkpoint)
         else:
-            payment = occupied + (previous_amount if operation == 10 else 0)
-            outputs.append(output(payment, self.fixture.standard if wrong_recipient else owner_lock))
-            data.append("0x")
-            fee = FEE + (previous_amount if operation == 11 else 0)
+            active_delta, pending_delta = -active, 0
+            payment = occupied + (active if operation == 10 else 0)
             if operation == 10:
                 stake, _ = self.stake_points[validator]
                 header = self.l1.prove_committed(stake["tx_hash"])["header"]
@@ -288,6 +314,24 @@ class Scenario:
                 deps.append(dependency(stake))
                 if since is None:
                     since = int(header["number"], 16) + DELAY
+            else:
+                fee += active
+        if registry_delta is not None:
+            active_delta = registry_delta
+        totals = tuple(int.from_bytes(value, "little") for value in (record[-16:-8], record[-8:]))
+        records[validator] = (record[:-16] + le(totals[0] + active_delta, 8) + le(totals[1] + pending_delta, 8), own_data)
+        next_state = self.encode(self.sequence + 1, records)
+        outputs = [output(self.registry_capacity, self.lock, self.registry_type)]
+        data = [hex_bytes(next_state)]
+        next_capacity = 0
+        if next_position:
+            next_capacity = occupied + sum(next_position[:2])
+            outputs.append(output(next_capacity, self.lock, stake_type))
+            data.append(hex_bytes(b"".join(le(value, 8) for value in next_position)))
+        payment_index = len(outputs)
+        if payment:
+            outputs.append(output(payment, self.fixture.standard if wrong_recipient else owner_lock))
+            data.append("0x")
         if not funded_by_owner:
             fee_point, available = self.fee_point, self.fee_capacity
             fee_key, fee_lock = self.fixture.faucet, self.fixture.standard
@@ -297,8 +341,7 @@ class Scenario:
         else:
             fee_point, available = self.relay_fee_point, self.relay_fee_capacity
             fee_key, fee_lock = self.fixture.friend, self.fixture.friend_lock
-        change = available - fee
-        change += (occupied + previous_amount if prior else 0) - (occupied + amount if operation == 9 else payment)
+        change = available - fee + (occupied + active + pending if prior else 0) - next_capacity - payment
         inputs.append(fee_point)
         outputs.append(output(change, fee_lock))
         data.append("0x")
@@ -306,7 +349,7 @@ class Scenario:
         tx["header_deps"] = headers
         if since is not None:
             tx["inputs"][1]["since"] = hex(since)
-        tx["witnesses"] = [witness(bytes([operation]) + args)]
+        tx["witnesses"] = [witness(bytes([operation]) + args + suffix)]
         signed = self.fixture.sign(name, tx, [wallet_group(len(inputs) - 1, [fee_key])])
         if expected:
             try:
@@ -325,7 +368,7 @@ class Scenario:
         self.records = records
         self.state = next_state
         committed = self.l1.call("get_transaction", self.registry_tx)["transaction"]
-        assert committed["outputs"][1] == outputs[1], committed
+        assert committed["outputs"] == outputs, committed
         fee_point = point(self.registry_tx, len(outputs) - 1)
         if not funded_by_owner:
             self.fee_point, self.fee_capacity = fee_point, change
@@ -333,13 +376,14 @@ class Scenario:
             self.delegate_fee_point, self.delegate_fee_capacity = fee_point, change
         else:
             self.relay_fee_point, self.relay_fee_capacity = fee_point, change
-        if operation == 9:
-            self.delegations[label] = (stake_type, amount, point(self.registry_tx, 1), owner_lock)
+        if next_position:
+            self.delegations[label] = (stake_type, next_position, point(self.registry_tx, 1), owner_lock)
         else:
             del self.delegations[label]
         return {"transaction": self.registry_tx, "inclusion": self.l1.prove_committed(self.registry_tx),
-                "principal": amount if operation == 9 else previous_amount,
-                "occupied": occupied, "recipient_paid": payment, "fee": fee, "type": stake_type}
+                "principal": amount if operation in (9, 12) else pending if operation in (14, 15) else active,
+                "occupied": occupied, "recipient_paid": payment, "fee": fee, "type": stake_type,
+                "recipient_output": point(self.registry_tx, payment_index) if payment else None}
 
     def observe(self, label, target_epoch, parent=None, missing=False, count=1, signing_anchor=None,
                 rotation=None):

@@ -94,7 +94,12 @@ impl<'a> Vote<'a> {
     }
 }
 
-pub fn verify(policy: &Policy, tip: &Tip, liability: &Liability, bytes: &[u8]) -> Result<Hash32> {
+pub fn verify(
+    policy: &Policy,
+    tip: &Tip,
+    liability: &Liability,
+    bytes: &[u8],
+) -> Result<(Hash32, u64)> {
     if bytes.len() > 72 * 1024 {
         return Err(Error::Encoding);
     }
@@ -179,5 +184,8 @@ pub fn verify(policy: &Policy, tip: &Tip, liability: &Liability, bytes: &[u8]) -
             liability,
         )?;
     }
-    committee.verify_double_vote((first.point, first.share), (second.point, second.share))
+    let penalty =
+        committee.verify_double_vote((first.point, first.share), (second.point, second.share))?;
+    let height = native_height(first.header).max(native_height(second.header));
+    Ok((penalty, height))
 }

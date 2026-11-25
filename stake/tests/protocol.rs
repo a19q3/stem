@@ -101,10 +101,11 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         .map(|(i, member)| StakeData {
             validator_pubkey: member.key,
             delegated_amount: 0,
+            unbonding_amount: 0,
             bonded_amount: [100, 200, 200][i],
             activation_epoch: 0,
             exit_epoch: (i == 1).then_some(1),
-            frozen: false,
+            fault_height: 0,
             first_active_height: 1,
             first_inactive_height: 0,
             stake_cell_hash: [i as u8 + 1; 32],
@@ -276,4 +277,75 @@ fn retirement_commitment_keeps_registry_slots_reusable() -> Result<()> {
         Err(Error::Sequence)
     );
     Ok(())
+}
+
+#[test]
+fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
+    use stem_stake::l1::{
+        DelegationAction, DelegationBond, Policy, RELATIVE_BLOCKS, verify_delegation,
+    };
+
+    let policy = Policy {
+        registry_id: [4; 32],
+        network_id: [5; 32],
+        ckb_genesis: [6; 32],
+        chain_id: "stake-reduction-test",
+        minimum_bond: 100,
+        blocks_per_epoch: 10,
+        unbonding_blocks: 20,
+        checkpoint: stem_stake::finality::CheckpointId {
+            code_hash: [7; 32],
+            type_id: [8; 32],
+        },
+    };
+    let validator_pubkey = [9; 32];
+    let bond = DelegationBond {
+        active: 75,
+        pending: 100,
+        requested_sequence: 12,
+        cutoff_height: 11,
+    };
+    assert_eq!(DelegationBond::decode(&bond.encode())?, bond);
+    assert!(DelegationBond::decode(&DelegationBond { pending: 0, ..bond }.encode()).is_err());
+    let stake = StakeData {
+        validator_pubkey,
+        bonded_amount: 250,
+        delegated_amount: bond.active,
+        unbonding_amount: bond.pending,
+        activation_epoch: 0,
+        exit_epoch: None,
+        fault_height: 10,
+        first_active_height: 1,
+        first_inactive_height: 0,
+        stake_cell_hash: [10; 32],
+    };
+    let registry = |sequence, stake| {
+        Registry::new(policy.network_id, sequence, [11; 32], [0; 32], vec![stake])
+    };
+    let prior = registry(13, stake)?;
+    let next = registry(
+        14,
+        StakeData {
+            unbonding_amount: 0,
+            ..stake
+        },
+    )?;
+    let verify = |action| verify_delegation(&policy, &prior, &next, &validator_pubkey, action);
+    let withdraw = |cutoff, delay| DelegationAction::WithdrawReduction {
+        amount: bond.pending,
+        cutoff,
+        since: RELATIVE_BLOCKS | delay,
+    };
+    assert_eq!(verify(withdraw(11, 20)), Err(Error::Sequence));
+    assert_eq!(verify(withdraw(10, 19)), Err(Error::Sequence));
+    verify(withdraw(10, 20))?;
+    let slash = |cutoff, fee| DelegationAction::SlashReduction {
+        amount: bond.pending,
+        cutoff,
+        fee,
+        historical_evidence: false,
+    };
+    assert_eq!(verify(slash(10, 100)), Err(Error::Evidence));
+    assert_eq!(verify(slash(11, 99)), Err(Error::Evidence));
+    verify(slash(11, 100))
 }

@@ -12,7 +12,10 @@ use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, Member, Registry, RegistryAnchor,
     StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey,
     jolteon::{COMMITTEE_RECORD, CommitteeChange, evidence::epoch_end_key},
-    l1::guardian_generation,
+    l1::{
+        APPLIED_REGISTRY_SEQUENCE, RegistryApplication, guardian_generation,
+        registry_application_key,
+    },
 };
 
 use super::Store;
@@ -91,6 +94,7 @@ impl Staking {
         )?;
         let state = StakeState {
             accepted,
+            applied_sequence: accepted.anchor.sequence,
             eligible: members.clone(),
             announced: CommitteeChange {
                 epoch: 0,
@@ -146,6 +150,10 @@ impl Staking {
         let announced = store
             .system_record(COMMITTEE_RECORD)?
             .context("missing announced committee")?;
+        let applied = store
+            .system_record(APPLIED_REGISTRY_SEQUENCE)?
+            .context("missing applied Registry sequence")?;
+        let applied_sequence = u64::from_le_bytes(applied.as_slice().try_into()?);
         let authority = match store.system_record(AUTHORITY)? {
             Some(encoded) => {
                 let members = decode_members(&encoded)?;
@@ -154,7 +162,7 @@ impl Staking {
             None => self.authority.clone(),
         };
         Ok(StagedStake {
-            state: StakeState::decode(&accepted, &announced)?,
+            state: StakeState::decode(&accepted, &announced, applied_sequence)?,
             budget: BlockBudget::new(zero, self.limits, zero),
             authority,
             rotation: None,
@@ -245,6 +253,7 @@ impl Staking {
             eligible,
             announced,
             submitted,
+            applied_sequence,
         } = staged.state;
         let mut writes = staged
             .retirements
@@ -294,6 +303,26 @@ impl Staking {
             activation_height: self.config.effective_height(accepted.epoch)?,
             members: eligible,
         };
+        let sequence = accepted.anchor.sequence;
+        ensure!(
+            sequence >= applied_sequence,
+            "applied Registry sequence regressed"
+        );
+        if sequence > applied_sequence {
+            let record = RegistryApplication {
+                previous_sequence: applied_sequence,
+                effective_height: next_committee.activation_height,
+                l1_anchor: accepted.anchor.block,
+            };
+            writes.push((
+                registry_application_key(&self.domain.registry_id, sequence),
+                record.encode().to_vec(),
+            ));
+            writes.push((
+                APPLIED_REGISTRY_SEQUENCE.to_vec(),
+                sequence.to_le_bytes().to_vec(),
+            ));
+        }
         writes.push((
             epoch_end_key(announced.epoch),
             next_committee.activation_height.to_le_bytes().to_vec(),
@@ -313,20 +342,25 @@ pub(super) struct StagedStake {
 
 pub(super) struct StakeState {
     accepted: AcceptedSnapshot,
+    applied_sequence: u64,
     eligible: Vec<Member>,
     pub(super) announced: CommitteeChange,
     submitted: Option<Transaction>,
 }
 
 impl StakeState {
-    pub(super) fn genesis_records(&self) -> [(&'static [u8], Vec<u8>); 2] {
+    pub(super) fn genesis_records(&self) -> [(&'static [u8], Vec<u8>); 3] {
         [
             (ACCEPTED, encode_accepted(self.accepted, &self.eligible)),
             (COMMITTEE_RECORD, self.announced.encode()),
+            (
+                APPLIED_REGISTRY_SEQUENCE,
+                self.applied_sequence.to_le_bytes().to_vec(),
+            ),
         ]
     }
 
-    fn decode(accepted: &[u8], announced: &[u8]) -> Result<Self> {
+    fn decode(accepted: &[u8], announced: &[u8], applied_sequence: u64) -> Result<Self> {
         let (header, eligible) = accepted
             .split_at_checked(88)
             .context("truncated accepted Stake Snapshot")?;
@@ -343,6 +377,7 @@ impl StakeState {
                 },
             },
             eligible: decode_members(eligible)?,
+            applied_sequence,
             announced: CommitteeChange::decode(announced)?,
             submitted: None,
         })

@@ -25,7 +25,7 @@ pub type ValidatorKey = [u8; 32];
 
 pub const MAX_TOTAL_VOTING_POWER: u64 = (i64::MAX / 8) as u64;
 pub const MAX_RECORDS: usize = 256;
-const RECORD_BYTES: usize = 114;
+const RECORD_BYTES: usize = 129;
 const REGISTRY_HEADER: usize = 32 + 8 + 32 + 32 + 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,15 +60,20 @@ pub struct StakeData {
     pub validator_pubkey: ValidatorKey,
     pub bonded_amount: u64,
     pub delegated_amount: u64,
+    pub unbonding_amount: u64,
     pub activation_epoch: u64,
     pub exit_epoch: Option<u64>,
-    pub frozen: bool,
+    pub fault_height: u64,
     pub first_active_height: i64,
     pub first_inactive_height: i64,
     pub stake_cell_hash: Hash32,
 }
 
 impl StakeData {
+    pub fn frozen(&self) -> bool {
+        self.fault_height != 0
+    }
+
     pub fn total_bond(&self) -> Result<u64> {
         self.bonded_amount
             .checked_add(self.delegated_amount)
@@ -104,7 +109,11 @@ impl Registry {
                 || entry.first_inactive_height < 0
                 || (entry.first_inactive_height != 0
                     && entry.first_inactive_height <= entry.first_active_height)
-                || (entry.frozen && entry.first_active_height == 0)
+                || (entry.frozen()
+                    && (entry.first_active_height == 0
+                        || entry.fault_height < entry.first_active_height as u64
+                        || (entry.first_inactive_height != 0
+                            && entry.fault_height >= entry.first_inactive_height as u64)))
                 || entry.stake_cell_hash == [0; 32]
                 || entry
                     .exit_epoch
@@ -114,6 +123,7 @@ impl Registry {
             }
             bonded_sum = bonded_sum
                 .checked_add(entry.total_bond()?)
+                .and_then(|sum| sum.checked_add(entry.unbonding_amount))
                 .ok_or(Error::Overflow)?;
             last = Some(entry.validator_pubkey);
         }
@@ -148,17 +158,14 @@ impl Registry {
             records.push(StakeData {
                 validator_pubkey: record[..32].try_into().unwrap(),
                 bonded_amount: u64::from_le_bytes(record[32..40].try_into().unwrap()),
-                delegated_amount: u64::from_le_bytes(record[106..114].try_into().unwrap()),
+                delegated_amount: u64::from_le_bytes(record[113..121].try_into().unwrap()),
+                unbonding_amount: u64::from_le_bytes(record[121..129].try_into().unwrap()),
                 activation_epoch: u64::from_le_bytes(record[40..48].try_into().unwrap()),
                 exit_epoch,
-                frozen: match record[57] {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(Error::Encoding),
-                },
-                first_active_height: i64::from_le_bytes(record[58..66].try_into().unwrap()),
-                first_inactive_height: i64::from_le_bytes(record[66..74].try_into().unwrap()),
-                stake_cell_hash: record[74..106].try_into().unwrap(),
+                fault_height: u64::from_le_bytes(record[57..65].try_into().unwrap()),
+                first_active_height: i64::from_le_bytes(record[65..73].try_into().unwrap()),
+                first_inactive_height: i64::from_le_bytes(record[73..81].try_into().unwrap()),
+                stake_cell_hash: record[81..113].try_into().unwrap(),
             });
         }
         Self::new(
@@ -183,11 +190,12 @@ impl Registry {
             data.extend_from_slice(&entry.activation_epoch.to_le_bytes());
             data.push(u8::from(entry.exit_epoch.is_some()));
             data.extend_from_slice(&entry.exit_epoch.unwrap_or(0).to_le_bytes());
-            data.push(u8::from(entry.frozen));
+            data.extend_from_slice(&entry.fault_height.to_le_bytes());
             data.extend_from_slice(&entry.first_active_height.to_le_bytes());
             data.extend_from_slice(&entry.first_inactive_height.to_le_bytes());
             data.extend_from_slice(&entry.stake_cell_hash);
             data.extend_from_slice(&entry.delegated_amount.to_le_bytes());
+            data.extend_from_slice(&entry.unbonding_amount.to_le_bytes());
         }
         data
     }
@@ -221,7 +229,7 @@ impl Registry {
 
     pub fn retired_keys(&self, epoch: u64) -> impl Iterator<Item = ValidatorKey> + '_ {
         self.records.iter().filter_map(move |stake| {
-            (stake.frozen
+            (stake.frozen()
                 || stake.first_inactive_height != 0
                 || stake.exit_epoch.is_some_and(|exit| exit <= epoch))
             .then_some(stake.validator_pubkey)
@@ -507,7 +515,7 @@ impl StakeConfig {
             .records
             .iter()
             .filter(|stake| {
-                !stake.frozen
+                !stake.frozen()
                     && stake.first_active_height > 0
                     && stake.first_active_height <= height
                     && stake.first_inactive_height == 0

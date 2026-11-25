@@ -84,6 +84,24 @@ pub(crate) fn query(
             }))?
             .into()
         }
+        "/stem/stake-registry-application" if prove && data.len() == 40 => {
+            ensure!(
+                requested == tip,
+                "Registry application proof requires the current height"
+            );
+            let registry = data[..32].try_into()?;
+            let sequence = u64::from_le_bytes(data[32..].try_into()?);
+            let (record, proof) = store.prove_registry_application(registry, sequence)?;
+            serde_json::to_vec(&serde_json::json!({
+                "sequence": sequence,
+                "previous_sequence": record.map(|item| item.previous_sequence),
+                "effective_height": record.map(|item| item.effective_height),
+                "l1_height": record.map(|item| item.l1_anchor.height),
+                "l1_hash": record.map(|item| format!("0x{}", hex::encode(item.l1_anchor.hash))),
+                "proof": format!("0x{}", hex::encode(proof.encode()?)),
+            }))?
+            .into()
+        }
         "/stem/stake-snapshot" if prove && data.is_empty() => {
             ensure!(
                 requested == tip,

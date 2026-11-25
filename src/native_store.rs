@@ -660,6 +660,22 @@ impl Store {
         Ok((end, path))
     }
 
+    pub fn prove_registry_application(
+        &self,
+        registry: &stem_stake::Hash32,
+        sequence: u64,
+    ) -> Result<(Option<stem_stake::l1::RegistryApplication>, Proof)> {
+        use stem_stake::l1::{RegistryApplication, registry_application_key};
+        let (record, proof) = self.prove_system(&registry_application_key(registry, sequence))?;
+        Ok((
+            record
+                .as_deref()
+                .map(RegistryApplication::decode)
+                .transpose()?,
+            proof,
+        ))
+    }
+
     pub(crate) fn announced_committee(&self) -> Result<Option<CommitteeChange>> {
         Ok(self
             .system_record(COMMITTEE_RECORD)?

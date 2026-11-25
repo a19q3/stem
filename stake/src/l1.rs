@@ -16,6 +16,10 @@ pub const MAX_DELAY: u64 = (1 << 56) - 1;
 pub const BOND_DELEGATION: u8 = 9;
 pub const WITHDRAW_DELEGATION: u8 = 10;
 pub const SLASH_DELEGATION: u8 = 11;
+pub const REDUCE_DELEGATION: u8 = 12;
+pub const CONFIRM_REDUCTION: u8 = 13;
+pub const WITHDRAW_REDUCTION: u8 = 14;
+pub const SLASH_REDUCTION: u8 = 15;
 
 /// A delegation uses a native Type ID bound to its own CKB creation input and output index.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,12 +63,123 @@ impl DelegationId {
     }
 }
 
-pub fn delegation_amount(data: &[u8]) -> Result<u64> {
-    let amount = u64::from_le_bytes(data.try_into().map_err(|_| Error::Encoding)?);
-    if amount == 0 {
-        return Err(Error::Encoding);
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DelegationBond {
+    pub active: u64,
+    pub pending: u64,
+    pub requested_sequence: u64,
+    pub cutoff_height: u64,
+}
+
+impl DelegationBond {
+    pub const SIZE: usize = 32;
+
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        let bytes: &[u8; Self::SIZE] = data.try_into().map_err(|_| Error::Encoding)?;
+        let bond = Self {
+            active: u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            pending: u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+            requested_sequence: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+            cutoff_height: u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+        };
+        if bond.total()? == 0
+            || (bond.pending != 0) != (bond.requested_sequence != 0)
+            || (bond.pending == 0 && bond.cutoff_height != 0)
+        {
+            return Err(Error::Encoding);
+        }
+        Ok(bond)
     }
-    Ok(amount)
+
+    pub fn encode(self) -> [u8; Self::SIZE] {
+        let mut bytes = [0; Self::SIZE];
+        for (field, value) in bytes.chunks_exact_mut(8).zip([
+            self.active,
+            self.pending,
+            self.requested_sequence,
+            self.cutoff_height,
+        ]) {
+            field.copy_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
+    pub fn total(self) -> Result<u64> {
+        self.active.checked_add(self.pending).ok_or(Error::Overflow)
+    }
+}
+
+pub const APPLIED_REGISTRY_SEQUENCE: &[u8] = b"stake/applied-registry-sequence";
+
+pub fn registry_application_key(registry: &Hash32, sequence: u64) -> Vec<u8> {
+    [
+        b"stake/registry-application/".as_slice(),
+        registry,
+        &sequence.to_le_bytes(),
+    ]
+    .concat()
+}
+
+#[derive(Clone, Copy)]
+pub struct RegistryApplication {
+    pub previous_sequence: u64,
+    pub effective_height: u64,
+    pub l1_anchor: crate::Anchor,
+}
+
+impl RegistryApplication {
+    pub const SIZE: usize = 56;
+
+    pub fn encode(self) -> [u8; Self::SIZE] {
+        let mut bytes = [0; Self::SIZE];
+        bytes[..8].copy_from_slice(&self.previous_sequence.to_le_bytes());
+        bytes[8..16].copy_from_slice(&self.effective_height.to_le_bytes());
+        bytes[16..24].copy_from_slice(&self.l1_anchor.height.to_le_bytes());
+        bytes[24..].copy_from_slice(&self.l1_anchor.hash);
+        bytes
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let bytes: &[u8; Self::SIZE] = bytes.try_into().map_err(|_| Error::Encoding)?;
+        Ok(Self {
+            previous_sequence: u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            effective_height: u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+            l1_anchor: crate::Anchor {
+                height: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+                hash: bytes[24..].try_into().unwrap(),
+            },
+        })
+    }
+
+    pub fn verify(
+        self,
+        policy: &Policy<'_>,
+        checkpoint: CheckpointState,
+        applied_sequence: u64,
+        requested_sequence: u64,
+        path: &[u8],
+    ) -> Result<()> {
+        use crate::patricia::{Commitment, Namespace};
+        if requested_sequence <= self.previous_sequence
+            || requested_sequence > applied_sequence
+            || self.effective_height == 0
+            || self.effective_height > checkpoint.height
+            || self.l1_anchor.hash == EMPTY
+        {
+            return Err(Error::Anchor);
+        }
+        let commitment = Commitment::new(policy.network_id, Namespace::System);
+        let key = registry_application_key(&policy.registry_id, applied_sequence);
+        if !commitment.verify(
+            &checkpoint.system_root,
+            &commitment.record_key(&key),
+            Some(&commitment.value_hash(&self.encode())),
+            decode_path(path)?.into_iter(),
+        ) {
+            return Err(Error::Anchor);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,7 +247,7 @@ impl StakeCell {
     fn matches_record(self, record: &StakeData) -> bool {
         self.first_active_height == record.first_active_height
             && self.first_inactive_height == record.first_inactive_height
-            && record.frozen == (self.penalty != EMPTY)
+            && record.frozen() == (self.penalty != EMPTY)
             && self.commitment() == record.stake_cell_hash
     }
 
@@ -286,8 +401,13 @@ impl ChangeContext<'_> {
         }
         let (old_record, new_record) =
             verify_subject(self.old_registry, self.new_registry, &self.validator)?;
-        if old_record.map_or(0, |stake| stake.delegated_amount)
-            != new_record.map_or(0, |stake| stake.delegated_amount)
+        let balances = |record: Option<StakeData>| {
+            record.map_or((0, 0), |stake| {
+                (stake.delegated_amount, stake.unbonding_amount)
+            })
+        };
+        if old_record == new_record
+            || balances(old_record) != balances(new_record)
             || !matches_cell(old_record, self.old)
             || !matches_cell(new_record, self.new)
         {
@@ -300,7 +420,7 @@ impl ChangeContext<'_> {
                     || !self.owner_authorized
                     || stake.bonded_amount < self.policy.minimum_bond
                     || stake.exit_epoch.is_some()
-                    || stake.frozen
+                    || stake.frozen()
                     || cell.first_active_height != 0
                     || cell.first_inactive_height != 0
                     || cell.penalty != EMPTY
@@ -340,7 +460,7 @@ impl ChangeContext<'_> {
                     || before.exit_epoch.is_some()
                     || old_cell != new_cell
                     || before.activation_epoch != after.activation_epoch
-                    || before.frozen != after.frozen
+                    || before.fault_height != after.fault_height
                 {
                     return Err(Error::Sequence);
                 }
@@ -353,7 +473,7 @@ impl ChangeContext<'_> {
                 let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
                 let (_, new_cell) = self.new.ok_or(Error::Sequence)?;
                 if before.bonded_amount == 0
-                    || before.frozen
+                    || before.frozen()
                     || old_cell.first_active_height != 0
                     || old_cell.first_inactive_height != 0
                     || new_cell.first_active_height
@@ -396,7 +516,7 @@ impl ChangeContext<'_> {
                 if self.new.is_some()
                     || !self.owner_authorized
                     || cell.first_inactive_height == 0
-                    || (before.frozen && before.bonded_amount != 0)
+                    || (before.frozen() && before.bonded_amount != 0)
                     || (self.since & !MAX_DELAY) != RELATIVE_BLOCKS
                     || (self.since & MAX_DELAY) < self.policy.unbonding_blocks
                     || new_record.is_some()
@@ -406,7 +526,12 @@ impl ChangeContext<'_> {
                 Ok(())
             }
             Action::Freeze(evidence) => self.freeze(|liability| {
-                evidence.verify(&self.policy.network_id, self.policy.chain_id, liability)
+                let hash =
+                    evidence.verify(&self.policy.network_id, self.policy.chain_id, liability)?;
+                Ok((
+                    hash,
+                    u64::try_from(evidence.first.height).map_err(|_| Error::Evidence)?,
+                ))
             }),
             Action::FreezeJolteon {
                 policy,
@@ -424,7 +549,7 @@ impl ChangeContext<'_> {
             }
             Action::FinalizeSlash => {
                 let (before, cell) = self.old.ok_or(Error::Sequence)?;
-                if !before.frozen
+                if !before.frozen()
                     || before.bonded_amount == 0
                     || cell.penalty == EMPTY
                     || cell.first_inactive_height == 0
@@ -443,12 +568,12 @@ impl ChangeContext<'_> {
         }
     }
 
-    fn freeze(&self, verify: impl FnOnce(&Liability) -> Result<Hash32>) -> Result<()> {
+    fn freeze(&self, verify: impl FnOnce(&Liability) -> Result<(Hash32, u64)>) -> Result<()> {
         let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
-        if before.bonded_amount == 0 || before.frozen || old_cell.penalty != EMPTY {
+        if before.bonded_amount == 0 || before.frozen() || old_cell.penalty != EMPTY {
             return Err(Error::Evidence);
         }
-        let penalty = verify(&Liability {
+        let (penalty, fault_height) = verify(&Liability {
             validator: self.validator,
             first_active_height: old_cell.first_active_height,
             first_inactive_height: (old_cell.first_inactive_height != 0)
@@ -456,7 +581,7 @@ impl ChangeContext<'_> {
         })?;
         self.verify_cell_update(
             StakeData {
-                frozen: true,
+                fault_height,
                 ..before
             },
             StakeCell {
@@ -504,6 +629,22 @@ pub enum DelegationAction {
         amount: u64,
         fee: u64,
     },
+    Reduce {
+        amount: u64,
+        owner_authorized: bool,
+    },
+    ConfirmReduction,
+    WithdrawReduction {
+        amount: u64,
+        cutoff: u64,
+        since: u64,
+    },
+    SlashReduction {
+        amount: u64,
+        cutoff: u64,
+        fee: u64,
+        historical_evidence: bool,
+    },
 }
 
 pub fn verify_delegation(
@@ -520,6 +661,7 @@ pub fn verify_delegation(
     let (Some(before), Some(after)) = verify_subject(old, new, validator)? else {
         return Err(Error::Sequence);
     };
+    let mut unbonding_amount = before.unbonding_amount;
     let delegated_amount = match action {
         DelegationAction::Bond {
             before: previous,
@@ -530,7 +672,7 @@ pub fn verify_delegation(
                 || before.first_active_height == 0
                 || before.first_inactive_height != 0
                 || before.exit_epoch.is_some()
-                || before.frozen
+                || before.frozen()
                 || before.bonded_amount < policy.minimum_bond
             {
                 return Err(Error::Sequence);
@@ -553,7 +695,7 @@ pub fn verify_delegation(
                 .checked_add(policy.unbonding_blocks)
                 .ok_or(Error::Overflow)?;
             if before.first_inactive_height == 0
-                || before.frozen
+                || before.frozen()
                 || retired_block == 0
                 || since & !MAX_DELAY != 0
                 || since < minimum
@@ -567,7 +709,8 @@ pub fn verify_delegation(
                 .ok_or(Error::Sequence)?
         }
         DelegationAction::Slash { amount, fee } => {
-            if !before.frozen || before.first_inactive_height == 0 || amount == 0 || fee < amount {
+            if !before.frozen() || before.first_inactive_height == 0 || amount == 0 || fee < amount
+            {
                 return Err(Error::Evidence);
             }
             before
@@ -575,10 +718,68 @@ pub fn verify_delegation(
                 .checked_sub(amount)
                 .ok_or(Error::Sequence)?
         }
+        DelegationAction::Reduce {
+            amount,
+            owner_authorized,
+        } => {
+            if !owner_authorized
+                || amount == 0
+                || before.first_active_height == 0
+                || before.first_inactive_height != 0
+                || before.frozen()
+            {
+                return Err(Error::Sequence);
+            }
+            unbonding_amount = unbonding_amount
+                .checked_add(amount)
+                .ok_or(Error::Overflow)?;
+            before
+                .delegated_amount
+                .checked_sub(amount)
+                .ok_or(Error::Sequence)?
+        }
+        DelegationAction::ConfirmReduction => before.delegated_amount,
+        DelegationAction::WithdrawReduction {
+            amount,
+            cutoff,
+            since,
+        } => {
+            if amount == 0
+                || cutoff == 0
+                || (before.frozen() && before.fault_height < cutoff)
+                || since & !MAX_DELAY != RELATIVE_BLOCKS
+                || since & MAX_DELAY < policy.unbonding_blocks
+            {
+                return Err(Error::Sequence);
+            }
+            unbonding_amount = unbonding_amount
+                .checked_sub(amount)
+                .ok_or(Error::Sequence)?;
+            before.delegated_amount
+        }
+        DelegationAction::SlashReduction {
+            amount,
+            cutoff,
+            fee,
+            historical_evidence,
+        } => {
+            if amount == 0
+                || cutoff == 0
+                || fee < amount
+                || !(historical_evidence || (before.frozen() && before.fault_height < cutoff))
+            {
+                return Err(Error::Evidence);
+            }
+            unbonding_amount = unbonding_amount
+                .checked_sub(amount)
+                .ok_or(Error::Sequence)?;
+            before.delegated_amount
+        }
     };
     if after
         != (StakeData {
             delegated_amount,
+            unbonding_amount,
             ..before
         })
     {
@@ -594,15 +795,14 @@ fn verify_subject(
 ) -> Result<(Option<StakeData>, Option<StakeData>)> {
     let before = old.record(validator);
     let after = new.record(validator);
-    if before == after
-        || !old
+    if !old
+        .records
+        .iter()
+        .filter(|stake| &stake.validator_pubkey != validator)
+        .eq(new
             .records
             .iter()
-            .filter(|stake| &stake.validator_pubkey != validator)
-            .eq(new
-                .records
-                .iter()
-                .filter(|stake| &stake.validator_pubkey != validator))
+            .filter(|stake| &stake.validator_pubkey != validator))
     {
         return Err(Error::Sequence);
     }
@@ -615,7 +815,7 @@ pub fn retirement_cell(
     cell: StakeCell,
     inactive: i64,
 ) -> Result<StakeCell> {
-    let earliest = if record.frozen {
+    let earliest = if record.frozen() {
         cell.first_active_height
             .checked_add(1)
             .ok_or(Error::Overflow)?
