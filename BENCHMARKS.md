@@ -2927,3 +2927,46 @@ passed 460 tests with 16 ignored. The Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Signed workloads, per-transaction timing, replay proofs and failures](benchmarks/2026-11-26-stem-lineage-load.json.xz).
+
+## Proposal selection after the Lineage read limit
+
+Revision `4ffb817` skips candidates whose encoded bytes or minimum
+Lineage reads exceed the remaining block budget. Jolteon walks the
+mempool by reference. A boundary test spends 18 of 34 reads, skips a
+three-target command, and uses the remaining 16 reads for a valid
+fee-only outcome. Its Header and receipts match full execution.
+
+The controlled Store probe compared `84049bf` and `4ffb817` with the
+same test code and five exact prebuilt RISC-V artifacts. It offered
+4,096 signed eight-Head commands in order, with a 1,104-read budget.
+Each repetition selected the same 24 commands. Both revisions
+produced the same Header and signed workload digest. Median selection
+over 11 repetitions fell from **144.588 ms to 5.042 ms**. The timer
+excludes constructing the input queue and preparing the selected
+block afterward. A baseline checkout can apply fixture commits
+`26a9108` and `e0650e1` to run the same probe.
+
+| Local network, planned load | Actual offered TPS, before → after | Common visibility TPS in offer window, before → after | Visible by end of drain, before → after | p99, before → after |
+| --- | ---: | ---: | ---: | ---: |
+| 4 replicas, eight-Head commands, 240 TPS | 229.32 → 229.64 | 148.88 → 148.88 | 5,680 → 5,680 | 30.523 → 30.271 s |
+| 16 replicas, one AMM pool, 240 TPS | 127.60 → 142.63 | 6.20 → 1.33 | 2,108 → 2,116 | 36.099 → 39.182 s |
+
+Both network pairs reused each other's signed workload, genesis,
+cadence and resource budgets. The four-replica accounting bottleneck
+remained at 178 eight-Head commands per block. The 16-replica
+after run admitted more submissions, used 541.35 aggregate CPU
+seconds versus 498.40, and remained overloaded. Its sampled
+visibility during the offer window was lower. The end-to-end
+experiment therefore established no throughput gain. Each row is
+one before/after pair on the same host. All observed finalizations
+passed the serial Lineage audit.
+
+The archive retains an initial compiler failure, the unpinned
+attempt with different contract bytes and Headers, and a pinned
+attempt that reused the wrong host test binary in the shared Cargo
+target directory. Only the matched Header and checked binaries enter
+the Store comparison. The workspace passed 461 release tests with
+17 ignored. The Go proof suite and frozen CometBFT build passed.
+
+[Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
+[Raw timings, signed workloads, pinned contracts and failed controls](benchmarks/2026-11-26-stem-proposal-selection.json.xz).

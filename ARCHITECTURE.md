@@ -62,9 +62,9 @@ inclusion in the next block. Uncertified proposals and temporary queue
 saturation leave entries eligible for later selection. Committed
 reservations follow the Keeper state machine.
 
-The proposer walks borrowed mempool entries in order and copies only
-those it selects. It skips an entry if the remaining block bytes are
-too small or its Lineage command cannot fit the remaining logical reads.
+The proposer walks borrowed mempool entries in order and copies them
+into the candidate list upon selection. It skips an entry when its
+bytes or minimum Lineage reads exceed the remaining block budget.
 The read floor covers the Executor context and both resolutions of the
 fee input and declared dependencies. It also applies to a fee-only
 outcome, and sums across members of an atomic batch. Candidate execution

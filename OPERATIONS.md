@@ -895,6 +895,19 @@ replays the archive in a separate store. The audit checks every
 receipt and Header, the final versions and both proof paths for
 each Head, and the two asset supplies for AMM runs.
 
+To measure only proposal selection against an exhausted read budget,
+run the fixed-queue test. For checkout comparisons use the same
+directory of prebuilt RISC-V contracts in both runs.
+
+```sh
+STEM_TEST_CONTRACT_DIR="$contracts_dir" STEM_SELECTION_REPORT=/tmp/stem-selection.json \
+cargo test --locked --release --test native_store \
+  measure_exhausted_lineage_selection -- --ignored --nocapture
+```
+
+The report includes all selection times, the signed input digest,
+and the Header produced by the selected transactions.
+
 ### Exercise the browser SDK
 
 Build the ES module and TypeScript declarations with the [SDK build
