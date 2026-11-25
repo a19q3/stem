@@ -813,6 +813,25 @@ The Stem escrow arguments use the original complete identity Type hash, CKB gene
 
 Approval and ownership have their own inputs and signatures. The fixture uses a single approval key under two network-specific Locks and distinct owner keys. It archives successful and rejected transactions through creation, export, CKB transfer, verified burn and restoration, including attempts to remove the independent policy or pay the remote escrow Lock.
 
+### Verify per-vault revenue
+
+Query `/stem/vault-revenue` with `prove=true` and empty data at the current
+tip. Decode the query value to `accounting.json` and authenticate the native
+execution Header at the returned height with `stem jolteon-proof`. Save that
+Header as a JSON hex string in `header.json`.
+
+```sh
+stem bridge verify-vault-revenue --network "$stem_network" \
+  --header header.json --accounting accounting.json
+```
+
+The CLI checks the Strand revenue record and cumulative fee tally against
+the same SystemRoot, then recomputes the amount for each lane. Amounts in the
+returned account report are hexadecimal shannons. Allocation uses each
+lane's previously authenticated CKB reserve weight. See `/stem/fee-funds`
+for the actual withdrawal lane and amounts already paid. The Rust SDK exposes
+`VaultRevenue::decode` and `Store::verify_vault_revenue`.
+
 ### Redeem fee revenue on CKB
 
 An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.

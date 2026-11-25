@@ -986,6 +986,19 @@
       ]
     },
     {
+      "name": "VaultRevenueEntry",
+      "kind": "sequence",
+      "fields": [
+        { "name": "lane", "type": "Byte32" },
+        { "name": "attributed", "type": "CompactUint64" }
+      ]
+    },
+    {
+      "name": "VaultRevenue",
+      "kind": "dense_vector",
+      "item": "VaultRevenueEntry"
+    },
+    {
       "name": "FeePayout",
       "kind": "sequence",
       "fields": [

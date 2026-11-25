@@ -19,6 +19,7 @@ mod mint;
 mod reward_claim;
 mod settlement;
 mod snapshot;
+mod vault_revenue;
 pub use backing::BridgeBacking;
 pub use fees::{FeeClaim, FeeFund, FeeFundDestination, FeeFundPolicy, FeePayout, FeePayouts};
 pub use l1_anchor::L1AnchorUpdate;
@@ -31,6 +32,8 @@ pub use snapshot::{
     ARRIVING_GUARDIAN, SnapshotContext, VerifiedSnapshot, snapshot_body, snapshot_commitment,
     snapshot_digest,
 };
+pub use vault_revenue::{VaultRevenue, VaultRevenueEntry};
+
 const MAX_ATTESTATIONS: usize = 2 * MAX_RECORDS;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

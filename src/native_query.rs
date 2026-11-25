@@ -306,6 +306,33 @@ pub(crate) fn query(
             }))?
             .into()
         }
+        "/stem/vault-revenue" if prove && data.is_empty() => {
+            ensure!(
+                requested == tip,
+                "vault revenue proof requires the current height"
+            );
+            let (revenue, proof) = store.prove_vault_revenue()?;
+            let (fees, fee_proof) = store.prove_extinguished_fees()?;
+            let entries: Vec<_> = revenue
+                .entries()
+                .iter()
+                .map(|entry| {
+                    serde_json::json!({
+                        "lane": format!("0x{}", hex::encode(entry.lane.as_slice())),
+                        "attributed_shannons": ckb_jsonrpc_types::Uint64::from(entry.attributed),
+                    })
+                })
+                .collect();
+            serde_json::to_vec(&serde_json::json!({
+                "entries": entries,
+                "attributed_shannons": ckb_jsonrpc_types::Uint64::from(revenue.total()?),
+                "extinguished_shannons": fees.map(ckb_jsonrpc_types::Uint64::from),
+                "fee_proof": format!("0x{}", hex::encode(fee_proof.encode()?)),
+                "record": format!("0x{}", hex::encode(revenue.encode())),
+                "proof": format!("0x{}", hex::encode(proof.encode()?)),
+            }))?
+            .into()
+        }
         "/stem/bridge-lane" if prove => {
             ensure!(
                 requested == tip,

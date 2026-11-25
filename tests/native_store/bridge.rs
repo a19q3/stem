@@ -8,8 +8,8 @@ use stem::native_store::{
 };
 use stem_ledger::protocol::{
     BridgeMint, BridgeSettlement, Certificate, FeeClaim, FeeFund, FeePayouts, L1Anchor,
-    Limits as ProtocolLimits, MintObservation, Operation, SettlementAction, VaultUpdate,
-    settlement_digest,
+    Limits as ProtocolLimits, MintObservation, Operation, SettlementAction, VaultRevenue,
+    VaultRevenueEntry, VaultUpdate, settlement_digest,
 };
 use stem_stake::{Attestation, Member};
 
@@ -227,6 +227,42 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         .out_point(OutPoint::new(code_mint.id(store.network()), 1))
         .build();
     let code_capacity: u64 = code_mint.outputs().map(|cell| cell.capacity()).sum();
+    // The opening reserve can be empty when fees are paid using a same-block mint.
+    let first_block_path = tempfile::tempdir()?;
+    let mut first_block =
+        Store::open(first_block_path.path(), &fixture.spec, Retention::Recent(2))?;
+    let code = code_mint.outputs().nth(1).context("missing minted code")?;
+    let payment = Transaction::new(
+        vec![lock_dep.clone()],
+        vec![],
+        vec![CellInput::new(udt_dep.out_point(), None)],
+        vec![Cell::new(
+            code.capacity() - FEE,
+            code.lock(),
+            vec![],
+            code.data(),
+        )?],
+        vec![],
+    )?;
+    let payment = fixture.seal_with(payment, |point| {
+        code_mint
+            .outputs()
+            .nth(u32::from(point.index()) as usize)
+            .context("missing same-block input")
+    })?;
+    let txs = [code_mint.clone(), payment];
+    let serial = first_block.prepare(&txs, TIME, false)?;
+    let parallel = first_block.prepare(&txs, TIME, true)?;
+    assert_eq!(serial.header(), parallel.header());
+    first_block.commit(parallel)?;
+    let (revenue, _) = first_block.prove_vault_revenue()?;
+    for entry in revenue.entries() {
+        assert_eq!(
+            entry.attributed,
+            if entry.lane == ckb_lane { FEE } else { 0 }
+        );
+    }
+
     commit(&mut store, code_mint)?;
     let ((confirmed, adopted), path) = store.prove_bridge_anchor()?;
     assert_eq!(confirmed, anchor(2));
@@ -355,6 +391,45 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     assert_eq!(backing.circulating(), code_capacity);
     assert_eq!(backing.pending(), MINT - FEE);
     assert_eq!(backing.unallocated(), FEE);
+    let (revenue, path) = store.prove_vault_revenue()?;
+    let mut expected = vec![
+        (ckb_lane.clone(), code_capacity),
+        (asset_lane.clone(), MINT),
+    ];
+    expected.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let mut prefix = 0u128;
+    let mut allocated = 0u64;
+    let expected = VaultRevenue::new(
+        expected
+            .into_iter()
+            .map(|(lane, capacity)| {
+                prefix += u128::from(capacity);
+                let share = (u128::from(FEE) * prefix / u128::from(backing.liquid())) as u64;
+                let attributed = share - allocated;
+                allocated = share;
+                VaultRevenueEntry { lane, attributed }
+            })
+            .collect(),
+    )?;
+    assert_eq!(expected, revenue);
+    assert_eq!(revenue.total()?, store.fee_surplus()?);
+    assert!(Store::verify_vault_revenue(
+        store.network(),
+        store.tip(),
+        &revenue,
+        &path
+    ));
+    let mut forged = revenue.entries().to_vec();
+    forged[0].attributed -= 1;
+    forged[1].attributed += 1;
+    let forged = VaultRevenue::new(forged)?;
+    assert_eq!(forged.total()?, revenue.total()?);
+    assert!(!Store::verify_vault_revenue(
+        store.network(),
+        store.tip(),
+        &forged,
+        &path
+    ));
     let pending = store
         .bridge_receipt(&asset_lane, 0)?
         .context("pending nonce zero")?;
@@ -474,6 +549,14 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     ));
     assert!(restored.bridge_receipt(&asset_lane, 0)?.is_none());
     assert_eq!(restored.fee_surplus()?, FEE);
+    let (restored_revenue, proof) = restored.prove_vault_revenue()?;
+    assert_eq!(restored_revenue, revenue);
+    assert!(Store::verify_vault_revenue(
+        restored.network(),
+        restored.tip(),
+        &restored_revenue,
+        &proof
+    ));
     let policy = restored
         .fee_fund_policy()
         .context("missing restored funds")?;

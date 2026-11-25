@@ -36,6 +36,7 @@ mod anchor;
 mod payout;
 mod reference;
 mod vault;
+mod vault_revenue;
 
 const DEPOSIT_MEMO: &[u8] = b"STEM-PIN";
 
@@ -83,6 +84,8 @@ pub enum BridgeCommand {
         #[arg(long)]
         claimed_before: u64,
     },
+    /// Verify all vault allocations and the fee tally against an authenticated Header.
+    VerifyVaultRevenue(vault_revenue::Verify),
     /// Verify a pending withdrawal against an authenticated Header and build its CKB input_type.
     WithdrawalWitness(payout::WithdrawalWitness),
     /// Verify a Stem execution proof and confirmed CKB payout before signing.
@@ -203,6 +206,7 @@ impl BridgeCommand {
                 println!("{}", json!(JsonBytes::from_vec(claim.as_slice().to_vec())));
                 Ok(())
             }
+            Self::VerifyVaultRevenue(args) => args.run(),
             Self::WithdrawalWitness(args) => args.run(),
             Self::AttestPayout(args) => args.run(),
             Self::AttestVault(args) => args.run(),

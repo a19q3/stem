@@ -10,7 +10,7 @@ import secrets
 import struct
 import subprocess
 
-from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, script, write_key
+from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, reject_cli, script, write_key
 from jolteon_checkpoint_localnet import PublisherFixture, Relay
 from intercell_localnet import intercell_round
 from security_domain_localnet import use_stem_receipt
@@ -125,9 +125,11 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
         return result["log"]
 
     unearned = reject(claim(0, 100 * CKB), "exceeds fund allocation")
+    zero_revenue = vault_revenue_proof(args, client, "before-fee", {lane: 0})
     paid_fee = client.call("broadcast_tx_commit", tx=payment)
     before = proved("/stem/fee-funds")
     assert int(before["extinguished_shannons"], 16) == fee, before
+    attributed = vault_revenue_proof(args, client, "before-fund-claims", {lane: fee})
     amounts = [fee * basis // 10_000 for basis in (6500, 1500, 1000, 1000)]
     wrong_amount = reject(claim(0, amounts[0] + 1), "exceeds fund allocation")
     dust = reject(claim(0, 1), "below L1 occupied Capacity")
@@ -171,7 +173,11 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
     assert int(backing["pending_shannons"], 16) == int(backing["unallocated_shannons"], 16) == 0
     expenses = use_fee_fund(args, l1, fixture, vault, relay, fee_fund, payouts[-2:], fee_input) if fee_fund else None
     assert proved("/stem/bridge-backing")["record"] == backing["record"]
-    return {"payment": paid_fee, "before": before, "queued": queued, "backing_queued": backing_queued,
+    attributed_after = vault_revenue_proof(args, client, "after-fund-payouts", {lane: fee}, negative=True)
+    assert attributed_after["query"]["record"] == attributed["query"]["record"]
+    return {"vault_revenue": {"before_fee": zero_revenue, "before_claims": attributed,
+                              "after_payouts": attributed_after},
+            "payment": paid_fee, "before": before, "queued": queued, "backing_queued": backing_queued,
             "payouts": payouts, "after": after, "backing": backing, "checkpoint_expenses": expenses,
             "rejections": {"unearned": unearned, "overclaim": wrong_amount, "dust": dust, "replay": replay}}
 
@@ -372,6 +378,52 @@ def reference_round(args, l1, fixture, spec, spec_path, lane, mint, client):
             "historical_out_point": spent_point, "historical_inclusion": historical_inclusion}
 
 
+def vault_revenue_proof(args, client, name, expected, *, negative=False):
+    reply = client.query("/stem/vault-revenue", prove=True)
+    height = reply["height"]
+    query = json.loads(bytes.fromhex(reply["value"]))
+    header = client.header(height)
+    finality = client.finality(height)
+    header_file = args.output / f"vault-revenue-{name}-header.json"
+    accounting_file = args.output / f"vault-revenue-{name}.json"
+    write_json(header_file, "0x" + header["header"])
+    write_json(accounting_file, query)
+    command = [args.binary, "bridge", "verify-vault-revenue", "--network", client.network,
+               "--header", header_file, "--accounting", accounting_file]
+    verified = json.loads(run(*command))
+    assert verified["height"] == height
+    assert {entry["lane"]: int(entry["attributed_shannons"], 16)
+            for entry in verified["entries"]} == expected, verified
+    assert int(verified["attributed_shannons"], 16) == sum(expected.values())
+    rejected = {}
+    if negative:
+        for kind in ("different-total", "different-network"):
+            invalid_command = command.copy()
+            if kind == "different-total":
+                path = args.output / f"vault-revenue-{name}-{kind}.json"
+                write_json(path, dict(query, extinguished_shannons=hex(sum(expected.values()) + 1)))
+                invalid_command[-1] = path
+                reason = "invalid extinguished fee proof"
+            else:
+                invalid_command[invalid_command.index("--network") + 1] = "0x" + "ff" * 32
+                reason = "invalid vault revenue proof"
+            rejected[kind] = reject_cli(reason, *invalid_command)
+    return {"query": query, "height": height, "header": header, "finality": finality,
+            "verified": verified, "rejections": rejected, "command": [str(arg) for arg in command]}
+
+
+def split_vault_fee(fees, weights):
+    shares = {}
+    total = sum(weights.values())
+    prefix = allocated = 0
+    for lane, weight in sorted(weights.items()):
+        prefix += weight
+        share = fees * prefix // total
+        shares[lane] = share - allocated
+        allocated = share
+    return shares
+
+
 def bridge_round(args, l1, fixture, children):
     network = hex_bytes(ckb_hash(b"Stem native Jolteon bridge fixture\0" + secrets.token_bytes(32)))
     vault = deploy(args, l1, fixture, network)
@@ -466,8 +518,17 @@ def bridge_round(args, l1, fixture, children):
     if token:
         token["custody_cell"] = vault["custody_cell"]
         report["xudt"] = xudt_round_trip(args, l1, fixture, token, spec, spec_path, mint, payout, client, relay)
+        asset_lane = report["xudt"]["lane"]
+        weights = {lane: mint["capacity"] - payout["capacity"], asset_lane: report["xudt"]["mint"]["capacity"]}
+        expected = split_vault_fee(FEE, weights)
+        expected[lane] += FEE
+        before = vault_revenue_proof(args, client, "before-reserve-move", expected)
         report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                      report["xudt"], spec_path, client)
+        after = vault_revenue_proof(args, client, "after-rotation", expected, negative=True)
+        assert before["query"]["record"] == after["query"]["record"]
+        report["vault_revenue"] = {"second_fee_weights": weights, "before_reserve_move": before,
+                                   "after_rotation": after}
     report["checkpoint"] = (publisher or relay).report()
     if not (args.fee_funds or args.reference_script or args.intercell_mailbox):
         report["backing"] = reconcile_backing(client, report)

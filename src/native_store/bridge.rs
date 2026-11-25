@@ -12,8 +12,8 @@ use stem_ledger::{
     protocol::{
         BlockBudget, BridgeBacking, BridgeLedger, FeeClaim, FeeFund, FeeFundDestination,
         FeeFundPolicy, FeePayouts, L1Anchor, L1AnchorUpdate, Lane, Limits, PendingWithdrawal,
-        RewardClaim, SettlementChanges, VerifiedMint, l1_reference::VerifiedL1References,
-        reward_balance_key, reward_claim_key,
+        RewardClaim, SettlementChanges, VaultRevenue, VaultRevenueEntry, VerifiedMint,
+        l1_reference::VerifiedL1References, reward_balance_key, reward_claim_key,
     },
     replay,
 };
@@ -36,6 +36,7 @@ const LANE: &[u8] = b"bridge/lane/";
 const DEPOSIT: &[u8] = b"bridge/deposit/";
 const FUND_POLICY: &[u8] = b"fees/fund-policy";
 const FUND_PAYOUTS: &[u8] = b"fees/fund-payouts";
+const VAULT_REVENUE: &[u8] = b"fees/vault-revenue";
 const FUND_PENDING: &[u8] = b"fees/fund-pending/";
 
 pub struct BridgeGenesis {
@@ -151,6 +152,47 @@ impl StagedBridge {
                 backing.unallocated() == expected,
                 "bridge backing differs from fee accounting"
             );
+            if fees != 0 {
+                let parent = View {
+                    store,
+                    staged: &Records::new(),
+                };
+                let opening = if self.records.contains_key(BACKING) {
+                    parent.backing()?.liquid()
+                } else {
+                    backing.liquid()
+                };
+                // A first mint can fund a later transaction in the same block.
+                let (positions, liquid) = if opening == 0 {
+                    (&view, backing.liquid())
+                } else {
+                    (&parent, opening)
+                };
+                let revenue = VaultRevenue::decode(
+                    &parent
+                        .read(VAULT_REVENUE)?
+                        .context("missing vault revenue record")?,
+                )?;
+                let weights = revenue
+                    .entries()
+                    .iter()
+                    .map(|entry| Ok(positions.lane_state(&entry.lane)?.0.capacity))
+                    .collect::<Result<Vec<_>>>()?;
+                ensure!(
+                    weights
+                        .iter()
+                        .try_fold(0u64, |sum, weight| sum.checked_add(*weight))
+                        == Some(liquid),
+                    "vault reserves differ from aggregate backing"
+                );
+                let revenue = revenue.allocate(fees, &weights)?;
+                ensure!(
+                    revenue.total()? == total,
+                    "per-vault revenue differs from extinguished fees"
+                );
+                self.records
+                    .insert(VAULT_REVENUE.to_vec(), Some(revenue.encode().to_vec()));
+            }
             self.records
                 .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
         }
@@ -251,6 +293,17 @@ impl Bridge {
             };
             records.insert(key(LANE, &name, None), Some(lane.encode(0).to_vec()));
         }
+
+        let revenue = VaultRevenue::new(
+            lanes
+                .keys()
+                .map(|lane| VaultRevenueEntry {
+                    lane: lane.clone(),
+                    attributed: 0,
+                })
+                .collect(),
+        )?;
+        records.insert(VAULT_REVENUE.to_vec(), Some(revenue.encode().to_vec()));
 
         config.extend_from_slice(&u32::try_from(spec.recipient_locks.len())?.to_le_bytes());
         let recipient_locks = spec
@@ -1024,6 +1077,27 @@ impl Store {
         proof: &super::Proof,
     ) -> bool {
         Self::verify_system_record(network, header, BACKING, Some(&backing.encode()), proof)
+    }
+
+    pub fn prove_vault_revenue(&self) -> Result<(VaultRevenue, super::Proof)> {
+        let (record, proof) = self.prove_system(VAULT_REVENUE)?;
+        let record = record.context("vault revenue is not configured")?;
+        Ok((VaultRevenue::decode(&record)?, proof))
+    }
+
+    pub fn verify_vault_revenue(
+        network: &Byte32,
+        header: &super::Header,
+        revenue: &VaultRevenue,
+        proof: &super::Proof,
+    ) -> bool {
+        Self::verify_system_record(
+            network,
+            header,
+            VAULT_REVENUE,
+            Some(&revenue.encode()),
+            proof,
+        )
     }
 
     pub fn bridge_lane(&self, lane: &Byte32) -> Result<Lane> {
