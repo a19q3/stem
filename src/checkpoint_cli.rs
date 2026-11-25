@@ -360,16 +360,20 @@ fn build_jolteon_bundle(
         tip.height() == height && tip.header.as_slice() == index.header(height)?.encode().as_ref(),
         "proof certifies a different checkpoint Header"
     );
-    let next_roster = if terminal {
-        HandoffProof::decode(advance.proof.as_slice())?.announcement
-    } else {
-        advance.roster
-    };
+    let next_roster = next_jolteon_roster(advance)?;
     Ok(Bundle {
         witness,
         tip,
         next_roster,
     })
+}
+
+fn next_jolteon_roster(advance: jolteon::Advance) -> Result<Vec<u8>> {
+    if advance.terminal {
+        Ok(HandoffProof::decode(advance.proof.as_slice())?.announcement)
+    } else {
+        Ok(advance.roster)
+    }
 }
 
 impl Prepare {

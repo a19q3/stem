@@ -188,7 +188,8 @@ The configuration uses the following fields.
 | `policy`, `initial_roster` | Hex Type Script arguments and path to a JSON hex string containing the genesis committee record |
 | `checkpoint_code`, `checkpoint_code_hash` | CKB code OutPoint and its pinned Data2 code hash |
 | `seed`, `fee_dep_group` | The CKB seed OutPoint pinned by the Type ID and the CKB secp256k1 Sighash dep-group OutPoint |
-| `fee_key` | Path to the seed owner's private CKB Sighash key, stored in a private 32-byte file |
+| `fee_key` | Path to a private 32-byte CKB Sighash key. The initial publisher uses the seed owner key. |
+| `update_funding` | Optional plain CKB OutPoint locked to this publisher's fee key. Set it for a publisher joining an existing checkpoint. |
 | `checkpoint_capacity`, `fee` | Checkpoint capacity and fee per publication in shannons |
 | `interval_seconds`, `confirmations` | Routine interval in finalized Stem seconds and the number of CKB blocks required after inclusion |
 
@@ -198,17 +199,33 @@ same checkpoint capacity and returns fee change to that key. Budget
 the seed for the initial checkpoint, change occupied capacity, and
 planned fees. Keep the journal across process restarts. A shallow fork
 can retry the same signed transaction. A reorganized confirmed
-checkpoint, a spent publisher input, or a rejected journaled transaction
-requires operator reconciliation before another publication. The publisher
-currently follows the checkpoint chain it bootstraps. Coordinated
-adoption of a competing relayer's successor and automatic wallet
-refunding are separate operations.
+checkpoint anchor halts the journal. To continue after another publisher
+wins a competing spend, supply each missing confirmed transaction hash
+in spend order. A fresh journal starts at the transaction that consumes
+the pinned seed.
+
+```sh
+stem checkpoint publish --config publisher-b.json \
+  --adopt "$first_missing_tx_hash" --adopt "$next_missing_tx_hash"
+stem checkpoint publish --config publisher-b.json --at-least-height "$target_height"
+```
+
+Each invocation accepts up to 64 updates. It checks the exact
+predecessor OutPoint, pinned Lock and Type Script, native finality
+and committee handoff witnesses, and the configured CKB confirmation
+depth. The full list is recorded atomically. Successful adoption
+resolves a stale pending publication. A publisher uses its own tracked
+change or its configured funding Cell. The operator supplies the
+transaction hashes and fee funding. Use independent journals, fee
+keys and proof indexes for multiple publishers.
 
 Use the stake runner from the preceding example with `--exercise-publisher
 --replace` in place of `--publish-checkpoint --replace` and with a new
 output directory. It uses actual CKB blocks and records each fresh CLI
 invocation, canonical witness inclusion proofs and the response to both
-shallow and confirmed-anchor reorganizations.
+shallow and confirmed-anchor reorganizations. Use
+`--exercise-publisher-handoff --replace` to test two fee wallets,
+a competing spend, and catch-up from a fresh journal.
 
 ### Fund CKB checkpoint fees
 

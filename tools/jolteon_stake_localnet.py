@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, point, script_hash, write_key
 from jolteon_bridge_localnet import Client, fee_payment
-from jolteon_checkpoint_localnet import Relay, exercise_publisher
+from jolteon_checkpoint_localnet import Relay, exercise_publisher, exercise_publisher_handoff
 from checkpoint_fee_fund_localnet import funded_handoff
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, STATUS, SUBMIT, rpc, write_configuration
 from jolteon_slash_localnet import evidence as slash_evidence
@@ -677,7 +677,7 @@ def run_epochs(args, l1, scenario, fixture):
         increased = None
         stake_client = Client(args, ports[public(incoming)], hex_bytes(scenario.network))
         archive = args.output / f"node-{ports[public(incoming)]}" / "db"
-        relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint or args.exercise_publisher or args.checkpoint_fee_fund else None
+        relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint or args.exercise_publisher or args.exercise_publisher_handoff or args.checkpoint_fee_fund else None
         if delegation:
             delegation["activation"] = confirm_positions(args, scenario, relay, public(old), genesis[0]["registry"], original)
         if rewards:
@@ -802,6 +802,8 @@ def run_epochs(args, l1, scenario, fixture):
                 stake_client, verified["height"], exit_case, active_freeze)
         if args.exercise_publisher:
             checkpoints = exercise_publisher(args, l1, fixture, relay, scenario.secp, common_height)
+        if args.exercise_publisher_handoff:
+            checkpoints = exercise_publisher_handoff(args, l1, fixture, relay, scenario, common_height)
         if args.checkpoint_fee_fund:
             checkpoints = funded_handoff(args, l1, fixture, scenario, relay)
         if rewards:
@@ -901,6 +903,7 @@ def main():
     parser.add_argument("--replace", action="store_true", help="replace the entire first committee, then increase power")
     parser.add_argument("--publish-checkpoint", action="store_true", help="publish native Jolteon checkpoints on the CKB devnet")
     parser.add_argument("--exercise-publisher", action="store_true", help="exercise durable sparse publication on a disposable CKB devnet")
+    parser.add_argument("--exercise-publisher-handoff", action="store_true", help="switch independent checkpoint publishers on CKB")
     parser.add_argument("--checkpoint-fee-fund", type=lambda path: Path(path).resolve(),
                         help="fund the first CKB committee handoff from a restricted fee pot")
     parser.add_argument("--retire", action="store_true", help="retire and unbond the outgoing stake using the native checkpoint")
@@ -915,10 +918,12 @@ def main():
     for optional in ("vault", "deposit-lock", "native-lock", "wrapped"):
         parser.add_argument(f"--{optional}", type=lambda path: Path(path).resolve())
     args = parser.parse_args()
-    if args.checkpoint_fee_fund and (args.exercise_publisher or args.publish_checkpoint or args.delegation or args.slash):
+    if args.checkpoint_fee_fund and (args.exercise_publisher or args.exercise_publisher_handoff or args.publish_checkpoint or args.delegation or args.slash):
         parser.error("--checkpoint-fee-fund uses an isolated committee handoff fixture")
     if args.exercise_publisher and (args.publish_checkpoint or args.delegation or args.slash):
         parser.error("--exercise-publisher uses its own isolated checkpoint and CKB reorg scenario")
+    if args.exercise_publisher_handoff and (args.exercise_publisher or args.publish_checkpoint or args.delegation or args.slash):
+        parser.error("--exercise-publisher-handoff uses an isolated competing-publisher fixture")
     if args.observer_extra_lag < 0:
         parser.error("--observer-extra-lag must be nonnegative")
     if args.active_slash and (not args.slash or args.replace):

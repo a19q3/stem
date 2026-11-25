@@ -29,6 +29,8 @@ use crate::{
     l1::{Journal, Rpc},
 };
 
+mod adoption;
+
 const SIGHASH_TYPE: &str = "9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8";
 
 #[derive(Args)]
@@ -42,6 +44,9 @@ pub struct Publish {
     /// Pay for this update from the specified PoW Security Fund Cell.
     #[arg(long)]
     fee_fund: Option<PathBuf>,
+    /// Adopt a confirmed successor by transaction hash. Repeat in spend order.
+    #[arg(long, conflicts_with_all = ["at_least_height", "fee_fund"])]
+    adopt: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +64,8 @@ struct Config {
     seed: OutPoint,
     fee_dep_group: OutPoint,
     fee_key: PathBuf,
+    /// Independent fee input after the shared checkpoint has been bootstrapped.
+    update_funding: Option<OutPoint>,
     checkpoint_capacity: u64,
     fee: u64,
     interval_seconds: u64,
@@ -83,6 +90,8 @@ struct State {
 #[derive(Deserialize, Serialize)]
 struct Confirmed {
     transaction: H256,
+    #[serde(default)]
+    output_index: u32,
     l1_height: u64,
     l1_block: H256,
     tip: JsonBytes,
@@ -125,6 +134,9 @@ impl Publish {
     pub fn run(self) -> Result<()> {
         let config = read_json_limited(&self.config, 64 * 1024)?;
         let (publisher, mut state) = Publisher::open(config)?;
+        if !self.adopt.is_empty() {
+            return print_json(&publisher.adopt(&mut state, &self.adopt)?);
+        }
         let fund = self
             .fee_fund
             .as_deref()
@@ -272,7 +284,7 @@ impl Publisher {
                 .as_ref()
                 .context("initialize the checkpoint with the fee wallet first")?;
             let funded = fund::Update {
-                checkpoint: out_point(&previous.transaction, 0),
+                checkpoint: previous.point(),
                 checkpoint_code: self.config.checkpoint_code.clone(),
                 fund: fund.out_point,
                 fund_code: fund.code,
@@ -383,22 +395,21 @@ impl Publisher {
             "CKB code dep differs from the pinned checkpoint code hash"
         );
         let mut inputs = Vec::with_capacity(2);
-        let fee_point = match previous {
+        let (fee_point, checkpoint_capacity) = match previous {
             Some(previous) => {
-                let point = out_point(&previous.transaction, 0);
+                let point = previous.point();
                 let cell = self.node.live_cell(&point)?;
                 ensure!(
                     packed::Script::from(cell.output.lock) == self.checkpoint_lock
                         && cell.output.type_.map(Script::from).as_ref()
                             == Some(&self.checkpoint_type)
-                        && cell.output.capacity.value() == self.config.checkpoint_capacity
                         && cell.data.is_some_and(|data| data.content == previous.tip),
                     "live checkpoint differs from the journal"
                 );
                 inputs.push(CellInput::new(point.into(), 0));
-                previous.wallet_point()
+                (self.wallet_point(previous), cell.output.capacity.value())
             }
-            None => self.config.seed.clone(),
+            None => (self.config.seed.clone(), self.config.checkpoint_capacity),
         };
         let fee = self.node.live_cell(&fee_point)?;
         ensure!(
@@ -409,7 +420,6 @@ impl Publisher {
         );
         inputs.push(CellInput::new(fee_point.into(), 0));
 
-        let checkpoint_capacity = self.config.checkpoint_capacity;
         let change = fee
             .output
             .capacity
@@ -542,18 +552,13 @@ impl Publisher {
                         "checkpoint inclusion changed during confirmation"
                     );
                     let wallet_change = if pending.uses_fund {
-                        Some(
-                            state
-                                .confirmed
-                                .as_ref()
-                                .context("missing checkpoint wallet")?
-                                .wallet_point(),
-                        )
+                        self.retained_wallet(state.confirmed.as_ref())?
                     } else {
-                        None
+                        Some(out_point(&hash, 1))
                     };
                     state.confirmed = Some(Confirmed {
                         transaction: hash,
+                        output_index: 0,
                         l1_height: height,
                         l1_block: block,
                         tip: JsonBytes::from_vec(tip.encode()),
@@ -568,13 +573,42 @@ impl Publisher {
         }
         Ok(result)
     }
+
+    fn wallet_point(&self, previous: &Confirmed) -> OutPoint {
+        previous
+            .wallet_change
+            .clone()
+            .or_else(|| self.config.update_funding.clone())
+            .unwrap_or_else(|| out_point(&previous.transaction, 1))
+    }
+
+    fn retained_wallet(&self, previous: Option<&Confirmed>) -> Result<Option<OutPoint>> {
+        let Some(previous) = previous else {
+            return Ok(None);
+        };
+        if previous.wallet_change.is_some() || self.config.update_funding.is_some() {
+            return Ok(previous.wallet_change.clone());
+        }
+        let (raw, _, _) = self.node.committed(&previous.transaction)?;
+        let tx = packed::Transaction::from_slice(raw.as_bytes())?;
+        let change = tx
+            .raw()
+            .outputs()
+            .get(1)
+            .zip(tx.raw().outputs_data().get(1));
+        Ok(change
+            .filter(|(output, data)| self.is_fee_output(output, &data.raw_data()))
+            .map(|_| out_point(&previous.transaction, 1)))
+    }
+
+    fn is_fee_output(&self, output: &CellOutput, data: &[u8]) -> bool {
+        output.lock() == self.fee_lock && output.type_().is_none() && data.is_empty()
+    }
 }
 
 impl Confirmed {
-    fn wallet_point(&self) -> OutPoint {
-        self.wallet_change
-            .clone()
-            .unwrap_or_else(|| out_point(&self.transaction, 1))
+    fn point(&self) -> OutPoint {
+        out_point(&self.transaction, self.output_index)
     }
 }
 

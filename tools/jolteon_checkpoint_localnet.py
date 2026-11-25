@@ -132,14 +132,15 @@ class Relay:
 class PublisherFixture:
     """Drive the real publisher CLI with a fresh process on each poll."""
 
-    def __init__(self, args, l1, fixture, relay, fee_dep):
+    def __init__(self, args, l1, fixture, relay, fee_dep, *, name="publisher"):
         self.args, self.l1, self.relay = args, l1, relay
         root = relay.root
-        self.path = root / "publisher.json"
+        self.path = root / f"{name}.json"
+        self.events_path = root / f"{name}-events.json"
         self.config = {
             "l1": l1.url, "replica": f"127.0.0.1:{relay.client.port}",
-            "archive_db": str(relay.archive), "index": str(root / "publisher-index"),
-            "journal": str(root / "journal"), "policy": relay.policy, "initial_roster": str(relay.roster),
+            "archive_db": str(relay.archive), "index": str(root / f"{name}-index"),
+            "journal": str(root / ("journal" if name == "publisher" else f"{name}-journal")), "policy": relay.policy, "initial_roster": str(relay.roster),
             "checkpoint_code": relay.anchor["code"]["out_point"], "checkpoint_code_hash": relay.anchor["hash"],
             "seed": relay.anchor["seed"], "fee_dep_group": fee_dep["out_point"],
             "fee_key": str(fixture.faucet), "checkpoint_capacity": 1000 * CKB,
@@ -147,18 +148,22 @@ class PublisherFixture:
         }
         self.events, self.publications = [], []
 
-    def tick(self, label, requested=None, error=None, fee_fund=None):
+    def tick(self, label, requested=None, error=None, fee_fund=None, *, adopt=()):
         write_json(self.path, self.config)
         command = [self.args.binary, "checkpoint", "publish", "--config", self.path]
         if requested is not None:
             command += ["--at-least-height", str(requested)]
         if fee_fund is not None:
             command += ["--fee-fund", fee_fund]
+        for update in adopt:
+            command += ["--adopt", update]
+        started = time.perf_counter()
         result = subprocess.run(command, text=True, capture_output=True, timeout=30)
         event = {"label": label, "command": list(map(str, command)), "configuration": dict(self.config),
-                 "stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}
+                 "stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode,
+                 "wall_seconds": time.perf_counter() - started}
         self.events.append(event)
-        write_json(self.relay.root / "publisher-events.json", self.events)
+        write_json(self.events_path, self.events)
         if error is not None:
             assert result.returncode and error in result.stderr, event
             return event
@@ -253,3 +258,109 @@ def exercise_publisher(args, l1, fixture, relay, fee_dep, agreed):
     halted = tick("halt-after-confirmed-reorg", error="confirmed checkpoint anchor was reorganized")
     return {**publisher.report(), "first_inclusion": original, "replacement_inclusion": included,
             "rejected_confirmed_reorg": halted}
+
+
+def exercise_publisher_handoff(args, l1, fixture, relay, scenario, agreed):
+    a = PublisherFixture(args, l1, fixture, relay, scenario.secp, name="publisher-a")
+    b = PublisherFixture(args, l1, fixture, relay, scenario.secp, name="publisher-b")
+    late = PublisherFixture(args, l1, fixture, relay, scenario.secp, name="late-publisher")
+    b.config.update(fee_key=str(fixture.friend), update_funding=scenario.relay_fee_point)
+    late.config.update(fee_key=str(fixture.friend), update_funding=scenario.relay_fee_point)
+
+    def adopted(publisher, label, hashes, height, epoch, count=1):
+        step = publisher.tick(label, adopt=hashes)
+        assert (step["status"], step["updates"], step["transaction"], step["stem_height"], step["next_epoch"]) == (
+            "adopted", count, hashes[-1], height, epoch), step
+        return step
+
+    late.tick("reject-unrelated-transaction", error="lacks the pinned checkpoint Type Script",
+              adopt=[scenario.relay_fee_point["tx_hash"]])
+    first = a.tick("a-bootstraps")
+    assert (first["status"], first["stem_height"], first["next_epoch"]) == ("submitted", 10, 1), first
+    first_hash = first["transaction"]
+    a.mine_inclusion(first_hash)
+    b.tick("reject-before-confirmations", error="not sufficiently confirmed", adopt=[first_hash])
+    a.confirm("a-confirms-bootstrap", first)
+    adopted(b, "b-adopts-bootstrap", [first_hash], 10, 1)
+    foreign = relay.foreign(scenario.foreign_checkpoint)
+    foreign.advance(10, scenario.secp)
+    l1.mine(late.config["confirmations"])
+    late.tick("reject-valid-foreign-checkpoint", error="lacks the pinned checkpoint Type Script",
+              adopt=[foreign.point["tx_hash"]])
+
+    second = a.tick("a-submits-committee-handoff")
+    assert (second["status"], second["stem_height"], second["next_epoch"]) == ("submitted", 20, 2), second
+    second_hash = second["transaction"]
+    b.tick("b-competes-for-same-checkpoint", 20, error="L1 send_transaction failed")
+    a.mine_inclusion(second_hash)
+    a.confirm("a-confirms-handoff", second)
+    late.tick("reject-missing-bootstrap", error="does not bootstrap from the pinned seed", adopt=[second_hash])
+    b.tick("reject-unknown-tail-without-saving-preceding-update", error="L1 transaction is unconfirmed",
+           adopt=[second_hash, "0x" + "42" * 32])
+    adopted(b, "b-adopts-winner-after-conflict", [first_hash, second_hash], 20, 2)
+    adopted(b, "b-repeats-last-adoption", [second_hash], 20, 2, count=0)
+
+    height = max(21, agreed)
+    update = b.tick("b-publishes-with-independent-wallet", height)
+    assert update["status"] == "submitted" and update["stem_height"] == height, update
+    update_hash = update["transaction"]
+    b.mine_inclusion(update_hash)
+    l1.mine(b.config["confirmations"])
+    adopted(b, "b-adopts-own-pending-winner", [update_hash], height, 2)
+    b.publications.append(dict(update, proof=l1.prove_committed(update_hash),
+        signed=l1.call("get_transaction", update_hash, "0x0", True)["transaction"]))
+    inputs = l1.call("get_transaction", update_hash, "0x2", True)["transaction"]["inputs"]
+    assert [i["previous_output"] for i in inputs] == [point(second_hash, 0), scenario.relay_fee_point], inputs
+    adopted(a, "a-adopts-b", [update_hash], height, 2)
+    late.tick("reject-skipped-handoff", error="does not spend the preceding adopted OutPoint",
+              adopt=[first_hash, update_hash])
+
+    def finalized(height):
+        for _ in range(80):
+            if relay.client.status()["height"] >= height:
+                return
+            time.sleep(0.1)
+        raise TimeoutError(f"Stem did not finalize {height}")
+
+    # Rebuild the proofs used here from the actual Stem archive. The manual
+    # successor demonstrates that adoption follows real CKB group positions.
+    for h in (10, 20, height):
+        bundle = relay.bundle(h)
+        relay.previous = relay.root / f"manual-prior-{h}.json"
+        relay.roster = relay.root / f"manual-roster-{h}.json"
+        write_json(relay.previous, bundle["tip"])
+        write_json(relay.roster, bundle["next_roster"])
+    target = height + 1
+    finalized(target)
+    shifted = relay.bundle(target)
+    fee_input = point(second_hash, 1)
+    balance = int(l1.call("get_live_cell", fee_input, True)["cell"]["output"]["capacity"], 16)
+    old_capacity = int(l1.call("get_live_cell", point(update_hash, 0), True)["cell"]["output"]["capacity"], 16)
+    tx = transaction([fee_input, point(update_hash, 0)],
+         [output(balance - FEE - CKB, fixture.standard), output(old_capacity + CKB, relay.lock, relay.type)],
+         ["0x", shifted["tip"]], [relay.anchor["code"], scenario.secp])
+    tx["witnesses"] = ["0x", witness(binary(shifted["witness"]))]
+    shifted_signed = fixture.sign("shifted-checkpoint", tx, [wallet_group(0, [fixture.faucet])])
+    moved = l1.send(shifted_signed)
+    moved_proof = l1.prove_committed(moved)
+    l1.mine(b.config["confirmations"])
+    adopted(b, "b-adopts-output-and-group-input-one", [moved], target, 2)
+    all_updates = adopted(late, "late-adopts-all-committees", [first_hash, second_hash, update_hash, moved], target, 2, count=4)
+    assert all_updates["checkpoint"] == point(moved, 1), all_updates
+    finalized(target + 1)
+    successor = b.publish("b-resumes-from-shifted-output", target + 1)
+    successor_hash = successor["transaction"]
+    resumed = l1.call("get_transaction", successor_hash, "0x2", True)["transaction"]
+    assert [i["previous_output"] for i in resumed["inputs"]] == [point(moved, 1), point(update_hash, 1)], resumed
+    assert int(resumed["outputs"][0]["capacity"], 16) == old_capacity + CKB, resumed
+
+    inclusion = successor["l1_height"]
+    l1.call("truncate", l1.call("get_block_hash", hex(inclusion - 1)))
+    l1.mine(1)
+    assert l1.call("get_block_hash", hex(inclusion)) != successor["l1_block"]
+    b.tick("halt-after-confirmed-publisher-reorg", error="confirmed checkpoint anchor was reorganized")
+    b.tick("refuse-adoption-after-confirmed-reorg", error="confirmed checkpoint anchor was reorganized",
+           adopt=[moved])
+    return {"a": a.report(), "b": b.report(), "late": late.report(), "foreign": foreign.report(),
+            "shifted": {"transaction": moved, "proof": moved_proof, "signed": shifted_signed},
+            "confirmed_reorg": {"orphaned": successor_hash, "replacement": l1.call("get_block_hash", hex(inclusion))}}
