@@ -2970,3 +2970,52 @@ the Store comparison. The workspace passed 461 release tests with
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Raw timings, signed workloads, pinned contracts and failed controls](benchmarks/2026-11-26-stem-proposal-selection.json.xz).
+
+## Jolteon control transport under Lineage load
+
+Revision `aa33f3f` separates peer transaction relay from consensus
+traffic with bounded inbound queues and independent TCP streams.
+A transport test filled the relay queue and received a QC frame
+on the other socket while the relay socket remained unread.
+The scheduler test verified the eight-event control burst and
+application progress when both queues had pending events.
+
+All six AMM runs used 16 local replicas on an i9-13900H, matching
+signed workloads and genesis at each rate, 250 ms cadence,
+two VM workers, and a 2-billion-cycle block cap. Each offered for
+30 seconds and observed another 12 seconds. The three traced
+240 TPS runs used the same workload driver and independently
+pinned node binaries.
+
+| Run | Actual offer / admission / common visible TPS in window | Visible by end of observation | p99 among visible transactions | RPC observation errors | Observed TC views |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline, 240 TPS | 141.90 / 140.33 / 57.03 | 4,257 | 35.942 s | 2 | — |
+| Baseline traced, 240 TPS | 125.63 / 123.77 / 22.23 | 2,713 | 35.686 s | 2 | 4 |
+| Isolated transport, 240 TPS | 139.13 / 136.97 / 32.97 | 3,035 | 30.828 s | 1 | 6 |
+| Isolated transport repeat, 240 TPS | 127.40 / 124.83 / 0.00 | 2,667 | 35.913 s | 5 | 5 |
+| Baseline, 80 TPS | 79.50 / 78.93 / 71.37 | 2,385 | 4.948 s | 0 | — |
+| Isolated transport, 80 TPS | 80.00 / 79.63 / 72.23 | 2,400 | 3.029 s | 0 | 0 |
+
+A timeout was counted when at least one replica reported its
+certificate view in a sampled status. The zero in-window rate means
+the observer saw no common finalized transaction during that window.
+Status polling also waited on application traffic and sometimes timed
+out. The high-load samples still showed accumulation and variable
+progress, with no consistent end-to-end throughput improvement.
+The traced high-load runs used 534–564 aggregate process CPU
+seconds. Outbound drop counters stayed flat during offer and drain.
+The 80 TPS after run confirmed all 2,400 offers, with no client drops.
+All observed finalizations passed the serial replay and dual-root
+Lineage audit.
+
+The new transport recovered a four-replica network after one replica
+missed 200 blocks with a 64-block retention window. The 16-replica
+run survived two consecutive offline leaders and regained a common
+Header after both restarted. A 128-replica payment smoke confirmed
+all 96 payments. A separate CKB devnet drove a funded four-member
+handoff and delivered a pre-handoff Intercell message at a successor
+checkpoint. The locked Rust release workspace passed 463 tests with
+17 ignored. The Go proof tests and frozen CometBFT build passed.
+
+[Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
+[Signed workloads, pacemaker samples, overload and recovery evidence](benchmarks/2026-11-26-stem-transport-priority.json.xz).
