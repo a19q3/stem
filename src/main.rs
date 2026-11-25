@@ -71,6 +71,27 @@ enum Command {
         #[arg(long)]
         header: bool,
     },
+    /// Run Stem's weighted Jolteon replica.
+    Jolteon {
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long)]
+        configuration: PathBuf,
+        #[arg(long)]
+        key_file: PathBuf,
+        /// Create a new durable validator journal.
+        #[arg(long)]
+        initialize: bool,
+    },
+    /// Verify a fixed-epoch two-chain execution proof against Stem genesis.
+    JolteonProof {
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long)]
+        proof: PathBuf,
+    },
     Run {
         #[arg(long)]
         home: PathBuf,
@@ -122,6 +143,51 @@ fn main() -> Result<()> {
                 hex::encode(store.genesis_id().as_slice())
             };
             bridge_cli::print_json(&format!("0x{encoded}"))
+        }
+        Command::Jolteon {
+            home,
+            genesis,
+            configuration,
+            key_file,
+            initialize,
+        } => {
+            let spec = native_spec::load(&genesis)?;
+            let config = bridge_cli::read_json_limited(&configuration, 64 * 1024)?;
+            let key = bridge_cli::read_key(&key_file)?;
+            if initialize {
+                DirBuilder::new().mode(0o700).create(&home)?;
+            }
+            let metadata = fs::symlink_metadata(&home)?;
+            ensure!(
+                metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
+                "application home must be a private directory with mode 0700"
+            );
+            let store = stem::native_store::Store::open(
+                &home.join("db"),
+                &spec,
+                stem::native_store::Retention::Archive,
+            )?;
+            stem::jolteon::run(store, key, config, initialize)
+        }
+        Command::JolteonProof { genesis, proof } => {
+            use ckb_types::prelude::Entity;
+            let spec = native_spec::load(&genesis)?;
+            let raw: String = bridge_cli::read_json_limited(&proof, 128 * 1024)?;
+            let directory = tempfile::tempdir()?;
+            let store = stem::native_store::Store::open(
+                directory.path(),
+                &spec,
+                stem::native_store::Retention::Archive,
+            )?;
+            let header = stem::jolteon::verify_finality(
+                &store,
+                &hex::decode(raw.strip_prefix("0x").unwrap_or(&raw))?,
+            )?;
+            bridge_cli::print_json(&serde_json::json!({
+                "height": header.context.height,
+                "header": hex::encode(header.encode()),
+                "app_hash": hex::encode(header.app_hash(store.network()).as_slice()),
+            }))
         }
         Command::Run {
             home,

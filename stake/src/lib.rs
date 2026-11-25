@@ -14,6 +14,7 @@ pub mod compact;
 mod evidence;
 pub mod finality;
 pub mod history;
+pub mod jolteon;
 pub mod l1;
 pub mod patricia;
 pub mod retirement;

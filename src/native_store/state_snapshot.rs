@@ -100,7 +100,9 @@ impl Store {
     /// an already verified L1 checkpoint. Installation is for a fresh replica.
     pub fn install_state(&mut self, image: StateSnapshot, trusted_app_hash: &Byte32) -> Result<()> {
         ensure!(
-            self.tip.context.height == 0 && image.header.context.height != 0,
+            self.branch.is_empty()
+                && self.tip.context.height == 0
+                && image.header.context.height != 0,
             "snapshot install requires a fresh replica and non-genesis state"
         );
         ensure!(

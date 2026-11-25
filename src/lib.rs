@@ -1,3 +1,5 @@
+#[cfg(unix)]
+pub mod jolteon;
 pub mod l1_proof;
 #[cfg(unix)]
 pub mod native_abci;

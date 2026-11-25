@@ -3672,6 +3672,7 @@ dependencies = [
  "stem-vm",
  "tempfile",
  "tendermint-proto",
+ "tokio",
 ]
 
 [[package]]

@@ -41,6 +41,22 @@ journalctl --user -u "stem-app@${instance}.service" -u "stem-comet@${instance}.s
 
 Keep CometBFT's private validator key and signing state together during recovery. Each key must have a single signing process. Back up the Stem specification, CKB guardian trust and CometBFT signing state independently of disposable state-sync snapshots. Enable CometBFT's Prometheus instrumentation on an operator interface when collecting consensus metrics.
 
+## Exercise the native Jolteon path
+
+Use a fresh development genesis and a separate home per replica. `stem jolteon` accepts one 32-byte Ed25519 seed and a JSON config with `peers` in genesis public-key order, `view_timeout_ms`, `proposal_interval_ms`, and an optional `vm_workers`. Run once with `--initialize`. To restart, keep the same home and key and omit that flag. The runner defaults to two VM workers. It generates disposable keys for a private loopback network.
+
+```sh
+python3 tools/jolteon_localnet.py \
+  --binary target/release/stem \
+  --lock target/stem-contracts/riscv64imac-unknown-none-elf/release/stem-lock \
+  --output /tmp/stem-jolteon-16 --validators 16 --transactions 64 \
+  --offered 32 --cadence 200 --timeout 850 --offline 2
+target/release/stem jolteon-proof --genesis /tmp/stem-jolteon-16/genesis.json \
+  --proof /tmp/stem-jolteon-16/two-chain.json
+```
+
+The fixture checks consecutive failed Leaders, watches surviving weight finalize payments, restarts stopped replicas and checks the execution Header at a common height. It retains the public genesis, signed workload, execution proof and replica diagnostics. For the nominal scale sweep use `--offline 0 --transactions 32 --offered 16 --cadence 300 --timeout 2500` and separate output and port ranges for each size. The `tools/comet_matrix_localnet.py` comparator uses the same fixture against a pinned CometBFT application build. Its `--comet` argument takes the CometBFT executable.
+
 ## Exercise the native CometBFT path
 
 ```sh

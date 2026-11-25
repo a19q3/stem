@@ -552,3 +552,51 @@ mod lineage;
 
 #[path = "native_store/sponsored_lineage.rs"]
 mod sponsored_lineage;
+
+#[test]
+fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let dir = tempfile::tempdir()?;
+    let ref_dir = tempfile::tempdir()?;
+    let store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+    let mut reference = Store::open(ref_dir.path(), &fixture.spec, Retention::Archive)?;
+    let parent = fixture.signed(fixture.spend.clone(), None, FUND - FEE, None)?;
+    let parent_output = OutPoint::new(parent.id(store.network()), 0);
+    let child = fixture.signed(
+        parent_output.clone(),
+        Some(Since::RelativeBlocks(1)),
+        FUND - 2 * FEE,
+        None,
+    )?;
+    let fork = fixture.signed(fixture.spend.clone(), None, FUND - 3 * FEE, None)?;
+    let parent_batch =
+        std::sync::Arc::new(store.prepare(std::slice::from_ref(&parent), TIME + 1, false)?);
+    let fork_batch = std::sync::Arc::new(store.prepare(&[fork], TIME + 1, false)?);
+    assert!(
+        store
+            .prepare(std::slice::from_ref(&child), TIME + 2, false)
+            .is_err()
+    );
+    let next = store.on_branch(&[parent_batch], |state| {
+        state.prepare(std::slice::from_ref(&child), TIME + 2, false)
+    })?;
+    assert!(
+        store
+            .on_branch(&[fork_batch], |state| state.prepare(
+                std::slice::from_ref(&child),
+                TIME + 2,
+                false
+            ))
+            .is_err()
+    );
+    assert!(store.live_cell(&parent_output)?.is_none());
+    assert!(store.live_cell(&fixture.spend)?.is_some());
+    assert_eq!(store.tip().context.height, 0);
+
+    let finalized = reference.prepare(&[parent], TIME + 1, false)?;
+    reference.commit(finalized)?;
+    let expected = reference.prepare(&[child], TIME + 2, false)?;
+    assert_eq!(next.header(), expected.header());
+    assert_eq!(next.receipts(), expected.receipts());
+    Ok(())
+}

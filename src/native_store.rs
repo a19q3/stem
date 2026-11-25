@@ -4,11 +4,11 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use anyhow::{Context, Result, ensure};
-use ckb_db::internal::{DB, Options, WriteBatch, WriteOptions, prelude::*};
+use ckb_db::internal::{DB, DBVector, Options, WriteBatch, WriteOptions, prelude::*};
 use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
@@ -183,8 +183,8 @@ pub struct Store {
     network: Byte32,
     chain_id: String,
     genesis_validators: Vec<([u8; 32], i64)>,
-    staking: Option<Staking>,
-    bridge: Option<Bridge>,
+    staking: Option<Arc<Staking>>,
+    bridge: Option<Arc<Bridge>>,
     lineage: Option<Byte32>,
     keeper: Option<KeeperPolicy>,
     genesis_id: Byte32,
@@ -196,7 +196,8 @@ pub struct Store {
     capacity: CapacityPolicy,
     limits: Limits,
     fees: ResourceFees,
-    cache: VerificationCache,
+    cache: Arc<VerificationCache>,
+    branch: Vec<Arc<Prepared>>,
     live_cache: Mutex<LiveCache>,
 }
 
@@ -493,8 +494,8 @@ impl Store {
             network,
             chain_id: spec.chain_id.clone(),
             genesis_validators: validators,
-            staking,
-            bridge,
+            staking: staking.map(Arc::new),
+            bridge: bridge.map(Arc::new),
             lineage: spec.lineage_type.clone(),
             keeper: spec.keeper,
             genesis_id,
@@ -507,7 +508,8 @@ impl Store {
             limits: spec.limits,
             fees: spec.fees,
             live_cache: Mutex::default(),
-            cache: VerificationCache::new(4096),
+            cache: Arc::new(VerificationCache::new(4096)),
+            branch: Vec::new(),
         })
     }
 
@@ -543,11 +545,81 @@ impl Store {
         &self.genesis_validators
     }
 
+    /// Run the normal state machine against a contiguous, uncommitted branch.
+    /// The closure borrows the view while the committed store is read-only.
+    pub fn on_branch<T>(
+        &self,
+        branch: &[Arc<Prepared>],
+        task: impl FnOnce(&Store) -> Result<T>,
+    ) -> Result<T> {
+        if branch.is_empty() {
+            return task(self);
+        }
+        ensure!(
+            self.branch.is_empty(),
+            "candidate view cannot own a nested branch"
+        );
+        let mut tip = &self.tip;
+        for candidate in branch {
+            ensure!(
+                candidate.parent == tip.id(&self.network)
+                    && tip.context.height.checked_add(1) == Some(candidate.next.context.height),
+                "noncontiguous candidate state branch",
+            );
+            tip = &candidate.next;
+        }
+        let view = Self {
+            db: self.db.clone(),
+            network: self.network.clone(),
+            chain_id: self.chain_id.clone(),
+            genesis_validators: self.genesis_validators.clone(),
+            staking: self.staking.clone(),
+            bridge: self.bridge.clone(),
+            lineage: self.lineage.clone(),
+            keeper: self.keeper,
+            genesis_id: self.genesis_id.clone(),
+            tip: tip.clone(),
+            history: branch.last().unwrap().history.clone(),
+            cells: self.cells.clone(),
+            system: self.system.clone(),
+            retention: self.retention,
+            capacity: self.capacity,
+            limits: self.limits,
+            fees: self.fees,
+            cache: self.cache.clone(),
+            branch: branch.to_vec(),
+            live_cache: Mutex::default(),
+        };
+        task(&view)
+    }
+
+    fn read(&self, key: impl AsRef<[u8]>) -> Result<Option<ReadValue<'_>>> {
+        let key = key.as_ref();
+        for prepared in self.branch.iter().rev() {
+            if let Some(value) = prepared.batch.lookup(key) {
+                return Ok(value.as_deref().map(ReadValue::Candidate));
+            }
+        }
+        Ok(self.db.get(key)?.map(ReadValue::Committed))
+    }
+
+    pub(crate) fn consensus_record(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        Ok(self.read(index_key(b'j', key))?.map(|value| value.to_vec()))
+    }
+
+    pub(crate) fn persist_consensus(&self, records: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        ensure!(self.branch.is_empty(), "cannot persist a speculative view");
+        let mut batch = Batch::default();
+        for (key, value) in records {
+            batch.put(index_key(b'j', key), value);
+        }
+        sync(&self.db, &batch)
+    }
+
     fn system_record(&self, name: &[u8]) -> Result<Option<Vec<u8>>> {
         let id = self.system.record_key(name);
         Ok(self
-            .db
-            .get(state_key(STATE_RECORD, Namespace::System, &id))
+            .read(state_key(STATE_RECORD, Namespace::System, &id))
             .context(StateReadFault)?
             .map(|value| value.to_vec()))
     }
@@ -664,8 +736,7 @@ impl Store {
 
     pub fn fee_surplus(&self) -> Result<u64> {
         let id = self.system.record_key(FEE_KEY);
-        self.db
-            .get(state_key(STATE_RECORD, Namespace::System, &id))?
+        self.read(state_key(STATE_RECORD, Namespace::System, &id))?
             .map(|bytes| decode_extinguished_fees(bytes.as_ref()))
             .transpose()
             .map(|value| value.unwrap_or_default())
@@ -684,8 +755,7 @@ impl Store {
         }
         let id = record::cell_key(&self.cells, point);
         let found = self
-            .db
-            .get(state_key(STATE_RECORD, Namespace::Cells, &id))
+            .read(state_key(STATE_RECORD, Namespace::Cells, &id))
             .context(StateReadFault)?
             .map(|bytes| {
                 let (stored_point, record) = record::decode_cell(&bytes)?;
@@ -724,14 +794,13 @@ impl Store {
     }
 
     pub fn header(&self, height: u64) -> Result<Option<Header>> {
-        self.db
-            .get(index_key(HEADER, &height.to_be_bytes()))?
+        self.read(index_key(HEADER, &height.to_be_bytes()))?
             .map(|bytes| Header::decode(&bytes))
             .transpose()
     }
 
     pub fn execution(&self, height: u64) -> Result<Option<(Vec<Transaction>, Vec<Receipt>)>> {
-        let Some(bytes) = self.db.get(index_key(EXECUTION, &height.to_be_bytes()))? else {
+        let Some(bytes) = self.read(index_key(EXECUTION, &height.to_be_bytes()))? else {
             return Ok(None);
         };
         let mut cursor = bytes.as_ref();
@@ -752,8 +821,7 @@ impl Store {
 
     fn resolve_header(&self, id: &Byte32, candidate: u64) -> Result<Header> {
         let height = self
-            .db
-            .get(index_key(HEADER_ID, id.as_slice()))?
+            .read(index_key(HEADER_ID, id.as_slice()))?
             .context("unknown Header Dep")?;
         let height = u64::from_be_bytes(height.as_ref().try_into()?);
         let age = candidate
@@ -768,9 +836,8 @@ impl Store {
 
     fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<Vec<u8>>> {
         Ok(self
-            .db
-            .get(state_key(STATE_NODE, namespace, id))?
-            .map(|bytes| bytes.to_vec()))
+            .read(state_key(STATE_NODE, namespace, id))?
+            .map(|value| value.to_vec()))
     }
 
     /// Resolve conflicts and protocol state in proposal order. Schedule immutable
@@ -1080,7 +1147,7 @@ impl Store {
         Ok(Overlay {
             live: BTreeMap::new(),
             stake: self.stage_stake()?,
-            bridge: self.bridge.as_ref().map(Bridge::stage),
+            bridge: self.bridge.as_deref().map(Bridge::stage),
             lineages: BTreeMap::new(),
             keeper: keeper::Stage::default(),
         })
@@ -1398,13 +1465,22 @@ impl Store {
     }
 
     pub fn commit(&mut self, prepared: Prepared) -> Result<()> {
+        self.commit_certified(&prepared, &[])
+    }
+
+    pub(crate) fn commit_certified(
+        &mut self,
+        prepared: &Prepared,
+        records: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<()> {
+        ensure!(self.branch.is_empty(), "cannot commit a speculative view");
         ensure!(
             prepared.parent == self.tip.id(&self.network),
             "stale prepared block"
         );
-        sync(&self.db, &prepared.batch)?;
-        self.history = prepared.history;
-        self.tip = prepared.next;
+        sync_with_consensus(&self.db, &prepared.batch, records)?;
+        self.history = prepared.history.clone();
+        self.tip = prepared.next.clone();
         self.live_cache.get_mut().expect("Live Cell cache").clear();
         Ok(())
     }
@@ -1548,27 +1624,72 @@ fn take_record<'a>(cursor: &mut &'a [u8]) -> Result<&'a [u8]> {
     Ok(item)
 }
 
+enum ReadValue<'a> {
+    Committed(DBVector),
+    Candidate(&'a [u8]),
+}
+
+impl AsRef<[u8]> for ReadValue<'_> {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Committed(value) => value.as_ref(),
+            Self::Candidate(value) => value,
+        }
+    }
+}
+
+impl std::ops::Deref for ReadValue<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+type Write = (Vec<u8>, Option<Vec<u8>>);
+
 #[derive(Default)]
-struct Batch(Vec<(Vec<u8>, Option<Vec<u8>>)>);
+struct Batch {
+    writes: Vec<Write>,
+    index: OnceLock<HashMap<Vec<u8>, usize>>,
+}
 
 impl Batch {
+    fn lookup(&self, key: &[u8]) -> Option<&Option<Vec<u8>>> {
+        let index = self.index.get_or_init(|| {
+            self.writes
+                .iter()
+                .enumerate()
+                .map(|(position, (key, _))| (key.clone(), position))
+                .collect()
+        });
+        index.get(key).map(|&position| &self.writes[position].1)
+    }
+
     fn put(&mut self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
-        self.0
+        self.writes
             .push((key.as_ref().to_vec(), Some(value.as_ref().to_vec())));
     }
 
     fn delete(&mut self, key: impl AsRef<[u8]>) {
-        self.0.push((key.as_ref().to_vec(), None));
+        self.writes.push((key.as_ref().to_vec(), None));
     }
 }
 
 fn sync(db: &DB, batch: &Batch) -> Result<()> {
+    sync_with_consensus(db, batch, &[])
+}
+
+fn sync_with_consensus(db: &DB, batch: &Batch, records: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
     let mut raw = WriteBatch::default();
-    for (key, entry) in &batch.0 {
+    for (key, entry) in &batch.writes {
         match entry {
             Some(value) => raw.put(key, value)?,
             None => raw.delete(key)?,
         }
+    }
+    for (key, value) in records {
+        raw.put(index_key(b'j', key), value)?;
     }
     let mut options = WriteOptions::default();
     options.set_sync(true);
