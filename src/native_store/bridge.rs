@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, ensure};
-use ckb_hash::new_blake2b;
 use ckb_types::{
     bytes::Bytes,
     core::{Capacity, ScriptHashType},
@@ -25,7 +24,6 @@ const ANCHOR: &[u8] = b"bridge/anchor";
 const BACKING: &[u8] = b"bridge/backing";
 const DEPOSITS: &[u8] = b"bridge/replay-count";
 const LANE: &[u8] = b"bridge/lane/";
-const PENDING: &[u8] = b"bridge/pending/";
 const DEPOSIT: &[u8] = b"bridge/deposit/";
 
 pub struct BridgeGenesis {
@@ -471,13 +469,11 @@ impl Bridge {
             receipt.extend_from_slice(&cell.capacity().to_le_bytes());
             receipt.extend_from_slice(&units.to_le_bytes());
             receipt.extend_from_slice(recipient.as_slice());
-            let id = hash(
-                b"Stem withdrawal receipt\0",
-                &[store.network().as_slice(), &receipt],
-            );
+            let id: Byte32 =
+                stem_bridge_wire::withdrawal_receipt_id(&store.network().unpack(), &receipt).pack();
             let mut pending = id.as_slice().to_vec();
             pending.extend_from_slice(&receipt);
-            let pending_key = key(PENDING, &lane_id, Some(nonce));
+            let pending_key = pending_key(&lane_id, nonce).to_vec();
             ensure!(
                 View {
                     store,
@@ -552,7 +548,7 @@ impl Bridge {
                 .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
             changes
                 .records
-                .insert(key(PENDING, &lane, Some(nonce)), None);
+                .insert(pending_key(&lane, nonce).to_vec(), None);
         }
         changes
             .records
@@ -631,8 +627,35 @@ impl Store {
         )
     }
 
+    pub fn prove_bridge_withdrawal(
+        &self,
+        lane: &Byte32,
+        nonce: u64,
+    ) -> Result<(Option<Vec<u8>>, super::Proof)> {
+        self.prove_system(&pending_key(lane, nonce))
+    }
+
+    pub fn verify_bridge_withdrawal(
+        network: &Byte32,
+        header: &super::Header,
+        lane: &Byte32,
+        nonce: u64,
+        record: &[u8],
+        proof: &super::Proof,
+    ) -> bool {
+        stem_bridge_wire::Withdrawal::decode(&network.unpack(), record)
+            .is_some_and(|claim| claim.lane == lane.as_slice() && claim.nonce == nonce)
+            && Self::verify_system_record(
+                network,
+                header,
+                &pending_key(lane, nonce),
+                Some(record),
+                proof,
+            )
+    }
+
     pub fn bridge_receipt(&self, lane: &Byte32, nonce: u64) -> Result<Option<Vec<u8>>> {
-        self.system_record(&key(PENDING, lane, Some(nonce)))
+        self.system_record(&pending_key(lane, nonce))
     }
 }
 
@@ -678,28 +701,34 @@ impl BridgeLedger for View<'_> {
 
     fn pending(&self, id: &Byte32, nonce: u64) -> Result<PendingWithdrawal> {
         let encoded = self
-            .read(&key(PENDING, id, Some(nonce)))?
+            .read(&pending_key(id, nonce))?
             .context("missing pending withdrawal")?;
-        ensure!(encoded.len() >= 132, "truncated pending withdrawal");
+        let withdrawal =
+            stem_bridge_wire::Withdrawal::decode(&self.store.network().unpack(), &encoded)
+                .context("invalid pending withdrawal")?;
+        ensure!(
+            withdrawal.lane == id.as_slice() && withdrawal.nonce == nonce,
+            "wrong pending withdrawal identity"
+        );
         Ok(PendingWithdrawal {
-            receipt: Byte32::from_slice(&encoded[..32])?,
-            capacity: u64::from_le_bytes(encoded[108..116].try_into()?),
-            units: u128::from_le_bytes(encoded[116..132].try_into()?),
+            receipt: withdrawal.id.pack(),
+            capacity: withdrawal.capacity,
+            units: withdrawal.units,
         })
     }
 }
 
 pub fn lane_id(genesis: &Byte32, vault_type: &Byte32, asset: Option<&Byte32>) -> Byte32 {
-    let tag = [u8::from(asset.is_some())];
-    hash(
-        b"Stem bridge lane\0",
-        &[
-            genesis.as_slice(),
-            vault_type.as_slice(),
-            &tag,
-            asset.map_or(&[], |id| id.as_slice()),
-        ],
+    stem_bridge_wire::lane_id(
+        &genesis.unpack(),
+        &vault_type.unpack(),
+        asset.map(Unpack::unpack).as_ref(),
     )
+    .pack()
+}
+
+fn pending_key(lane: &Byte32, nonce: u64) -> [u8; stem_bridge_wire::WITHDRAWAL_KEY_SIZE] {
+    stem_bridge_wire::pending_key(&lane.unpack(), nonce)
 }
 
 fn key(prefix: &[u8], id: &Byte32, nonce: Option<u64>) -> Vec<u8> {
@@ -709,17 +738,6 @@ fn key(prefix: &[u8], id: &Byte32, nonce: Option<u64>) -> Vec<u8> {
         key.extend_from_slice(&nonce.to_le_bytes());
     }
     key
-}
-
-fn hash(domain: &[u8], chunks: &[&[u8]]) -> Byte32 {
-    let mut hasher = new_blake2b();
-    hasher.update(domain);
-    for chunk in chunks {
-        hasher.update(chunk);
-    }
-    let mut bytes = [0; 32];
-    hasher.finalize(&mut bytes);
-    bytes.pack()
 }
 
 fn encode_anchor(anchor: &L1Anchor) -> Vec<u8> {

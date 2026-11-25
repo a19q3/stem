@@ -1,8 +1,9 @@
 """Publish a permissionless, directly verified Stem checkpoint on CKB devnet."""
 
+import base64
 import json
 
-from bridge_localnet import CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output, point, script, script_hash, transaction
+from bridge_localnet import CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output, point, script, script_hash, transaction, wallet_group
 from localnet import run, write_json
 from stake_localnet import witness
 
@@ -145,3 +146,67 @@ def publish(args, scenario, stem_genesis, comet_genesis, rpc, header, funding=No
     return {"type": hex_bytes(identity), "initial_committee": hex_bytes(committee),
             "genesis_app_hash": hex_bytes(genesis_app_hash), "publications": publications,
             "rejections": rejections, "committee_pages": pages}
+
+
+class Relay:
+    """Publish checkpoint updates paid from an independent relayer Cell."""
+
+    def __init__(self, args, l1, fixture, anchor, spec_path, comet_genesis, rpc):
+        self.args, self.l1, self.fixture, self.anchor, self.rpc = args, l1, fixture, anchor, rpc
+        self.comet_genesis = comet_genesis
+        self.chain = json.loads(comet_genesis.read_text())["chain_id"]
+        self.network = anchor["network"]
+        self.native_genesis = binary(json.loads(run(args.binary, "genesis-hash", "--genesis", spec_path, "--header")))
+        genesis_id = ckb_hash(b"Stem Header\0" + binary(self.network) + self.native_genesis)
+        self.app_hash = ckb_hash(b"Stem AppHash\0" + binary(self.network) + bytes(8) + genesis_id)
+        self.root = args.output / "bridge-checkpoints"
+        self.root.mkdir()
+        self.point = self.lock = self.type = None
+        self.funding, self.height = anchor["seed"], -1
+        self.publications = []
+
+    def header(self, height):
+        if height == 0:
+            return self.native_genesis
+        response = self.rpc.call("abci_query", path=json.dumps("/stem/header"), height=height)["response"]
+        if response["code"] != 0 or int(response["height"]) != height:
+            raise AssertionError(response)
+        return base64.b64decode(response["value"])
+
+    def advance(self, target, secp):
+        if target < self.height:
+            raise ValueError("cannot roll back a CKB checkpoint")
+        while self.height < target:
+            end = min(target, self.height + 8)
+            entries = []
+            for height in range(self.height + 2, end + 2):
+                validators, _ = committee_at(self.rpc, height)
+                entries.append({"commit": self.rpc.call("commit", height=height), "validators": validators,
+                                "native_header": hex_bytes(self.header(height - 1))})
+            label = f"bridge-checkpoint-{end}"
+            source = self.root / f"{label}-source.json"
+            write_json(source, entries)
+            bundle = json.loads(run(self.args.proof_verifier, "-genesis", self.comet_genesis, "-direct-bundle", source))
+            write_json(self.root / f"{label}-bundle.json", bundle)
+            if bundle["native_height"] != end:
+                raise AssertionError(bundle)
+            if self.point is None:
+                args = (self.anchor["id"] + binary(self.network) + binary(self.anchor["genesis"])
+                        + bytes.fromhex(bundle["initial_committee"]) + self.app_hash + self.chain.encode())
+                self.type = script(self.anchor["hash"], hex_bytes(args), "data2")
+                self.lock = dict(self.type, args=hex_bytes(script_hash(self.type)))
+            inputs = [self.point, self.funding] if self.point else [self.funding]
+            fee_output = self.l1.call("get_live_cell", self.funding, True)["cell"]["output"]
+            available = int(fee_output["capacity"], 16) - FEE
+            capacity = 1500 * CKB
+            if self.point is None:
+                available -= capacity
+            tx = transaction(inputs, [output(capacity, self.lock, self.type), output(available, self.fixture.standard)],
+                             [bundle["tip"], "0x"], [self.anchor["code"], secp])
+            tx["witnesses"] = [witness(binary(bundle["proof"]))]
+            signed = self.fixture.sign(label, tx, [wallet_group(len(inputs) - 1, [self.fixture.faucet])])
+            tx_hash = self.l1.send(signed)
+            self.point, self.funding = point(tx_hash, 0), point(tx_hash, 1)
+            self.height = end
+            self.publications.append({"height": end, "point": self.point, "l1_inclusion": self.l1.prove_committed(tx_hash)})
+        return dependency(self.point)

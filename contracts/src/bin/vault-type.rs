@@ -1,24 +1,77 @@
 #![no_std]
 #![no_main]
 
-use ckb_hash::new_blake2b;
 use ckb_std::{
     ckb_constants::Source,
     ckb_types::{core::ScriptHashType, packed::Script, prelude::*},
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_lock, load_cell_lock_hash, load_cell_type,
-        load_cell_type_hash, load_script, load_script_hash,
+        load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash, load_cell_type,
+        load_cell_type_hash, load_script, load_script_hash, load_witness_args,
     },
     syscalls, type_id,
 };
 use stem_bridge_wire::{self as wire, Asset, Gate};
+use stem_stake::{
+    finality::{CheckpointPolicy, Tip},
+    patricia::{Commitment, MAX_PATH_BYTES, Namespace, decode_path},
+};
 
 entry!(main);
 default_alloc!();
 
 const EMPTY: [u8; 32] = [0; 32];
+const TYPE_ARGS: usize = 5 * 32;
+const LOCK_ARGS: usize = 32 + 20;
+
+struct Policy {
+    checkpoint_code: [u8; 32],
+    checkpoint_id: [u8; 32],
+    ckb_genesis: [u8; 32],
+    network: [u8; 32],
+}
+
+impl Policy {
+    fn decode(args: &[u8]) -> Result<Self, Error> {
+        if args.len() != TYPE_ARGS || args[32..].chunks_exact(32).any(|part| part == EMPTY) {
+            return Err(Error::Identity);
+        }
+        Ok(Self {
+            checkpoint_code: args[32..64].try_into().unwrap(),
+            checkpoint_id: args[64..96].try_into().unwrap(),
+            ckb_genesis: args[96..128].try_into().unwrap(),
+            network: args[128..160].try_into().unwrap(),
+        })
+    }
+
+    fn system_root(&self) -> Result<[u8; 32], Error> {
+        for index in 0.. {
+            let checkpoint = match load_cell_type(index, Source::CellDep) {
+                Ok(Some(script)) => script,
+                Ok(None) => continue,
+                Err(SysError::IndexOutOfBound) => break,
+                Err(err) => return Err(err.into()),
+            };
+            if checkpoint.code_hash().as_slice() != self.checkpoint_code
+                || u8::from(checkpoint.hash_type()) != ScriptHashType::Data2 as u8
+            {
+                continue;
+            }
+            let args = checkpoint.args().raw_data();
+            let policy = CheckpointPolicy::decode(&args).map_err(|_| Error::Proof)?;
+            if policy.type_id == self.checkpoint_id
+                && policy.ckb_genesis == self.ckb_genesis
+                && policy.trust.network == self.network
+            {
+                let tip = Tip::decode(&load_cell_data(index, Source::CellDep)?)
+                    .map_err(|_| Error::Proof)?;
+                return Ok(tip.system_root());
+            }
+        }
+        Err(Error::Proof)
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -57,6 +110,8 @@ enum Error {
     Rotation = 13,
     Accounting = 14,
     Payout = 15,
+    Proof = 16,
+    Custody = 17,
 }
 
 impl From<SysError> for Error {
@@ -112,20 +167,31 @@ fn main() -> i8 {
 }
 
 fn verify() -> Result<(), Error> {
-    if load_script()?.args().raw_data().len() != 32 {
+    let script = load_script()?;
+    if u8::from(script.hash_type()) != ScriptHashType::Data2 as u8 {
         return Err(Error::Identity);
     }
+    let args = script.args().raw_data();
+    if args.len() == LOCK_ARGS {
+        // The unique Vault Type Script governs all spends of this lock.
+        let vault: [u8; 32] = args[..32].try_into().unwrap();
+        if load_cell_type_hash(0, Source::GroupInput)? != Some(vault)
+            || load_cell_type_hash(1, Source::GroupInput) != Err(SysError::IndexOutOfBound)
+        {
+            return Err(Error::Identity);
+        }
+        return Ok(());
+    }
+
+    let policy = Policy::decode(&args)?;
+    let vault = load_script_hash()?;
     type_id::check_type_id(0, 32)?;
 
     // Requiring a group output also rejects destruction of the unique vault.
     let next = State::load(Source::GroupOutput)?;
     let output_lock = load_cell_lock(0, Source::GroupOutput)?;
-    if output_lock.code_hash().as_slice() != next.multisig_code
-        || u8::from(output_lock.hash_type()) != ScriptHashType::Type as u8
-        || output_lock.args().raw_data().len() != 20
-        || next.deposit_code == EMPTY
-        || next.multisig_code == EMPTY
-    {
+    let counterparty = custody(&output_lock, &script, &vault)?;
+    if counterparty == [0; 20] || next.deposit_code == EMPTY || next.multisig_code == EMPTY {
         return Err(Error::Rotation);
     }
     let before = match load_cell_capacity(0, Source::GroupInput) {
@@ -147,7 +213,12 @@ fn verify() -> Result<(), Error> {
         return Err(Error::Identity);
     }
     let after = load_cell_capacity(0, Source::GroupOutput)?;
-    let same_lock = load_cell_lock(0, Source::GroupInput)? == output_lock;
+    let input_lock = load_cell_lock(0, Source::GroupInput)?;
+    let same_lock = input_lock == output_lock;
+    if next.action != Action::Release {
+        let authority = custody(&input_lock, &script, &vault)?;
+        require_custody_input(previous.multisig_code, &authority)?;
+    }
     let native_deposits = deposit_capacity(&next)?;
     if next.asset.is_some() && native_deposits != 0 {
         return Err(Error::Accounting);
@@ -187,12 +258,12 @@ fn verify() -> Result<(), Error> {
                 || deposits != 0
                 || previous.next.checked_add(1) != Some(next.next)
                 || next.amount == 0
-                || next.burn_id != withdrawal_id(previous.next)?
                 || before.checked_sub(next.amount) != Some(after)
                 || assets_in.escrow_units.checked_sub(next.units) != Some(assets_out.escrow_units)
             {
                 return Err(Error::Accounting);
             }
+            verify_release(&policy, &vault, previous.next, &next)?;
             // Output zero is the beneficiary. Token escrow and native capacity
             // must move by exactly the amounts in the authenticated vault state.
             if load_cell_lock_hash(0, Source::Output)? != next.payout_lock
@@ -346,14 +417,84 @@ fn token_amount(index: usize, source: Source) -> Result<u128, Error> {
     wire::amount(&data).ok_or(Error::Accounting)
 }
 
-fn withdrawal_id(nonce: u64) -> Result<[u8; 32], Error> {
-    let mut hash = new_blake2b();
-    hash.update(b"CKB bridge withdrawal v1\0");
-    hash.update(&load_script_hash()?);
-    hash.update(&nonce.to_le_bytes());
-    let mut id = [0; 32];
-    hash.finalize(&mut id);
-    Ok(id)
+fn custody(lock: &Script, script: &Script, vault: &[u8; 32]) -> Result<[u8; 20], Error> {
+    let args = lock.args().raw_data();
+    if lock.code_hash() != script.code_hash()
+        || lock.hash_type() != script.hash_type()
+        || args.len() != LOCK_ARGS
+        || &args[..32] != vault
+    {
+        return Err(Error::Identity);
+    }
+    Ok(args[32..].try_into().unwrap())
+}
+
+fn require_custody_input(code: [u8; 32], authority: &[u8; 20]) -> Result<(), Error> {
+    let expected = Script::new_builder()
+        .code_hash(code.pack())
+        .hash_type(ScriptHashType::Type)
+        .args(authority.as_slice().pack())
+        .build()
+        .calc_script_hash();
+    for index in 0.. {
+        match load_cell_lock_hash(index, Source::Input) {
+            Ok(actual) if actual == expected.as_slice() => return Ok(()),
+            Ok(_) => {}
+            Err(SysError::IndexOutOfBound) => break,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(Error::Custody)
+}
+
+fn verify_release(
+    policy: &Policy,
+    vault: &[u8; 32],
+    nonce: u64,
+    next: &State,
+) -> Result<(), Error> {
+    let witness = load_witness_args(0, Source::GroupInput)?;
+    let payload = witness
+        .input_type()
+        .to_opt()
+        .ok_or(Error::Proof)?
+        .raw_data();
+    let (size, body) = payload.split_at_checked(4).ok_or(Error::Proof)?;
+    let size = u32::from_le_bytes(size.try_into().unwrap()) as usize;
+    if size > wire::MAX_WITHDRAWAL_RECORD {
+        return Err(Error::Proof);
+    }
+    let (record, path) = body.split_at_checked(size).ok_or(Error::Proof)?;
+    if path.len() > MAX_PATH_BYTES {
+        return Err(Error::Proof);
+    }
+    let lane = wire::lane_id(
+        &policy.ckb_genesis,
+        vault,
+        next.asset.as_ref().map(|asset| &asset.type_hash),
+    );
+    let withdrawal = wire::Withdrawal::decode(&policy.network, record).ok_or(Error::Proof)?;
+    let recipient = Script::from_slice(withdrawal.recipient).map_err(|_| Error::Proof)?;
+    if withdrawal.lane != lane
+        || withdrawal.nonce != nonce
+        || withdrawal.capacity != next.amount
+        || withdrawal.units != next.units
+        || withdrawal.id != next.burn_id
+        || recipient.calc_script_hash().as_slice() != next.payout_lock
+        || (next.asset.is_some() != (withdrawal.units > 0))
+    {
+        return Err(Error::Proof);
+    }
+
+    let root = policy.system_root()?;
+    let tree = Commitment::new(policy.network, Namespace::System);
+    let key = tree.record_key(&wire::pending_key(&lane, nonce));
+    let value = tree.value_hash(record);
+    let nodes = decode_path(path).map_err(|_| Error::Proof)?;
+    if !tree.verify(&root, &key, Some(&value), nodes.into_iter()) {
+        return Err(Error::Proof);
+    }
+    Ok(())
 }
 
 fn deposit_capacity(state: &State) -> Result<u64, Error> {

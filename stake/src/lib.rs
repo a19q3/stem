@@ -15,6 +15,7 @@ mod evidence;
 pub mod finality;
 pub mod history;
 pub mod l1;
+pub mod patricia;
 pub mod retirement;
 pub use evidence::{BlockId, DoubleVote, Liability, SignedVote, VoteKind};
 

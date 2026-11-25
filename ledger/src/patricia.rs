@@ -2,156 +2,45 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use ckb_types::{bytes::Bytes, packed::Byte32, prelude::Entity};
 
 use crate::{
-    hash,
     strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
 
-pub type Key = [u8; 32];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Namespace {
-    Cells,
-    System,
-}
-
-impl Namespace {
-    pub fn tag(self) -> u8 {
-        match self {
-            Self::Cells => 0,
-            Self::System => 1,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Node {
-    Leaf {
-        key: Key,
-        value: Key,
-    },
-    Branch {
-        prefix: Key,
-        bits: u8,
-        children: [Key; 2],
-    },
-}
-
-impl Node {
-    fn encode(&self) -> Vec<u8> {
-        match self {
-            Self::Leaf { key, value } => {
-                let mut bytes = Vec::with_capacity(65);
-                bytes.push(0);
-                bytes.extend_from_slice(key);
-                bytes.extend_from_slice(value);
-                bytes
-            }
-            Self::Branch {
-                prefix,
-                bits,
-                children,
-            } => {
-                let mut bytes = Vec::with_capacity(98);
-                bytes.extend_from_slice(&[1, *bits]);
-                bytes.extend_from_slice(prefix);
-                bytes.extend_from_slice(&children[0]);
-                bytes.extend_from_slice(&children[1]);
-                bytes
-            }
-        }
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        Ok(match bytes {
-            [0, body @ ..] if body.len() == 64 => Self::Leaf {
-                key: key(&body[..32]),
-                value: key(&body[32..]),
-            },
-            [1, bits, body @ ..] if body.len() == 96 => {
-                let prefix = key(&body[..32]);
-                let children = [key(&body[32..64]), key(&body[64..])];
-                ensure!(
-                    canonical_prefix(&prefix, *bits) == prefix,
-                    "invalid Patricia prefix"
-                );
-                ensure!(
-                    children[0] != children[1],
-                    "duplicate Patricia branch children"
-                );
-                Self::Branch {
-                    prefix,
-                    bits: *bits,
-                    children,
-                }
-            }
-            _ => bail!("invalid Patricia node encoding"),
-        })
-    }
-
-    fn prefix(&self) -> (&Key, usize) {
-        match self {
-            Self::Leaf { key, .. } => (key, 256),
-            Self::Branch { prefix, bits, .. } => (prefix, usize::from(*bits)),
-        }
-    }
-}
+use stem_stake::patricia::{
+    Commitment, MAX_NODES, MAX_PATH_BYTES, Node, canonical_prefix, decode_path, side,
+};
+pub use stem_stake::patricia::{Key, Namespace};
 
 #[derive(Clone, Debug)]
 pub struct Patricia {
-    network: Byte32,
-    namespace: Namespace,
-    empty: Key,
+    commitment: Commitment,
 }
 
 impl Patricia {
     pub fn new(network: Byte32, namespace: Namespace) -> Self {
-        let empty = key(hash(
-            b"Stem empty Patricia tree\0",
-            &network,
-            &[&[namespace.tag()]],
-        )
-        .as_slice());
         Self {
-            network,
-            namespace,
-            empty,
+            commitment: Commitment::new(key(network.as_slice()), namespace),
         }
     }
 
     pub fn empty_root(&self) -> Key {
-        self.empty
+        self.commitment.empty_root()
     }
 
     fn node_hash(&self, encoded: &[u8]) -> Key {
-        key(hash(
-            b"Stem Patricia node\0",
-            &self.network,
-            &[&[self.namespace.tag()], encoded],
-        )
-        .as_slice())
+        self.commitment.node_hash(encoded)
     }
 
     pub fn value_hash(&self, bytes: &[u8]) -> Key {
-        key(hash(
-            b"Stem state record\0",
-            &self.network,
-            &[&[self.namespace.tag()], bytes],
-        )
-        .as_slice())
+        self.commitment.value_hash(bytes)
     }
 
     pub fn record_key(&self, name: &[u8]) -> Key {
-        key(hash(
-            b"Stem state key\0",
-            &self.network,
-            &[&[self.namespace.tag()], name],
-        )
-        .as_slice())
+        self.commitment.record_key(name)
     }
 
     pub fn edit(
@@ -168,48 +57,8 @@ impl Patricia {
     }
 
     pub fn verify(&self, root: &Key, query: &Key, expected: Option<&Key>, proof: &Proof) -> bool {
-        if proof.nodes.is_empty() {
-            return expected.is_none() && *root == self.empty_root();
-        }
-        if proof.nodes.len() > 257 || *root == self.empty_root() {
-            return false;
-        }
-        let mut next = *root;
-        let mut depth = 0;
-        for (index, bytes) in proof.nodes.iter().enumerate() {
-            if self.node_hash(bytes) != next {
-                return false;
-            }
-            let Ok(node) = Node::decode(bytes) else {
-                return false;
-            };
-            let terminal = index + 1 == proof.nodes.len();
-            match node {
-                Node::Leaf { key, value } => {
-                    return terminal
-                        && if key == *query {
-                            expected == Some(&value)
-                        } else {
-                            expected.is_none()
-                        };
-                }
-                Node::Branch {
-                    prefix,
-                    bits,
-                    children,
-                } => {
-                    if usize::from(bits) < depth {
-                        return false;
-                    }
-                    if canonical_prefix(query, bits) != prefix {
-                        return terminal && expected.is_none();
-                    }
-                    next = children[side(query, bits)];
-                    depth = usize::from(bits) + 1;
-                }
-            }
-        }
-        false
+        self.commitment
+            .verify(root, query, expected, proof.nodes.iter().map(Vec::as_slice))
     }
 }
 
@@ -221,7 +70,7 @@ pub struct Proof {
 
 impl Proof {
     pub fn encode(&self) -> Result<Bytes> {
-        ensure!(self.nodes.len() <= 257, "oversized Patricia path");
+        ensure!(self.nodes.len() <= MAX_NODES, "oversized Patricia path");
         let nodes = self
             .nodes
             .iter()
@@ -237,21 +86,13 @@ impl Proof {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        ensure!(
-            bytes.len() <= 4 + 257 * (4 + 98),
-            "oversized Patricia proof"
-        );
-        let encoded = wire::PatriciaPath::from_slice(bytes)?;
-        ensure!(encoded.len() <= 257, "oversized Patricia path");
-        let nodes = encoded
-            .into_iter()
-            .map(|node| {
-                let raw = node.raw_data();
-                Node::decode(&raw)?;
-                Ok(raw.to_vec())
-            })
-            .collect::<Result<_>>()?;
-        Ok(Self { nodes })
+        ensure!(bytes.len() <= MAX_PATH_BYTES, "oversized Patricia proof");
+        Ok(Self {
+            nodes: decode_path(bytes)?
+                .into_iter()
+                .map(<[u8]>::to_vec)
+                .collect(),
+        })
     }
 }
 
@@ -462,18 +303,6 @@ impl<Read: FnMut(&Key) -> Result<Option<Vec<u8>>>> Edit<'_, Read> {
 
 fn key(bytes: &[u8]) -> Key {
     bytes.try_into().expect("32 byte hash")
-}
-
-fn side(key: &Key, bit: u8) -> usize {
-    usize::from((key[usize::from(bit / 8)] >> (7 - bit % 8)) & 1)
-}
-
-fn canonical_prefix(key: &Key, bits: u8) -> Key {
-    let mut prefix = *key;
-    let offset = usize::from(bits / 8);
-    prefix[offset] &= !(0xff >> (bits % 8));
-    prefix[offset + 1..].fill(0);
-    prefix
 }
 
 fn difference(left: &Key, right: &Key) -> Option<u8> {

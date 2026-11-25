@@ -13,12 +13,11 @@ use ckb_std::{
     },
     type_id,
 };
-use stem_stake::finality::{self, Tip, Trust};
+use stem_stake::finality::{self, CheckpointPolicy, Tip};
 
 entry!(main);
 default_alloc!();
 
-const TRUST_BYTES: usize = 160;
 const LOCK_BYTES: usize = 32;
 
 #[repr(i8)]
@@ -56,23 +55,13 @@ fn verify() -> Result<(), Error> {
             }
             Ok(())
         }
-        len if (TRUST_BYTES + 1..=TRUST_BYTES + 50).contains(&len) => verify_update(script, &args),
-        _ => Err(Error::Shape),
+        _ => verify_update(script, &args),
     }
 }
 
 fn verify_update(script: Script, args: &[u8]) -> Result<(), Error> {
     type_id::check_type_id(0, 32)?;
-    let chain_id = core::str::from_utf8(&args[TRUST_BYTES..]).map_err(|_| Error::Shape)?;
-    if args[64..96] == [0; 32] {
-        return Err(Error::Identity);
-    }
-    let trusted = Trust {
-        network: args[32..64].try_into().unwrap(),
-        initial_committee: args[96..128].try_into().unwrap(),
-        genesis_app_hash: args[128..160].try_into().unwrap(),
-        chain_id,
-    };
+    let policy = CheckpointPolicy::decode(args).map_err(|_| Error::Shape)?;
     let lock = script
         .as_builder()
         .args(load_script_hash()?.as_slice().pack())
@@ -102,8 +91,8 @@ fn verify_update(script: Script, args: &[u8]) -> Result<(), Error> {
     };
     let witness = load_witness_args(0, witness_source)?;
     let proof = witness.input_type().to_opt().ok_or(Error::Shape)?;
-    let tip =
-        finality::verify(&trusted, old.as_ref(), &proof.raw_data()).map_err(|_| Error::Finality)?;
+    let tip = finality::verify(&policy.trust, old.as_ref(), &proof.raw_data())
+        .map_err(|_| Error::Finality)?;
     if tip != next {
         return Err(Error::Finality);
     }

@@ -353,6 +353,24 @@ impl App {
                 }))?
                 .into()
             }
+            "/stem/bridge-withdrawal" if request.prove => {
+                ensure!(
+                    requested == tip,
+                    "bridge withdrawal proof requires the current height"
+                );
+                ensure!(
+                    request.data.len() == 40,
+                    "expected lane and withdrawal nonce"
+                );
+                let lane = Byte32::from_slice(&request.data[..32])?;
+                let nonce = u64::from_le_bytes(request.data[32..].try_into()?);
+                let (record, proof) = store.prove_bridge_withdrawal(&lane, nonce)?;
+                serde_json::to_vec(&serde_json::json!({
+                    "record": record.map(|record| format!("0x{}", hex::encode(record))),
+                    "proof": format!("0x{}", hex::encode(proof.encode()?)),
+                }))?
+                .into()
+            }
             "/stem/bridge-lane" if request.prove => {
                 ensure!(
                     requested == tip,

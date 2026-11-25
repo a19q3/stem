@@ -39,6 +39,42 @@ pub struct Trust<'a> {
     pub genesis_app_hash: Hash32,
 }
 
+/// CKB direct checkpoint Type Script args.
+pub struct CheckpointPolicy<'a> {
+    pub type_id: Hash32,
+    pub ckb_genesis: Hash32,
+    pub trust: Trust<'a>,
+}
+
+impl<'a> CheckpointPolicy<'a> {
+    pub const FIXED_SIZE: usize = 5 * 32;
+    pub const MAX_CHAIN_ID_SIZE: usize = 50;
+
+    pub fn decode(bytes: &'a [u8]) -> Result<Self> {
+        let (fixed, chain) = bytes
+            .split_at_checked(Self::FIXED_SIZE)
+            .ok_or(Error::Encoding)?;
+        if !(1..=Self::MAX_CHAIN_ID_SIZE).contains(&chain.len()) {
+            return Err(Error::Encoding);
+        }
+        let chain_id = core::str::from_utf8(chain).map_err(|_| Error::Encoding)?;
+        let ckb_genesis = fixed[64..96].try_into().unwrap();
+        if ckb_genesis == [0; 32] {
+            return Err(Error::Identity);
+        }
+        Ok(Self {
+            type_id: fixed[..32].try_into().unwrap(),
+            ckb_genesis,
+            trust: Trust {
+                network: fixed[32..64].try_into().unwrap(),
+                initial_committee: fixed[96..128].try_into().unwrap(),
+                genesis_app_hash: fixed[128..160].try_into().unwrap(),
+                chain_id,
+            },
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tip {
     pub block: BlockId,
@@ -75,6 +111,10 @@ impl Tip {
             return Err(Error::Encoding);
         }
         Ok(tip)
+    }
+
+    pub fn system_root(&self) -> Hash32 {
+        self.native_header[112..144].try_into().unwrap()
     }
 
     pub fn app_hash(&self, network: &Hash32) -> Hash32 {

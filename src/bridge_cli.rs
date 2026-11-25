@@ -67,6 +67,8 @@ pub enum BridgeCommand {
         #[arg(long)]
         observations: PathBuf,
     },
+    /// Verify a pending withdrawal against an authenticated Header and build its CKB input_type.
+    WithdrawalWitness(payout::WithdrawalWitness),
     /// Verify a Stem execution proof and confirmed CKB payout before signing.
     AttestPayout(payout::AttestPayout),
     /// Observe a confirmed L1 vault rotation or two-vault reserve adjustment.
@@ -161,6 +163,7 @@ impl MintBody {
 impl BridgeCommand {
     pub fn run(self) -> Result<()> {
         match self {
+            Self::WithdrawalWitness(args) => args.run(),
             Self::AttestPayout(args) => args.run(),
             Self::AttestVault(args) => args.run(),
             Self::Settle { observations } => payout::settlement(&observations),

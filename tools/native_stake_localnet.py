@@ -73,7 +73,7 @@ def stake_round(args, l1, scenario, fixture):
     if args.loadgen:
         args.xudt = None
         source = point(scenario.code["out_point"]["tx_hash"], 2)
-        vault = deploy_bridge(args, l1, fixture, source)
+        vault = deploy_bridge(args, l1, fixture, spec["network_id"], source)
         spec["bridge"], lane = bridge_configuration(args, l1, fixture, vault, None, spec["network_id"])
         for home in homes:
             config_value(home / "config/config.toml", "timeout_commit", '"3s"')
@@ -297,8 +297,8 @@ def main():
     parser.add_argument("--l1-port", type=int, default=43300)
     parser.add_argument("--comet-port", type=int, default=43310)
     args = parser.parse_args()
-    if args.loadgen and not all((args.vault, args.deposit_lock, args.native_lock, args.wrapped)):
-        parser.error("funded stake load requires --vault, --deposit-lock, --native-lock and --wrapped")
+    if args.loadgen and not all((args.vault, args.deposit_lock, args.native_lock, args.wrapped, args.direct_checkpoint)):
+        parser.error("funded stake load requires --vault, --deposit-lock, --native-lock, --wrapped and --direct-checkpoint")
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)
     try:

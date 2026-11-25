@@ -13,6 +13,54 @@ use stem_ledger::{
 use super::*;
 
 #[derive(Args)]
+pub struct WithdrawalWitness {
+    #[arg(long)]
+    genesis: PathBuf,
+    #[arg(long, value_parser = parse_hash)]
+    lane: H256,
+    #[arg(long)]
+    nonce: u64,
+    /// JSON hex for the native Header already authenticated by the CKB Checkpoint Cell.
+    #[arg(long)]
+    header: PathBuf,
+    /// Response body of the /stem/bridge-withdrawal query.
+    #[arg(long)]
+    proof: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct PendingProof {
+    record: JsonBytes,
+    proof: JsonBytes,
+}
+
+impl WithdrawalWitness {
+    pub fn run(self) -> Result<()> {
+        let spec = native_spec::load(&self.genesis)?;
+        let header: JsonBytes = read_json_limited(&self.header, 1024)?;
+        let header = Header::decode(header.as_bytes())?;
+        let evidence: PendingProof = read_json_limited(&self.proof, 128 * 1024)?;
+        let record = evidence.record.as_bytes();
+        let path = stem_ledger::patricia::Proof::decode(evidence.proof.as_bytes())?;
+        ensure!(
+            stem::native_store::Store::verify_bridge_withdrawal(
+                &spec.network,
+                &header,
+                &self.lane.pack(),
+                self.nonce,
+                record,
+                &path,
+            ),
+            "withdrawal is absent from the authenticated SystemRoot",
+        );
+        let mut witness = u32::try_from(record.len())?.to_le_bytes().to_vec();
+        witness.extend_from_slice(record);
+        witness.extend_from_slice(evidence.proof.as_bytes());
+        print_json(&JsonBytes::from_vec(witness))
+    }
+}
+
+#[derive(Args)]
 pub struct AttestPayout {
     #[arg(long)]
     genesis: PathBuf,
@@ -205,12 +253,7 @@ impl AttestPayout {
             let capacity = u64::from_le_bytes(item[76..84].try_into()?);
             let units = u128::from_le_bytes(item[84..100].try_into()?);
             let recipient = Script::from_slice(&item[100..])?;
-            let mut hash = ckb_hash::new_blake2b();
-            hash.update(b"Stem withdrawal receipt\0");
-            hash.update(spec.network.as_slice());
-            hash.update(item);
-            let mut id = [0; 32];
-            hash.finalize(&mut id);
+            let id = stem_bridge_wire::withdrawal_receipt_id(&spec.network.unpack(), item);
             return Ok(Ticket {
                 id: id.into(),
                 capacity,

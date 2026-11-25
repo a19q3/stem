@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import copy
 import json
 from pathlib import Path
 import secrets
@@ -14,7 +15,9 @@ from bridge_localnet import (
     le, output, packed_script, point, reject_cli, script, script_hash, transaction,
     vault_state, wallet_group, write_key,
 )
+from direct_checkpoint_localnet import Relay
 from localnet import Rpc, run, write_json
+from stake_localnet import witness
 
 
 def native_script(lock):
@@ -67,14 +70,14 @@ def wait_for(func, label, seconds=20):
     raise RuntimeError(f"timed out waiting for {label}")
 
 
-def deploy(args, l1, fixture, funding_point=None):
+def deploy(args, l1, fixture, network, funding_point=None):
     genesis = l1.call("get_block_by_number", "0x0")
     faucet, groups = genesis["transactions"][:2]
     index, funds = next((i, out) for i, out in enumerate(faucet["outputs"]) if out["lock"]["args"] == FAUCET_ARG)
     secp = dependency(point(groups["hash"], 0), "dep_group")
     multisig = dependency(point(groups["hash"], 1), "dep_group")
     multisig_code = hex_bytes(script_hash(faucet["outputs"][4]["type"]))
-    lock = script(multisig_code, hex_bytes(ckb_hash(fixture.multisig_prefix)[:20]))
+    custody = script(multisig_code, hex_bytes(ckb_hash(fixture.multisig_prefix)[:20]))
     if funding_point is None:
         funding_point = point(faucet["hash"], index)
     else:
@@ -84,17 +87,28 @@ def deploy(args, l1, fixture, funding_point=None):
     amounts = [(len(code) + 200) * CKB for code in codes]
     programs = len(args.native_lock.read_bytes()) + (len(args.wrapped.read_bytes()) if args.xudt else 0)
     funding = (programs + 20_000) * CKB
-    change = int(funds["capacity"], 16) - sum(amounts) - funding - FEE
-    deployment = transaction([funding_point],
-                             [output(c, fixture.standard) for c in amounts + [funding, change]],
-                             [hex_bytes(code) for code in codes] + ["0x", "0x"], [secp])
+    checkpoint = args.direct_checkpoint.read_bytes()
+    checkpoint_capacity, relay_funding, authorization = (len(checkpoint) + 200) * CKB, 8_000 * CKB, 300 * CKB
+    change = int(funds["capacity"], 16) - sum(amounts) - funding - checkpoint_capacity - relay_funding - authorization - FEE
+    deployment = transaction(
+        [funding_point], [output(c, fixture.standard) for c in amounts + [funding, change, checkpoint_capacity, relay_funding]]
+        + [output(authorization, custody)],
+        [hex_bytes(code) for code in codes] + ["0x", "0x", hex_bytes(checkpoint), "0x", "0x"], [secp],
+    )
     deployed = l1.send(fixture.sign("deploy", deployment, [wallet_group(0, [fixture.faucet])]))
     vault_code = dependency(point(deployed, 0))
     deposit_code = dependency(point(deployed, 1))
     deposit_hash = hex_bytes(ckb_hash(codes[1]))
     type_id = hex_bytes(ckb_hash(le(0, 8) + binary(deployed) + le(2, 4) + le(0, 8)))
-    vault_type = script(hex_bytes(ckb_hash(codes[0])), type_id, "data1")
+    anchor = {
+        "hash": hex_bytes(ckb_hash(checkpoint)), "id": ckb_hash(le(0, 8) + binary(deployed) + le(5, 4) + le(0, 8)),
+        "code": dependency(point(deployed, 4)), "seed": point(deployed, 5),
+        "network": network, "genesis": genesis["header"]["hash"],
+    }
+    policy = binary(anchor["hash"]) + anchor["id"] + binary(anchor["genesis"]) + binary(network)
+    vault_type = script(hex_bytes(ckb_hash(codes[0])), hex_bytes(binary(type_id) + policy), "data2")
     vault_hash = hex_bytes(script_hash(vault_type))
+    lock = dict(vault_type, args=hex_bytes(binary(vault_hash) + binary(custody["args"])))
     reserve = 1600 * CKB
     initial = vault_state(0, 0, deposit_hash, multisig_code)
     tx = transaction([point(deployed, 2)], [output(reserve, lock, vault_type),
@@ -104,7 +118,8 @@ def deploy(args, l1, fixture, funding_point=None):
         "genesis": genesis["header"]["hash"], "vault": vault, "state": initial, "type": vault_type,
         "vault_hash": vault_hash, "lock": lock, "reserve": reserve, "funding": funding - reserve - FEE,
         "secp": secp, "multisig": multisig, "vault_code": vault_code, "deposit_code": deposit_code,
-        "change_point": point(deployed, 3), "change": change,
+        "change_point": point(deployed, 3), "change": change, "anchor": anchor,
+        "custody": custody, "custody_cell": point(deployed, 6), "authorization": authorization,
     }
 
 
@@ -115,7 +130,7 @@ def native_spec(args, l1, fixture, vault, token):
     config = json.loads(comet_config.read_text())
     config["chain_id"] = "stem-native-ckb-local"
     config["genesis_time"] = "2025-01-01T00:00:00Z"
-    network = hex_bytes(ckb_hash(b"Stem CKB bridge fixture\0" + secrets.token_bytes(32)))
+    network = vault["anchor"]["network"]
     bridge, lane = bridge_configuration(args, l1, fixture, vault, token, network)
     spec = {
         "chain_id": config["chain_id"], "network_id": network, "genesis_time_ms": 1_735_689_600_000,
@@ -183,12 +198,15 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
                      [item["data"] for item in body] + ["0x"], [vault["secp"]])
     deposited = l1.send(fixture.sign("deposits", tx, [wallet_group(0, [fixture.faucet])]))
     consolidation = transaction(
-        [point(vault["vault"], 0)] + [point(deposited, index) for index in range(len(body) + 1)],
-        [output(vault["reserve"] + total, vault["lock"], vault["type"]), output(change - FEE, fixture.standard)],
-        [vault["state"], "0x"], [vault["vault_code"], vault["deposit_code"], vault["multisig"], vault["secp"]],
+        [point(vault["vault"], 0)] + [point(deposited, index) for index in range(len(body) + 1)] + [vault["custody_cell"]],
+        [output(vault["reserve"] + total, vault["lock"], vault["type"]), output(change - FEE, fixture.standard),
+         output(vault["authorization"], vault["custody"])],
+        [vault["state"], "0x", "0x"], [vault["vault_code"], vault["deposit_code"], vault["multisig"], vault["secp"]],
     )
-    groups = [wallet_group(0, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)), wallet_group(len(body) + 1, [fixture.faucet])]
+    groups = [wallet_group(len(body) + 2, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)),
+              wallet_group(len(body) + 1, [fixture.faucet])]
     consolidated = l1.send(fixture.sign("consolidate", consolidation, groups))
+    vault["custody_cell"] = point(consolidated, 2)
     encoded, minted, approvals, rejected = attain_mint(
         args, l1, fixture, vault, spec_path, lane, consolidated, comet_rpc, "ckb",
         spec["bridge"]["anchor_height"], spec["bridge"]["anchor_hash"], [],
@@ -235,7 +253,7 @@ def attain_mint(args, l1, fixture, vault, spec_path, lane, consolidated, comet_r
     return encoded, minted, approvals, rejected
 
 
-def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, mint, comet_rpc,
+def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, mint, comet_rpc, relay,
                         *, typed=None):
     source = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())), fixture.key(fixture.owner)["blake160"], "data")
     recipient = fixture.friend_lock
@@ -290,14 +308,32 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     fee_input = point(mint["l1_consolidation"], 2 if typed else 1)
     fee_cell = l1.call("get_live_cell", fee_input, True)["cell"]["output"]
     before = vault["reserve"] + mint["capacity"]
-    l1_claim = ckb_hash(b"CKB bridge withdrawal v1\0" + binary(vault["vault_hash"]) + le(0, 8))
+    response = comet_rpc.call(
+        "abci_query", path=json.dumps("/stem/bridge-withdrawal"), prove="true",
+        data=hex_bytes(binary(lane) + le(0, 8)),
+    )["response"]
+    pending = json.loads(base64.b64decode(response["value"]))
+    pending_height = int(response["height"])
+    if response["code"] != 0 or pending_height < height or not pending["record"]:
+        raise AssertionError(response)
+    wait_for(lambda: int(comet_rpc.call("status")["sync_info"]["latest_block_height"]) > pending_height,
+             "Stem successor for the pending SystemRoot")
+    pending_proof = args.output / f"{name}-pending-proof.json"
+    pending_header = args.output / f"{name}-pending-header.json"
+    write_json(pending_proof, pending)
+    write_json(pending_header, hex_bytes(relay.header(pending_height)))
+    payload = binary(json.loads(run(
+        args.binary, "bridge", "withdrawal-witness", "--genesis", spec_path, "--lane", lane,
+        "--nonce", "0", "--header", pending_header, "--proof", pending_proof,
+    )))
+    l1_claim = binary(pending["record"])[:32]
     previous = binary(vault["state"])
     state = binary(vault_state(1, 1, hex_bytes(previous[10:42]), hex_bytes(previous[42:74]),
                               amount=capacity, payout_hash=script_hash(recipient), burn_id=l1_claim))
     inputs = [input_vault]
     outs = [output(capacity, recipient, vault["l1_type"] if typed else None),
             output(before - capacity, vault["lock"], vault["type"])]
-    deps = [vault["vault_code"], vault["multisig"], vault["secp"]]
+    deps = [vault["vault_code"], vault["secp"]]
     if typed:
         state = bytes([2]) + state[1:] + previous[146:210] + units
         inputs.append(point(mint["l1_consolidation"], 1))
@@ -306,10 +342,37 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
     data = [hex_bytes(units), hex_bytes(state)] + ([hex_bytes(le(0, 16))] if typed else [])
     inputs.append(fee_input)
     outs.append(output(int(fee_cell["capacity"], 16) - FEE, fixture.standard))
-    release = transaction(inputs, outs, data + ["0x"], deps)
-    groups = [wallet_group(0, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)),
-              wallet_group(len(inputs) - 1, [fixture.faucet])]
-    payout = l1.send(fixture.sign(f"{name}-release", release, groups))
+
+    def release(label, checkpoint, claim=payload, modify=None):
+        tx = transaction(inputs, copy.deepcopy(outs), data + ["0x"], deps + ([checkpoint] if checkpoint else []))
+        if modify:
+            modify(tx)
+        tx["witnesses"] = [witness(claim)]
+        return fixture.sign(f"{name}-{label}", tx, [wallet_group(len(inputs) - 1, [fixture.faucet])])
+
+    def wrong_recipient(tx):
+        tx["outputs"][0]["lock"] = fixture.owner_lock
+        after = binary(tx["outputs_data"][1])
+        tx["outputs_data"][1] = hex_bytes(after[:82] + script_hash(fixture.owner_lock) + after[114:])
+
+    pre_checkpoint = dependency(relay.point)
+    negative = {"old_system_root": l1.reject(release("early-release", pre_checkpoint))}
+    checkpoint = relay.advance(pending_height, vault["secp"])
+    negative["missing_checkpoint"] = l1.reject(release("no-checkpoint", None))
+    negative["modified_path"] = l1.reject(release("bad-path", checkpoint, payload[:-1] + bytes([payload[-1] ^ 1])))
+    negative["wrong_recipient"] = l1.reject(release("wrong-recipient", checkpoint, modify=wrong_recipient))
+    signed_release = release("release", checkpoint)
+    estimate = int(l1.call("estimate_cycles", signed_release["json"])["cycles"], 16)
+    payout = l1.send(signed_release)
+    if not typed:
+        fee = int(outs[-1]["capacity"], 16)
+        replay_after = state[:2] + le(2, 8) + state[10:]
+        replay = transaction([point(payout, 1), point(payout, 2)],
+                             [outs[0], output(before - 2 * capacity, vault["lock"], vault["type"]),
+                              output(fee - FEE, fixture.standard)],
+                             ["0x", hex_bytes(replay_after), "0x"], deps + [checkpoint])
+        replay["witnesses"] = [witness(payload)]
+        negative["old_nonce"] = l1.reject(fixture.sign("ckb-replay-withdrawal", replay, [wallet_group(1, [fixture.faucet])]))
     l1.mine(spec["bridge"]["confirmations"])
     request = {
         "lane": lane, "nonce": 0, "payout": payout, "vault_input": input_vault,
@@ -333,6 +396,8 @@ def withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, 
         raise AssertionError(confirmed)
     return {"burn": burned, "l1_payout": payout, "l1_payout_proof": l1.prove_committed(payout),
             "settlement": confirmed, "signature_verification": verification, "capacity": capacity,
+            "direct_release": {"checkpoint": checkpoint, "pending_height": pending_height,
+                               "proof_bytes": len(payload), "estimated_cycles": estimate, "rejections": negative},
             "confirmed_height": approvals[0]["confirmed_height"],
             "confirmed_hash": approvals[0]["confirmed_hash"]}
 
@@ -353,24 +418,25 @@ def deploy_token(args, l1, fixture, vault):
                          list(map(hex_bytes, (gate_bytes, token_bytes))) + ["0x"] * 4, [vault["secp"]])
     binaries = l1.send(fixture.sign("xudt-deploy", deploy, [wallet_group(0, [fixture.faucet])]))
     type_id = hex_bytes(ckb_hash(le(0, 8) + binary(binaries) + le(2, 4) + le(0, 8)))
-    vault_type = dict(vault["type"], args=type_id)
+    vault_type = dict(vault["type"], args=hex_bytes(binary(type_id) + binary(vault["type"]["args"])[32:]))
     vault_hash = hex_bytes(script_hash(vault_type))
+    lock = dict(vault["lock"], args=hex_bytes(binary(vault_hash) + binary(vault["custody"]["args"])))
     escrow = script(gate_code, hex_bytes(binary(vault_hash) + b"\1"), "data1")
     prior = binary(vault["state"])
     initial = hex_bytes(bytes([2]) + prior[1:] + binary(gate_code) + script_hash(l1_type) + bytes(16))
     create = transaction([point(binaries, 2)],
-                         [output(vault["reserve"], vault["lock"], vault_type),
+                         [output(vault["reserve"], lock, vault_type),
                           output(capital - vault["reserve"] - FEE, fixture.standard)],
                          [initial, "0x"], [vault["vault_code"], vault["secp"]])
     receiver = l1.send(fixture.sign("xudt-vault", create, [wallet_group(0, [fixture.faucet])]))
-    return dict(vault, vault=receiver, type=vault_type, vault_hash=vault_hash, state=initial,
+    return dict(vault, vault=receiver, type=vault_type, vault_hash=vault_hash, state=initial, lock=lock,
                 l1_type=l1_type, escrow_lock=escrow, gate_dep=dependency(point(binaries, 0)),
                 token_dep=dependency(point(binaries, 1)), issuer=issuer,
                 issuance=point(binaries, 3), fee_input=point(binaries, 4),
                 fee_capacity=capital, escrow_capacity=600 * CKB)
 
 
-def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, prior, comet_rpc):
+def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, prior, comet_rpc, relay):
     lane = hex_bytes(ckb_hash(b"Stem bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"])
                               + b"\1" + script_hash(vault["l1_type"])))
     native = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())), fixture.key(fixture.owner)["blake160"], "data")
@@ -383,14 +449,16 @@ def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, 
                          output(vault["fee_capacity"] - capacity - vault["escrow_capacity"] - FEE, fixture.standard)],
                         [hex_bytes(le(amount, 16)), hex_bytes(bytes(16)), "0x"], [vault["token_dep"], vault["secp"]])
     deposit = l1.send(fixture.sign("xudt-issue", issue, [wallet_group(0, [vault["issuer"]])]))
-    consolidation = transaction([point(vault["vault"], 0), point(deposit, 0), point(deposit, 1), vault["fee_input"]],
+    consolidation = transaction([point(vault["vault"], 0), point(deposit, 0), point(deposit, 1), vault["fee_input"], vault["custody_cell"]],
                                 [output(vault["reserve"] + capacity, vault["lock"], vault["type"]),
                                  output(vault["escrow_capacity"], vault["escrow_lock"], vault["l1_type"]),
-                                 output(vault["fee_capacity"] - FEE, fixture.standard)],
-                                [vault["state"], hex_bytes(le(amount, 16)), "0x"],
+                                 output(vault["fee_capacity"] - FEE, fixture.standard),
+                                 output(vault["authorization"], vault["custody"])],
+                                [vault["state"], hex_bytes(le(amount, 16)), "0x", "0x"],
                                 [vault["vault_code"], vault["gate_dep"], vault["token_dep"], vault["multisig"], vault["secp"]])
-    groups = [wallet_group(0, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)), wallet_group(3, [fixture.faucet])]
+    groups = [wallet_group(4, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)), wallet_group(3, [fixture.faucet])]
     consolidated = l1.send(fixture.sign("xudt-consolidate", consolidation, groups))
+    vault["custody_cell"] = point(consolidated, 3)
     stem_dep = point(baseline["mint_id"], 2)
     encoded, minted, votes, rejected = attain_mint(args, l1, fixture, vault, spec_path, lane, consolidated, comet_rpc,
                                                    "xudt", prior["confirmed_height"], prior["confirmed_hash"],
@@ -401,7 +469,7 @@ def xudt_round_trip(args, l1, fixture, vault, spec, spec_path, comet, baseline, 
             "payment": point(tx_id, 0), "lock_dep": baseline["lock_dep"], "minority_rejected": rejected,
             "confirmed_height": votes[0]["mint"]["confirmed_height"], "confirmed_hash": votes[0]["mint"]["confirmed_hash"]}
     wrapped = script(spec["bridge"]["wrapped_code_hash"], hex_bytes(script_hash(vault["l1_type"])), "data")
-    payout = withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, mint, comet_rpc,
+    payout = withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, mint, comet_rpc, relay,
                                  typed={"wrapped": wrapped, "amount": amount, "stem_dep": stem_dep})
     return {"mint": mint, "withdrawal": payout, "units": amount, "lane": lane}
 
@@ -411,9 +479,9 @@ def vault_operations(args, l1, fixture, native, token, ckb_lane, ckb, typed, spe
     source = point(ckb["l1_payout"], 1)
     destination = point(typed["withdrawal"]["l1_payout"], 1)
     fee_input = point(typed["withdrawal"]["l1_payout"], 3)
-    inputs = [source, destination, fee_input]
+    inputs = [source, destination, fee_input, token["custody_cell"]]
     cell = lambda out: l1.call("get_live_cell", out, True)["cell"]["output"]
-    before, after, change = map(cell, inputs)
+    before, after, change, custody_coin = map(cell, inputs)
     cap = lambda out: int(out["capacity"], 16)
     native_config, typed_config = [binary(vault["state"]) for vault in (native, token)]
 
@@ -443,30 +511,36 @@ def vault_operations(args, l1, fixture, native, token, ckb_lane, ckb, typed, spe
                 "confirmed_hash": votes[0]["confirmed_hash"], "l1_transaction": transition,
                 "l1_proof": l1.prove_committed(transition)}
 
-    groups = [{"inputs": [0, 1], "keys": [str(key) for key in fixture.l1_keys[:2]],
-               "lock_prefix": hex_bytes(fixture.multisig_prefix)}, wallet_group(2, [fixture.faucet])]
+    groups = [wallet_group(3, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)),
+              wallet_group(2, [fixture.faucet])]
     outs = [output(cap(before) - amount, before["lock"], before["type"]),
             output(cap(after) + amount, after["lock"], after["type"]),
-            output(cap(change) - FEE, fixture.standard)]
+            output(cap(change) - FEE, fixture.standard), output(cap(custody_coin), native["custody"])]
     data = [state(native_config, 3, amount, binary(token["vault_hash"])),
-            state(typed_config, 4, amount, binary(native["vault_hash"])), "0x"]
+            state(typed_config, 4, amount, binary(native["vault_hash"])), "0x", "0x"]
     deps = [native["vault_code"], native["multisig"], native["secp"]]
     wrong = [*outs]
     wrong[1] = output(cap(after) + amount - 1, after["lock"], after["type"])
     invalid = l1.reject(fixture.sign("invalid-reserve", transaction(inputs, wrong, data, deps), groups))
+    missing_custody = l1.reject(fixture.sign("reserve-without-custody",
+                                           transaction(inputs[:-1], outs[:-1], data[:-1], deps),
+                                           [wallet_group(2, [fixture.faucet])]))
     moved = l1.send(fixture.sign("move-reserve", transaction(inputs, outs, data, deps), groups))
     transfer = observe(moved, {"lane": ckb_lane, "vault": source}, typed["withdrawal"],
                        {"lane": typed["lane"], "vault": destination})
-    transfer.update(capacity=amount, mismatch_rejected=invalid)
+    transfer.update(capacity=amount, mismatch_rejected=invalid, missing_custody_rejected=missing_custody)
 
     incoming = [write_key(args.output, f"incoming-custody-{index}", secrets.token_bytes(32)) for index in range(3)]
     script_bytes = bytes([0, 0, 2, 3]) + b"".join(binary(fixture.key(key)["blake160"]) for key in incoming)
-    lock = dict(before["lock"], args=hex_bytes(ckb_hash(script_bytes)[:20]))
+    next_authority = ckb_hash(script_bytes)[:20]
+    lock = dict(before["lock"], args=hex_bytes(binary(native["vault_hash"]) + next_authority))
+    custody_lock = dict(native["custody"], args=hex_bytes(next_authority))
     fee_cap = cap(cell(point(moved, 2)))
-    rotate = transaction([point(moved, 0), point(moved, 2)],
-                         [output(cap(before) - amount, lock, before["type"]), output(fee_cap - FEE, fixture.standard)],
-                         [state(native_config, 2), "0x"], deps)
-    old_groups = [wallet_group(0, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)), wallet_group(1, [fixture.faucet])]
+    rotate = transaction([point(moved, 0), point(moved, 2), point(moved, 3)],
+                         [output(cap(before) - amount, lock, before["type"]), output(fee_cap - FEE, fixture.standard),
+                          output(cap(custody_coin), custody_lock)],
+                         [state(native_config, 2), "0x", "0x"], deps)
+    old_groups = [wallet_group(2, fixture.l1_keys[:2], hex_bytes(fixture.multisig_prefix)), wallet_group(1, [fixture.faucet])]
     rotation = l1.send(fixture.sign("rotate-custody", rotate, old_groups))
     rotated = observe(rotation, {"lane": ckb_lane, "vault": point(moved, 0)}, transfer)
     if cell(point(rotation, 0))["lock"] != lock:
@@ -563,7 +637,7 @@ def verify_l1_output(args, l1, payout, vault_spent):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("binary", "l1", "comet", "vault", "deposit-lock", "native-lock", "wrapped", "proof-verifier", "output"):
+    for name in ("binary", "l1", "comet", "vault", "deposit-lock", "native-lock", "wrapped", "proof-verifier", "direct-checkpoint", "output"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve(), required=True)
     for name in ("xudt", "xudt-gate"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
@@ -578,22 +652,26 @@ def main():
     comet_rpc = Rpc(args.comet_port)
     try:
         fixture = Fixtures(args)
-        vault = deploy(args, l1, fixture)
+        network = hex_bytes(ckb_hash(b"Stem CKB bridge fixture\0" + secrets.token_bytes(32)))
+        vault = deploy(args, l1, fixture, network)
         token = deploy_token(args, l1, fixture, vault) if args.xudt else None
         comet, spec, spec_path, lane = native_spec(args, l1, fixture, vault, token)
         home = args.output / "stem"
-        children.append(start(args, [args.binary, "run", "--home", home, "--genesis", spec_path], "stem.log"))
+        children.append(start(args, [args.binary, "run", "--home", home, "--genesis", spec_path, "--archive"], "stem.log"))
         wait_for(lambda: (home / "abci.sock").is_socket(), "Stem ABCI socket")
         children.append(start(args, [args.comet, "start", "--home", comet,
             "--proxy_app", f"unix://{home / 'abci.sock'}", "--rpc.laddr", f"tcp://127.0.0.1:{args.comet_port}",
             "--p2p.laddr", f"tcp://127.0.0.1:{args.comet_port + 1}"], "comet.log"))
         wait_for(lambda: int(comet_rpc.call("status")["sync_info"]["latest_block_height"]) > 0, "CometBFT height")
+        relay = Relay(args, l1, fixture, vault["anchor"], spec_path, comet / "config/genesis.json", comet_rpc)
+        relay.advance(0, vault["secp"])
         result = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc)
         write_json(args.output / "native-mint-report.json", result)
-        payout = withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, result, comet_rpc)
-        report = {"mint": result, "withdrawal": payout}
+        payout = withdraw_and_settle(args, l1, fixture, vault, comet, spec, spec_path, lane, result, comet_rpc, relay)
+        report = {"mint": result, "withdrawal": payout, "checkpoint_type": relay.type, "checkpoints": relay.publications}
         if token:
-            report["xudt"] = xudt_round_trip(args, l1, fixture, token, spec, spec_path, comet, result, payout, comet_rpc)
+            token["custody_cell"] = vault["custody_cell"]
+            report["xudt"] = xudt_round_trip(args, l1, fixture, token, spec, spec_path, comet, result, payout, comet_rpc, relay)
             report["vault_operations"] = vault_operations(args, l1, fixture, vault, token, lane, payout,
                                                              report["xudt"], spec_path, comet_rpc)
             print(f"CKB xUDT payout {report['xudt']['withdrawal']['l1_payout']} for {report['xudt']['units']} units")
