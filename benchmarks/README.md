@@ -34,5 +34,6 @@ available. Published network evidence contains public genesis and proof data.
 | CKB fee fund settlement and bridge regression | [Report](../BENCHMARKS.md#ckb-fee-fund-settlement), [raw runs including the failed attempt](2026-11-25-stem-fee-funds.json.xz) |
 | Fixed-precision resource pricing | [Report](../BENCHMARKS.md#fixed-precision-fee-calibration), [both attempts and CKB regression](2026-11-25-stem-resource-pricing.json.xz) |
 | CKB delegation, retirement, slashing and capped Jolteon handoffs | [Report](../BENCHMARKS.md#ckb-delegation-and-weighted-handoffs), [all devnet runs and failure evidence](2026-11-25-stem-ckb-delegation.json.xz) |
+| In-term CKB delegation reductions, historical penalties and L1 reorg | [Report](../BENCHMARKS.md#in-term-ckb-delegation-reductions), [raw runs and failed attempt](2026-11-25-stem-delegation-reduction.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

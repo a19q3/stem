@@ -1210,3 +1210,48 @@ failure from a missing fixture field.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
 [Raw run and failure evidence](benchmarks/2026-11-25-stem-ckb-delegation.json.xz).
+
+## In-term CKB delegation reductions
+
+The devnet used three Stem processes and CKB 0.210.0 on the i9-13900H
+host. Before the first committee handoff, two CKB owners requested
+reductions of 100 and 70 CKB. The first position retained 75 CKB of
+active principal. With no reductions the old validator's raw voting
+power would have been 495. The applied Registry reduced it to 325
+at Stem height 11, with the second validator at 400. The old validator
+stayed in the committee throughout settlement.
+
+| L1 operation | Transaction bytes | Estimated CKB cycles |
+| --- | ---: | ---: |
+| Request a reduction | 1,717 | 1,980,074–1,990,936 |
+| Confirm the cutoff for each position | 2,229–2,261 | 2,100,741–2,103,460 |
+| Withdraw 100 CKB and retain the active position | 1,826 | 1,986,277 |
+| Close the 70 CKB position | 1,491 | 1,957,311 |
+| Settle the 100 CKB historical double-vote penalty | 3,057 | 6,331,814 |
+
+The normal run paid 100 CKB to the first owner and 337 CKB to the
+second, including the second position's 267 CKB occupied Capacity.
+The historical run proved a vote fault at height 12 and froze the
+validator globally. CKB rejected using that fault against a pending
+position with cutoff 11. A separate valid proof of two votes at
+height 3 forfeited 100 CKB pending principal, preserving the 75 CKB
+active successor. The other owner still collected 337 CKB. The two
+runs reached agreement at Stem heights 17 and 18, respectively.
+
+A third workload truncated the actual CKB branch after the two
+reduction requests but before the signed snapshot anchor. Both
+request Cells remained live. The fixture published an authentic
+Stem checkpoint on the replacement CKB chain. CKB rejected the
+orphaned Header Dep, and the Stake Registry contract rejected
+substituting the new canonical block hash into the old proof.
+The normal runs also rejected a checkpoint before the new weights
+took effect, missing anchor data, duplicate confirmation, an
+immature withdrawal and an attempted recipient change.
+
+The full retirement and active-slash path passed as a regression.
+The release Rust workspace passed 440 tests with 12 ignored. The
+Go proof suite passed. The archive also keeps the failed historical
+fixture attempt and the first successful withdrawal run.
+
+[Run instructions](OPERATIONS.md#exercise-ckb-delegation) ·
+[Raw runs and fingerprints](benchmarks/2026-11-25-stem-delegation-reduction.json.xz).
