@@ -38,6 +38,7 @@ struct Request {
     cell_deps: Vec<CellDep>,
     fee_input: OutPoint,
     valid_before_height: u64,
+    execute_at: Option<u64>,
     executor: H256,
     executor_dep: OutPoint,
     executor_cycles: u64,
@@ -61,7 +62,7 @@ impl Command {
         let transaction = match self {
             Self::Build { request } => {
                 let request: Request = read_json_limited(&request, 512 * 1024)?;
-                Transaction::new_lineage_command(
+                let tx = Transaction::new_lineage_command(
                     request.cell_deps.into_iter().map(Into::into).collect(),
                     request.fee_input.into(),
                     request.valid_before_height,
@@ -83,7 +84,11 @@ impl Command {
                             })
                             .collect(),
                     },
-                )?
+                )?;
+                match request.execute_at {
+                    Some(height) => tx.with_execute_at(height)?,
+                    None => tx,
+                }
             }
             Self::Sign {
                 genesis,

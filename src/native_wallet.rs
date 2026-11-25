@@ -103,6 +103,14 @@ struct Draft {
     proofs: Vec<Proof>,
     #[serde(default)]
     messages: Vec<Message>,
+    keeper: Option<KeeperRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum KeeperRequest {
+    Schedule(JsonBytes),
+    Cancel { height: u64, fee_input: OutPoint },
 }
 
 #[derive(Deserialize)]
@@ -244,6 +252,21 @@ impl Wallet {
                 )?;
                 if let Some(height) = request.valid_before_height {
                     tx = tx.with_valid_before_height(height)?;
+                }
+                if let Some(action) = request.keeper {
+                    let action = match action {
+                        KeeperRequest::Schedule(bytes) => {
+                            let command = stem_ledger::keeper::decode_command(bytes.as_bytes())?;
+                            stem_ledger::keeper::Action::schedule(&command)?
+                        }
+                        KeeperRequest::Cancel { height, fee_input } => {
+                            stem_ledger::keeper::Action::Cancel {
+                                height,
+                                fee_input: fee_input.into(),
+                            }
+                        }
+                    };
+                    tx = tx.with_keeper_action(action)?;
                 }
                 tx = tx.with_messages(
                     request

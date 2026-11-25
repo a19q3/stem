@@ -23,6 +23,7 @@ use strand::prelude::{Builder as WireBuilder, Entity as WireEntity};
 mod authorization;
 pub mod block;
 pub mod history;
+pub mod keeper;
 pub mod lineage;
 mod message;
 pub mod patricia;
@@ -297,6 +298,8 @@ fn validate_script(script: &Script) -> Result<()> {
 pub struct Transaction {
     encoded: wire::Transaction,
     lineage_command: Option<Arc<lineage::Command>>,
+    execute_at: Option<u64>,
+    keeper: Option<keeper::Action>,
 }
 
 impl Transaction {
@@ -433,10 +436,35 @@ impl Transaction {
             .map(lineage::Command::decode)
             .transpose()?
             .map(Arc::new);
+        let execute_at = raw
+            .execute_at()
+            .to_opt()
+            .map(|height| u64::from_le_bytes(height.as_slice().try_into().expect("Uint64")));
+        let keeper = raw
+            .keeper()
+            .to_opt()
+            .map(keeper::Action::decode)
+            .transpose()?;
         let tx = Self {
             encoded,
             lineage_command,
+            execute_at,
+            keeper,
         };
+        if let Some(height) = tx.execute_at {
+            ensure!(
+                tx.has_lineage_command()
+                    && height != 0
+                    && tx
+                        .valid_before_height()
+                        .is_some_and(|expiry| height < expiry),
+                "invalid Keeper execution height"
+            );
+        }
+        ensure!(
+            tx.keeper.is_none() || (raw.protocol().to_opt().is_none() && !tx.has_lineage_command()),
+            "Keeper actions belong to ordinary Cell transactions"
+        );
         GroupMessage::validate_all(&tx.messages().collect::<Vec<_>>())?;
         ensure!(
             tx.valid_before_height() != Some(0),
@@ -630,6 +658,53 @@ impl Transaction {
 
     pub fn has_lineage_command(&self) -> bool {
         self.lineage_command.is_some()
+    }
+
+    pub fn execute_at(&self) -> Option<u64> {
+        self.execute_at
+    }
+
+    /// Restrict a Lineage command to the on-chain Keeper at this exact height.
+    pub fn with_execute_at(&self, height: u64) -> Result<Self> {
+        ensure!(
+            self.witnesses().len() == 0,
+            "set Keeper height before signing"
+        );
+        let raw = self
+            .encoded
+            .raw()
+            .as_builder()
+            .execute_at(
+                wire::Uint64Opt::new_builder()
+                    .set(Some(wire::Uint64::new_unchecked(
+                        height.to_le_bytes().to_vec().into(),
+                    )))
+                    .build(),
+            )
+            .build();
+        Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
+    }
+
+    pub fn keeper_action(&self) -> Option<&keeper::Action> {
+        self.keeper.as_ref()
+    }
+
+    pub fn with_keeper_action(&self, action: keeper::Action) -> Result<Self> {
+        ensure!(
+            self.witnesses().len() == 0,
+            "set Keeper action before signing"
+        );
+        let raw = self
+            .encoded
+            .raw()
+            .as_builder()
+            .keeper(
+                wire::KeeperActionOpt::new_builder()
+                    .set(Some(action.encode()))
+                    .build(),
+            )
+            .build();
+        Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
     }
 
     pub fn lineage_signing_digest(&self, network: &Byte32, fee_cell: &Cell) -> Result<Byte32> {

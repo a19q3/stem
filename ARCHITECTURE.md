@@ -34,6 +34,15 @@ The validation VM exposes authorization through syscall 2125 as one role byte pl
 
 The Executor uses the V2 instruction schedule and a bounded portable RISC-V VM. It meters ELF loading, instructions and copied bytes. Syscall 2126 with source 0 and index 0 loads height, parent time in milliseconds, payer Lock hash and target count (8+8+32+4 bytes). Source 1 loads a target's LineageId, current version and Capacity (32+8+8 bytes). Syscall 2127 exposes the signed payload at source 0 and the indexed target's Data at source 1. Reads use the standard buffer, size and offset registers. Syscall 2128 takes Data pointer, Data length, target index and Capacity in a0 through a3. Exactly one output per target is required. The Executor cannot read the store or make outbound calls. [Fuel access lists](https://docs.fuel.network/docs/specs/protocol/tx-validity/) [Sui shared-object inputs](https://www.docs.sui.io/develop/transactions/ptbs/inputs-and-results)
 
+### Keeper scheduling
+
+Height-indexed Strand queues and exact fee OutPoint reservations live in SystemRoot. The carrier uses the ordinary Cell transaction and complete Lock signature. At registration the kernel verifies the embedded command's fee authorization and charges both authorization work and the carrier's state updates. The maximum active queue size is the configured delay times the per-height limit. At each height the kernel reads one bucket, with work per retained reservation independent of historical block count.
+
+Before user transactions, the Store runs the due bucket through the existing Lineage materializer, RISC-V Executor and validation path. Each attempt has a block-derived resource share. Stale or unaffordable attempts consume a prepaid share and record a skip. Local state read faults abort block preparation. Phase mutations, deletion of processed reservations and normal transaction deltas commit together. Snapshots include the pending state through the existing SystemRoot record stream.
+
+The native transaction and receipt Merkle trees contain due commands first, including skipped commands, followed by proposal transactions. The application returns results for submitted proposal transactions to CometBFT as required by ABCI. Scheduled results remain visible at the native execution query and are authenticated by the signed successor.
+
+
 ## CKB-VM host
 
 The [StemVM crate](vm) owns the native ABI, verification cache and Group execution. The RISC-V backend is the exact upstream CKB-VM v0.24.15 source at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Stem uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)
@@ -60,7 +69,7 @@ Calls retain the CKB buffer convention. `a0` is the buffer pointer, `a1` points 
 | 2121 | Recover a 33-byte compressed secp256k1 key from a 65-byte compact seal at `a0` and a 32-byte digest at `a1`. Writes the key at `a2`. Returns 4 for an invalid or high-S seal. Each call charges 1,900,000 cycles, including invalid seals. |
 | 2122 | Candidate height and committed parent time as two little-endian u64 values, followed by the 32-byte parent Header ID. Source and index must be zero. |
 | 2123 | The encoded Group Message. Source 0 and index 0 select the current group. Source 1 selects the absolute group index. |
-| 2124 | For paired Lock authorization, the 32-byte network-bound ordered dependency digest, little-endian u64 transaction fee and one Group Message presence byte. Source and index must be zero. |
+| 2124 | For paired Lock authorization, the 32-byte network-bound ordered dependency digest, little-endian u64 transaction fee and a full-authorization flag set for Group Messages or Keeper controls. Source and index must be zero. |
 | 2072, 2082 | Native Header, or fields height 0, time 1, parent ID 2, transaction root 3, Cell root 4, system root 5, history root 6, receipt root 7 |
 
 The native host uses the existing Cell Data, input, Header and process call numbers. Call 2083 field 1 returns the nine-byte native Since. Spawn and Exec can read group proof bytes using the absolute group index as the witness data index. A creation header is visible when named by a header dep. Header source 5 and index 0 read the committed parent directly. The parent ID and candidate height are included in the VM cache key. Stem headers carry no extension data. Fields 4 and 5 under 2081 have no native value. Contracts discover the Type Script set via 2110–2113.

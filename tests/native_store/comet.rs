@@ -177,6 +177,7 @@ pub(super) fn write_spec(path: &Path, spec: &Spec) -> Result<()> {
         "limits": spec.limits,
         "development_validators": committee,
         "development_cells": cells,
+        "keeper": spec.keeper,
         "lineage_type": spec.lineage_type.as_ref().map(|hash| format!("0x{}", hex::encode(hash.as_slice()))),
     });
     fs::write(path, serde_json::to_vec(&spec)?)?;
@@ -375,7 +376,8 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         let swap = super::intent::Swap::fund(&mut fixture)?;
         let lineage = super::lineage::FixtureLineage::fund(&mut fixture)?;
         let dynamic =
-            super::lineage::DynamicLineage::fund_using(&mut fixture, &lineage, 3, 2, None)?;
+            super::lineage::DynamicLineage::fund_using(&mut fixture, &lineage, 5, 2, None)?;
+        super::keeper::fund_carriers(&mut fixture, 3)?;
         Some((swap, lineage, dynamic))
     } else {
         None
@@ -835,6 +837,190 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     )?;
     println!(
         "pre-signed Lineage commands and fee-only rollback verified on four validators and a snapshot observer"
+    );
+    verify_keeper_execution(&nodes, &observer, &client, &fixture, &dynamic, &output)?;
+    Ok(())
+}
+
+fn verify_keeper_execution(
+    nodes: &[Node],
+    observer: &Node,
+    client: &reqwest::blocking::Client,
+    fixture: &Fixture,
+    dynamic: &super::lineage::DynamicLineage,
+    output: &Path,
+) -> Result<()> {
+    use stem_ledger::{
+        block::Receipt, keeper::decode_queue, lineage::Outcome, proof::InclusionProof,
+    };
+
+    let due = nodes[0].signed_height(client)? + 9;
+    let command = dynamic.scheduled(fixture, 3, (2, 2), 4, due)?;
+    let rejected = dynamic.scheduled(fixture, 4, (3, 3), 0, due)?;
+    for (index, tx) in [&rejected, &command].into_iter().enumerate() {
+        let carrier = super::keeper::schedule(fixture, index as u32, tx)?;
+        let result = nodes[0].rpc(
+            client,
+            &format!(
+                "broadcast_tx_commit?tx=0x{}",
+                hex::encode(carrier.as_slice())
+            ),
+        )?;
+        ensure!(
+            result["check_tx"]["code"].as_u64() == Some(0)
+                && result["tx_result"]["code"].as_u64() == Some(0),
+            "Keeper reservation failed: {result}"
+        );
+    }
+    let query = nodes[0].rpc(
+        client,
+        &format!(
+            "abci_query?path=%22%2Fstem%2Fkeeper%22&prove=true&data=0x{}",
+            hex::encode(due.to_le_bytes())
+        ),
+    )?;
+    let response = &query["response"];
+    assert_eq!(response["code"].as_u64(), Some(0));
+    let at: u64 = response["height"]
+        .as_str()
+        .context("Keeper proof height")?
+        .parse()?;
+    let data = STANDARD.decode(response["value"].as_str().context("Keeper proof value")?)?;
+    let payload: Value = serde_json::from_slice(&data)?;
+    let record: ckb_jsonrpc_types::JsonBytes = serde_json::from_value(payload["record"].clone())?;
+    let proof: ckb_jsonrpc_types::JsonBytes = serde_json::from_value(payload["proof"].clone())?;
+    let path = stem_ledger::patricia::Proof::decode(proof.as_bytes())?;
+    let network = &fixture.spec.network;
+    let pending_header = nodes[0].header(client, at)?;
+    assert!(Store::verify_keeper_queue(
+        network,
+        &pending_header,
+        due,
+        Some(record.as_bytes()),
+        &path
+    ));
+    let pending = decode_queue(record.as_bytes(), due)?;
+    assert_eq!(
+        pending.iter().map(|tx| tx.id(network)).collect::<Vec<_>>(),
+        [command.id(network), rejected.id(network)]
+    );
+
+    poll(
+        "signed Keeper wake on every replica",
+        Duration::from_secs(25),
+        || {
+            let heights = nodes
+                .iter()
+                .chain([observer])
+                .map(|node| node.signed_height(client))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(heights.into_iter().all(|height| height > due).then_some(()))
+        },
+    )?;
+    let pending_successor = nodes[0].rpc(client, &format!("commit?height={}", at + 1))?;
+    let pending_hash = pending_header.app_hash(network);
+    assert_eq!(
+        hex::decode(
+            pending_successor["signed_header"]["header"]["app_hash"]
+                .as_str()
+                .context("pending Keeper proof AppHash")?
+        )?,
+        pending_hash.as_slice()
+    );
+    let comet = nodes[0].rpc(client, &format!("block?height={due}"))?;
+    assert!(
+        comet["block"]["data"]["txs"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
+
+    let header = nodes[0].header(client, due)?;
+    let mut evidence = Vec::new();
+    for node in nodes.iter().chain([observer]) {
+        assert_eq!(node.header(client, due)?, header);
+        let successor = node.rpc(client, &format!("commit?height={}", due + 1))?;
+        assert_eq!(
+            hex::decode(
+                successor["signed_header"]["header"]["app_hash"]
+                    .as_str()
+                    .context("Keeper AppHash")?
+            )?,
+            header.app_hash(network).as_slice()
+        );
+        let mut outcomes = Vec::new();
+        for (i, (tx, outcome)) in [(&command, Outcome::Applied), (&rejected, Outcome::Rejected)]
+            .into_iter()
+            .enumerate()
+        {
+            let query = node.rpc(
+                client,
+                &format!(
+                    "abci_query?path=%22%2Fstem%2Fexecution%22&prove=true&height={due}&data=0x{}",
+                    hex::encode((i as u32).to_le_bytes())
+                ),
+            )?;
+            let response = &query["response"];
+            ensure!(
+                response["code"].as_u64() == Some(0),
+                "Keeper execution query failed: {query}"
+            );
+            let value = STANDARD.decode(
+                response["value"]
+                    .as_str()
+                    .context("Keeper execution value")?,
+            )?;
+            let value: Value = serde_json::from_slice(&value)?;
+            assert_eq!(
+                hex::decode(
+                    value["transaction"]
+                        .as_str()
+                        .context("Keeper transaction")?
+                )?,
+                tx.as_slice()
+            );
+            let receipt = Receipt::decode(&hex::decode(
+                value["receipt"].as_str().context("Keeper receipt")?,
+            )?)?;
+            assert_eq!(Outcome::decode(&receipt.protocol_result)?, outcome);
+            assert_eq!(receipt.fee, FEE);
+            let proof: ckb_jsonrpc_types::JsonBytes =
+                serde_json::from_value(value["proof"].clone())?;
+            let (tx_path, receipt_path) = InclusionProof::decode_execution_pair(proof.as_bytes())?;
+            assert!(tx_path.verify_execution(
+                network,
+                &header.execution(),
+                tx,
+                &receipt_path,
+                &receipt
+            ));
+            outcomes.push(value);
+        }
+        evidence.push(json!({"executions": outcomes, "signed_successor": successor}));
+    }
+    let heads = verify_lineage_heads(
+        nodes,
+        observer,
+        client,
+        fixture,
+        &dynamic.ids[0],
+        3,
+        &OutPoint::new(command.id(network), 1),
+        Some(&249u128.to_le_bytes()),
+    )?;
+    fs::write(
+        output.join("keeper-wake.json"),
+        serde_json::to_vec_pretty(&json!({
+            "due": due, "pending": payload, "pending_height": at,
+            "pending_header": hex::encode(pending_header.encode()),
+            "pending_app_hash": hex::encode(pending_hash.as_slice()),
+            "pending_successor": pending_successor,
+            "header": hex::encode(header.encode()),
+            "app_hash": hex::encode(header.app_hash(network).as_slice()),
+            "wakes": evidence, "heads": heads,
+        }))?,
+    )?;
+    println!(
+        "Keeper executed two sealed commands at H={due} on four validators and the restored observer"
     );
     Ok(())
 }

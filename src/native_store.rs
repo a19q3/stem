@@ -30,6 +30,8 @@ mod cell_query;
 pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
 pub use history_index::HistoryIndex;
+mod keeper;
+pub use keeper::KeeperPolicy;
 mod lineage;
 pub use lineage::LineageProof;
 mod staking;
@@ -50,6 +52,17 @@ const HEADER_ID: u8 = b'i';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
 const FEE_KEY: &[u8] = b"fees/extinguished";
+#[derive(Debug)]
+struct StateReadFault;
+
+impl std::fmt::Display for StateReadFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cannot read committed Stem state")
+    }
+}
+
+impl std::error::Error for StateReadFault {}
+
 const PARAMETER_KEY: &[u8] = b"genesis/network-parameters";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -118,6 +131,7 @@ impl ResourceFees {
         reads: u64,
         read_bytes: u64,
         write_bytes: u64,
+        reserved_fee: u64,
     ) -> Result<u64> {
         let fixed = [
             (self.encoded_byte, encoded_bytes),
@@ -135,7 +149,8 @@ impl ResourceFees {
         })?;
         let cycle_balance = resolved
             .fee()
-            .checked_sub(fixed)
+            .checked_sub(reserved_fee)
+            .and_then(|fee| fee.checked_sub(fixed))
             .context("insufficient fee for transaction resources")?;
         Ok(cycle_balance.checked_div(self.cycle).unwrap_or(u64::MAX))
     }
@@ -147,6 +162,7 @@ pub struct Spec {
     pub stake: Option<StakeGenesis>,
     pub bridge: Option<BridgeGenesis>,
     pub lineage_type: Option<Byte32>,
+    pub keeper: Option<KeeperPolicy>,
     pub network: Byte32,
     pub genesis_time_ms: u64,
     pub capacity: CapacityPolicy,
@@ -170,6 +186,7 @@ pub struct Store {
     staking: Option<Staking>,
     bridge: Option<Bridge>,
     lineage: Option<Byte32>,
+    keeper: Option<KeeperPolicy>,
     genesis_id: Byte32,
     tip: Header,
     history: History,
@@ -215,6 +232,7 @@ pub struct Prepared {
     next: Header,
     history: History,
     receipts: Vec<Receipt>,
+    keeper_receipts: usize,
     validator_updates: Vec<stem_stake::Member>,
     batch: Batch,
 }
@@ -224,6 +242,7 @@ struct Overlay {
     stake: Option<StagedStake>,
     bridge: Option<StagedBridge>,
     lineages: lineage::Heads,
+    keeper: keeper::Stage,
 }
 
 impl Prepared {
@@ -234,6 +253,11 @@ impl Prepared {
     pub fn receipts(&self) -> &[Receipt] {
         &self.receipts
     }
+    /// CometBFT expects results only for transactions submitted with the proposal.
+    pub fn submitted_receipts(&self) -> &[Receipt] {
+        &self.receipts[self.keeper_receipts..]
+    }
+
     pub fn validator_updates(&self) -> &[stem_stake::Member] {
         &self.validator_updates
     }
@@ -373,6 +397,17 @@ impl Store {
                 marker.as_slice(),
             );
         }
+        if let Some(policy) = spec.keeper {
+            ensure!(
+                spec.lineage_type.is_some(),
+                "Keeper requires configured Lineages"
+            );
+            policy.validate(spec.limits)?;
+            let (name, value) = policy.record();
+            let id = system.record_key(name);
+            system_edit.set(id, Some(system.value_hash(&value)))?;
+            batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
+        }
         let staking = if let Some((staking, state, config, snapshot)) = configured_staking {
             for (name, value) in state
                 .genesis_records()
@@ -461,6 +496,7 @@ impl Store {
             staking,
             bridge,
             lineage: spec.lineage_type.clone(),
+            keeper: spec.keeper,
             genesis_id,
             tip,
             history,
@@ -511,7 +547,8 @@ impl Store {
         let id = self.system.record_key(name);
         Ok(self
             .db
-            .get(state_key(STATE_RECORD, Namespace::System, &id))?
+            .get(state_key(STATE_RECORD, Namespace::System, &id))
+            .context(StateReadFault)?
             .map(|value| value.to_vec()))
     }
 
@@ -646,7 +683,8 @@ impl Store {
         let id = record::cell_key(&self.cells, point);
         let found = self
             .db
-            .get(state_key(STATE_RECORD, Namespace::Cells, &id))?
+            .get(state_key(STATE_RECORD, Namespace::Cells, &id))
+            .context(StateReadFault)?
             .map(|bytes| {
                 let (stored_point, record) = record::decode_cell(&bytes)?;
                 ensure!(
@@ -655,7 +693,8 @@ impl Store {
                 );
                 Ok(record)
             })
-            .transpose()?;
+            .transpose()
+            .context(StateReadFault)?;
         if let Some(cell) = &found {
             self.live_cache
                 .lock()
@@ -741,15 +780,23 @@ impl Store {
         timestamp_ms: u64,
         parallel: bool,
     ) -> Result<Prepared> {
+        let height = self
+            .tip
+            .context
+            .height
+            .checked_add(1)
+            .context("block height overflow")?;
+        let due = self.due(height)?;
         ensure!(
-            transactions.len() <= self.limits.transaction_count as usize,
+            transactions.len().saturating_add(due.len()) <= self.limits.transaction_count as usize,
             "block transaction count exceeded"
         );
         let mut budget = Budget::new(self.limits);
         let mut overlay = self.overlay()?;
-        let mut receipts = Vec::with_capacity(transactions.len());
-        let mut fees = 0u64;
-        let total_bytes = transactions
+        let with_due =
+            (!due.is_empty()).then(|| due.iter().chain(transactions).cloned().collect::<Vec<_>>());
+        let execution = with_due.as_deref().unwrap_or(transactions);
+        let total_bytes = execution
             .iter()
             .try_fold(0u64, |total, tx| {
                 total.checked_add(tx.as_slice().len() as u64)
@@ -763,10 +810,15 @@ impl Store {
             &self.network,
             &self.tip,
             timestamp_ms,
-            Tree::transactions(self.network.clone(), transactions)?.root(),
+            Tree::transactions(self.network.clone(), execution)?.root(),
         )?;
-        let height = context.height;
         let origin = Origin::new(&self.network, &context);
+        let mut receipts = self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
+        let mut fees = receipts
+            .iter()
+            .try_fold(0u64, |sum, receipt| sum.checked_add(receipt.fee))
+            .context("Keeper fee overflow")?;
+        receipts.reserve(transactions.len());
         let width = if parallel {
             rayon::current_num_threads()
         } else {
@@ -825,7 +877,10 @@ impl Store {
                 for (position, verified) in completed {
                     let cycles = verified?;
                     charge(&mut budget.cycles, cycles, "block VM cycles")?;
-                    receipts[position].cycles = cycles;
+                    receipts[position].cycles = receipts[position]
+                        .cycles
+                        .checked_add(cycles)
+                        .context("receipt cycles overflow")?;
                 }
             }
         }
@@ -900,6 +955,15 @@ impl Store {
             });
             system_changes.push((id, hash));
         }
+        for (name, value) in overlay.keeper.finish() {
+            let id = self.system.record_key(&name);
+            let hash = value.map(|bytes| {
+                let hash = self.system.value_hash(&bytes);
+                batch.put(state_key(STATE_RECORD, Namespace::System, &id), bytes);
+                hash
+            });
+            system_changes.push((id, hash));
+        }
         system_changes.sort_unstable_by_key(|(id, _)| *id);
         system.set_batch(&system_changes, |id, _, value| {
             if value.is_none() {
@@ -921,7 +985,7 @@ impl Store {
         put_tip(&mut batch, &self.network, &next, &history);
         batch.put(
             index_key(EXECUTION, &height.to_be_bytes()),
-            encode_execution(transactions, &receipts)?,
+            encode_execution(execution, &receipts)?,
         );
         if let Retention::Recent(window) = self.retention
             && let Some(pruned) = height.checked_sub(window)
@@ -937,6 +1001,7 @@ impl Store {
             next,
             history,
             receipts,
+            keeper_receipts: due.len(),
             validator_updates,
             batch,
         })
@@ -956,9 +1021,11 @@ impl Store {
         let context =
             HeaderContext::after(&self.network, &self.tip, timestamp_ms, Byte32::default())?;
         let origin = Origin::new(&self.network, &context);
+        let due = self.due(context.height)?;
+        self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
         let mut selected = Vec::new();
         for tx in transactions {
-            if selected.len() == self.limits.transaction_count as usize
+            if selected.len() + due.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
                 || wire_bytes == 0
             {
@@ -969,20 +1036,21 @@ impl Store {
             let Some(next_wire) = wire_bytes.checked_sub(entry_bytes) else {
                 continue;
             };
-            if self
-                .stage(
-                    &tx,
-                    &context,
-                    &origin,
-                    &mut budget,
-                    &mut overlay,
-                    None,
-                    |resolved, limit| self.cache.verify(resolved, limit, true),
-                )
-                .is_ok()
-            {
-                wire_bytes = next_wire;
-                selected.push(tx);
+            match self.stage(
+                &tx,
+                &context,
+                &origin,
+                &mut budget,
+                &mut overlay,
+                None,
+                |resolved, limit| self.cache.verify(resolved, limit, true),
+            ) {
+                Ok(_) => {
+                    wire_bytes = next_wire;
+                    selected.push(tx);
+                }
+                Err(error) if error.is::<StateReadFault>() => return Err(error),
+                Err(_) => {}
             }
         }
         Ok(selected)
@@ -1012,6 +1080,7 @@ impl Store {
             stake: self.stage_stake()?,
             bridge: self.bridge.as_ref().map(Bridge::stage),
             lineages: BTreeMap::new(),
+            keeper: keeper::Stage::default(),
         })
     }
 
@@ -1034,6 +1103,11 @@ impl Store {
         overlay: &Overlay,
         budget: Budget,
     ) -> Result<Option<lineage::Materialized>> {
+        ensure!(
+            tx.execute_at()
+                .is_none_or(|height| overlay.keeper.running && context.height == height),
+            "height-bound Lineage command requires its committed Keeper reservation"
+        );
         tx.lineage_command()
             .map(|command| {
                 ensure!(
@@ -1084,6 +1158,7 @@ impl Store {
             stake,
             bridge,
             lineages,
+            keeper,
         } = overlay;
         if matches!(tx.operation(), Some(Operation::StakeSnapshot(_))) {
             let (staking, stake) = self
@@ -1162,6 +1237,12 @@ impl Store {
             };
             (resolved, changes)
         };
+        let keeper_change = if tx.keeper_action().is_some() {
+            keeper::change(self, keeper, &resolved, block, &mut next, fresh)?
+        } else {
+            None
+        };
+        let keeper_cycles = keeper_change.as_ref().map_or(0, |change| change.cycles);
         let id = tx.id(&self.network);
         let lineage_changes = self
             .lineage
@@ -1226,15 +1307,26 @@ impl Store {
             lineage_bytes,
             "block Lineage write bytes",
         )?;
-        let cycle_limit = self.limits.transaction_cycles.min(next.cycles);
+        let cycle_limit = self
+            .limits
+            .transaction_cycles
+            .checked_sub(keeper_cycles)
+            .context("Keeper authorization exceeds transaction cycles")?
+            .min(next.cycles);
         let cycle_limit = if tx.operation().is_none() {
-            cycle_limit.min(self.fees.cycle_budget(
-                &resolved,
-                tx.as_slice().len() as u64,
-                reads,
-                read_bytes,
-                budget.write_bytes - next.write_bytes,
-            )?)
+            cycle_limit.min(
+                self.fees
+                    .cycle_budget(
+                        &resolved,
+                        tx.as_slice().len() as u64,
+                        budget.reads - next.reads,
+                        budget.read_bytes - next.read_bytes,
+                        budget.write_bytes - next.write_bytes,
+                        keeper_change.as_ref().map_or(0, |change| change.fee),
+                    )?
+                    .checked_sub(keeper_cycles)
+                    .context("Keeper authorization exceeds paid VM cycles")?,
+            )
         } else {
             cycle_limit
         };
@@ -1285,6 +1377,9 @@ impl Store {
         live.extend(concrete.inputs().map(|input| (input.previous_output, None)));
         live.extend(outputs);
         lineages.extend(lineage_changes);
+        if let Some(change) = keeper_change {
+            keeper.apply(change);
+        }
         let protocol_result = materialized.as_ref().map_or_else(
             || changes.protocol_result.clone(),
             |command| stem_ledger::lineage::Outcome::from_applied(command.executed).encode(),
@@ -1295,7 +1390,7 @@ impl Store {
         *budget = next;
         Ok(Receipt {
             fee,
-            cycles,
+            cycles: cycles + keeper_cycles,
             protocol_result,
         })
     }
@@ -1329,6 +1424,44 @@ struct Budget {
 }
 
 impl Budget {
+    fn empty() -> Self {
+        Self {
+            bytes: 0,
+            cycles: 0,
+            reads: 0,
+            read_bytes: 0,
+            write_bytes: 0,
+        }
+    }
+
+    fn charge_slot(&mut self, slot: Self, remaining: Self) -> Result<()> {
+        charge(
+            &mut self.bytes,
+            slot.bytes - remaining.bytes,
+            "Keeper block bytes",
+        )?;
+        charge(
+            &mut self.cycles,
+            slot.cycles - remaining.cycles,
+            "Keeper block cycles",
+        )?;
+        charge(
+            &mut self.reads,
+            slot.reads - remaining.reads,
+            "Keeper block reads",
+        )?;
+        charge(
+            &mut self.read_bytes,
+            slot.read_bytes - remaining.read_bytes,
+            "Keeper block read bytes",
+        )?;
+        charge(
+            &mut self.write_bytes,
+            slot.write_bytes - remaining.write_bytes,
+            "Keeper block write bytes",
+        )
+    }
+
     fn new(limits: Limits) -> Self {
         Self {
             bytes: limits.transaction_bytes,

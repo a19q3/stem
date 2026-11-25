@@ -53,11 +53,11 @@ STEM_TEST_COMET=target/stem-tools/cometbft \
 
 The backend can also run its imported upstream test suite with `cargo test --manifest-path vendor/ckb-vm/Cargo.toml --features detect-asm`. The Stem workspace pins its backend and definitions to the source in that directory.
 
-The four-node test prints its evidence directory. It generates a fresh network, starts four validators, exercises signed payments and a two-Type-Script transfer, restarts a replica and joins a fifth node using remote snapshots. It also commits an independently signed two-asset trade with a sponsor and authenticates explicit and dynamically resolved Lineage successors on all replicas. It leaves the test configuration, logs, headers, commit certificates and lifecycle proofs in the evidence directory.
+The four-node test prints its evidence directory. It generates a fresh network, starts four validators, exercises signed payments and a two-Type-Script transfer, restarts a replica and joins a fifth node using remote snapshots. It also commits an independently signed two-asset trade with a sponsor and authenticates explicit and dynamically resolved Lineage successors on all replicas. The same harness verifies a Keeper wake with zero submitted transactions in its CometBFT block. It leaves the test configuration, logs, headers, commit certificates and lifecycle proofs in the evidence directory.
 
 ```sh
 STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
-  go -C tools/proof test -mod=readonly -run 'Test(NativeCommit|LineageCommand)Signatures' -v .
+  go -C tools/proof test -mod=readonly -run 'Test(NativeCommit|LineageCommand|KeeperWake)Signatures' -v .
 ```
 
 The benchmark uses the same four-node harness. Set `STEM_TEST_LOADGEN`, `STEM_TEST_LOAD_RATE`, `STEM_TEST_LOAD_COUNT` and `STEM_TEST_LOAD_KIND`. Workloads are `payment`, `single`, `double`, `multi` and `settlement`. Set `STEM_TEST_EVIDENCE_ROOT=target/stem-runs` to keep evidence on the workspace filesystem. Set `STEM_TEST_VALIDATORS` to vary the same-host benchmark from 4 to 32 replicas. Use `--release` for throughput characterization.
@@ -102,6 +102,10 @@ For an ordinary exact spend of a Head or fee Cell, use
 transaction, Lock, context and key arguments.
 
 Use `lineage::Outcome::decode` on the authenticated receipt protocol result. Position 0 always refers to fee change. On success each ordered target's output follows it. On a fee-only failure no target outputs are created. The four-node runner exports `lineage-commands.json` containing the real command results and the state and certificate evidence.
+
+**Keeper.** Enable `keeper` in the genesis JSON of a Lineage-enabled network. The research fixture uses `{"max_delay":64,"per_height":4,"reservation_fee":2000}`. Choose limits such that the configured schedule fits the block. Add an `execute_at` height earlier than `valid_before_height` to the Lineage build request, then sign the command as above. Include the resulting hex string under `"keeper": {"schedule": "0x…"}` in an ordinary wallet build request and sign that carrier with its own funding inputs. Fees must cover the reservation charge and ordinary resource prices. Broadcast the carrier. The signed command becomes executable only through the committed queue.
+
+To cancel before its due height, build a transaction consuming the reserved fee input and include `"keeper": {"cancel":{"height":42,"fee_input":…}}` with the actual height and OutPoint. Sign with the fee Cell's Lock. If a normal spend consumes the fee Cell first, its pending reservation is skipped at the due height. Queries to `/stem/keeper` take an eight-byte little-endian height and `prove=true`. For completed attempts, use `/stem/execution`. At a due height, attempt indices precede submitted transaction indices. Triggering depends on the network continuing to produce blocks.
 
 `stem wallet build --request request.json` encodes inputs, outputs, dependencies and optional ordered `messages` and `proofs`. `stem wallet sign` needs the native genesis, complete requested Lock Script, group index and `--context` file. Its `cells` array contains `{"out_point": ..., "cell": "0x..."}` records for all inputs, explicit dependencies and expanded Dep Group members. Its optional `headers` array contains canonical encoded Header Deps. Obtain and authenticate these records against the expected chain state before signing. `stem wallet id --network HASH` reads the JSON hex transaction from stdin. `stem ckb-wallet` uses the CKB-native encoding for L1 signing.
 

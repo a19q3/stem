@@ -458,12 +458,12 @@ pub(super) struct DynamicLineage {
     pub(super) marker: Byte32,
     pub(super) ids: Vec<Byte32>,
     anchors: Vec<OutPoint>,
-    fee_points: Vec<OutPoint>,
-    fee_cell: Cell,
+    pub(super) fee_points: Vec<OutPoint>,
+    pub(super) fee_cell: Cell,
     head_lock: Script,
     executor: Byte32,
     executor_dep: OutPoint,
-    deps: Vec<CellDep>,
+    pub(super) deps: Vec<CellDep>,
 }
 
 impl DynamicLineage {
@@ -604,6 +604,19 @@ impl DynamicLineage {
         )
     }
 
+    pub(super) fn scheduled(
+        &self,
+        fixture: &Fixture,
+        fee: usize,
+        versions: (u64, u64),
+        increment: u64,
+        height: u64,
+    ) -> Result<Transaction> {
+        let tx = self.signed(fixture, fee, &[0], versions, increment)?;
+        let tx = tx.with_witnesses(vec![])?.with_execute_at(height)?;
+        self.sign_command(fixture, tx)
+    }
+
     fn signed_payload(
         &self,
         fixture: &Fixture,
@@ -636,6 +649,10 @@ impl DynamicLineage {
                 payload,
             },
         )?;
+        self.sign_command(fixture, transaction)
+    }
+
+    fn sign_command(&self, fixture: &Fixture, transaction: Transaction) -> Result<Transaction> {
         let digest = transaction.lineage_signing_digest(&fixture.spec.network, &self.fee_cell)?;
         transaction.with_witnesses(vec![stem_ledger::GroupWitness {
             group_index: 0,

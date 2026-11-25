@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, ensure};
 use ckb_types::{
@@ -185,7 +188,8 @@ fn current_head(store: &Store, stage: &Heads, id: &Byte32) -> Result<Option<Head
             .system_record(&record_key(id))?
             .as_deref()
             .map(Head::decode)
-            .transpose(),
+            .transpose()
+            .context(super::StateReadFault),
     }
 }
 
@@ -263,19 +267,22 @@ impl Materialized {
     }
 }
 
-pub(super) fn materialize(
+pub(super) struct FeeAuthorization {
+    input: CellInput,
+    cell: Cell,
+    refund: Cell,
+    transaction: Transaction,
+    pub resolved: Arc<ResolvedTransaction>,
+}
+
+pub(super) fn resolve_fee(
     store: &Store,
     original: &Transaction,
     command: &Command,
     block: BlockContext<'_>,
-    heads: &Heads,
-    budget: Budget,
-    mut fresh: impl FnMut(&OutPoint) -> Result<LiveCell>,
-) -> Result<Materialized> {
-    let marker = store
-        .lineage
-        .as_ref()
-        .context("Lineages are not configured")?;
+    fresh: impl FnMut(&OutPoint) -> Result<LiveCell>,
+) -> Result<FeeAuthorization> {
+    let mut fresh = fresh;
     let fee_input = original.input(0).context("missing Lineage fee input")?;
     let fee_cell = fresh(&fee_input.previous_output)?.cell;
     ensure!(
@@ -293,6 +300,50 @@ pub(super) fn materialize(
     )?;
 
     let witness = original.witness(0).context("missing Lineage fee seal")?;
+    let initial_fee = Transaction::new(
+        original.cell_deps().collect(),
+        vec![],
+        vec![fee_input.clone()],
+        vec![refund.clone()],
+        vec![witness.clone()],
+    )?;
+    let preflight = ResolvedTransaction::resolve(
+        store.network.clone(),
+        initial_fee.clone(),
+        block,
+        fresh,
+        |_| unreachable!("Lineage fee preflight has no Header Deps"),
+    )?
+    .authorize_materialized_lineage(original, &fee_cell)?;
+    Ok(FeeAuthorization {
+        input: fee_input,
+        cell: fee_cell,
+        refund,
+        transaction: initial_fee,
+        resolved: Arc::new(preflight),
+    })
+}
+
+pub(super) fn materialize(
+    store: &Store,
+    original: &Transaction,
+    command: &Command,
+    block: BlockContext<'_>,
+    heads: &Heads,
+    budget: Budget,
+    mut fresh: impl FnMut(&OutPoint) -> Result<LiveCell>,
+) -> Result<Materialized> {
+    let marker = store
+        .lineage
+        .as_ref()
+        .context("Lineages are not configured")?;
+    let FeeAuthorization {
+        input: fee_input,
+        cell: fee_cell,
+        refund,
+        transaction: initial_fee,
+        resolved: preflight,
+    } = resolve_fee(store, original, command, block, &mut fresh)?;
     let executor_code = fresh(&command.executor_dep)?.cell;
     ensure!(
         executor_code.data_hash() == &command.executor,
@@ -328,21 +379,6 @@ pub(super) fn materialize(
         loaded.push((head.out_point, cell.cell));
     }
     let reads = 2 + 2 * command.targets.len() as u64;
-    let initial_fee = Transaction::new(
-        original.cell_deps().collect(),
-        vec![],
-        vec![fee_input.clone()],
-        vec![refund.clone()],
-        vec![witness.clone()],
-    )?;
-    let preflight = ResolvedTransaction::resolve(
-        store.network.clone(),
-        initial_fee.clone(),
-        block,
-        &mut fresh,
-        |_| unreachable!("Lineage fee preflight has no Header Deps"),
-    )?
-    .authorize_materialized_lineage(original, &fee_cell)?;
     let reads = reads + preflight.cell_reads() as u64;
     let read_bytes = read_bytes + preflight.resolved_cell_bytes() as u64;
     ensure!(
@@ -351,7 +387,7 @@ pub(super) fn materialize(
     );
     let cycle_limit = store.limits.transaction_cycles.min(budget.cycles);
     let fee_cycles = store.cache.verify(
-        std::sync::Arc::new(preflight),
+        preflight,
         cycle_limit
             .checked_sub(command.executor_cycles)
             .and_then(|limit| limit.checked_sub(command.validation_cycles))
@@ -383,7 +419,7 @@ pub(super) fn materialize(
             .map(|(_, cell)| cell.lock().as_bytes())
             .filter(|key| key < &fee_lock)
             .collect();
-        let mut witness = witness;
+        let mut witness = original.witness(0).expect("resolved fee seal");
         witness.group_index = u16::try_from(before_fee.len())?;
         let tx = Transaction::new(
             original.cell_deps().collect(),

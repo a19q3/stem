@@ -416,6 +416,30 @@
       "item": "LineageCommand"
     },
     {
+      "name": "KeeperActionKind",
+      "kind": "fixed",
+      "size": 1,
+      "allowed_values": [0, 1]
+    },
+    {
+      "name": "KeeperAction",
+      "kind": "sequence",
+      "fields": [
+        { "name": "kind", "type": "KeeperActionKind" },
+        { "name": "payload", "type": "Bytes" }
+      ]
+    },
+    {
+      "name": "KeeperActionOpt",
+      "kind": "optional",
+      "item": "KeeperAction"
+    },
+    {
+      "name": "KeeperQueue",
+      "kind": "dense_vector",
+      "item": "Bytes"
+    },
+    {
       "name": "RawTransaction",
       "kind": "flagged",
       "fields": [
@@ -455,6 +479,16 @@
           "name": "lineage_command",
           "type": "LineageCommandOpt",
           "bit": 4
+        },
+        {
+          "name": "execute_at",
+          "type": "Uint64Opt",
+          "bit": 5
+        },
+        {
+          "name": "keeper",
+          "type": "KeeperActionOpt",
+          "bit": 6
         }
       ],
       "flag_bytes": 1

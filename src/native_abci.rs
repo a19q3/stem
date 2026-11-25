@@ -199,7 +199,7 @@ impl App {
                 .install(|| store.prepare(&decode(&request.txs)?, timestamp, true))?,
         };
         let tx_results = block
-            .receipts()
+            .submitted_receipts()
             .iter()
             .map(|receipt| {
                 let cycles = i64::try_from(receipt.cycles)?;
@@ -280,6 +280,19 @@ impl App {
                     "proof": hex(&lineage.system_path.encode()?),
                     "cell": cell.as_deref().map(hex),
                     "cell_proof": cell_path.as_deref().map(hex),
+                }))?
+                .into()
+            }
+            "/stem/keeper" if request.prove => {
+                ensure!(requested == tip, "Keeper proof requires the current height");
+                let height = u64::from_le_bytes(request.data.as_ref().try_into()?);
+                ensure!(height > 0, "invalid Keeper height");
+                let (queue, proof) = store.prove_keeper_queue(height)?;
+                let hex = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
+                serde_json::to_vec(&serde_json::json!({
+                    "execute_at": height,
+                    "record": queue.as_deref().map(hex),
+                    "proof": hex(&proof.encode()?),
                 }))?
                 .into()
             }

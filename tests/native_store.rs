@@ -66,6 +66,7 @@ impl Fixture {
                 stake: None,
                 bridge: None,
                 lineage_type: None,
+                keeper: None,
                 network: [5; 32].pack(),
                 genesis_time_ms: TIME,
                 capacity,
@@ -544,5 +545,7 @@ mod bridge;
 #[path = "native_store/intent.rs"]
 mod intent;
 
+#[path = "native_store/keeper.rs"]
+mod keeper;
 #[path = "native_store/lineage.rs"]
 mod lineage;

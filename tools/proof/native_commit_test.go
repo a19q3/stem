@@ -117,3 +117,70 @@ func TestLineageCommandSignatures(t *testing.T) {
 	}
 	t.Log("verified ten signed successors for dynamic Head proof replicas")
 }
+
+// Verifies the certificate for a Stem block whose only executions were due work.
+func TestKeeperWakeSignatures(t *testing.T) {
+	root := os.Getenv("STEM_NATIVE_EVIDENCE")
+	if root == "" {
+		t.Skip("set STEM_NATIVE_EVIDENCE to the four-node test output")
+	}
+	genesis, err := types.GenesisDocFromFile(filepath.Join(root, "net/node0/config/genesis.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	voters, err := genesisCommittee(genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := readLimited(filepath.Join(root, "keeper-wake.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		Due           int64           `json:"due"`
+		AppHash       string          `json:"app_hash"`
+		PendingHeight int64           `json:"pending_height"`
+		PendingHash   string          `json:"pending_app_hash"`
+		PendingCommit json.RawMessage `json:"pending_successor"`
+		Wakes         []struct {
+			Commit json.RawMessage `json:"signed_successor"`
+		} `json:"wakes"`
+	}
+	if err := json.Unmarshal(raw, &evidence); err != nil || evidence.Due <= 0 || len(evidence.Wakes) != 5 {
+		t.Fatalf("invalid Keeper evidence: %v", err)
+	}
+	expected, err := hex.DecodeString(evidence.AppHash)
+	if err != nil || len(expected) != 32 {
+		t.Fatal("invalid Keeper AppHash")
+	}
+	if len(evidence.PendingCommit) > 0 {
+		expectedPending, err := hex.DecodeString(evidence.PendingHash)
+		if err != nil || len(expectedPending) != 32 || evidence.PendingHeight >= evidence.Due {
+			t.Fatal("invalid pending Keeper hash or height")
+		}
+		var proof core.ResultCommit
+		if err := cmtjson.Unmarshal(evidence.PendingCommit, &proof); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyCommit(genesis.ChainID, proof.SignedHeader, voters); err != nil {
+			t.Fatal(err)
+		}
+		if proof.Height != evidence.PendingHeight+1 || !bytes.Equal(proof.AppHash, expectedPending) {
+			t.Fatal("commit does not authenticate the pending Keeper queue")
+		}
+		t.Logf("verified signed pending Keeper queue at height %d", evidence.PendingHeight)
+	}
+	for _, entry := range evidence.Wakes {
+		var proof core.ResultCommit
+		if err := cmtjson.Unmarshal(entry.Commit, &proof); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyCommit(genesis.ChainID, proof.SignedHeader, voters); err != nil {
+			t.Fatal(err)
+		}
+		if proof.Height != evidence.Due+1 || !bytes.Equal(proof.AppHash, expected) {
+			t.Fatalf("commit does not authenticate the Keeper execution at height %d", evidence.Due)
+		}
+	}
+	t.Logf("verified five signed successor responses for the Keeper wake at height %d", evidence.Due)
+}

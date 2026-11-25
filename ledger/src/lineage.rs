@@ -196,6 +196,7 @@ impl Command {
 pub enum Outcome {
     Rejected,
     Applied,
+    Skipped,
 }
 
 impl Outcome {
@@ -211,6 +212,7 @@ impl Outcome {
         match self {
             Self::Rejected => Bytes::from_static(&[0]),
             Self::Applied => Bytes::from_static(&[1]),
+            Self::Skipped => Bytes::from_static(&[2]),
         }
     }
 
@@ -218,6 +220,7 @@ impl Outcome {
         match bytes {
             [0] => Ok(Self::Rejected),
             [1] => Ok(Self::Applied),
+            [2] => Ok(Self::Skipped),
             _ => anyhow::bail!("invalid Lineage outcome"),
         }
     }

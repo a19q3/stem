@@ -57,7 +57,7 @@ GroupWitness   = (group_index: u16, proof_data, seal)
 
 标准锁的签名摘要绑定网络、Lock 角色、完整 Script 哈希及原始交易 ID。它还承诺按顺序解析的输入 Cell 内容、每个 Cell Dep、Dep Group 容器及其实际展开成员、已声明 Header Dep 的完整编码，以及所有非空 `proof_data`。交易 ID 已覆盖输出、输入引用、依赖引用、排他有效高度及 Group Messages。独立签名人可分别填入各组的 seal，完整交易承诺覆盖全部 seal。其他 Lock 可以定义自己的验签逻辑。
 
-CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。Stem 的配对 OTX 使用普通交易和专用 RISC-V Lock。签名绑定网络、完整 Lock 身份、输入 OutPoint 与 Cell、交付 Cell 的完整 Strand 哈希、实际解析的有序依赖、有效高度及费用上限。Solver 可以移动一对输入与输出，脚本总是用已解析输入的下标匹配同下标输出。一项部分授权只消费一个 Cell，同一输出不能满足两个独立配对。当前配对模式要求零 Since、相同有序依赖及空 Group Messages。持有人可以使用完整交易签名取消。 [CKB Open Transaction 场景](https://github.com/nervosnetwork/ckb/discussions/3670)
+CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。Stem 的配对 OTX 使用普通交易和专用 RISC-V Lock。签名绑定网络、完整 Lock 身份、输入 OutPoint 与 Cell、交付 Cell 的完整 Strand 哈希、实际解析的有序依赖、有效高度及费用上限。Solver 可以移动一对输入与输出，脚本总是用已解析输入的下标匹配同下标输出。一项部分授权只消费一个 Cell，同一输出不能满足两个独立配对。当前配对模式要求零 Since、相同有序依赖及空 Group Messages，并排除 Keeper 控制。持有人可以使用完整交易签名取消。 [CKB Open Transaction 场景](https://github.com/nervosnetwork/ckb/discussions/3670)
 
 可重组代付使用交易位置 0 的一个纯 Capacity 输入及同锁找零。授权额外绑定位置 1 的指定 OutPoint 和完整交付 Cell。代付扣款必须为正、低于各自授权上限且不超过整笔交易实际消耗的手续费。已认证的 Lock 和 Type Groups 仍独立执行。手续费和多资产交付在同一次普通交易提交内生效。
 
@@ -74,6 +74,14 @@ Lineage 命令是原生 Strand 交易的可选字段。命令包含 1 至 16 个
 成功时原子消费付款 Cell 与所有 Head，在原命令交易 ID 下创建后继。输出 0 是付款余额，其余按目标顺序。Executor 拒绝、耗尽预算、给出不合规后继或后续 Script Group 拒绝时，已通过付款授权且覆盖预算的命令可以提交费用结果，全部 Head 保持原样。未认证、过期或签名匹配条件失效的命令没有费用结果。回执的协议结果单字节为 1（已应用）或 0（已拒绝业务）。已执行尝试的逻辑读取和 VM cycles 一并计费，失败阶段按签名上限计费。
 
 同一 Head 的访问冲突按区块顺序执行。不同命令只有在当前 Head、费用输入、预期输出及依赖访问互不冲突且保留完整预算时才并行解析和运行 Executor，最终检查和提交按原交易顺序。使用 Dep Group 的命令按串行路径执行。
+
+### Native Keeper
+
+Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_height` 和正数预约费 `reservation_fee`。Keeper 使用原有 Lineage 执行路径。先签一条包含确定执行高度 `execute_at` 的 Lineage 命令，再由普通 Cell 交易提交封存命令和预约费。命令字节上限为 8 KiB。两笔签名分别授权执行费和整个预约交易，付款 Cell 与预约交易输入分开。预约时验证实际付款 Lock 和签名，付款 OutPoint 在所有待执行高度间只能占用一个预约。配对 OTX 签名无法授权新增预约或取消。
+
+待处理队列按执行高度写入 SystemRoot，队内按付款 OutPoint 的规范字节排序。每块先读取当前高度队列，依次解析 Head 并执行一次，再处理用户提交的交易。带 `execute_at` 的命令只能由已提交队列触发。相同高度的写入共享同一串行覆盖层。预约、执行与结束均随同一次 RocksDB 提交持久化。执行列表和回执按相同顺序纳入 Header 承诺并可通过 `/stem/execution` 证明。CometBFT 提案正文只携带用户提交的交易。
+
+每个预约单独拥有由区块上限计算出的字节、读取、写入和 cycles 份额。提交预约时另付正常交易资源费用。执行成功或遇到已授权的业务失败时，按 Lineage 规则扣除已签名执行费。付款 Cell 已被消费、Head 版本失效或份额不足时，到期结果为 2（跳过），只结束预约，不产生 Cell 或新增手续费。跳过回执的 cycles 记录保留份额，供区块资源计账。一次性尝试结束后删除队列和占用记录。直接花费付款 Cell 会使后续尝试跳过。到期之前，也可用经正常 Lock 授权并消费该付款 Cell 的取消交易立即腾出预约名额。此规则使用共识高度，网络停摆期间预约高度不会推进。
 
 ## 3. 确定性执行与资源
 

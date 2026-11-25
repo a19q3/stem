@@ -6,7 +6,9 @@ use anyhow::{Context, Result};
 use ckb_jsonrpc_types::{JsonBytes, OutPoint as JsonOutPoint, Script as JsonScript};
 use ckb_types::{H256, core::ScriptHashType, packed::Script, prelude::*};
 use serde::Deserialize;
-use stem::native_store::{BridgeGenesis, LaneGenesis, Limits, RecipientLock, ResourceFees, Spec};
+use stem::native_store::{
+    BridgeGenesis, KeeperPolicy, LaneGenesis, Limits, RecipientLock, ResourceFees, Spec,
+};
 use stem_ledger::{
     CapacityPolicy, Cell,
     protocol::{L1Anchor, Limits as ProtocolLimits},
@@ -30,6 +32,7 @@ struct Network {
     stake: Option<Stake>,
     bridge: Option<Bridge>,
     lineage_type: Option<H256>,
+    keeper: Option<KeeperPolicy>,
 }
 
 #[derive(Deserialize)]
@@ -164,6 +167,7 @@ pub fn load(path: &Path) -> Result<Spec> {
         stake,
         bridge,
         lineage_type: config.lineage_type.map(|hash| hash.pack()),
+        keeper: config.keeper,
     })
 }
 

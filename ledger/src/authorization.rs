@@ -198,8 +198,10 @@ impl Transaction {
         headers: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Byte32> {
         ensure!(
-            self.operation().is_none(),
-            "control transaction cannot carry intents"
+            self.operation().is_none()
+                && self.keeper_action().is_none()
+                && !self.has_lineage_command(),
+            "protocol and Lineage transactions cannot carry paired intents"
         );
         let consumed = self.inputs().map(|input| input.previous_output).collect();
         let mut digest = dependency_hasher();

@@ -286,7 +286,10 @@ fn load_draft(path: &Path) -> Result<Transaction> {
         read_json_limited(path, 2 * stem_ledger::MAX_TRANSACTION_BYTES + 1024)?;
     let tx = Transaction::from_slice(encoded.as_bytes())?;
     ensure!(
-        tx.operation().is_none() && tx.messages().len() == 0,
+        tx.operation().is_none()
+            && tx.messages().len() == 0
+            && tx.keeper_action().is_none()
+            && !tx.has_lineage_command(),
         "intent draft must be an ordinary transaction without Group Messages"
     );
     Ok(tx)
