@@ -465,3 +465,30 @@ generator remain unmeasured.
 cargo test --locked --release --test native_store measure_dynamic_lineage_updates -- --ignored --nocapture
 cargo test --locked --release --test native_store measure_lineage_hotspot_amm -- --ignored --nocapture
 ```
+
+### Executor backend selection
+
+An assembly experiment reused the same per-thread core as the ordinary
+Script Group scheduler. Both engines produced identical successors and
+cycles, including the same success and exhaustion boundary. The test
+alternated backend order over 1,000 samples at each size and timed only
+the Executor call.
+
+| Heads | Portable p50/p95/p99 | Reused assembly p50/p95/p99 | Charged cycles |
+| --- | ---: | ---: | ---: |
+| 1 | 3.946 / 4.367 / 5.344 µs | 25.957 / 30.984 / 33.981 µs | 3,395 |
+| 8 | 8.270 / 9.053 / 11.237 µs | 27.234 / 32.121 / 34.060 µs | 14,581 |
+| 16 | 13.217 / 14.347 / 16.556 µs | 28.859 / 33.954 / 36.410 µs | 27,365 |
+
+The measured Executor calls favor the portable backend. Whole local
+block prepare times varied between runs, and the AMM showed no median
+benefit with assembly. Stem continues to use the portable V2 engine for
+Executors and the usual backend for validation groups. The [paired raw
+record](benchmarks/2026-11-25-stem-executor-backends.json) preserves four
+worker and serial measurements. Reproduce the backend experiment in
+an isolated checkout of `5b716db`.
+
+```sh
+cargo test --locked --release -p stem-vm reusable_executor_matches_portable
+cargo test --locked --release -p stem-vm measure_executor_backends -- --ignored --nocapture
+```

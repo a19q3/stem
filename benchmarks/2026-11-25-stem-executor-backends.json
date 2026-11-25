@@ -1,0 +1,171 @@
+{
+  "alternating_executor_samples": [
+    {
+      "assembly_reuse_ns": [
+        25957,
+        30984,
+        33981
+      ],
+      "cycles": 3395,
+      "heads": 1,
+      "portable_ns": [
+        3946,
+        4367,
+        5344
+      ],
+      "samples": 1000
+    },
+    {
+      "assembly_reuse_ns": [
+        27234,
+        32121,
+        34060
+      ],
+      "cycles": 14581,
+      "heads": 8,
+      "portable_ns": [
+        8270,
+        9053,
+        11237
+      ],
+      "samples": 1000
+    },
+    {
+      "assembly_reuse_ns": [
+        28859,
+        33954,
+        36410
+      ],
+      "cycles": 27365,
+      "heads": 16,
+      "portable_ns": [
+        13217,
+        14347,
+        16556
+      ],
+      "samples": 1000
+    }
+  ],
+  "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+  "date": "2026-11-25",
+  "experimental_commit": "5b716dbe0020096f4361b92c472170d6b18c4978",
+  "experimental_store": [
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 30963344,
+      "parallel_commit_us": [
+        126,
+        197,
+        202
+      ],
+      "parallel_prepare_us": [
+        4597,
+        5006,
+        8211
+      ],
+      "serial_prepare_us": [
+        5219,
+        5516,
+        5594
+      ],
+      "workload": "independent"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 30963344,
+      "parallel_commit_us": [
+        77,
+        126,
+        289
+      ],
+      "parallel_prepare_us": [
+        5338,
+        6732,
+        7534
+      ],
+      "serial_prepare_us": [
+        5030,
+        5708,
+        8959
+      ],
+      "workload": "single-hotspot"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 1,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 3960347,
+      "parallel_commit_us": [
+        54,
+        63,
+        68
+      ],
+      "parallel_prepare_us": [
+        1814,
+        2421,
+        3074
+      ],
+      "serial_prepare_us": [
+        1670,
+        2127,
+        2196
+      ],
+      "workload": "atomic"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 8,
+      "mean_charged_cycles_per_block": 30963344,
+      "parallel_commit_us": [
+        91,
+        153,
+        176
+      ],
+      "parallel_prepare_us": [
+        5427,
+        6903,
+        7071
+      ],
+      "serial_prepare_us": [
+        5225,
+        5733,
+        5822
+      ],
+      "workload": "mixed"
+    },
+    {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        79,
+        100,
+        106
+      ],
+      "parallel_prepare_us": [
+        7732,
+        9767,
+        10233
+      ],
+      "serial_prepare_us": [
+        7530,
+        7990,
+        8005
+      ],
+      "workload": "hotspot-amm"
+    }
+  ],
+  "percentile_order": [
+    50,
+    95,
+    99
+  ],
+  "reference_commit": "267684713a195ed73c107b19872758890927163e",
+  "rust": "rustc 1.95.0 (59807616e 2026-04-14)"
+}
