@@ -350,6 +350,8 @@ Stem → CKB 的接收方消费其唯一 Mailbox。Mailbox 的 Type ID、所有�
 
 CKB → Stem 的发送方由 Mailbox 的原有 CKB Lock 授权。合约令发送序号逐笔递增，并把完整消息写在这一笔的后继 Cell。后续状态可覆盖正文，原 CKB 交易仍可证明历史包含。Stem 接收交易附一个这种历史引用，并核对父状态接受的锚点、CKB genesis、实际 Type Script、Mailbox 的检查点与所有者、消息正文及实际接收 Lock Group。超过三分之二 guardian 权重认证 CKB 观测，签名前按网络确认深度核验创建交易和见证的包含证明。若确认锚重组，持久化观测日志的 guardians 停签。Stem 的已最终确定历史保持原记录。此前签发的证书在其锚点仍是父状态锚点时保持有效，因此确认深度与 guardian 观测属于实际安全假设。
 
+CKB Mailbox 的防重放根是 CKB 规范链上的状态。中继者可从指定的 Live Head 回溯同一 Type Script 的唯一历史，从交易见证恢复已消费 ID，并逐步校验根变化。CKB 重组若移除一次投递，防重放根回到替代链对应的状态。同一消息能否再次投递取决于替代链是否已消费其 ID。Stem 已最终确定的消息和历史保持原记录。
+
 跨网络通用的消息身份和载荷编码与具体证明验证分离。当前启用 CKB 与 Stem 两种端点及证明路径。业务合约读取同笔交易的消息并决定自身状态变化，资产铸造、储备和提款沿各自协议路径验证。 [运行说明](OPERATIONS.md#exercise-intercell-messaging)
 
 ### Stem 原生 UDT 往返结算

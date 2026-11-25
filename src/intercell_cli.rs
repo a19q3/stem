@@ -1,3 +1,5 @@
+mod recovery;
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, ensure};
@@ -25,6 +27,8 @@ pub enum Intercell {
         #[arg(long)]
         record: PathBuf,
     },
+    /// Rebuild the replay index from a live CKB mailbox head.
+    RecoverInbox(recovery::Recover),
     /// Verify the Stem outbox path and build the CKB input_type witness.
     DeliveryWitness {
         #[arg(long)]
@@ -57,6 +61,7 @@ struct Delivery {
 impl Intercell {
     pub fn run(self) -> Result<()> {
         match self {
+            Self::RecoverInbox(args) => args.run(),
             Self::Encode { request } => {
                 let request: Request = read_json_limited(&request, 2 * MAX_PAYLOAD + 1024)?;
                 let message = Message {

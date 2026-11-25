@@ -540,6 +540,18 @@ Use `stem intercell encode --request message.json`. The request fields are `sour
 
 For CKB delivery, query `/stem/intercell/outbox` with the message ID as hex `data` and `prove=true`. Publish the corresponding finalized execution Header using the Jolteon checkpoint flow. Pass the query's `record` and `proof`, the list of consumed IDs in the mailbox's current history, and its current `expected_root` to `stem intercell delivery-witness --request delivery.json --header header.json`. The Header file holds its canonical bytes as a JSON hex string. The command checks the claimed outbox path and reconstructs the current inbox root. Put the returned `input_type` in the mailbox input's Molecule WitnessArgs and the `successor_root` in the successor data. Keep the outbound nonce and use empty outgoing bytes. The CKB transaction references the matching checkpoint and the owner signs the transaction. Store the consumed IDs or an equivalent derived sparse tree to generate subsequent paths.
 
+If the relay loses its local inbox index, use the live CKB mailbox OutPoint and the pinned complete Mailbox Type Script hash to rebuild it with a CKB full node that serves historical transactions and witnesses.
+
+```sh
+stem intercell recover-inbox --l1-rpc http://127.0.0.1:8114/ \
+  --tx-hash "$mailbox_head_tx" --output-index "$mailbox_head_index" \
+  --mailbox "$mailbox_type_hash" > inbox.json
+jq -s '.[0] + (.[1] | {consumed, expected_root})' outbox-proof.json inbox.json > delivery.json
+stem intercell delivery-witness --request delivery.json --header header.json
+```
+
+Recovery identifies the actual mailbox input and output at each step, checks the canonical block hashes and replay root transitions, and checks the supplied head is still live before returning. A stale or orphaned head requires a fresh live OutPoint. The default budget is 2,048 transaction reads, including unrelated inputs read to identify the mailbox predecessor. Use `--max-transactions` for a deeper history, up to 65,536 reads. Relays with longer histories should maintain a derived local inbox index. The mailbox contract still verifies the resulting witness at delivery time.
+
 A Stem recipient can verify inclusion or absence at the finalized tip via `/stem/intercell/inbox` and `Store::verify_intercell`. The fixture captures failures and successful inclusion transactions in its output directory.
 
 ### Exercise Stem native UDT settlement

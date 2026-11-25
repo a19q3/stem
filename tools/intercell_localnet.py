@@ -35,6 +35,7 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
                 fixture.standard)],
         [hex_bytes(code), "0x", "0x", "0x", "0x", "0x"], [secp]), [wallet_group(0, [fixture.faucet])]))
     mailbox_dep = dependency(point(funded, 0))
+    fee_capacity = vault["change"] - code_capacity - 3 * mailbox_capacity - substitute_capacity - FEE
     type_id = ckb_hash(le(0, 8) + binary(funded) + le(1, 4) + le(0, 8))
     type_args = (type_id + binary(genesis) + binary(network) + script_hash(fixture.owner_lock)
                  + binary(vault["anchor"]["hash"]) + vault["anchor"]["id"])
@@ -50,13 +51,24 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     def mailbox_state(nonce, root, outgoing=b""):
         return le(nonce, 8) + root + outgoing
 
-    def ckb_tx(label, prev, capacity, data, *, evidence=None, checkpoint=None, headers=(), lock=None, type_=None):
-        tx = transaction([prev], [output(capacity, lock or fixture.owner_lock, type_ or mailbox_type)],
-                         [hex_bytes(data)], [secp, mailbox_dep] + ([checkpoint] if checkpoint else []))
+    def ckb_tx(label, prev, capacity, data, *, evidence=None, checkpoint=None, headers=(), lock=None,
+               type_=None, extra_input=False):
+        inputs = [prev]
+        outputs = [output(capacity, lock or fixture.owner_lock, type_ or mailbox_type)]
+        outputs_data = [hex_bytes(data)]
+        witnesses = [witness(evidence)] if evidence is not None else []
+        groups = [wallet_group(0, [fixture.owner])]
+        if extra_input:
+            inputs.insert(0, point(funded, 5))
+            outputs.insert(0, output(fee_capacity, fixture.standard))
+            outputs_data.insert(0, "0x")
+            witnesses.insert(0, "0x")
+            groups = [wallet_group(0, [fixture.faucet]), wallet_group(1, [fixture.owner])]
+        tx = transaction(inputs, outputs, outputs_data, [secp, mailbox_dep] + ([checkpoint] if checkpoint else []))
         tx["header_deps"] = list(headers)
-        if evidence is not None:
-            tx["witnesses"] = [witness(evidence)]
-        return fixture.sign(f"intercell-{label}", tx, [wallet_group(0, [fixture.owner])])
+        if witnesses:
+            tx["witnesses"] = witnesses
+        return fixture.sign(f"intercell-{label}", tx, groups)
 
     def ckb_reject(label, signed, code):
         result = l1.reject(signed)
@@ -153,20 +165,47 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
         checkpoint = dependency(point(published["transaction"], 0))
     header = args.output / "intercell-outbox-header.json"
     write_json(header, hex_bytes(relay.header(proof_height)))
-    seen = []
     ckb_deliveries = []
+    recoveries = {}
 
-    def delivery(i):
+    def recover(label, head, *, mailbox=None, budget=None, reason=None):
+        command = [args.binary, "intercell", "recover-inbox", "--l1-rpc", l1.url,
+                   "--tx-hash", head["tx_hash"], "--output-index", str(int(head["index"], 16)),
+                   "--mailbox", mailbox or mailbox_id]
+        if budget is not None:
+            command.extend(("--max-transactions", str(budget)))
+        started = time.monotonic()
+        result = subprocess.run(command, text=True, capture_output=True, timeout=20)
+        elapsed = time.monotonic() - started
+        if reason:
+            assert result.returncode != 0 and reason in result.stderr, result
+            rejected[label] = result.stderr
+            return
+        assert result.returncode == 0, result
+        recovered = json.loads(result.stdout)
+        assert recovered["head"] == head and recovered["mailbox"] == mailbox_id
+        recoveries[label] = {**recovered, "seconds": elapsed, "command": [str(arg) for arg in command]}
+        return recovered
+
+    def delivery(i, label):
         _, proof = proofs[i]
-        request = args.output / f"intercell-delivery-{i}.json"
-        write_json(request, {**proof, "consumed": seen, "expected_root": hex_bytes(root)})
+        recovered = recover(label, ckb_head)
+        assert recovered["expected_root"] == hex_bytes(root)
+        assert recovered["consumed"] == [msg["id"] for msg in outgoing[:i]]
+        request = args.output / f"intercell-delivery-{label}.json"
+        write_json(request, {**proof, "consumed": recovered["consumed"], "expected_root": recovered["expected_root"]})
         result = json.loads(run(args.binary, "intercell", "delivery-witness", "--request", request, "--header", header))
-        write_json(args.output / f"intercell-witness-{i}.json", result)
+        write_json(args.output / f"intercell-witness-{label}.json", result)
         return result
 
+    recover("ckb_recovery_wrong_mailbox", ckb_head, mailbox=hex_bytes(script_hash(foreign_type)),
+            reason="Type Script mismatch")
+    recover("ckb_recovery_read_budget", ckb_head, budget=1, reason="transaction budget exhausted")
+
     replay_witness = None
+    delivery_fork = None
     for i in (0, 1):
-        result = delivery(i)
+        result = delivery(i, f"before-delivery-{i}")
         raw = binary(result["input_type"])
         updated = binary(result["successor_root"])
         if i == 0:
@@ -188,14 +227,30 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
             rejected["ckb_owner_substitution"] = ckb_reject("lock", ckb_tx("foreign-owner", ckb_head,
                 ckb_capacity - FEE, mailbox_state(0, updated), evidence=raw, checkpoint=checkpoint,
                 lock=fixture.friend_lock), 81)
+        if i == 1:
+            forked = ckb_tx("deliver-on-replaced-fork", ckb_head, ckb_capacity - FEE - 1,
+                            mailbox_state(0, updated), evidence=raw, checkpoint=checkpoint, extra_input=True)
+            orphan_head = point(l1.send(forked), 1)
+            forked_inclusion = l1.prove_committed(orphan_head["tx_hash"])
+            before = recover("before-delivery-reorg", orphan_head)
+            assert before["expected_root"] == hex_bytes(updated)
+            assert before["consumed"] == [msg["id"] for msg in outgoing]
+            forked_header = forked_inclusion["header"]
+            l1.call("truncate", forked_header["parent_hash"])
+            l1.mine(spec["bridge"]["confirmations"] + 2)
+            replacement = l1.call("get_block_hash", forked_header["number"])
+            assert replacement != forked_header["hash"]
+            recover("ckb_recovery_orphaned_delivery", orphan_head, reason="no longer live")
+            delivery_fork = {"orphaned_head": orphan_head, "inclusion": forked_inclusion, "replacement": replacement}
+            recovered_witness = delivery(i, "after-delivery-reorg")
+            assert recovered_witness == result
         signed = ckb_tx(f"deliver-{i}", ckb_head, ckb_capacity - FEE,
-                        mailbox_state(0, updated), evidence=raw, checkpoint=checkpoint)
+                        mailbox_state(0, updated), evidence=raw, checkpoint=checkpoint, extra_input=(i == 1))
         cycles = int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
         committed = l1.send(signed)
         ckb_deliveries.append({"transaction": committed, "cycles": cycles, "bytes": len(binary(signed["molecule"])),
                                "inclusion": l1.prove_committed(committed), "inbox_root": hex_bytes(updated)})
-        ckb_head, ckb_capacity, root = point(committed, 0), ckb_capacity - FEE, updated
-        seen.append(result["id"])
+        ckb_head, ckb_capacity, root = point(committed, i), ckb_capacity - FEE, updated
     rejected["ckb_repeated_consumption"] = ckb_reject("replay", ckb_tx("repeat-delivery", ckb_head,
         ckb_capacity - FEE, mailbox_state(0, root), evidence=replay_witness, checkpoint=checkpoint), 85)
 
@@ -304,6 +359,10 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     rejected["stem_repeat_after_restart"] = stem_reject(sign_stem("restart-replay", inputs[4], change, incoming,
                                       MESSAGE_RECEIVE, approvals), "nonce already used", replica)
 
+    restored = recover("after-stem-restart", ckb_head)
+    assert restored["consumed"] == [msg["id"] for msg in outgoing]
+    assert restored["expected_root"] == hex_bytes(root)
+    surviving_head = ckb_head
     pending, fork_emission = publish_ckb("ckb-fork-message", native_owner)
     l1.mine(spec["bridge"]["confirmations"])
     fork_header = fork_emission["inclusion"]["header"]
@@ -315,6 +374,8 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     l1.mine(spec["bridge"]["confirmations"] + 2)
     replacement = l1.call("get_block_hash", fork_header["number"])
     assert replacement != fork_anchor["hash"]
+    recover("ckb_recovery_orphaned_send", fork_emission["point"], reason="no longer live")
+    assert recover("after-send-reorg", surviving_head) == restored
     rejected["guardian_orphaned_anchor"] = reference("post-reorg", fork_emission["point"], fork_anchor, "anchor was reorganized")
     rejected["stem_orphaned_message"] = stem_reject(orphan, "committed CKB anchor")
     assert query(client, "/stem/intercell/inbox", pending["id"])[1]["record"] is None
@@ -329,4 +390,5 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
             "alternate_checkpoint_send": alternate_proof,
             "anchor_update": advanced, "anchor": anchor,
             "after_restart": restart_proof, "restart_seconds": recovery_seconds,
-            "orphaned": fork_emission, "replacement": replacement, "rejections": rejected}
+            "orphaned": fork_emission, "replacement": replacement, "delivery_fork": delivery_fork,
+            "ckb_inbox_recovery": recoveries, "rejections": rejected}
