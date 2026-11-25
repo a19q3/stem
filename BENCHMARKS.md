@@ -1944,3 +1944,58 @@ committee and penalty regressions passed.
 
 [Reproduction](OPERATIONS.md#exercise-a-paid-ckb-security-domain) ·
 [Raw transactions, proof data, measurements, and unsuccessful attempts](benchmarks/2026-11-26-stem-security-domain.json.xz).
+
+## Intercell mailbox recovery after CKB reorganization
+
+Revision `9020349` extended the bidirectional fixture originally started
+from `b0750bf`. Two successful rounds used four Jolteon replicas and a
+real CKB 0.210.0 devnet on one i9-13900H host. The last round published a
+Jolteon checkpoint for Stem height 20. Stem consumed an authenticated CKB
+message at height 37, and all four replicas agreed at height 40. The
+original [bidirectional runs](#bidirectional-intercell-messaging) remain
+available.
+
+The last round built both CKB delivery witnesses from chain history with
+an empty local relay state. The second CKB delivery used a Mailbox input
+and output at index 1, alongside an independent input and output at
+index 0. One fork first committed that delivery. Truncating and
+replacing its CKB block made the orphaned head unavailable. Recovery
+from its surviving predecessor returned the first consumed ID and
+regenerated the same second witness. A new transaction then delivered
+that message on the replacement chain. The Mailbox still rejected a
+replay. A separate CKB reorganization removed a send before Stem
+accepted its anchor. The guardian journal refused to sign again, and
+the committed Stem inbox survived a replica restart.
+
+| Last round, recovered CKB Mailbox | Transaction reads | Consumed IDs | CLI wall time |
+| --- | ---: | ---: | ---: |
+| After creation | 2 | 0 | 11.14 ms |
+| After first delivery | 3 | 1 | 12.36 ms |
+| Before replacing the second delivery's block | 5 | 2 | 14.56 ms |
+| From the surviving head after replacement | 3 | 1 | 12.10 ms |
+| After both deliveries and two sends | 7 | 2 | 16.06 ms |
+
+Times include process startup and local RPC. Each row is a single
+sample. The bounded scan reads the mailbox history and earlier
+unrelated inputs needed to locate the real witness. This fixture does
+not measure long-history recovery. The two successful CKB deliveries
+were 1,390 and 1,663 bytes, estimated at 4,202,078 and 5,876,835 CKB
+cycles. The second included an extra independent Lock, so its cost
+cannot isolate the replay path. The Stem receive was 1,448 bytes,
+including three guardian signatures.
+
+The final message fixture recorded 24 expected rejections, including a
+foreign Mailbox Type Script, exhausted recovery budget, orphaned
+heads, forged proofs, wrong networks and replay attempts. The first
+attempt failed on the `0x` prefix in normal CKB RPC hashes. Both final
+runs use the same prefix-aware parser as the existing CKB CLI. The
+archive preserves that attempt and the initial build failure.
+
+The release workspace passed 451 tests with 13 ignored. The Go proof
+suite and the frozen CometBFT comparison feature check passed.
+Independent CKB rounds verified CKB/xUDT redemption, historical and
+live-at-anchor references, the four fee fund payouts, and CKB-backed
+delegation, slashing and stake reward redemption.
+
+[Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
+[Raw reports, commands and fingerprints](benchmarks/2026-11-26-stem-intercell-recovery.json.xz).
