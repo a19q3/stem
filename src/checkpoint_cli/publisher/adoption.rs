@@ -10,12 +10,12 @@ use serde_json::{Value, json};
 use stem_stake::jolteon::{CommitteeChange, checkpoint as jolteon};
 
 use super::super::next_jolteon_roster;
-use super::{Confirmed, Publisher, State, out_point, parse_hash};
+use super::{Confirmed, Publisher, State, out_point};
 
-const MAX_ADOPTED_UPDATES: usize = 64;
+pub(super) const MAX_ADOPTED_UPDATES: usize = 64;
 
 impl Publisher {
-    pub(super) fn adopt(&self, state: &mut State, hashes: &[String]) -> Result<Value> {
+    pub(super) fn adopt(&self, state: &mut State, hashes: &[H256]) -> Result<Value> {
         ensure!(
             (1..=MAX_ADOPTED_UPDATES).contains(&hashes.len()),
             "adopt between 1 and {MAX_ADOPTED_UPDATES} checkpoint transactions"
@@ -36,11 +36,10 @@ impl Publisher {
         let mut latest = None;
         for (index, hash) in hashes.iter().enumerate() {
             let previous = latest.as_ref().or(state.confirmed.as_ref());
-            let hash = parse_hash(hash)?;
-            if index == 0 && previous.is_some_and(|entry| entry.transaction == hash) {
+            if index == 0 && previous.is_some_and(|entry| &entry.transaction == hash) {
                 continue;
             }
-            let (raw, height, block) = self.node.committed(&hash)?;
+            let (raw, height, block) = self.node.committed(hash)?;
             ensure!(
                 tip_height
                     .value()
@@ -112,7 +111,7 @@ impl Publisher {
                 jolteon::roster_id(&roster) == tip.roster,
                 "adopted roster differs from the checkpoint output"
             );
-            if pending_wallet_tx.as_ref() == Some(&hash) {
+            if pending_wallet_tx.as_ref() == Some(hash) {
                 let change = tx
                     .outputs()
                     .get(1)
@@ -126,10 +125,10 @@ impl Publisher {
                     self.is_fee_output(&change, &data),
                     "invalid journaled wallet change"
                 );
-                wallet_change = Some(out_point(&hash, 1));
+                wallet_change = Some(out_point(hash, 1));
             }
             latest = Some(Confirmed {
-                transaction: hash,
+                transaction: hash.clone(),
                 output_index: u32::try_from(output_index)?,
                 l1_height: height,
                 l1_block: block,

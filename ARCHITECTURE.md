@@ -163,6 +163,14 @@ pending update is cleared after its predecessor is spent on the adopted
 chain. The fee wallet follows its own locally confirmed change through
 adoption and funded updates.
 
+An optional CKB Indexer lookup discovers confirmed successor hashes by
+the exact checkpoint Type Script. After the journaled OutPoint is spent,
+it reads candidates in ascending CKB block and transaction position.
+Each batch passes the same canonical adoption checks and writes one
+journal update. An immature spend leaves the journal at its current
+anchor, and consecutive updates in the same CKB block remain discoverable
+after a partial catch-up.
+
 The PoW Security Fund can pay a dedicated permissionless CKB Lock. Stem pins that Lock to the same checkpoint Type ID and networks used by the native vault. On CKB the Lock constrains the exact two-input, two-output checkpoint update and preserves both checkpoint capacity and the fund's change Lock. Only the transaction fee may reduce fund principal. The checkpoint contract independently verifies the certificate, including a mandatory committee handoff eligible before the regular interval. Merging two or more pots preserves principal and requires separately funded fees. The publisher journals a selected fund transaction before sending and tracks the wallet change independently across sponsored updates. [Fund operation](OPERATIONS.md#fund-ckb-checkpoint-fees)
 
 ## CKB Cell references

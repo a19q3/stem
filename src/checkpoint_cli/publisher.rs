@@ -5,7 +5,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use anyhow::{Context, Result, bail, ensure};
 use ckb_jsonrpc_types::{
     JsonBytes, OutPoint, Status, Transaction as JsonTransaction, TransactionWithStatusResponse,
-    Uint64,
+    TxStatus, Uint64,
 };
 use ckb_types::{
     H256,
@@ -30,6 +30,7 @@ use crate::{
 };
 
 mod adoption;
+mod follow;
 
 const SIGHASH_TYPE: &str = "9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8";
 
@@ -71,6 +72,9 @@ struct Config {
     interval_seconds: u64,
     /// Number of canonical CKB blocks required after the inclusion block.
     confirmations: u64,
+    /// Discover confirmed competing checkpoint successors with the CKB Indexer.
+    #[serde(default)]
+    auto_follow: bool,
 }
 
 #[derive(Deserialize)]
@@ -135,7 +139,12 @@ impl Publish {
         let config = read_json_limited(&self.config, 64 * 1024)?;
         let (publisher, mut state) = Publisher::open(config)?;
         if !self.adopt.is_empty() {
-            return print_json(&publisher.adopt(&mut state, &self.adopt)?);
+            let hashes = self
+                .adopt
+                .iter()
+                .map(|hash| parse_hash(hash))
+                .collect::<Result<Vec<_>>>()?;
+            return print_json(&publisher.adopt(&mut state, &hashes)?);
         }
         let fund = self
             .fee_fund
@@ -237,6 +246,11 @@ impl Publisher {
         fund: Option<FundInput>,
     ) -> Result<Value> {
         self.validate_anchor(state.confirmed.as_ref())?;
+        if self.config.auto_follow
+            && let Some(result) = self.follow(state)?
+        {
+            return Ok(result);
+        }
         if state.pending.is_some() {
             return self.resume(state);
         }
@@ -502,10 +516,7 @@ impl Publisher {
         if pending.uses_fund {
             result["fund_change"] = json!(out_point(&hash, 1));
         }
-        let response: TransactionWithStatusResponse = self
-            .node
-            .call("get_transaction", json!([hash, "0x1", false]))?;
-        let status = response.tx_status;
+        let status = self.transaction_status(&hash, false)?;
         match status.status {
             Status::Unknown => {
                 let submitted: H256 = self.node.call(
@@ -572,6 +583,13 @@ impl Publisher {
             }
         }
         Ok(result)
+    }
+
+    fn transaction_status(&self, hash: &H256, only_committed: bool) -> Result<TxStatus> {
+        let response: TransactionWithStatusResponse = self
+            .node
+            .call("get_transaction", json!([hash, "0x1", only_committed]))?;
+        Ok(response.tx_status)
     }
 
     fn wallet_point(&self, previous: &Confirmed) -> OutPoint {

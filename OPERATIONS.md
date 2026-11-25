@@ -235,8 +235,8 @@ by both CKB peers.
 
 Run one poll with `stem checkpoint publish --config publisher.json`. Schedule that
 command under a timer. It publishes at most one CKB transaction per poll, and
-prints `idle`, `submitted`, `in_pool`, `awaiting_confirmations` or `confirmed`
-as JSON. Keep polling through confirmation. Use `--at-least-height H` while
+prints its status as JSON, such as `idle`, `submitted`, `in_pool`,
+`awaiting_confirmations` or `confirmed`. Keep polling through confirmation. Use `--at-least-height H` while
 a withdrawal, Intercell delivery or retirement needs a more recent checkpoint.
 The publisher targets H exactly if H is finalized and ahead of the last
 published checkpoint. Missing handoffs through the chosen target are relayed
@@ -256,6 +256,7 @@ The configuration uses the following fields.
 | `seed`, `fee_dep_group` | The CKB seed OutPoint pinned by the Type ID and the CKB secp256k1 Sighash dep-group OutPoint |
 | `fee_key` | Path to a private 32-byte CKB Sighash key. The initial publisher uses the seed owner key. |
 | `update_funding` | Optional plain CKB OutPoint locked to this publisher's fee key. Set it for a publisher joining an existing checkpoint. |
+| `auto_follow` | Optional boolean. With CKB Indexer enabled, discover confirmed successors after the journaled OutPoint is spent. Defaults to false. |
 | `checkpoint_capacity`, `fee` | Checkpoint capacity and fee per publication in shannons |
 | `interval_seconds`, `confirmations` | Routine interval in finalized Stem seconds and the number of CKB blocks required after inclusion |
 
@@ -265,10 +266,20 @@ same checkpoint capacity and returns fee change to that key. Budget
 the seed for the initial checkpoint, change occupied capacity, and
 planned fees. Keep the journal across process restarts. A shallow fork
 can retry the same signed transaction. A reorganized confirmed
-checkpoint anchor halts the journal. To continue after another publisher
-wins a competing spend, supply each missing confirmed transaction hash
-in spend order. A fresh journal starts at the transaction that consumes
-the pinned seed.
+checkpoint anchor halts the journal. For automatically following another
+publisher, enable `Indexer` in the CKB node's RPC modules and set
+`"auto_follow": true` in the publisher configuration. When the tracked
+OutPoint has been spent, the next poll searches the index by the exact
+checkpoint Type Script and verifies each confirmed successor in spend
+order. A fresh journal starts at the transaction consuming the pinned seed.
+
+The poll returns `awaiting_successor` while confirmation or indexing
+is pending and `adopted` after saving up to 64 verified updates.
+Repeat the poll to process longer pending history. For an on-demand
+target, keep polling with `--at-least-height` until the needed
+checkpoint is available.
+
+Manual recovery accepts confirmed transaction hashes in spend order.
 
 ```sh
 stem checkpoint publish --config publisher-b.json \
@@ -281,9 +292,8 @@ predecessor OutPoint, pinned Lock and Type Script, native finality
 and committee handoff witnesses, and the configured CKB confirmation
 depth. The full list is recorded atomically. Successful adoption
 resolves a stale pending publication. A publisher uses its own tracked
-change or its configured funding Cell. The operator supplies the
-transaction hashes and fee funding. Use independent journals, fee
-keys and proof indexes for multiple publishers.
+change or its configured funding Cell. Use independent journals,
+fee keys and proof indexes for multiple publishers.
 
 Use the stake runner from the preceding example with `--exercise-publisher
 --replace` in place of `--publish-checkpoint --replace` and with a new
@@ -291,7 +301,10 @@ output directory. It uses actual CKB blocks and records each fresh CLI
 invocation, canonical witness inclusion proofs and the response to both
 shallow and confirmed-anchor reorganizations. Use
 `--exercise-publisher-handoff --replace` to test two fee wallets,
-a competing spend, and catch-up from a fresh journal.
+a competing spend, and catch-up from a fresh journal. Add
+`--auto-follow` to exercise the Indexer path and dependent
+successors in one CKB block. Add `--auto-follow-long` to cross
+the 64-update limit with 65 confirmed successors.
 
 ### Fund CKB checkpoint fees
 

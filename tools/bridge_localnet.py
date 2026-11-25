@@ -105,8 +105,11 @@ class L1(CkbRpc):
                 raise ValueError("CKB dev spec does not have a unique max_block_cycles setting")
             spec.write_text(updated)
         config = self.home / "ckb.toml"
+        modules = ', "IntegrationTest"'
+        if getattr(args, "ckb_indexer", False):
+            modules += ', "Indexer"'
         config.write_text(re.sub(r"(?m)^modules = \[(.*)\]",
-                                 r'modules = [\1, "IntegrationTest"]', config.read_text(), count=1))
+                                 r'modules = [\1' + modules + "]", config.read_text(), count=1))
         with (self.home / "l1.log").open("wb", buffering=0) as log:
             self.process = subprocess.Popen([args.l1, "run", "-C", self.home],
                                             stdout=log, stderr=subprocess.STDOUT)

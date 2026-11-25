@@ -6,6 +6,7 @@ import time
 
 from bridge_localnet import CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output, point, script, script_hash, transaction, wallet_group
 from localnet import run, write_json
+from native_bridge_localnet import wait_for
 from stake_localnet import witness
 
 
@@ -57,10 +58,13 @@ class Relay:
         label = f"checkpoint-{height}"
         bundle = self.bundle(height, proof_file=proof_file, terminal=terminal)
         raw = binary(bundle["witness"])
+        capacity = 1000 * CKB
+        if self.point is not None:
+            previous = self.l1.call("get_live_cell", self.point, False)["cell"]["output"]
+            capacity = int(previous["capacity"], 16)
 
         def sign(name, tip, evidence):
             inputs = [self.point, self.funding] if self.point else [self.funding]
-            capacity = 1000 * CKB
             payer = self.fixture.friend if self.point else self.fixture.faucet
             available = int(self.l1.call("get_live_cell", self.funding, True)["cell"]["output"]["capacity"], 16)
             change = available - FEE - (0 if self.point else capacity)
@@ -267,8 +271,26 @@ def exercise_publisher_handoff(args, l1, fixture, relay, scenario, agreed):
     b.config.update(fee_key=str(fixture.friend), update_funding=scenario.relay_fee_point)
     late.config.update(fee_key=str(fixture.friend), update_funding=scenario.relay_fee_point)
 
-    def adopted(publisher, label, hashes, height, epoch, count=1):
-        step = publisher.tick(label, adopt=hashes)
+    auto = args.auto_follow
+    if auto:
+        for publisher in (a, b, late):
+            publisher.config["auto_follow"] = True
+
+    def indexed():
+        expected = l1.call("get_tip_block_number")
+        tip = wait_for(lambda: l1.call("get_indexer_tip"), "CKB Indexer initialization", seconds=15)
+        if tip["block_number"] != expected:
+            wait_for(lambda: l1.call("get_indexer_tip")["block_number"] == expected,
+                     "CKB Indexer catching up", seconds=15)
+
+    def awaiting(publisher, label, pinned):
+        step = publisher.tick(label)
+        assert step["status"] == "awaiting_successor" and step["checkpoint"] == pinned, step
+
+    def adopted(publisher, label, hashes, height, epoch, count=1, *, explicit=False):
+        if auto and not explicit:
+            indexed()
+        step = publisher.tick(label, adopt=hashes if explicit or not auto else ())
         assert (step["status"], step["updates"], step["transaction"], step["stem_height"], step["next_epoch"]) == (
             "adopted", count, hashes[-1], height, epoch), step
         return step
@@ -279,6 +301,8 @@ def exercise_publisher_handoff(args, l1, fixture, relay, scenario, agreed):
     assert (first["status"], first["stem_height"], first["next_epoch"]) == ("submitted", 10, 1), first
     first_hash = first["transaction"]
     a.mine_inclusion(first_hash)
+    if auto:
+        awaiting(b, "wait-for-bootstrap-confirmations", relay.anchor["seed"])
     b.tick("reject-before-confirmations", error="not sufficiently confirmed", adopt=[first_hash])
     a.confirm("a-confirms-bootstrap", first)
     adopted(b, "b-adopts-bootstrap", [first_hash], 10, 1)
@@ -293,22 +317,29 @@ def exercise_publisher_handoff(args, l1, fixture, relay, scenario, agreed):
     second_hash = second["transaction"]
     b.tick("b-competes-for-same-checkpoint", 20, error="L1 send_transaction failed")
     a.mine_inclusion(second_hash)
+    if auto:
+        awaiting(b, "wait-for-winning-spend-confirmations", point(first_hash, 0))
     a.confirm("a-confirms-handoff", second)
     late.tick("reject-missing-bootstrap", error="does not bootstrap from the pinned seed", adopt=[second_hash])
     b.tick("reject-unknown-tail-without-saving-preceding-update", error="L1 transaction is unconfirmed",
            adopt=[second_hash, "0x" + "42" * 32])
     adopted(b, "b-adopts-winner-after-conflict", [first_hash, second_hash], 20, 2)
-    adopted(b, "b-repeats-last-adoption", [second_hash], 20, 2, count=0)
+    adopted(b, "b-repeats-last-adoption", [second_hash], 20, 2, count=0, explicit=True)
 
     height = max(21, agreed)
     update = b.tick("b-publishes-with-independent-wallet", height)
     assert update["status"] == "submitted" and update["stem_height"] == height, update
     update_hash = update["transaction"]
     b.mine_inclusion(update_hash)
-    l1.mine(b.config["confirmations"])
-    adopted(b, "b-adopts-own-pending-winner", [update_hash], height, 2)
-    b.publications.append(dict(update, proof=l1.prove_committed(update_hash),
-        signed=l1.call("get_transaction", update_hash, "0x0", True)["transaction"]))
+    if auto:
+        local = b.tick("b-retains-own-shallow-confirmation", height)
+        assert local["status"] == "awaiting_confirmations" and local["transaction"] == update_hash, local
+        b.confirm("b-retains-own-funding-confirmation", update)
+    else:
+        l1.mine(b.config["confirmations"])
+        adopted(b, "b-adopts-own-pending-winner", [update_hash], height, 2)
+        b.publications.append(dict(update, proof=l1.prove_committed(update_hash),
+            signed=l1.call("get_transaction", update_hash, "0x0", True)["transaction"]))
     inputs = l1.call("get_transaction", update_hash, "0x2", True)["transaction"]["inputs"]
     assert [i["previous_output"] for i in inputs] == [point(second_hash, 0), scenario.relay_fee_point], inputs
     adopted(a, "a-adopts-b", [update_hash], height, 2)
@@ -341,26 +372,96 @@ def exercise_publisher_handoff(args, l1, fixture, relay, scenario, agreed):
          ["0x", shifted["tip"]], [relay.anchor["code"], scenario.secp])
     tx["witnesses"] = ["0x", witness(binary(shifted["witness"]))]
     shifted_signed = fixture.sign("shifted-checkpoint", tx, [wallet_group(0, [fixture.faucet])])
-    moved = l1.send(shifted_signed)
-    moved_proof = l1.prove_committed(moved)
-    l1.mine(b.config["confirmations"])
-    adopted(b, "b-adopts-output-and-group-input-one", [moved], target, 2)
-    all_updates = adopted(late, "late-adopts-all-committees", [first_hash, second_hash, update_hash, moved], target, 2, count=4)
-    assert all_updates["checkpoint"] == point(moved, 1), all_updates
+    same_block = None
+    if auto:
+        moved = l1.call("send_transaction", shifted_signed["json"], "passthrough")
+        assert moved == shifted_signed["hash"]
+        finalized(target + 1)
+        relay.previous = relay.root / "same-block-parent-tip.json"
+        relay.roster = relay.root / "same-block-parent-roster.json"
+        write_json(relay.previous, shifted["tip"])
+        write_json(relay.roster, shifted["next_roster"])
+        next_bundle = relay.bundle(target + 1)
+        child = transaction([point(moved, 1), point(moved, 0)],
+            [output(old_capacity + CKB, relay.lock, relay.type), output(balance - 2 * FEE - CKB, fixture.standard)],
+            [next_bundle["tip"], "0x"], [relay.anchor["code"], scenario.secp])
+        child["witnesses"] = [witness(binary(next_bundle["witness"]))]
+        child_signed = fixture.sign("same-block-checkpoint", child, [wallet_group(1, [fixture.faucet])])
+        tail = l1.send(child_signed)
+        tail_proof, moved_proof = l1.prove_committed(tail), l1.prove_committed(moved)
+        assert tail_proof["header"] == moved_proof["header"], (moved_proof, tail_proof)
+        same_block = {"transaction": tail, "proof": tail_proof, "signed": child_signed}
+        l1.mine(b.config["confirmations"])
+        adopted(b, "b-pins-first-position-in-shared-ckb-block", [moved], target, 2, explicit=True)
+        shifted_head = adopted(b, "b-discovers-second-position-in-same-block", [tail], target + 1, 2)
+        tail_point = point(tail, 0)
+        assert shifted_head["checkpoint"] == tail_point
+        all_updates = adopted(late, "late-discovers-all-committees", [first_hash, second_hash, update_hash, moved, tail],
+                              target + 1, 2, count=5)
+        target += 1
+    else:
+        moved = l1.send(shifted_signed)
+        moved_proof = l1.prove_committed(moved)
+        l1.mine(b.config["confirmations"])
+        adopted(b, "b-adopts-output-and-group-input-one", [moved], target, 2)
+        all_updates = adopted(late, "late-adopts-all-committees", [first_hash, second_hash, update_hash, moved],
+                              target, 2, count=4)
+        tail_point = point(moved, 1)
+    assert all_updates["checkpoint"] == tail_point, all_updates
     finalized(target + 1)
     successor = b.publish("b-resumes-from-shifted-output", target + 1)
     successor_hash = successor["transaction"]
     resumed = l1.call("get_transaction", successor_hash, "0x2", True)["transaction"]
-    assert [i["previous_output"] for i in resumed["inputs"]] == [point(moved, 1), point(update_hash, 1)], resumed
+    assert [i["previous_output"] for i in resumed["inputs"]] == [tail_point, point(update_hash, 1)], resumed
     assert int(resumed["outputs"][0]["capacity"], 16) == old_capacity + CKB, resumed
 
-    inclusion = successor["l1_height"]
+    pages = None
+    anchor = successor
+    if args.auto_follow_long:
+        pages = exercise_follow_pages(args, l1, fixture, relay, scenario, b, successor, finalized, indexed, adopted)
+        anchor = pages["resumed"]
+    inclusion = anchor["l1_height"]
     l1.call("truncate", l1.call("get_block_hash", hex(inclusion - 1)))
     l1.mine(1)
-    assert l1.call("get_block_hash", hex(inclusion)) != successor["l1_block"]
+    assert l1.call("get_block_hash", hex(inclusion)) != anchor["l1_block"]
     b.tick("halt-after-confirmed-publisher-reorg", error="confirmed checkpoint anchor was reorganized")
     b.tick("refuse-adoption-after-confirmed-reorg", error="confirmed checkpoint anchor was reorganized",
            adopt=[moved])
     return {"a": a.report(), "b": b.report(), "late": late.report(), "foreign": foreign.report(),
             "shifted": {"transaction": moved, "proof": moved_proof, "signed": shifted_signed},
-            "confirmed_reorg": {"orphaned": successor_hash, "replacement": l1.call("get_block_hash", hex(inclusion))}}
+            "same_block": same_block, "auto_follow": auto, "paging": pages,
+            "confirmed_reorg": {"orphaned": anchor["transaction"], "replacement": l1.call("get_block_hash", hex(inclusion))}}
+
+
+def exercise_follow_pages(args, l1, fixture, relay, scenario, publisher, previous, finalized, indexed, adopted):
+    funding = scenario.deployment_change
+    balance = int(l1.call("get_live_cell", funding, True)["cell"]["output"]["capacity"], 16)
+    tx = transaction([funding],
+        [output(1000 * CKB, fixture.friend_lock), output(balance - 1000 * CKB - FEE, fixture.standard)],
+        ["0x", "0x"], [scenario.secp])
+    wallet = l1.send(fixture.sign("paged-checkpoints-fee-source", tx, [wallet_group(0, [fixture.faucet])]))
+    remote = Relay(args, l1, fixture, relay.anchor, relay.archive, relay.spec, relay.members, relay.client,
+                   directory="paged-checkpoints")
+    remote.point, remote.funding = point(previous["transaction"], 0), point(wallet, 0)
+    committed = l1.call("get_transaction", previous["transaction"], "0x2", True)["transaction"]
+    remote.previous = remote.root / "previous-tip.json"
+    write_json(remote.previous, committed["outputs_data"][0])
+    remote.roster = relay.roster
+    start = previous["stem_height"]
+    for height in range(start + 1, start + 66):
+        finalized(height)
+        remote.advance(height, scenario.secp)
+        write_json(remote.root / "publication-progress.json", remote.publications)
+    l1.mine(publisher.config["confirmations"])
+    indexed()
+    txs = [entry["transaction"] for entry in remote.publications]
+    first = adopted(publisher, "follow-first-64-checkpoints", txs[:64], start + 64, 2, count=64)
+    second = adopted(publisher, "follow-remaining-checkpoint", txs[64:], start + 65, 2)
+    finalized(start + 66)
+    resumed = publisher.publish("publish-after-paged-recovery", start + 66)
+    committed = l1.call("get_transaction", resumed["transaction"], "0x2", True)["transaction"]
+    assert [input_["previous_output"] for input_ in committed["inputs"]] == [
+        point(second["transaction"], 0), point(previous["transaction"], 1),
+    ], committed
+    return {"remote_fee_input": point(wallet, 0), "remote": remote.report(), "first": first, "second": second,
+            "resumed": resumed}

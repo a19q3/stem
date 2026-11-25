@@ -889,6 +889,8 @@ def main():
     parser.add_argument("--publish-checkpoint", action="store_true", help="publish native Jolteon checkpoints on the CKB devnet")
     parser.add_argument("--exercise-publisher", action="store_true", help="exercise durable sparse publication on a disposable CKB devnet")
     parser.add_argument("--exercise-publisher-handoff", action="store_true", help="switch independent checkpoint publishers on CKB")
+    parser.add_argument("--auto-follow", action="store_true", help="discover competing checkpoints using the CKB Indexer")
+    parser.add_argument("--auto-follow-long", action="store_true", help="cross the 64-transaction auto-follow limit on CKB")
     parser.add_argument("--checkpoint-fee-fund", type=lambda path: Path(path).resolve(),
                         help="fund the first CKB committee handoff from a restricted fee pot")
     parser.add_argument("--retire", action="store_true", help="retire and unbond the outgoing stake using the native checkpoint")
@@ -909,6 +911,11 @@ def main():
         parser.error("--exercise-publisher uses its own isolated checkpoint and CKB reorg scenario")
     if args.exercise_publisher_handoff and (args.exercise_publisher or args.publish_checkpoint or args.delegation or args.slash):
         parser.error("--exercise-publisher-handoff uses an isolated competing-publisher fixture")
+    if args.auto_follow and not args.exercise_publisher_handoff:
+        parser.error("--auto-follow requires --exercise-publisher-handoff")
+    if args.auto_follow_long and not args.auto_follow:
+        parser.error("--auto-follow-long requires --auto-follow")
+    args.ckb_indexer = args.auto_follow
     if args.observer_extra_lag < 0:
         parser.error("--observer-extra-lag must be nonnegative")
     if args.active_slash and (not args.slash or args.replace):
