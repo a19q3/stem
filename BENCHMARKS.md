@@ -226,3 +226,162 @@ saturation point.
 
 The [cycle sweep archive](benchmarks/2026-11-25-stem-cycle-sweep.json.xz)
 contains per-run counters and per-block charged cycles for all six runs.
+
+## Local pressure and replica sweep
+
+One Intel Core i9-13900H host, Rust 1.95.0 and CometBFT 0.38.26. All
+runs use signed native payments with one real standard Lock verification,
+one distinct funded input each and two VM workers per replica. Each genesis
+fixes the byte, count, read and write limits recorded in the archive. The
+first series runs the `ee808c9` application binary with the updated load
+fixture. All four replicas must expose H+1 before the runner counts a
+successful execution at H. The whole-run confirmation rate includes drain.
+Rate calculations and per-request timings are in the
+[pressure and certificate archive](benchmarks/2026-11-25-stem-evolution.json.xz).
+
+| Block cycles | Commit wait | Target TPS | Attempted TPS | Admitted TPS | Confirmed TPS | Confirmed count | Client drops | p99 visibility |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 B | 1,000 ms | 2,000 | 1,850.32 | 993.71 | 747.49 | 20,734 | 1,240 | 13.255 s |
+| 8 B | 1,000 ms | 2,000 | 1,888.77 | 1,134.63 | 861.52 | 22,461 | 2,224 | 10.787 s |
+| 8 B | 500 ms | 2,000 | 1,704.40 | 1,193.75 | 926.03 | 23,617 | 5,912 | 9.707 s |
+| 8 B | 250 ms | 2,000 | 1,815.20 | 1,165.70 | 943.65 | 23,001 | 3,696 | 9.534 s |
+| 8 B | 100 ms | 2,000 | 1,731.51 | 1,255.47 | 1,038.98 | 25,052 | 5,056 | 8.663 s |
+| 16 B | 100 ms | 2,000 | 1,871.80 | 1,345.64 | 1,082.39 | 27,314 | 1,832 | 9.889 s |
+| 16 B | 100 ms | 5,000 | 2,659.26 | 1,180.45 | 916.14 | 23,340 | 46,592 | 16.275 s |
+| 16 B | 100 ms | 10,000 | 3,226.26 | 1,298.08 | 911.99 | 13,204 | 66,800 | 10.820 s |
+
+The 2,000/s runs schedule 40,000 payments over 20 seconds. The higher
+targets schedule 100,000 over 20 and 10 seconds. At 4 B the p95 observed
+active block charged 3.998 B cycles. At 16 B the 2,000/s probe had p95
+5.253 B cycles and 10,729 explicit full-mempool rejections. The 5,000/s
+and 10,000/s targets remained dispatch and admission pressure tests.
+Observed consensus and application saturation on this shared host depends
+on the proposal cadence, queue load and resource limits. These finite
+runs do not establish a sustainable network maximum.
+
+A subsequent series held 16 B cycles and 100 ms constant. The new bridge
+accounting code was present but the signed payments use development
+allocations. Each run used the pre-batching Patricia implementation.
+Process writes are Linux `/proc/PID/io` write counters summed by role.
+They include all process activity through sampling end. CPU, RSS and
+both directions of P2P traffic are archived with the block and admission
+records.
+
+| Replicas | Mempool per replica | Target TPS | Attempted TPS | Admitted TPS | Confirmed TPS | Full-mempool replies | Stem writes | CometBFT writes | p99 visibility |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 5,000 | 2,000 | 1,810.91 | 1,338.58 | 1,125.85 | 9,782 | 1,281 MB | 322 MB | 9.186 s |
+| 4 | 20,000 | 2,000 | 1,509.06 | 1,506.07 | 353.65 | 62 | 489 MB | 199 MB | 26.802 s |
+| 16 | 20,000 | 1,000 | 283.70 | 280.35 | 247.91 | 0 | 461 MB | 489 MB | 15.849 s |
+| 32 | 20,000 | 1,000 | 181.76 | 174.15 | 5.30 | 0 | 597 MB | 1,566 MB | 36.991 s |
+
+In the four-replica control, the larger mempool increased RPC admission,
+but accumulated more pending work and the CometBFT log recorded proposal
+and precommit timeouts. Only 10,784 finished within the observation
+window, compared to 27,567 with 5,000 slots. The 16- and 32-replica
+probes shared the same host and client and delivered only 28% and 18% of
+the requested rate. The 32-replica probe used 10.03 GB of sampled peak
+RSS and transferred 2.47 GB in P2P sends. The physical write attribution
+currently separates processes. Patricia, history and snapshots still
+share application-level storage and counters.
+
+```sh
+STEM_TEST_COMET=target/stem-tools/cometbft STEM_TEST_LOADGEN=target/stem-tools/stem-loadgen \
+STEM_TEST_EVIDENCE_ROOT=target/stem-runs STEM_TEST_VALIDATORS=4 STEM_TEST_VM_WORKERS=2 \
+STEM_TEST_LOAD_COUNT=40000 STEM_TEST_LOAD_RATE=2000 \
+STEM_TEST_COMMIT_MS=100 STEM_TEST_MEMPOOL_SIZE=5000 \
+STEM_TEST_BLOCK_CYCLES=16000000000 STEM_TEST_BLOCK_TX_LIMIT=8192 \
+STEM_TEST_BLOCK_BYTES=8388608 STEM_TEST_CELL_READS=16384 \
+STEM_TEST_CELL_READ_BYTES=536870912 STEM_TEST_CELL_WRITE_BYTES=8388608 \
+cargo test --locked --release --test native_store \
+  four_node_native_finality_restart_and_app_hash -- --ignored --nocapture
+```
+
+## Patricia batch update
+
+Paired release runs on the same host, with 25 blocks of eight signed
+transactions per configuration. Each transaction consumes and creates
+one Cell. The numbers are microseconds at p50. Each configuration uses
+a fresh RocksDB. The preparation values include VM execution, tree edits,
+and batch preparation. The sync values cover the atomic write.
+
+| Live Cells | Prior blocks | Prepare before | Prepare after | Sync before | Sync after |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 514 | 0 | 1,731 | 1,661 | 98 | 72 |
+| 8,194 | 0 | 1,915 | 1,772 | 219 | 146 |
+| 8,194 | 512 | 1,963 | 1,717 | 221 | 130 |
+
+A separate four-replica run after the Patricia change reused the 16 B,
+100 ms, 5,000-slot and 2,000/s profile above. It attempted 1,902.40 TPS,
+admitted 1,774.99 TPS, and confirmed 36,254 payments at 1,522.05 TPS
+including drain. Visibility p50/p95/p99 was 2.521/5.641/6.116 s. The
+active window confirmed 1,554.08 TPS, with 5,412 pending at the end of the
+scheduled window and 1,088 client drops. Compared with the pre-batch
+run, Stem process writes were 1,138 MB versus 1,281 MB and CometBFT
+writes were 446 MB versus 322 MB. Different blocks and confirmation
+counts affect those totals. Both results come from single runs on a
+shared machine.
+
+With four VM workers per replica at the same 2,000/s target, the
+benchmark attempted 1,908.93 TPS, admitted 1,687.13 TPS, and finalized
+34,419 payments at 1,508.57 TPS including drain. Cumulative process CPU
+rose from 221.21 s to 270.28 s and p99 rose from 6.116 s to 7.251 s. At
+a 5,000/s target and two workers, the client managed 2,168.57 attempted
+TPS, 1,307.43 admitted TPS and 1,064.11 confirmed TPS, with 55,792
+client drops. These profiles leave two workers as the experiment
+default on this host.
+
+```sh
+cargo test --locked --release --test native_store \
+  measure_commit_with_fixed_changes_and_varying_state_and_history -- --ignored --nocapture
+```
+
+## Weighted certificate cost
+
+The fixture repeats committee weights 1, 2, 3, 4 in canonical member
+order and signs until the selected weight strictly exceeds two thirds.
+It measures Ed25519 verification using dalek and same-message BLS
+aggregation in `blst` 0.3.17. Each BLS participant proves possession of
+an independently generated key. The RISC-V variant uses
+`bls12_381` 0.8.0 on CKB-VM V2 and receives a trusted committee. It
+validates the signer bitmap, threshold, curve points and the proof
+over the supplied digest. The CKB-VM numbers include parsing and
+signature verification, with initialization supplied by the fixture.
+CKB transaction overhead and historical committee authentication are
+outside this measurement. [CFRG proof-of-possession variant](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bls-signature/)
+
+| Committee | Signers | Indexed Ed25519 | Bitmap Ed25519 | Bitmap BLS | Ed25519 host p50 | BLS host p50 | Ed25519 VM cycles | BLS VM cycles |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 4 | 266 B | 257 B | 97 B | 0.103 ms | 0.783 ms | 8.47 M | 77.02 M |
+| 16 | 12 | 794 B | 770 B | 98 B | 0.333 ms | 0.792 ms | 25.96 M | 98.29 M |
+| 32 | 23 | 1,520 B | 1,476 B | 100 B | 0.603 ms | 0.759 ms | 49.90 M | 127.53 M |
+| 64 | 44 | 2,906 B | 2,824 B | 104 B | 1.185 ms | 0.783 ms | 95.81 M | 183.36 M |
+| 100 | 68 | 4,490 B | 4,365 B | 109 B | 1.848 ms | 0.794 ms | 148.08 M | 247.16 M |
+| 128 | 87 | 5,744 B | 5,584 B | 112 B | 2.343 ms | 0.797 ms | 189.41 M | 297.66 M |
+
+The bytes are signer payloads. A full QC also needs the signed subject
+and view. At 128 members BLS aggregation took 3.219 ms p50 and
+registration with validation of all proofs of possession took 107 ms
+p50. An individual signature is 64 bytes for Ed25519 and 96 for BLS.
+The BLS quorum saves bytes on stored and transmitted certificates.
+Equivocation evidence still needs two attributable votes, so the
+aggregate cannot replace the individual vote evidence. For these
+implementations, Ed25519 used fewer CKB-VM cycles at every size. CometBFT
+remains the active protocol. The BLS result is a cost trade-off for a
+future direct verifier and weighted network. [Reproduction commands](OPERATIONS.md#exercise-the-native-cometbft-path)
+
+## CKB devnet regression
+
+The CKB and xUDT round trips deployed the L1 vault scripts, paid the
+two withdrawal receipts, moved 500,000 shannons between lanes and rotated
+the vault. After settlement, the SystemRoot bridge record showed
+4,599,200,000,000 shannons in circulating Capacity, zero pending and
+2,000,000 unallocated shannons. The runner independently computed the
+record amounts from the actual certified deposits and confirmed payouts.
+The stake runners separately executed a 250 CKB penalty on CKB, verified
+an authenticated committee handoff and a 250 CKB unbonding, and published
+CKB checkpoints for Stem heights 11 and 24.
+
+The offline wallet verifier authenticated the original payout output
+and the old vault output from the same CKB transaction. The live-cell
+RPC reported the old vault as `unknown` after its consumption. The
+verifier rejected mismatched Merkle positions and altered witness bytes.

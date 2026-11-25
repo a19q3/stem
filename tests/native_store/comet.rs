@@ -390,6 +390,9 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     let mut nodes = Vec::new();
     for index in 0..directories {
         let dir = home.join(format!("node{index}"));
+        if let Some(benchmark) = &benchmark {
+            benchmark.configure(&dir.join("config/config.toml"))?;
+        }
         fs::write(
             dir.join("config/genesis.json"),
             serde_json::to_vec(&genesis)?,

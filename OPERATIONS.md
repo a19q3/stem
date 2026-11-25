@@ -62,7 +62,17 @@ STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
 
 The benchmark uses the same four-node harness. Set `STEM_TEST_LOADGEN`, `STEM_TEST_LOAD_RATE`, `STEM_TEST_LOAD_COUNT` and `STEM_TEST_LOAD_KIND`. Workloads are `payment`, `single`, `double`, `multi` and `settlement`. Set `STEM_TEST_EVIDENCE_ROOT=target/stem-runs` to keep evidence on the workspace filesystem. Set `STEM_TEST_VALIDATORS` to vary the same-host benchmark from 4 to 32 replicas. Use `--release` for throughput characterization.
 
-In benchmark mode, `STEM_TEST_BLOCK_CYCLES` and `STEM_TEST_BLOCK_TX_LIMIT` control the disposable genesis. Keep the transaction limit high enough that it does not cap the cycle-budget comparison. A load of 7,800 payments at 260/s schedules 30 seconds of input. The report gives rates for the final two-thirds of that schedule and counts admissions still awaiting confirmation at its end. Confirmation requires observing H+1 on every replica. `block-load.json` records each observed block's transaction count and charged cycles.
+In benchmark mode, `STEM_TEST_BLOCK_CYCLES`, `STEM_TEST_BLOCK_TX_LIMIT`, `STEM_TEST_BLOCK_BYTES`, `STEM_TEST_CELL_READS`, `STEM_TEST_CELL_READ_BYTES` and `STEM_TEST_CELL_WRITE_BYTES` control the disposable genesis. `STEM_TEST_COMMIT_MS` and `STEM_TEST_MEMPOOL_SIZE` control CometBFT's configured commit wait and transaction count per mempool. The report distinguishes attempted submission, RPC admission, client dispatch drops and full-mempool replies. It reports separate Stem and CometBFT CPU, sampled RSS and process write counters. These counters measure operating-system writes at process granularity. Confirmation requires observing H+1 on every replica. `block-load.json` records observed transaction counts and charged cycles. See [matched run settings and outcomes](BENCHMARKS.md#local-pressure-and-replica-sweep).
+
+```sh
+cargo test --locked --release --test weighted_finality
+cargo build --locked --manifest-path contracts/Cargo.toml --release \
+  --target riscv64imac-unknown-none-elf --example certificate-cost
+STEM_TEST_CERTIFICATE_ELF=contracts/target/riscv64imac-unknown-none-elf/release/examples/certificate-cost \
+  cargo test --locked --release --test certificate_cost -- --nocapture
+```
+
+The certificate probe reports one weighted signer payload at 4, 16, 32, 64, 100 and 128 members. The optional ELF adds CKB-VM V2 cycle measurements for the same independently generated signatures. The ELF exercises signature verification with an authenticated committee input.
 
 ## Wallet and proofs
 
@@ -75,6 +85,10 @@ A separate payer can sign its Lock Group with `--sponsor-max-debit SHANNONS` aft
 With `prove=true`, `/stem/cell` returns a hex Telegraph `PatriciaPath` in its `proof` field. `/stem/execution` returns a hex Telegraph `ExecutionProof` with one position and count for both Merkle paths. Verify each proof against the corresponding root in the authenticated Stem Header.
 
 Query `/stem/extinguished-fees` with `prove=true` and empty data to audit the cumulative fee tally at the current application height. The response contains `extinguished_shannons` as a hex u64 or `null` for an absent record, and a Telegraph Patricia proof. Authenticate the Header at the returned height through its signed successor, then verify against its SystemRoot using `Store::verify_extinguished_fees`. A verified absent record represents zero fees. The tally measures extinguished Capacity and can include fees from development allocations.
+
+On a bridged network, `/stem/bridge-backing` with `prove=true` and empty data returns a Telegraph `record` and `proof`, plus `liquid_shannons`, `circulating_shannons`, `pending_shannons` and `unallocated_shannons` as hex u64 values. Decode the record with `stem_ledger::protocol::BridgeBacking::decode` and the proof with `stem_ledger::patricia::Proof::decode`. Verify the record using `Store::verify_bridge_backing` with the trusted network identity and Header at the returned height. Use the verified record for numerical values. CKB vault liveness and confirmations follow the guardian observation model.
+
+Query `/stem/bridge-lane` with `prove=true` and the 32-byte lane ID as data. Decode its record with `stem_ledger::protocol::Lane::decode`, and check the lane ID, Header and record with `Store::verify_bridge_lane`. The returned counter alongside the Lane is the next request nonce. The Lane's `next_nonce` identifies the next withdrawal eligible for settlement.
 
 CometBFT serves ABCI queries at `/stem/header`, `/stem/cell` and `/stem/execution`. A Live Cell query uses the packed OutPoint. An execution query uses a little-endian `u32` transaction index and a block height. Use `prove=true` for the Patricia path or the matching transaction and receipt Merkle paths. To authenticate header height H, verify the CometBFT commit at H+1 against the native AppHash. Supply signed handoff certificates when validator sets have changed.
 
@@ -90,6 +104,18 @@ python3 tools/native_bridge_localnet.py \
 ```
 
 Add `--xudt /path/to/xudt_rce --xudt-gate "$contracts_dir/xudt-gate"` to deploy a separate xUDT vault and execute both asset round trips. The runner uses isolated CKB and CometBFT nodes and disposable key files. At mint, guardians audit the actual confirmed consolidation and sign the exact native output bytes. To reconcile a payout, they authenticate the Stem execution receipt and the CKB transaction that matches its recipient, quantity and vault nonce.
+
+The runner also reconciles the recognized balance and liabilities against the amounts minted and paid on both lanes. The final report includes the ABCI backing record and path. Store and snapshot tests independently authenticate the path and reject altered amounts.
+
+The runner saves the packed CKB payout transaction and its header with the dual Merkle proof. A wallet or relayer can validate a historical output offline with an independently trusted CKB block hash.
+
+```sh
+stem ckb-wallet verify-inclusion --transaction ckb-payout-packed.json \
+  --proof ckb-payout-inclusion.json --block-hash "$confirmed_block_hash" \
+  --tx-hash "$payout_transaction_hash" --output-index 0
+```
+
+The result authenticates the selected output at creation. It provides no authorization to consume the output or evidence about its later spend status.
 
 ## Exercise the CKB Stake Registry
 

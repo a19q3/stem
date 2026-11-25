@@ -17,6 +17,8 @@ pub(super) struct Benchmark {
     count: u32,
     workload: String,
     limits: Limits,
+    commit_ms: u64,
+    mempool_size: u64,
 }
 
 impl Benchmark {
@@ -36,7 +38,7 @@ impl Benchmark {
             .parse::<u32>()?;
         let workload = env::var("STEM_TEST_LOAD_KIND").unwrap_or_else(|_| "payment".into());
         ensure!(
-            (1..=20_000).contains(&count) && (1..=5_000).contains(&rate),
+            (1..=100_000).contains(&count) && (1..=10_000).contains(&rate),
             "unsupported test load"
         );
         let transaction_limit = env::var("STEM_TEST_BLOCK_TX_LIMIT")
@@ -50,9 +52,21 @@ impl Benchmark {
         );
         fixture.spec.limits.transaction_count = transaction_limit;
         fixture.spec.limits.block_cycles = block_cycles;
-        fixture.spec.limits.cell_reads = 4096;
-        fixture.spec.limits.cell_read_bytes = 64 * 1024 * 1024;
-        fixture.spec.limits.cell_write_bytes = 1024 * 1024;
+        fixture.spec.limits.transaction_bytes = setting(
+            "STEM_TEST_BLOCK_BYTES",
+            fixture.spec.limits.transaction_bytes,
+        )?;
+        fixture.spec.limits.cell_reads = setting("STEM_TEST_CELL_READS", 4096)?;
+        fixture.spec.limits.cell_read_bytes =
+            setting("STEM_TEST_CELL_READ_BYTES", 64 * 1024 * 1024)?;
+        fixture.spec.limits.cell_write_bytes = setting("STEM_TEST_CELL_WRITE_BYTES", 1024 * 1024)?;
+        let commit_ms = setting("STEM_TEST_COMMIT_MS", 1000)?;
+        ensure!(commit_ms > 0, "test commit wait must be positive");
+        let mempool_size = setting("STEM_TEST_MEMPOOL_SIZE", 5000)?;
+        ensure!(
+            (1..=50_000).contains(&mempool_size),
+            "test mempool size must be between 1 and 50,000"
+        );
         let rules: &[u8] = match workload.as_str() {
             "payment" => &[],
             "single" => &[1],
@@ -89,10 +103,12 @@ impl Benchmark {
                 .build();
             cells.push(other);
         }
-        let mut transactions = Vec::new();
+        let code: BTreeMap<_, _> = fixture.spec.development_cells.iter().cloned().collect();
+        let mut transactions = Vec::with_capacity(count as usize);
         for index in 0..count {
             let mut inputs = Vec::new();
             let mut outputs = Vec::new();
+            let mut signing_inputs = Vec::new();
             for (asset, scripts) in cells.iter().enumerate() {
                 let point = OutPoint::new([32 + asset as u8; 32].pack(), index);
                 let data = if scripts.is_empty() {
@@ -102,10 +118,12 @@ impl Benchmark {
                     bytes.push(1);
                     Bytes::from(bytes)
                 };
-                fixture.spec.development_cells.push((
-                    point.clone(),
-                    Cell::new(FUND, fixture.lock.clone(), scripts.clone(), data.clone())?,
-                ));
+                let funding = Cell::new(FUND, fixture.lock.clone(), scripts.clone(), data.clone())?;
+                signing_inputs.push((point.clone(), funding.clone()));
+                fixture
+                    .spec
+                    .development_cells
+                    .push((point.clone(), funding));
                 inputs.push(CellInput::new(point, None));
                 outputs.push(Cell::new(
                     FUND - FEE,
@@ -114,13 +132,18 @@ impl Benchmark {
                     data,
                 )?);
             }
-            let tx = fixture.seal(Transaction::new(
-                deps.clone(),
-                vec![],
-                inputs,
-                outputs,
-                vec![],
-            )?)?;
+            let tx = fixture.seal_with(
+                Transaction::new(deps.clone(), vec![], inputs, outputs, vec![])?,
+                |point| {
+                    signing_inputs
+                        .iter()
+                        .find(|(candidate, _)| candidate == point)
+                        .map(|(_, cell)| cell)
+                        .or_else(|| code.get(point))
+                        .cloned()
+                        .context("unknown benchmark signing input")
+                },
+            )?;
             transactions.push(format!("0x{}", hex::encode(tx.as_slice())));
         }
         let path_out = evidence.join("workload.json");
@@ -135,7 +158,46 @@ impl Benchmark {
             count,
             workload,
             limits: fixture.spec.limits,
+            commit_ms,
+            mempool_size,
         }))
+    }
+
+    pub(super) fn configure(&self, path: &Path) -> Result<()> {
+        let config = fs::read_to_string(path)?;
+        let mut section = "";
+        let mut configured_wait = false;
+        let mut configured_mempool = false;
+        let mut new = String::with_capacity(config.len());
+        for line in config.lines() {
+            if line.starts_with('[') {
+                section = line;
+            }
+            if section == "[consensus]" && line.starts_with("timeout_commit = ") {
+                ensure!(
+                    !configured_wait,
+                    "duplicate commit timeout in fixture config"
+                );
+                new.push_str(&format!("timeout_commit = \"{}ms\"\n", self.commit_ms));
+                configured_wait = true;
+            } else if section == "[mempool]" && line.starts_with("size = ") {
+                ensure!(
+                    !configured_mempool,
+                    "duplicate mempool size in fixture config"
+                );
+                new.push_str(&format!("size = {}\n", self.mempool_size));
+                configured_mempool = true;
+            } else {
+                new.push_str(line);
+                new.push('\n');
+            }
+        }
+        ensure!(
+            configured_wait && configured_mempool,
+            "missing benchmark config key"
+        );
+        fs::write(path, new)?;
+        Ok(())
     }
 
     pub(super) fn run(
@@ -152,7 +214,9 @@ impl Benchmark {
         let cpus = getconf("CLK_TCK")? as f64;
         let pages = getconf("PAGESIZE")?;
         let initial = sample(nodes, rpc, cpus, pages)?;
-        let mut memory = initial.memory;
+        let mut memory = initial.memory();
+        let mut app_memory = initial.app.memory;
+        let mut comet_memory = initial.comet.memory;
         let events = evidence.join("loadgen.json");
         let start = unix()?.as_nanos() + 500_000_000;
         let mut sender = Process(
@@ -251,10 +315,17 @@ impl Benchmark {
                 );
                 blocks.push(load);
             }
-            memory = memory.max(sample_processes(nodes, cpus, pages)?.memory);
+            let sampled = sample_processes(nodes, cpus, pages)?;
+            memory = memory.max(sampled.memory());
+            app_memory = app_memory.max(sampled.app.memory);
+            comet_memory = comet_memory.max(sampled.comet.memory);
             if client.as_ref().is_some_and(|rows| {
                 rows.iter()
-                    .filter(|row| row.offered_s.is_some() && row.code.is_none_or(|code| code == 0))
+                    .filter(|row| {
+                        row.offered_s.is_some()
+                            && row.code.is_none_or(|code| code == 0)
+                            && !row.mempool_full()
+                    })
                     .all(|row| visibility.contains_key(&row.id.to_lowercase()))
             }) || Instant::now() >= deadline
             {
@@ -318,12 +389,17 @@ impl Benchmark {
         let report = json!({
             "workload": self.workload, "requested_tps": self.rate, "transactions": self.count,
             "replicas": nodes.len(), "vm_workers_per_replica": vm_workers().parse::<u32>()?,
+            "commit_wait_ms": self.commit_ms,
+            "mempool_size_per_replica": self.mempool_size,
+            "mempool_full": rows.iter().filter(|row| row.mempool_full()).count(),
             "offered": offered, "admitted": admitted, "finalized_all_replicas": confirmed.len(), "client_drops": drops,
             "offered_tps": offered as f64 / offered_duration, "admitted_tps": admitted as f64 / offered_duration,
             "finalized_tps": confirmed.len() as f64 / finalized_at.max(offered_duration),
             "replica_visible_ms": {"p50": percentile(50), "p95": percentile(95), "p99": percentile(99)},
-            "cpu_seconds": final_.cpu - initial.cpu, "peak_sampled_rss_bytes": memory,
-            "process_write_bytes": final_.writes.saturating_sub(initial.writes),
+            "cpu_seconds": final_.cpu() - initial.cpu(), "peak_sampled_rss_bytes": memory,
+            "process_write_bytes": final_.writes().saturating_sub(initial.writes()),
+            "stem_processes": final_.app.delta(&initial.app, app_memory),
+            "comet_processes": final_.comet.delta(&initial.comet, comet_memory),
             "p2p_sent_bytes": final_.sent.saturating_sub(initial.sent),
             "p2p_received_bytes": final_.recv.saturating_sub(initial.recv),
             "execution_height_attestation": "H+1 on every replica",
@@ -360,6 +436,12 @@ impl Benchmark {
     }
 }
 
+fn setting(name: &str, fallback: u64) -> Result<u64> {
+    env::var(name).map_or(Ok(fallback), |value| {
+        value.parse().with_context(|| format!("invalid {name}"))
+    })
+}
+
 #[derive(Deserialize)]
 struct Event {
     #[serde(default)]
@@ -367,8 +449,21 @@ struct Event {
     offered_s: Option<f64>,
     ack_s: Option<f64>,
     code: Option<u32>,
+    error: Option<String>,
     #[serde(default)]
     client_dropped: bool,
+}
+
+impl Event {
+    fn mempool_full(&self) -> bool {
+        self.error.as_ref().is_some_and(|error| {
+            serde_json::from_str::<Value>(error).is_ok_and(|rpc| {
+                rpc["data"]
+                    .as_str()
+                    .is_some_and(|data| data.starts_with("mempool is full:"))
+            })
+        })
+    }
 }
 
 #[derive(Serialize)]
@@ -382,32 +477,68 @@ struct BlockLoad {
 
 #[derive(Default)]
 struct Resource {
-    cpu: f64,
-    memory: u64,
-    writes: u64,
+    app: ProcessResource,
+    comet: ProcessResource,
     sent: u64,
     recv: u64,
 }
 
+impl Resource {
+    fn cpu(&self) -> f64 {
+        self.app.cpu + self.comet.cpu
+    }
+
+    fn memory(&self) -> u64 {
+        self.app.memory + self.comet.memory
+    }
+
+    fn writes(&self) -> u64 {
+        self.app.writes + self.comet.writes
+    }
+}
+
+#[derive(Default)]
+struct ProcessResource {
+    cpu: f64,
+    memory: u64,
+    writes: u64,
+}
+
+impl ProcessResource {
+    fn delta(&self, initial: &Self, memory: u64) -> Value {
+        json!({
+            "cpu_seconds": self.cpu - initial.cpu,
+            "peak_sampled_rss_bytes": memory,
+            "write_bytes": self.writes.saturating_sub(initial.writes),
+        })
+    }
+}
+
 fn sample_processes(nodes: &[Node], ticks: f64, pages: u64) -> Result<Resource> {
     let mut result = Resource::default();
-    for process in nodes
-        .iter()
-        .flat_map(|node| [node.app.as_ref(), node.comet.as_ref()])
-        .flatten()
-    {
-        let pid = process.0.id();
-        let state = fs::read_to_string(format!("/proc/{pid}/stat"))?;
-        let (_, fields) = state.rsplit_once(") ").context("invalid process stat")?;
-        let fields: Vec<_> = fields.split_whitespace().collect();
-        result.cpu += (fields[11].parse::<u64>()? + fields[12].parse::<u64>()?) as f64 / ticks;
-        result.memory += fields[21].parse::<u64>()? * pages;
-        let io = fs::read_to_string(format!("/proc/{pid}/io"))?;
-        result.writes += io
-            .lines()
-            .find_map(|line| line.strip_prefix("write_bytes: "))
-            .context("process writes unavailable")?
-            .parse::<u64>()?;
+    for node in nodes {
+        for (process, counters) in [
+            (&node.app, &mut result.app),
+            (&node.comet, &mut result.comet),
+        ] {
+            let pid = process
+                .as_ref()
+                .context("missing benchmark process")?
+                .0
+                .id();
+            let state = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+            let (_, fields) = state.rsplit_once(") ").context("invalid process stat")?;
+            let fields: Vec<_> = fields.split_whitespace().collect();
+            counters.cpu +=
+                (fields[11].parse::<u64>()? + fields[12].parse::<u64>()?) as f64 / ticks;
+            counters.memory += fields[21].parse::<u64>()? * pages;
+            let io = fs::read_to_string(format!("/proc/{pid}/io"))?;
+            counters.writes += io
+                .lines()
+                .find_map(|line| line.strip_prefix("write_bytes: "))
+                .context("process writes unavailable")?
+                .parse::<u64>()?;
+        }
     }
     Ok(result)
 }

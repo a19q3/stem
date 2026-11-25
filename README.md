@@ -12,9 +12,12 @@ Stem uses CKB capacity. A threshold-certified bridge backs spendable Capacity an
 
 The `stem run` executable uses the Telegraph ledger, group-indexed messages and Witnesses, authenticated RocksDB state and state sync. Devnet runs cover four-validator finality and restart, remote state sync, bidirectional CKB and xUDT, L1-derived validator addition and removal, and Checkpoint Type ID publications on CKB. The deployment assumes that the bridge guardians audit the confirmed CKB chain and that custodians release funds against verified Stem receipts. Stake and custody have independent authorization.
 
+Bridged networks expose SystemRoot proofs at `/stem/bridge-backing` and `/stem/bridge-lane`. They authenticate Stem's accounting of certified CKB observations, including recognized reserve, circulating Capacity, pending withdrawals and lane nonces. Development-network fee accounting is available separately at `/stem/extinguished-fees`.
+
 - [Protocol](STEM-PROTOCOL.md)
 - [Implementation and VM ABI](ARCHITECTURE.md)
 - [Build, configuration and reproducible network tests](OPERATIONS.md)
 - [Measurements and historical comparison](BENCHMARKS.md)
+- [Protocol evolution and research status](STEM-EVOLUTION.md)
 
 The protocol needs an independent review before custody of real funds. See the implementation status in the [protocol](STEM-PROTOCOL.md#9-当前实现与实测证据).

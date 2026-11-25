@@ -2,6 +2,8 @@
 
 The default `stem run` executable runs the native state machine. It commits current state, execution receipts and MMR peaks in one synchronous RocksDB write. A separate snapshot worker reads a stable database view and exports states for CometBFT state sync. The native bridge and stake observers use a trusted CKB full node outside the consensus process.
 
+Block preparation sorts changed record hashes per Patricia namespace, then passes each subtree a contiguous range of changed keys. Shared paths are loaded and rebuilt once for the block. The same edit removes superseded nodes. Snapshot restoration builds both trees from ordered records in batches and checks the roots before the atomic write.
+
 ## Native ledger
 
 [Stem's Telegraph schema](ledger/schemas/telegraph.json) encodes the Cell with inline scripts, an optional dense Type Script vector and application Data. The raw transaction contains inputs, dependencies, Cells, Group Messages and optional protocol or expiry fields. The outer transaction contains proof data, seals and any certificate. Script identity keeps the complete CKB Script hash. CKB L1 wire types still use Molecule. The indexed and historical Molecule layouts are measured by the encoding suite.
@@ -64,7 +66,17 @@ This is guardian authentication of a trusted CKB full node's state. Guardians al
 
 Each native lane pins a separate L1 vault Type ID. A mint certificate binds the sorted deposit OutPoints, observed vault predecessor and successor, exact Capacity and xUDT increments, and all native transaction outputs. Deposits use permanent SystemRoot keys. The wrapped RISC-V UDT receives mint rights only for the current authenticated Type Group. Native burns reserve a known amount and assign a contiguous lane nonce. The Burn Cell still participates in every applicable Type Group before it is removed from the live set. The payout reconciler verifies the native transaction and receipt proofs, the signed CometBFT successor and the confirmed L1 release.
 
-Stem fees extinguish Capacity. For fees paid with bridge-backed Capacity, the corresponding CKB stays in custody as liabilities decrease. The cumulative fee tally has a SystemRoot proof at `/stem/extinguished-fees`. It covers development-network fees as well. Paying out fees requires separate attribution and reconciliation against confirmed L1 reserves and outstanding obligations. Stake Cells are separate L1 resources. Guardians and custody operators have independent permissions. A continuously running CKB checkpoint broadcaster and the production bridge reorganization policy remain open.
+`stem::l1_proof::verify_output` independently verifies a historical CKB output's OutPoint, data and witness commitment with CKB's complete binary Merkle tree. The caller supplies the trusted CKB block hash and confirmation policy. The result carries only the output at creation. Later consumption and current liveness require separate state authentication.
+
+Stem fees extinguish Capacity. On bridged networks the same atomic write updates the `bridge/backing` SystemRoot record. A certified mint adds recognized reserve and circulating Capacity. A burn moves Capacity from circulation to pending withdrawals. A certified payout subtracts that amount from both pending withdrawals and recognized reserve. Moving the reserve between lanes or rotating a vault preserves the aggregate. Its unallocated balance must equal the cumulative extinguished fees. The accounting excludes L1 vault base Capacity and external L1 fee inputs. Wrapped units remain in their respective lanes.
+
+`/stem/bridge-backing` returns the Telegraph record and its Patricia path. `/stem/bridge-lane` authenticates one lane's reserved balances, vault OutPoint and both withdrawal nonce frontiers. Confirmed CKB observations depend on the configured guardian quorum and the L1 confirmation policy. Unallocated Capacity is an accounting balance. Fee attribution by lane, payable balances, disbursement authority, CKB checkpoint automation and the production bridge reorganization policy remain open. Stake Cells are separate L1 resources. The cumulative fee tally at `/stem/extinguished-fees` also covers development fees.
+
+## Weighted consensus experiments
+
+CometBFT owns runtime voting and finality. The fixed-epoch two-chain experiment tests synchronous persistence of vote, timeout and lock watermarks in an identity-bound RocksDB journal. It tests exact-message retries and rejects a restart with a missing or foreign journal. Proposals still need transport, verified availability and a speculative application branch before a node can use this logic to sign.
+
+The compact Ed25519 verifier pairs an exact-width bitmap with signatures in member order and checks signed weight. The BLS experiment registers independent keys with proofs of possession, checks the same weighted threshold and keeps individual votes for evidence. The RISC-V example measures signature verification against an already authenticated committee. Committee handoff verification and the L1 finality bridge remain separate work. See [certificate measurements](BENCHMARKS.md#weighted-certificate-cost).
 
 ## Historical proofs and CKB checkpoints
 
