@@ -1,0 +1,8 @@
+target/
+__pycache__/
+*.pyc
+*.profraw
+.env
+.idea/
+.vscode/
+.DS_Store

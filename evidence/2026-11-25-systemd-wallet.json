@@ -1,0 +1,28 @@
+{
+  "systemd_version": "systemd 262 (262.1-1.fc45)",
+  "replicas": 4,
+  "before_crash": [
+    465630,
+    465722
+  ],
+  "after_recovery": [
+    465823,
+    465861
+  ],
+  "recovery_seconds": 4.657,
+  "heights": [
+    2,
+    3,
+    5
+  ],
+  "receipts_on_all_replicas": [
+    "D8AD5D55E9E09E9FE8081D44821FD3B1701C6F783EFCF1D674C88A43134E3943",
+    "D45A166E38C495FCB98D3536E68623F0B8BBC67CFF9B171BB213D26102D42AB2",
+    "B9A802A6A9E1C8A1BBE58F50B2DD375EEA16AEB774F044CE669EF599A3D56EBB"
+  ],
+  "wallet_index_replica": 3,
+  "wallet_index_verified_after_restarts": true,
+  "runtime_source_commit": "1d1510195109d30abe18340e833cc76a7ddc7a34",
+  "runtime_binary_sha256": "12c72c180e6d175220da370b7ae121222c189164f51681d02bf7cdf4edd5b359",
+  "runner_source_commit": "7a7ccc6ff41a804fd6804a018bd64e727a957ba7"
+}

@@ -1,0 +1,21 @@
+[workspace]
+
+[package]
+name = "fern-contracts"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+license = "MIT"
+publish = false
+
+[dependencies]
+ckb-hash = { version = "=1.1.1", default-features = false, features = ["ckb-contract"] }
+fern-bridge-wire = { path = "../bridge-wire" }
+ckb-std = { version = "=1.1.0", default-features = false, features = ["allocator", "calc-hash", "type-id"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+overflow-checks = true
+panic = "abort"
+strip = true

@@ -1,0 +1,17 @@
+[Unit]
+Description=Fern CometBFT at %f
+BindsTo=fern-app@%i.service
+After=fern-app@%i.service
+PartOf=fern@%i.target
+StartLimitIntervalSec=60s
+StartLimitBurst=6
+
+[Service]
+Type=exec
+EnvironmentFile=%f/node.env
+ExecStart=/usr/bin/env ${COMETBFT_BINARY} start --home ${COMET_HOME} --proxy_app ${ABCI_ADDRESS}
+UMask=0077
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s

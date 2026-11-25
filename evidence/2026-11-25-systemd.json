@@ -1,0 +1,25 @@
+{
+  "systemd_version": "systemd 262 (262.1-1.fc45)",
+  "replicas": 4,
+  "before_crash": [
+    436831,
+    436908
+  ],
+  "after_recovery": [
+    437026,
+    437049
+  ],
+  "recovery_seconds": 4.552,
+  "heights": [
+    2,
+    3,
+    5
+  ],
+  "receipts_on_all_replicas": [
+    "0981C8F87D962A0F8E53809661B903234533F6328D8A6176FB3062C5F0BCBE0E",
+    "3295DB943520A68128FF7D2B879C7E8098CA26C124515A44822E50893C9FBE7E",
+    "C996DEA6A2EEB90A4B87FDA3C260106106564AE8D024CBB4367AB95973E9B7B8"
+  ],
+  "source_commit": "c83be3b39d067612b147ad6576d5272b40355a17",
+  "scenario": "four local validator replicas, application SIGKILL, automatic restart, and coordinated stop/start"
+}
