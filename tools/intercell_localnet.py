@@ -1,8 +1,11 @@
 """Bidirectional Intercell fixture for the native Jolteon bridge runner."""
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import subprocess
+from threading import Thread
 import time
+from urllib.request import Request, urlopen
 
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
                              point, script, script_hash, transaction, wallet_group)
@@ -26,6 +29,49 @@ def encode_message(args, label, source, destination, sender, receiver, nonce, pa
     write_json(request, dict(source=source, destination=destination, sender=sender, receiver=receiver,
                              nonce=nonce, payload=hex_bytes(payload)))
     return json.loads(run(args.binary, "intercell", "encode", "--request", request))
+
+
+def reject_forged_recovery_witness(args, l1, signed, head, recover):
+    """Change a witness signature while forwarding the real CKB Header and proofs."""
+    witness_bytes = binary(signed["json"]["witnesses"][0])
+    raw = binary(signed["molecule"])
+    forged = bytearray(raw)
+    # WitnessArgs is a three-field table. The lock Bytes follows its 16-byte header.
+    assert int.from_bytes(witness_bytes[4:8], "little") == 16
+    assert int.from_bytes(witness_bytes[16:20], "little") == 65
+    forged[raw.index(witness_bytes) + 20] ^= 1
+    write_json(args.output / "intercell-forged-recovery-witness.json",
+               {"transaction": head["tx_hash"], "original": hex_bytes(raw), "forged": hex_bytes(forged)})
+
+    class AlteredWitness(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            with urlopen(Request(l1.url, data=body, headers={"Content-Type": "application/json"}), timeout=5) as rpc:
+                reply = rpc.read()
+            call = json.loads(body)
+            if call["method"] == "get_transaction" and call["params"][0] == head["tx_hash"]:
+                response = json.loads(reply)
+                assert binary(response["result"]["transaction"]) == raw
+                response["result"]["transaction"] = hex_bytes(forged)
+                reply = json.dumps(response).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+
+        def log_message(self, *_):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), AlteredWitness) as proxy:
+        worker = Thread(target=proxy.serve_forever, daemon=True)
+        worker.start()
+        try:
+            recover("ckb_recovery_forged_witness", head, rpc=f"http://127.0.0.1:{proxy.server_port}/",
+                    reason="CKB transaction or witness proof does not match the Header")
+        finally:
+            proxy.shutdown()
+            worker.join()
 
 
 def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay, commands, children, *, publisher=None):
@@ -194,8 +240,8 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     ckb_deliveries = []
     recoveries = {}
 
-    def recover(label, head, *, mailbox=None, budget=None, reason=None):
-        command = [args.binary, "intercell", "recover-inbox", "--l1-rpc", l1.url,
+    def recover(label, head, *, mailbox=None, budget=None, reason=None, rpc=None):
+        command = [args.binary, "intercell", "recover-inbox", "--l1-rpc", rpc or l1.url,
                    "--tx-hash", head["tx_hash"], "--output-index", str(int(head["index"], 16)),
                    "--mailbox", mailbox or mailbox_id]
         if budget is not None:
@@ -239,6 +285,7 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     recover("ckb_recovery_read_budget", ckb_head, budget=1, reason="transaction budget exhausted")
 
     replay_witness = None
+    replay_path_bytes = None
     delivery_fork = None
     for i in (0, 1):
         if i == 1:
@@ -337,9 +384,40 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
             replacement = l1.call("get_block_hash", forked_header["number"])
             assert replacement != forked_header["hash"]
             recover("ckb_recovery_orphaned_delivery", orphan_head, reason="no longer live")
-            delivery_fork = {"orphaned_head": orphan_head, "inclusion": forked_inclusion, "replacement": replacement}
+            started = time.monotonic()
+            l1.stop()
+            l1.start("l1-intercell-restart.log")
+            delivery_fork = {"orphaned_head": orphan_head, "inclusion": forked_inclusion,
+                             "replacement": replacement, "restart_seconds": time.monotonic() - started}
+            assert l1.call("get_block_hash", forked_header["number"]) == replacement
             recovered_witness = delivery(i, "after-delivery-reorg")
             assert recovered_witness == result
+            replay_path = raw[history_end:]
+            replay_path_bytes = len(replay_path)
+            sparse_request = {**proofs[i][1], "expected_root": hex_bytes(root),
+                              "replay_path": hex_bytes(replay_path)}
+            sparse_path = args.output / "intercell-delivery-sparse-path.json"
+            write_json(sparse_path, sparse_request)
+            command = [args.binary, "intercell", "delivery-witness", "--request", sparse_path,
+                       "--header", checkpoint_header, "--history", history_path]
+            sparse_witness = json.loads(run(*command))
+            assert sparse_witness == result
+            raw = binary(sparse_witness["input_type"])
+            for label, request, reason in (
+                ("stale-root", dict(sparse_request, expected_root=hex_bytes(EMPTY)),
+                 "invalid Intercell replay path"),
+                ("forged-path", dict(sparse_request, replay_path=hex_bytes(replay_path[:-1])),
+                 "invalid Intercell replay path"),
+                ("ambiguous-replay", dict(sparse_request, consumed=[]),
+                 "provide exactly one of consumed and replay_path"),
+            ):
+                request_path = args.output / f"intercell-delivery-sparse-{label}.json"
+                write_json(request_path, request)
+                invalid_command = list(command)
+                invalid_command[invalid_command.index("--request") + 1] = request_path
+                failed = subprocess.run(invalid_command, text=True, capture_output=True)
+                assert failed.returncode and reason in failed.stderr, failed
+                rejected[f"cli_sparse_{label}"] = failed.stderr
         signed = ckb_tx(f"deliver-{i}", ckb_head, ckb_capacity - FEE,
                         mailbox_state(0, updated), evidence=raw, checkpoint=checkpoint, extra_input=(i == 1))
         cycles = int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
@@ -347,6 +425,8 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
         ckb_deliveries.append({"transaction": committed, "cycles": cycles, "bytes": len(binary(signed["molecule"])),
                                "inclusion": l1.prove_committed(committed), "inbox_root": hex_bytes(updated)})
         ckb_head, ckb_capacity, root = point(committed, i), ckb_capacity - FEE, updated
+        if i == 0:
+            reject_forged_recovery_witness(args, l1, signed, ckb_head, recover)
     rejected["ckb_repeated_consumption"] = ckb_reject("replay", ckb_tx("repeat-delivery", ckb_head,
         ckb_capacity - FEE, mailbox_state(0, root), evidence=replay_witness, checkpoint=checkpoint), 85)
 
@@ -474,6 +554,18 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     assert restart_proof["record"] == incoming["record"]
     rejected["stem_repeat_after_restart"] = stem_reject(sign_stem("restart-replay", inputs[4], change, incoming,
                                       MESSAGE_RECEIVE, approvals), "nonce already used", replica)
+    l1.mine(2)
+    newer_height = int(l1.call("get_tip_block_number"), 16) - spec["bridge"]["confirmations"]
+    anchor_refresh = stem_commit(anchors(anchor, newer_height, "after-restart"))
+    _, newer_anchor = query(client, "/stem/bridge-anchor")
+    assert newer_anchor["height"] == newer_height and newer_anchor["hash"] != anchor["hash"]
+    newer_approvals = reference("after-anchor-refresh", sent["point"], newer_anchor)
+    rejected["stem_old_certificate_after_anchor_refresh"] = stem_reject(
+        sign_stem("stale-after-anchor-refresh", inputs[4], change, incoming, MESSAGE_RECEIVE, approvals),
+        "committed CKB anchor")
+    rejected["stem_repeat_recertified_at_new_anchor"] = stem_reject(
+        sign_stem("replay-at-new-anchor", inputs[4], change, incoming, MESSAGE_RECEIVE, newer_approvals),
+        "nonce already used")
 
     restored = recover("after-stem-restart", ckb_head)
     assert restored["consumed"] == [msg["id"] for msg in outgoing]
@@ -506,6 +598,7 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
             "foreign_mailbox_creation": l1.prove_committed(foreign), "counterfeit": counterfeit_proof,
             "alternate_checkpoint_send": alternate_proof,
             "anchor_update": advanced, "anchor": anchor,
+            "anchor_refresh": anchor_refresh, "newer_anchor": newer_anchor,
             "after_restart": restart_proof, "restart_seconds": recovery_seconds,
             "orphaned": fork_emission, "replacement": replacement, "delivery_fork": delivery_fork,
-            "ckb_inbox_recovery": recoveries, "rejections": rejected}
+            "replay_path_bytes": replay_path_bytes, "ckb_inbox_recovery": recoveries, "rejections": rejected}

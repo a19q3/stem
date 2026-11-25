@@ -110,13 +110,18 @@ class L1(CkbRpc):
             modules += ', "Indexer"'
         config.write_text(re.sub(r"(?m)^modules = \[(.*)\]",
                                  r'modules = [\1' + modules + "]", config.read_text(), count=1))
-        with (self.home / "l1.log").open("wb", buffering=0) as log:
-            self.process = subprocess.Popen([args.l1, "run", "-C", self.home],
+        self.binary = args.l1
+        self.start("l1.log")
+
+    def start(self, log_name):
+        path = self.home / log_name
+        with path.open("wb", buffering=0) as log:
+            self.process = subprocess.Popen([self.binary, "run", "-C", self.home],
                                             stdout=log, stderr=subprocess.STDOUT)
         started = time.monotonic()
         while time.monotonic() - started < 30:
             if self.process.poll() is not None:
-                raise RuntimeError(f"L1 exited. See {self.home / 'l1.log'}")
+                raise RuntimeError(f"L1 exited. See {path}")
             try:
                 self.call("get_tip_block_number")
                 break

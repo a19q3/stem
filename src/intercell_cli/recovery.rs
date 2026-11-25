@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use ckb_jsonrpc_types::OutPoint;
+use ckb_jsonrpc_types::{HeaderView, OutPoint, TransactionAndWitnessProof};
 use ckb_types::{
     H256,
     core::ScriptHashType,
@@ -8,6 +8,7 @@ use ckb_types::{
 };
 use clap::Args;
 use serde::Serialize;
+use serde_json::json;
 use stem_bridge_wire::intercell::{Delivery, MailboxPolicy, MailboxState, Message};
 use stem_stake::intercell::consume;
 
@@ -105,6 +106,7 @@ impl Recover {
             remaining: self.max_transactions,
         };
         let (mut tx, l1_height, l1_block) = history.read(&head.tx_hash)?;
+        let mut block = l1_block.clone();
         let mut index = self.output_index as usize;
         let live_data = live
             .data
@@ -136,7 +138,7 @@ impl Recover {
             let mut predecessor = None;
             for (input_index, input) in raw.inputs().into_iter().enumerate() {
                 let out_point: OutPoint = input.previous_output().into();
-                let (previous_tx, _, _) = history.read(&out_point.tx_hash)?;
+                let (previous_tx, _, previous_block) = history.read(&out_point.tx_hash)?;
                 let output_index = out_point.index.value() as usize;
                 let spent = previous_tx
                     .raw()
@@ -144,11 +146,11 @@ impl Recover {
                     .get(output_index)
                     .context("missing committed Intercell transaction input")?;
                 if spent.type_().to_opt().as_ref() == Some(&script) {
-                    predecessor = Some((input_index, previous_tx, output_index));
+                    predecessor = Some((input_index, previous_tx, previous_block, output_index));
                     break;
                 }
             }
-            let Some((input_index, previous_tx, output_index)) = predecessor else {
+            let Some((input_index, previous_tx, previous_block, output_index)) = predecessor else {
                 let first = raw
                     .inputs()
                     .get(0)
@@ -174,6 +176,19 @@ impl Recover {
             let previous = MailboxState::decode(&previous_data)
                 .context("invalid preceding Intercell mailbox state")?;
             if current.outgoing.is_empty() {
+                let header = node
+                    .call::<HeaderView>("get_header", json!([block]))?
+                    .into();
+                let hash: H256 = raw.calc_tx_hash().unpack();
+                let proof: TransactionAndWitnessProof =
+                    node.call("get_transaction_and_witness_proof", json!([[hash], block]))?;
+                stem::l1_proof::verify_transaction(
+                    &block.pack(),
+                    &header,
+                    &tx.clone().into_view(),
+                    &proof,
+                )
+                .context("Intercell recovery requires the committed CKB delivery witness")?;
                 let witness = tx
                     .witnesses()
                     .get(input_index)
@@ -213,6 +228,7 @@ impl Recover {
             }
             transitions += 1;
             tx = previous_tx;
+            block = previous_block;
             index = output_index;
         }
         node.live_cell(&head)

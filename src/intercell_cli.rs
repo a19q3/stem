@@ -12,7 +12,7 @@ use stem_bridge_wire::intercell::{Delivery, MAX_PAYLOAD, Message, record_key};
 use stem_ledger::block::Header;
 use stem_stake::{
     finality::NATIVE_HEADER_BYTES,
-    intercell::{Inbox, outbox_system_root},
+    intercell::{Inbox, consume, outbox_system_root},
     patricia::{Commitment, Namespace, decode_path},
 };
 
@@ -61,8 +61,29 @@ struct Request {
 struct DeliveryRequest {
     record: JsonBytes,
     proof: JsonBytes,
-    consumed: Vec<H256>,
     expected_root: H256,
+    consumed: Option<Vec<H256>>,
+    replay_path: Option<JsonBytes>,
+}
+
+impl DeliveryRequest {
+    fn replay_path(&self, message: &Message<'_>, id: &[u8; 32]) -> Result<Vec<u8>> {
+        match (&self.consumed, &self.replay_path) {
+            (Some(consumed), None) => {
+                let mut inbox = Inbox::new(message.receiver);
+                for consumed in consumed {
+                    inbox.insert(consumed.clone().into())?;
+                }
+                ensure!(
+                    inbox.root() == self.expected_root.as_bytes(),
+                    "stale Intercell inbox root"
+                );
+                Ok(inbox.path(id))
+            }
+            (None, Some(path)) => Ok(path.as_bytes().to_vec()),
+            _ => anyhow::bail!("provide exactly one of consumed and replay_path"),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -152,16 +173,10 @@ impl Intercell {
                     ),
                     "invalid Intercell outbox proof"
                 );
-                let mut inbox = Inbox::new(message.receiver);
-                for consumed in request.consumed {
-                    inbox.insert(consumed.into())?;
-                }
-                ensure!(
-                    inbox.root() == request.expected_root.as_bytes(),
-                    "stale Intercell inbox root"
-                );
-                let path = inbox.path(&id);
-                inbox.insert(id)?;
+                let path = request.replay_path(&message, &id)?;
+                let expected_root = request.expected_root.into();
+                let successor_root = consume(&message.receiver, &id, &expected_root, &path)
+                    .context("invalid Intercell replay path for expected inbox root")?;
                 let bytes = [
                     &u32::try_from(raw.len())?.to_le_bytes()[..],
                     &u32::try_from(proof.len())?.to_le_bytes(),
@@ -176,7 +191,7 @@ impl Intercell {
                 print_json(&json!({
                     "id": H256::from(id),
                     "input_type": JsonBytes::from_vec(bytes),
-                    "successor_root": H256::from(inbox.root()),
+                    "successor_root": H256::from(successor_root),
                 }))
             }
         }
