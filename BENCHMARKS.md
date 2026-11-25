@@ -2287,3 +2287,57 @@ ignored. Go proof tests and the CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
 [Signed transactions, inclusion proofs, rejection traces and commands](benchmarks/2026-11-26-stem-checkpoint-adoption.json.xz).
+
+## 128-member checkpoint contention on CKB
+
+Revision `2e3a375` ran 128 weighted Jolteon replicas, finalized 32
+signed payments, and verified their common Header at height 12.
+It saved ordinary two-chain proofs for exact finalized heights 10,
+11 and 12. Two CKB 0.210.0 devnet nodes on the same i9-13900H host
+verified those proofs in the deployed RISC-V contract. They retained
+the default pool settings of 70,000,000 cycles for queue classification
+and 1,000 shannons/kB minimum fee rate.
+
+Both CKB nodes began at the same confirmed height-10 checkpoint.
+With P2P disconnected, each pool independently admitted a different
+height-11 spend of the same OutPoint. The two spends used separate
+fee keys and the same certified execution Header. The origin
+mined one spend and reached the required depth. After reconnecting,
+the receiving node rejected its own pending spend because the shared
+CKB input was dead. Its publisher adopted the winning checkpoint
+and published height 12 using its original funding Cell. Both nodes
+returned identical CKB witness inclusion proofs.
+
+| Devnet block cycles | Relayed transactions | Verified pool cycles per node | Transaction counts by inclusion block | Publisher command to remote pending |
+| ---: | ---: | ---: | --- | ---: |
+| 10,000,000,000 | 1 | 357,906,133 | 1 | 747 ms |
+| 10,000,000,000 | 5 | 1,792,235,186 | 5 | 879 ms |
+| 10,000,000,000 | 9 | 3,226,531,188 | 9 | 1,033 ms |
+| 10,000,000,000 | 17 | 6,095,114,209 | 17 | 1,376 ms |
+| 3,500,000,000 | 9 | 3,226,531,188 | 9 | 1,083 ms |
+| 3,500,000,000 | 17 | 6,095,114,209 | 9 then 8 | 1,382 ms |
+
+Each burst included one publisher follow-up and independently
+funded background checkpoint creations with distinct Type IDs.
+The secondary CKB node received the background transactions over
+P2P, and the origin received the follow-up over P2P. The publisher
+timing includes proof construction, cycle estimation, the journal,
+submission, and poll-based observation of the remote pool. It ends
+before mining. With the 3.5-billion budget, the follow-up was in
+the first block. The same 17 transactions' pending-pool footprint
+was 305,754 bytes per node. Across these measured bursts, the two
+CKB processes used 0.65 to 13.79 CPU seconds in aggregate between
+the beginning of the burst and complete remote visibility. The
+10-billion 17-transaction repeat observed two entries in the peer's
+verification queue at one sample. The 3.5-billion experiment
+demonstrated pending inclusion backlog across two blocks.
+
+These are single-host bursts using an actual fixed 128-member
+committee, with the archive replica reopened to construct and
+serve the publication witnesses. Full-size epoch handoffs and
+sustained CKB queue pressure remain to be measured. The standalone
+ordinary proof relay, 456 Rust release tests, Go proof tests and
+the CometBFT comparison build passed.
+
+[Reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
+[Raw runs, competing transactions, inclusion proofs and resource samples](benchmarks/2026-11-26-stem-ckb-checkpoint-contention.json.xz).

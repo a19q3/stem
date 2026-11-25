@@ -66,4 +66,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Competing CKB checkpoint publishers and canonical adoption | [Report](../BENCHMARKS.md#ckb-checkpoint-publisher-handoff), [signed transactions, rejected probes and reruns](2026-11-26-stem-checkpoint-adoption.json.xz) |
 
+| 128-member checkpoint contention across CKB peers | [Report](../BENCHMARKS.md#128-member-checkpoint-contention-on-ckb), [matrices, rejected spends, signed transactions and pool traces](2026-11-26-stem-ckb-checkpoint-contention.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
