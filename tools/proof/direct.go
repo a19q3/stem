@@ -43,7 +43,7 @@ func buildDirectBundle(genesis *types.GenesisDoc, entries []directStep) (directB
 	out := directBundle{InitialCommittee: hex.EncodeToString(initial.Hash())}
 	proof := []byte{byte(len(entries))}
 	var oldBlock types.BlockID
-	var previousSet []byte
+	var previousSet, nextSet []byte
 	var priorHeight int64
 	for i, entry := range entries {
 		if len(entry.Validators) > maxValidators {
@@ -60,8 +60,13 @@ func buildDirectBundle(genesis *types.GenesisDoc, entries []directStep) (directB
 		if i == 0 && signed.Height == 1 && !bytes.Equal(initial.Hash(), set.Hash()) {
 			return directBundle{}, errors.New("first commit does not use the genesis committee")
 		}
-		if i > 0 && (signed.Height != priorHeight+1 || !signed.LastBlockID.Equals(oldBlock)) {
-			return directBundle{}, errors.New("direct proof jumps height or changes its previous block")
+		if i > 0 {
+			if signed.Height != priorHeight+1 || !signed.LastBlockID.Equals(oldBlock) {
+				return directBundle{}, errors.New("direct proof jumps height or changes its previous block")
+			}
+			if !bytes.Equal(nextSet, set.Hash()) {
+				return directBundle{}, errors.New("direct proof breaks the signed committee handoff")
+			}
 		}
 		header := signed.Header
 		encoded, err := header.ToProto().Marshal()
@@ -118,7 +123,7 @@ func buildDirectBundle(genesis *types.GenesisDoc, entries []directStep) (directB
 		tip = append(tip, native...)
 		out.Tip = "0x" + hex.EncodeToString(tip)
 		out.NativeHeight = signed.Height - 1
-		oldBlock, previousSet, priorHeight = block, set.Hash(), signed.Height
+		oldBlock, previousSet, nextSet, priorHeight = block, set.Hash(), header.NextValidatorsHash, signed.Height
 	}
 	out.Proof = "0x" + hex.EncodeToString(proof)
 	return out, nil

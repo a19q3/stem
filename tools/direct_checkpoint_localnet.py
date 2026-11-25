@@ -7,6 +7,31 @@ from localnet import run, write_json
 from stake_localnet import witness
 
 
+COMMITTEE_PAGE_SIZE = 100
+MAX_COMMITTEE_SIZE = 128
+
+
+def committee_at(rpc, height):
+    members, page, total = [], 1, None
+    while total is None or len(members) < total:
+        response = rpc.call("validators", height=height, page=page, per_page=COMMITTEE_PAGE_SIZE)
+        validators = response["validators"]
+        reported_total = int(response["total"])
+        if (int(response["block_height"]) != height
+                or not 1 <= reported_total <= MAX_COMMITTEE_SIZE
+                or (total is not None and reported_total != total)
+                or len(validators) != int(response["count"])
+                or len(validators) != min(COMMITTEE_PAGE_SIZE, reported_total - len(members))):
+            raise ValueError(f"inconsistent CometBFT validator page {page} at height {height}")
+        total = reported_total
+        members.extend(validators)
+        page += 1
+    addresses = {member["address"] for member in members}
+    if len(addresses) != total:
+        raise ValueError(f"duplicate CometBFT validator at height {height}")
+    return members, page - 1
+
+
 def publish(args, scenario, stem_genesis, comet_genesis, rpc, header, funding=None):
     root = args.output / "direct-checkpoints"
     root.mkdir()
@@ -31,9 +56,11 @@ def publish(args, scenario, stem_genesis, comet_genesis, rpc, header, funding=No
     genesis_id = ckb_hash(b"Stem Header\0" + scenario.network + native_genesis)
     genesis_app_hash = ckb_hash(b"Stem AppHash\0" + scenario.network + bytes(8) + genesis_id)
 
+    pages = {}
+
     def entry(height):
-        return {"commit": rpc.call("commit", height=height),
-                "validators": rpc.call("validators", height=height, per_page=100)["validators"],
+        validators, pages[height] = committee_at(rpc, height)
+        return {"commit": rpc.call("commit", height=height), "validators": validators,
                 "native_header": hex_bytes(native_genesis if height == 1 else header(rpc, height - 1))}
 
     entries = [entry(height) for height in range(1, 33)]
@@ -116,4 +143,5 @@ def publish(args, scenario, stem_genesis, comet_genesis, rpc, header, funding=No
     if len({item for publication in publications for item in publication["validator_hashes"]}) < 4:
         raise AssertionError("fixture omitted a committee or power transition")
     return {"type": hex_bytes(identity), "initial_committee": hex_bytes(committee),
-            "genesis_app_hash": hex_bytes(genesis_app_hash), "publications": publications, "rejections": rejections}
+            "genesis_app_hash": hex_bytes(genesis_app_hash), "publications": publications,
+            "rejections": rejections, "committee_pages": pages}

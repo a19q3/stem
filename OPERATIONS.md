@@ -209,8 +209,10 @@ python3 tools/native_stake_localnet.py \
 
 The runner derives the native genesis bytes with
 `stem genesis-hash --genesis SPEC --header`. For each successive height,
-collect the public Comet `commit` and `validators` responses and the
-preceding native Header. `stem-proof -genesis COMET_GENESIS -direct-bundle SOURCE`
+collect the public Comet `commit` response, every page of `validators` at
+that height and the preceding native Header. The runner checks the
+height, total and membership across pages before assembling the input.
+`stem-proof -genesis COMET_GENESIS -direct-bundle SOURCE`
 exports a JSON object containing the witness and its expected tip.
 `stem checkpoint verify-direct --help` lists the trust and previous-tip
 arguments for off-chain verification. The actual publication places the direct

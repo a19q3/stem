@@ -670,3 +670,11 @@ The [raw report](benchmarks/2026-11-25-stem-direct-finality.json.xz)
 includes all three network rounds, public headers and votes, rejected
 transaction errors, confirmed CKB proofs, 12 VM fixtures and build
 fingerprints.
+
+A fourth devnet round forced one validator per RPC page. The runner
+fetched 42 pages across CometBFT heights 1–32. Heights 11–20 each
+required two pages. All five checkpoints confirmed and all six invalid
+submissions were rejected again. Full-transaction estimates ranged from
+4,234,032 to 36,237,820 cycles. This exercises actual paginated committee
+data from CometBFT. The 128-member cycle figure above still comes from
+the VM probe. [Pagination round evidence](benchmarks/2026-11-25-stem-direct-finality-pagination.json.xz)
