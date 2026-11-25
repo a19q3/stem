@@ -210,8 +210,24 @@ and reports the transaction hashes as it progresses. Use
 `--validators 4` for a smaller devnet run with the same proof checks.
 The fixture uses temporary test keys.
 
+To include a funded cross-epoch Intercell delivery, add these flags to
+the wide fixture and use a new output directory.
+
+```sh
+--intercell-mailbox "$contracts_dir/intercell-mailbox" \
+--vault "$contracts_dir/vault-type" --deposit-lock "$contracts_dir/deposit-lock" \
+--native-lock "$contracts_dir/stem-lock" --wrapped "$contracts_dir/bridge-udt"
+```
+
+The fixture mints against real CKB reserves and saves an Outbox proof
+before the boundary. After the new committee finalizes another send,
+it publishes a later checkpoint and delivers the original message
+using the checkpoint history path. The same transaction body with a
+fresh Outbox proof provides a cycle and size control.
+
 After the funded fixture exits, replay its original signed epoch
-boundary and successor into two fresh CKB nodes.
+boundary and successors into two fresh CKB nodes. The relay fixture
+also submits the recorded historical Intercell delivery if present.
 
 ```sh
 python3 tools/jolteon_ckb_epoch_relay_localnet.py \

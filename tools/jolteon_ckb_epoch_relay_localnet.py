@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relay the original signed boundary and successor of a funded Jolteon handoff."""
+"""Relay a funded Jolteon handoff and any dependent Intercell delivery over CKB."""
 
 import argparse
 import json
@@ -59,22 +59,54 @@ def stop_source(node, process):
 def verify_source(args, source):
     report = json.loads((args.stem_run / "wide-handoff-report.json").read_text())
     publications = report["checkpoint"]["publications"]
-    assert len(publications) == 3 and publications[1]["height"] == report["boundary"]["height"], publications
+    expected_count = 4 if report.get("intercell") else 3
+    assert len(publications) == expected_count and publications[1]["height"] == report["boundary"]["height"], publications
     signed_transactions = []
     for publication in publications:
         height, tx_hash = publication["height"], publication["transaction"]
-        inclusion = publication["l1_inclusion"]
-        header, proof = inclusion["header"], inclusion["proof"]
-        assert source.call("get_block_hash", header["number"]) == header["hash"]
-        assert source.call("verify_transaction_and_witness_proof", proof) == [tx_hash]
         signed = json.loads((args.stem_run / f"jolteon-checkpoints-checkpoint-{height}-signed.json").read_text())
         assert signed["hash"] == tx_hash
-        saved = source.call("get_transaction", tx_hash, "0x0", True)["transaction"]
-        assert saved == signed["molecule"], (height, tx_hash)
+        verify_transaction(source, signed, publication["l1_inclusion"])
         signed_transactions.append(signed)
     for previous, following in zip(signed_transactions, signed_transactions[1:]):
         assert following["json"]["inputs"][0]["previous_output"] == point(previous["hash"], 0)
     return report, signed_transactions
+
+
+def verify_transaction(source, signed, inclusion):
+    tx_hash = signed["hash"]
+    header, proof = inclusion["header"], inclusion["proof"]
+    assert source.call("get_block_hash", header["number"]) == header["hash"]
+    assert source.call("verify_transaction_and_witness_proof", proof) == [tx_hash]
+    saved = source.call("get_transaction", tx_hash, "0x0", True)["transaction"]
+    assert saved == signed["molecule"], tx_hash
+
+
+def relay_transaction(origin, peer, tx, source_inclusion, expected_cycles):
+    tx_hash = tx["hash"]
+    predecessor = tx["json"]["inputs"][0]["previous_output"]
+    connected = {"origin": origin, "peer": peer}
+    for node in connected.values():
+        entry = node.call("get_transaction", tx_hash)
+        assert not entry or entry["tx_status"]["status"] == "unknown", entry
+        assert node.call("get_live_cell", predecessor, True)["status"] == "live"
+    cycles = int(origin.call("estimate_cycles", tx["json"])["cycles"], 16)
+    assert cycles == expected_cycles, (cycles, expected_cycles)
+    before = {name: process_resources(node.process.pid) for name, node in connected.items()}
+    received = relay_checkpoint(origin, peer, tx)
+    after = {name: process_resources(node.process.pid) for name, node in connected.items()}
+    assert received["peer_inclusion"]["header"]["hash"] != source_inclusion["header"]["hash"]
+    committed_cycles = {}
+    for name, node in connected.items():
+        verify_transaction(node, tx, received["peer_inclusion"])
+        details = node.call("get_transaction", tx_hash, "0x1", True)
+        committed_cycles[name] = int(details["cycles"], 16)
+        assert committed_cycles[name] == cycles, details
+        cell = node.call("get_live_cell", point(tx_hash, 0), True)
+        assert cell["status"] == "live" and cell["cell"]["data"]["content"] == tx["json"]["outputs_data"][0]
+        assert node.call("get_live_cell", predecessor, False)["status"] != "live"
+    return {"transaction": tx_hash, "source_inclusion": source_inclusion, "estimated_cycles": cycles,
+            "committed_cycles": committed_cycles, "before_resources": before, "after_resources": after, **received}
 
 
 def run_scenario(args, source, origin, peer):
@@ -103,36 +135,20 @@ def run_scenario(args, source, origin, peer):
     connected = {"origin": origin, "peer": peer}
     observed = []
     for publication, tx in zip(publications[1:], signed[1:]):
-        tx_hash = tx["hash"]
-        predecessor = tx["json"]["inputs"][0]["previous_output"]
-        for node in connected.values():
-            # A fresh node has never imported this transaction or its proposal.
-            entry = node.call("get_transaction", tx_hash)
-            assert not entry or entry["tx_status"]["status"] == "unknown", entry
-            assert node.call("get_live_cell", predecessor, True)["status"] == "live"
-        cycles = int(origin.call("estimate_cycles", tx["json"])["cycles"], 16)
-        assert cycles == publication["estimated_cycles"], (cycles, publication["estimated_cycles"])
         if report["validators"] == 128:
-            assert cycles > policy[0]["max_tx_verify_cycles"], cycles
-        before = {name: process_resources(node.process.pid) for name, node in connected.items()}
-        received = relay_checkpoint(origin, peer, tx)
-        after = {name: process_resources(node.process.pid) for name, node in connected.items()}
-        assert received["peer_inclusion"]["header"]["hash"] != publication["l1_inclusion"]["header"]["hash"]
-        committed_cycles = {}
-        for name, node in connected.items():
-            committed = node.call("get_transaction", tx_hash, "0x0", True)
-            assert committed["transaction"] == tx["molecule"], tx_hash
-            details = node.call("get_transaction", tx_hash, "0x1", True)
-            committed_cycles[name] = int(details["cycles"], 16)
-            assert committed_cycles[name] == cycles, details
-            cell = node.call("get_live_cell", point(tx_hash, 0), True)
-            assert cell["status"] == "live" and cell["cell"]["data"]["content"] == tx["json"]["outputs_data"][0]
-            assert node.call("get_live_cell", predecessor, False)["status"] != "live"
-        observed.append({"stem_height": publication["height"], "transaction": tx_hash,
-                         "source_inclusion": publication["l1_inclusion"], "witness_bytes": publication["witness_bytes"],
-                         "estimated_cycles": cycles, "committed_cycles": committed_cycles,
-                         "before_resources": before, "after_resources": after, **received})
+            assert publication["estimated_cycles"] > policy[0]["max_tx_verify_cycles"], publication
+        received = relay_transaction(origin, peer, tx, publication["l1_inclusion"], publication["estimated_cycles"])
+        observed.append({"stem_height": publication["height"], "witness_bytes": publication["witness_bytes"], **received})
         write_json(args.output / "relayed-checkpoints.json", observed)
+
+    relayed_intercell = None
+    if intercell := report.get("intercell"):
+        tx = json.loads((args.stem_run / "epoch-intercell-historical-delivery-signed.json").read_text())
+        verify_transaction(source, tx, intercell["inclusion"])
+        assert intercell["later"]["height"] == publications[-1]["height"]
+        assert intercell["later"]["checkpoint"] in tx["json"]["cell_deps"]
+        relayed_intercell = relay_transaction(origin, peer, tx, intercell["inclusion"],
+                                             intercell["historical_delivery"]["cycles"])
 
     assert source.call("get_block_hash", prefix["number"]) == prefix["hash"]
     assert not source.call("get_peers"), "the copied source must stay disconnected"
@@ -145,6 +161,8 @@ def run_scenario(args, source, origin, peer):
                "setup_import_seconds": setup_import_seconds, "pool_policies": policy,
                "ckb_block_cycles": budgets[0], "ckb_peers": network,
                "skipped_handoff_rejected": rejection, "relayed": observed}
+    if relayed_intercell:
+        results["relayed_intercell"] = relayed_intercell
     write_json(args.output / "epoch-relay-report.json", results)
     print(f"Relayed the {report['validators']}-member boundary and successor via CKB P2P")
 

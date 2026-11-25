@@ -14,11 +14,12 @@ from bridge_localnet import (
     CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, output, point,
     transaction, wallet_group, write_key,
 )
+from intercell_epoch_localnet import EpochMailbox
 from jolteon_bridge_localnet import Client
 from jolteon_checkpoint_localnet import Relay
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, STATUS, SUBMIT, rpc, write_configuration
 from localnet import process_resources, run, write_json
-from native_bridge_localnet import start, wait_for
+from native_bridge_localnet import bridge_configuration, deploy, deposit_and_mint, start, wait_for
 from stake_localnet import CHAIN, Scenario, mk_record, witness
 
 
@@ -111,6 +112,15 @@ def run_epochs(args, l1, stake, fixture):
                   "signing_window": args.signing_window,
                   "limits": {"operations": 1, "bytes": 256 * 1024, "signatures": 8}},
     }
+    mailbox = None
+    if args.intercell_mailbox:
+        network = network_spec["network_id"]
+        funding = dict(stake.code["out_point"], index="0x2")
+        vault = deploy(args, l1, fixture, network, funding, checkpoint_anchor=stake.checkpoint)
+        mailbox = EpochMailbox(args, l1, fixture, vault, spec, network)
+        bridge, lane = bridge_configuration(args, l1, fixture, vault, None, network)
+        bridge["intercell_mailbox_code"] = mailbox.type["code_hash"]
+        network_spec["bridge"] = bridge
     write_json(spec, network_spec)
     write_json(args.output / "genesis-committee.json", roster)
     write_json(args.output / "public-genesis-header.json",
@@ -164,6 +174,15 @@ def run_epochs(args, l1, stake, fixture):
         processes[paused].wait(timeout=10)
 
         live = [pub for pub in ports if pub != paused]
+        if mailbox:
+            incumbent = next(pub for pub in initial if pub != paused)
+            client = Client(args, ports[incumbent], network)
+            mint = deposit_and_mint(args, l1, fixture, vault, network_spec, spec, lane, client)
+            message, sent = mailbox.send(client, "incumbent", 41, b"from the incumbent committee",
+                                         mint["payment"], mint["payment_capacity"], mint["lock_dep"])
+            old_proof = mailbox.proof(client, message)
+            assert sent["height"] <= old_proof[0] < args.blocks_per_epoch
+            write_json(args.output / "epoch-intercell-original-outbox.json", old_proof)
         wait_for(lambda: request(archive, STATUS)["height"] >= anchor_height,
                  "epoch 1 signing anchor", seconds=100)
         signed_anchor = request(archive, HEADER, le(anchor_height, 8))
@@ -226,6 +245,19 @@ def run_epochs(args, l1, stake, fixture):
         skipped = reject_skipped_handoff(args, l1, relay, stake, args.blocks_per_epoch, after_height, later)
         relay.advance(args.blocks_per_epoch, stake.secp, proof_file=handoff, terminal=True)
         relay.advance(after_height, stake.secp, proof_file=later, probe=True)
+        intercell = None
+        if mailbox:
+            _, successor_send = mailbox.send(client, "successor", 42, b"after the committee change",
+                point("0x" + sent["hash"], 0), mint["payment_capacity"] - FEE, mint["lock_dep"])
+            new_proof = mailbox.proof(client, message)
+            assert new_proof[0] >= successor_send["height"] > after_height
+            wait_for(lambda: statuses(ports, new_proof[0], 1), "Outbox proof height on all replicas", seconds=30)
+            tip = request(archive, HEADER, le(new_proof[0], 8))
+            assert all(request(pub, HEADER, le(new_proof[0], 8)) == tip for pub in ports)
+            checkpoint = relay.advance(new_proof[0], stake.secp)
+            intercell = mailbox.deliver(relay, message, old_proof, new_proof, checkpoint)
+            intercell.update({"mint": mint, "source_send": sent, "successor_send": successor_send,
+                              "agreed_successor_header": tip})
         native = {
             "validators": args.validators, "processes": len(ports), "initial_committee": roster,
             "successor_committee": [{"ed25519": hex_bytes(p), "power": w} for p, w in sorted(successor.items())],
@@ -236,6 +268,8 @@ def run_epochs(args, l1, stake, fixture):
             "missing_handoff_rejected": missing, "skipped_ckb_handoff_rejected": skipped,
             "checkpoint": relay.report(), "durations": duration,
         }
+        if intercell:
+            native["intercell"] = intercell
         write_json(args.output / "wide-handoff-report.json", native)
         print(f"{args.validators} to {args.validators} funded stake handoff confirmed on CKB at Stem {boundary['height']}")
     finally:
@@ -254,6 +288,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("binary", "l1", "stake-registry", "direct-checkpoint", "output"):
         parser.add_argument("--" + name, type=lambda path: Path(path).resolve(), required=True)
+    for name in ("intercell-mailbox", "vault", "deposit-lock", "native-lock", "wrapped"):
+        parser.add_argument("--" + name, type=lambda path: Path(path).resolve())
     parser.add_argument("--validators", type=int, default=128)
     parser.add_argument("--port", type=int, default=29630)
     parser.add_argument("--l1-port", type=int, default=29780)
@@ -265,6 +301,9 @@ def main():
     args = parser.parse_args()
     if not 4 <= args.validators <= 128 or not 4 <= args.signing_window <= args.blocks_per_epoch - 4:
         parser.error("invalid full committee or epoch dimensions")
+    if args.intercell_mailbox and not all((args.vault, args.deposit_lock, args.native_lock, args.wrapped)):
+        parser.error("--intercell-mailbox needs the bridge contract binaries")
+    args.xudt = None
     args.output.mkdir(parents=True, mode=0o700)
     capacity = (2000 + (args.validators + 1) * 171) * CKB
     funding = capacity + (args.validators + 1) * 1000 * CKB

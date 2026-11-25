@@ -374,7 +374,7 @@ StemVM syscall 2130 按索引返回认证记录。每条记录的 CellOutput 至
 
 Genesis 的 `bridge.intercell_mailbox_code` 固定受支持的 CKB 程序。Stem 普通交易可向实际消费的 Lock Group 声明一个保留 Group Action，`0xff00` 为发送，`0xff01` 为接收。完整 Lock 授权覆盖消息。两种保留 Intercell Action 均要求使用完整授权路径。消息记录与交易的应用输出和防重放状态原子提交。Outbox 和 Inbox 分别使用永久的 SystemRoot 记录，键绑定方向和消息 ID，值为完整消息。回执承诺该 ID。消息占用交易编码、读取、写入及签名资源，费用按普通交易计算。
 
-Stem → CKB 的接收方消费其唯一 Mailbox。Mailbox 的 Type ID、所有者 Lock、双方网络身份和 Jolteon 检查点代码哈希及 Type ID 在创建时固定。创建交易引用 CKB genesis Header。合约读取固定检查点实例。Outbox 证明可以直接使用检查点的 SystemRoot，也可以使用该检查点历史 MMR 已承诺的较早 Header。历史路径验证 Stem 网络、Header 高度和 ID、检查点 MMR 的叶数与峰值，以及该 Header 的包含路径。合约在对应 SystemRoot 下验证完整 Outbox 记录的 Patricia 路径，再以稀疏默克尔树不存在证明插入已消费 ID。后继 Mailbox 保留同一类型和所有者。任何中继者都可发布检查点和准备投递证明。Mailbox 的消费由接收者的 CKB Lock 授权。
+Stem → CKB 的接收方消费其唯一 Mailbox。Mailbox 的 Type ID、所有者 Lock、双方网络身份和 Jolteon 检查点代码哈希及 Type ID 在创建时固定。创建交易引用 CKB genesis Header。合约读取固定检查点实例。Outbox 证明可以直接使用检查点的 SystemRoot，也可以使用该检查点历史 MMR 已承诺的较早 Header。历史路径验证 Stem 网络、Header 高度和 ID、检查点 MMR 的叶数与峰值，以及该 Header 的包含路径。历史路径可以跨 epoch，CKB 上的检查点必须先按顺序验证委员会交接和历史连续性。合约在对应 SystemRoot 下验证完整 Outbox 记录的 Patricia 路径，再以稀疏默克尔树不存在证明插入已消费 ID。后继 Mailbox 保留同一类型和所有者。任何中继者都可发布检查点和准备投递证明。Mailbox 的消费由接收者的 CKB Lock 授权。
 
 投递见证首先用三个小端 `u32` 给出消息、Outbox 路径和历史证明的长度，接着依次编码这三段，最后为防重放路径。历史段为空时使用检查点本身。历史段非空时依次放入较早的 208 字节执行 Header、检查点的 MMR 叶数和峰值，以及目标叶到所属峰值的最短兄弟路径。检查点高度必须等于 MMR 叶数，待验证 Header 高度必须严格更早。检查点更新后可继续使用原 Outbox 证明，只需为仍存活的检查点 Cell 更新历史路径。
 

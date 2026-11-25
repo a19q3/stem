@@ -17,6 +17,17 @@ MESSAGE_RECEIVE = 0xff01
 MAX_PAYLOAD = 4096
 
 
+def mailbox_state(nonce, root, outgoing=b""):
+    return le(nonce, 8) + root + outgoing
+
+
+def encode_message(args, label, source, destination, sender, receiver, nonce, payload):
+    request = args.output / f"intercell-{label}-message.json"
+    write_json(request, dict(source=source, destination=destination, sender=sender, receiver=receiver,
+                             nonce=nonce, payload=hex_bytes(payload)))
+    return json.loads(run(args.binary, "intercell", "encode", "--request", request))
+
+
 def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay, commands, children, *, publisher=None):
     client = clients[0]
     network, genesis = client.network, vault["genesis"]
@@ -49,9 +60,6 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     alternate_id = ckb_hash(le(0, 8) + binary(funded) + le(4, 4) + le(0, 8))
     alternate_args = alternate_id + type_args[32:-32] + vault["foreign_anchor"]["id"]
     alternate_type = dict(mailbox_type, args=hex_bytes(alternate_args))
-
-    def mailbox_state(nonce, root, outgoing=b""):
-        return le(nonce, 8) + root + outgoing
 
     def ckb_tx(label, prev, capacity, data, *, evidence=None, checkpoint=None, headers=(), lock=None,
                type_=None, extra_input=False):
@@ -93,11 +101,7 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     root = EMPTY
 
     def prepare(label, source, destination, sender, receiver, nonce, payload):
-        request = args.output / f"intercell-{label}-message.json"
-        spec = dict(source=source, destination=destination, sender=sender, receiver=receiver,
-                    nonce=nonce, payload=hex_bytes(payload))
-        write_json(request, spec)
-        return json.loads(run(args.binary, "intercell", "encode", "--request", request))
+        return encode_message(args, label, source, destination, sender, receiver, nonce, payload)
 
     outgoing = [prepare(label, network, genesis, native_owner, mailbox_id, nonce, payload)
                 for label, nonce, payload in (("event", 41, b"reserve-observation"),
