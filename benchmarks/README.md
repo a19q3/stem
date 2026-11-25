@@ -24,6 +24,7 @@ available. Published network evidence contains public genesis and proof data.
 | CKB-funded committee change regression | [Report](../BENCHMARKS.md#ckb-funded-committee-regression), [evidence](2026-11-25-stem-bridge-funded-stake-rerun.json.xz) |
 | Direct CKB stake retirement, delayed withdrawal and slashing | [Report](../BENCHMARKS.md#direct-ckb-stake-retirement), [evidence](2026-11-25-stem-direct-retirement.json.xz) |
 | Native weighted Jolteon and frozen CometBFT comparison | [Report](../BENCHMARKS.md#native-weighted-jolteon), [successful and failed rounds](2026-11-25-stem-jolteon-runtime.json.xz) |
+| Frozen CometBFT 128-replica completion after cleanup | [Report](../BENCHMARKS.md#native-weighted-jolteon), [raw records](2026-11-25-stem-comet-128-post-clean.json.xz) |
 | Weighted Jolteon restart after clean rebuild | [Report](../BENCHMARKS.md#native-weighted-jolteon), [signed proofs and replica data](2026-11-25-stem-jolteon-post-clean.json) |
 | Native Jolteon proof verification in CKB-VM | [Report](../BENCHMARKS.md#jolteon-verifier-in-ckb-vm), [raw cycles and fingerprints](2026-11-25-stem-jolteon-ckb-vm.json) |
 

@@ -808,7 +808,7 @@ Stem process has its separate admission pool.
 | 32 | 12.31 | 12.35 | 3,220 |
 | 64 | 12.08 | 5.64 | 6,044 |
 | 100 | 11.83 | 1.86 | 9,254 |
-| 128 | 12.88 | No completed run | 11,628 |
+| 128 | 12.88 | 0.26 | 11,628 |
 
 Every successful run confirmed 32 payments and checked the execution
 Header at a common height. The duration includes draining and observing
@@ -824,7 +824,7 @@ and their bitmap Ed25519 QCs. Membership comes from the trusted genesis.
 | 32 | 13.33 / 65.37 | 35.48 / 109.63 | 3.80 / 10.57 | 0.91 / 3.29 |
 | 64 | 96.06 / 522.92 | 65.97 / 642.56 | 9.78 / 117.60 | 1.81 / 8.52 |
 | 100 | 315.30 / 1,830.79 | 114.36 / 2,045.30 | 19.81 / 436.62 | 2.88 / 16.41 |
-| 128 | 649.39 / — | 141.68 / — | 28.39 / — | 3.74 / — |
+| 128 | 649.39 / 6,864.40 | 141.68 / 8,353.10 | 28.39 / 2,203.82 | 3.74 / 23.89 |
 
 Jolteon counts bytes at the application frame layer. CometBFT counts
 each persistent P2P connection's monitor bytes. CPU and write counters
@@ -855,7 +855,13 @@ sizes. The first disk-backed 128-replica run timed out before workload
 submission. At cleanup 71 replicas reported height 3 and 57 reported
 height 2. The longer retry reached readiness and stopped when the P2P
 monitor RPC disconnected. The final retry was interrupted to clean the
-workspace target directories. All rounds are retained. [Public run archive](benchmarks/2026-11-25-stem-jolteon-runtime.json.xz)
+workspace target directories. The post-clean rerun used identical
+binaries, genesis and signed workload, with 240-second runner wait limits.
+All 128 replicas confirmed the 32 payments. The confirmation window was
+122.70 seconds. The longer run had sustained host contention and several
+CometBFT rounds passed through timeouts. [Completed 128-replica rerun](benchmarks/2026-11-25-stem-comet-128-post-clean.json.xz)
+
+The earlier attempts and their errors remain available. [Public run archive](benchmarks/2026-11-25-stem-jolteon-runtime.json.xz)
 
 A clean rebuild at `ec2b23e` repeated the four-replica test with one
 offline validator. All 32 payments finalized, the survivors formed a
