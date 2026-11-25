@@ -19,7 +19,6 @@ pub enum Key {
     Retirement {
         registry: Byte32,
         validator: Byte32,
-        generation: u64,
     },
 }
 
@@ -37,15 +36,10 @@ impl Key {
             Self::Retirement {
                 registry,
                 validator,
-                generation,
             } => hash(
-                b"Fern retired stake generation\0",
+                b"Fern retired stake\0",
                 network_id,
-                &[
-                    registry.as_slice(),
-                    validator.as_slice(),
-                    &generation.to_le_bytes(),
-                ],
+                &[registry.as_slice(), validator.as_slice()],
             ),
         }
     }

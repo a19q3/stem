@@ -263,6 +263,19 @@ impl App {
                 .header(requested)?
                 .context("Header outside local retention window")?
                 .encode(),
+            "/fern/stake-retirement" if request.prove => {
+                ensure!(
+                    requested == tip,
+                    "Stake retirement queries require the current height"
+                );
+                let validator = request.data.as_ref().try_into()?;
+                let (height, proof) = store.prove_stake_retirement(validator)?;
+                serde_json::to_vec(&serde_json::json!({
+                    "effective_height": height,
+                    "nodes": proof.nodes.iter().map(hex::encode).collect::<Vec<_>>(),
+                }))?
+                .into()
+            }
             "/fern/stake-snapshot" if request.prove && request.data.is_empty() => {
                 ensure!(
                     requested == tip,

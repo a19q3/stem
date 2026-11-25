@@ -11,4 +11,4 @@ The `fern run` executable uses the native ledger, group-indexed Witnesses, authe
 - [Build, configuration and reproducible network tests](OPERATIONS.md)
 - [Measurements and historical comparison](BENCHMARKS.md)
 
-The deployment still has finite L1 Registry lifetime limits, and the protocol needs an independent review before custody of real funds. See the implementation status in the [protocol](FERN-PROTOCOL.md#9-当前实现与实测证据).
+The protocol needs an independent review before custody of real funds. See the implementation status in the [protocol](FERN-PROTOCOL.md#9-当前实现与实测证据).

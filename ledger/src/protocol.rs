@@ -15,7 +15,11 @@ mod settlement;
 mod snapshot;
 pub use mint::{MintObservation, VerifiedMint, mint_digest};
 pub use settlement::{BridgeLedger, Lane, PendingWithdrawal, SettlementChanges};
-pub use snapshot::{SnapshotContext, snapshot_body, snapshot_commitment, snapshot_digest};
+pub use snapshot::{
+    ARRIVING_GUARDIAN, SnapshotContext, VerifiedSnapshot, snapshot_body, snapshot_commitment,
+    snapshot_digest,
+};
+const MAX_ATTESTATIONS: usize = 2 * MAX_RECORDS;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgeMint {
@@ -361,7 +365,10 @@ pub struct Certificate {
 
 impl Certificate {
     pub fn new(body: Bytes, attestations: Vec<Attestation>) -> Result<Self> {
-        ensure!(attestations.len() <= MAX_RECORDS, "too many attestations");
+        ensure!(
+            attestations.len() <= MAX_ATTESTATIONS,
+            "too many attestations"
+        );
         ensure!(
             body.len() <= crate::MAX_TRANSACTION_BYTES,
             "certificate body exceeds transaction size limit"
@@ -395,7 +402,7 @@ impl Certificate {
         let certificate = Self { encoded };
         let attestations = certificate.attestations();
         ensure!(
-            (1..=MAX_RECORDS).contains(&attestations.len()),
+            (1..=MAX_ATTESTATIONS).contains(&attestations.len()),
             "invalid attestation count"
         );
         let mut last = None;

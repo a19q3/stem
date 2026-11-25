@@ -217,3 +217,50 @@ fn load_bridge(bridge: Bridge) -> Result<BridgeGenesis> {
         deposits_per_block: bridge.deposits_per_block,
     })
 }
+
+pub(crate) fn verify_comet_genesis(spec: &Spec, path: &Path) -> Result<ckb_types::packed::Byte32> {
+    use anyhow::ensure;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use fern::native_store::{Retention, Store};
+
+    let genesis: serde_json::Value = crate::bridge_cli::read_json_limited(path, 2 * 1024 * 1024)?;
+    let directory = tempfile::tempdir()?;
+    let state = Store::open(directory.path(), spec, Retention::Archive)?;
+    let stated = genesis["app_state"]["fern_genesis"]
+        .as_str()
+        .context("missing CometBFT application genesis")?;
+    ensure!(
+        crate::bridge_cli::parse_hash(stated)?.as_bytes() == state.genesis_id().as_slice()
+            && genesis["chain_id"].as_str() == Some(spec.chain_id.as_str())
+            && (genesis["initial_height"].is_null()
+                || matches!(genesis["initial_height"].as_str(), Some("0" | "1"))),
+        "CometBFT genesis differs from the native specification"
+    );
+    let mut voters = genesis["validators"]
+        .as_array()
+        .context("missing CometBFT genesis committee")?
+        .iter()
+        .map(|voter| {
+            ensure!(
+                voter["pub_key"]["type"].as_str() == Some("tendermint/PubKeyEd25519"),
+                "CometBFT genesis requires Ed25519 public keys"
+            );
+            let key = STANDARD.decode(
+                voter["pub_key"]["value"]
+                    .as_str()
+                    .context("missing CometBFT public key")?,
+            )?;
+            let power = voter["power"]
+                .as_str()
+                .context("invalid CometBFT voting power")?
+                .parse()?;
+            Ok((key.as_slice().try_into()?, power))
+        })
+        .collect::<Result<Vec<([u8; 32], i64)>>>()?;
+    voters.sort_unstable();
+    ensure!(
+        voters == state.genesis_validators(),
+        "CometBFT genesis committee differs from the native specification"
+    );
+    Ok(state.genesis_id().clone())
+}

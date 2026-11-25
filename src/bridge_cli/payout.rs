@@ -1,10 +1,9 @@
 use std::{path::PathBuf, process::Command};
 
 use anyhow::{Context, Result, ensure};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use ckb_types::bytes::Bytes;
 use clap::Args;
-use fern::native_store::{Retention, Spec, Store};
+use fern::native_store::Spec;
 use fern_ledger::{
     block::{Header, Receipt},
     proof::InclusionProof,
@@ -158,39 +157,7 @@ impl AttestPayout {
     }
 
     fn verify_ticket(&self, spec: &Spec, request: &PayoutRequest) -> Result<Ticket> {
-        let genesis: serde_json::Value = read_json_limited(&self.comet_genesis, 2 * 1024 * 1024)?;
-        let directory = tempfile::tempdir()?;
-        let state = Store::open(directory.path(), spec, Retention::Archive)?;
-        let stated = genesis["app_state"]["fern_genesis"]
-            .as_str()
-            .context("missing CometBFT application genesis")?;
-        ensure!(
-            parse_hash(stated)?.as_bytes() == state.genesis_id().as_slice()
-                && genesis["chain_id"].as_str() == Some(spec.chain_id.as_str()),
-            "CometBFT genesis differs from the native specification"
-        );
-        let mut voters = genesis["validators"]
-            .as_array()
-            .context("missing CometBFT genesis committee")?
-            .iter()
-            .map(|voter| {
-                let key = STANDARD.decode(
-                    voter["pub_key"]["value"]
-                        .as_str()
-                        .context("missing CometBFT public key")?,
-                )?;
-                let power = voter["power"]
-                    .as_str()
-                    .context("invalid CometBFT voting power")?
-                    .parse()?;
-                Ok((key.as_slice().try_into()?, power))
-            })
-            .collect::<Result<Vec<([u8; 32], i64)>>>()?;
-        voters.sort_unstable();
-        ensure!(
-            voters == state.genesis_validators(),
-            "CometBFT genesis committee differs from the native specification"
-        );
+        let genesis = crate::native_spec::verify_comet_genesis(spec, &self.comet_genesis)?;
         let header = Header::decode(request.header.as_bytes())?;
         let app_hash = header.app_hash(&spec.network);
         let directory = self.request.parent().unwrap_or_else(|| Path::new("."));
@@ -198,6 +165,8 @@ impl AttestPayout {
         verifier
             .arg("-genesis")
             .arg(&self.comet_genesis)
+            .arg("-fern-genesis")
+            .arg(hex::encode(genesis.as_slice()))
             .arg("-commit")
             .arg(directory.join(&request.commit))
             .arg("-height")

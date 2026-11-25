@@ -1,13 +1,16 @@
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, ensure};
-use ckb_types::prelude::*;
+use ckb_types::{packed::Byte32, prelude::*};
 use fern_ledger::{
     Transaction,
     block::Receipt,
     protocol::{BlockBudget, Limits, Operation, SnapshotContext, snapshot_body},
+    replay::Key as ReplayKey,
 };
 use fern_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, Member, Registry, RegistryAnchor,
-    StakeConfig, StakeDomain, StakeSnapshot,
+    StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey, l1::guardian_generation,
 };
 
 use super::Store;
@@ -16,6 +19,7 @@ pub(super) const ACCEPTED: &[u8] = b"stake/accepted";
 pub(super) const ANNOUNCED: &[u8] = b"stake/announced";
 pub(super) const SNAPSHOT: &[u8] = b"stake/snapshot";
 pub(super) const CONFIG: &[u8] = b"stake/config";
+const AUTHORITY: &[u8] = b"stake/authority";
 
 /// Network parameters and the initial L1 Registry observation authenticated by guardians.
 #[derive(Clone)]
@@ -37,7 +41,23 @@ pub(super) struct Staking {
     authority: Authority,
 }
 
+pub(super) fn retirement_key(
+    network: &Byte32,
+    registry: [u8; 32],
+    validator: ValidatorKey,
+) -> Byte32 {
+    ReplayKey::Retirement {
+        registry: registry.pack(),
+        validator: validator.pack(),
+    }
+    .commitment(network)
+}
+
 impl Staking {
+    pub(super) fn retirement_key(&self, network: &Byte32, validator: ValidatorKey) -> Byte32 {
+        retirement_key(network, self.domain.registry_id, validator)
+    }
+
     pub(super) fn window(&self) -> u64 {
         self.window
     }
@@ -85,7 +105,7 @@ impl Staking {
             config.extend_from_slice(&item.to_le_bytes());
         }
         config.extend_from_slice(&encode_members(&genesis.guardians));
-        let mut snapshot = snapshot_body(&genesis.statement, &genesis.registry).to_vec();
+        let mut snapshot = snapshot_body(&genesis.statement, &genesis.registry, &[])?.to_vec();
         snapshot.extend_from_slice(&u16::try_from(genesis.signatures.len())?.to_le_bytes());
         for attestation in &genesis.signatures {
             snapshot.extend_from_slice(&attestation.guardian.to_le_bytes());
@@ -117,9 +137,19 @@ impl Staking {
         let announced = store
             .system_record(ANNOUNCED)?
             .context("missing announced committee")?;
+        let authority = match store.system_record(AUTHORITY)? {
+            Some(encoded) => {
+                let members = decode_members(&encoded)?;
+                Authority::new(guardian_generation(&members), &members)?
+            }
+            None => self.authority.clone(),
+        };
         Ok(StagedStake {
             state: StakeState::decode(&accepted, &announced)?,
             budget: BlockBudget::new(zero, self.limits, zero),
+            authority,
+            rotation: None,
+            retirements: BTreeMap::new(),
         })
     }
 
@@ -153,14 +183,39 @@ impl Staking {
             signing_anchor: &anchor,
             domain: &self.domain,
             previous: staged.state.accepted,
-            authority: &self.authority,
+            authority: &staged.authority,
             config: &self.config,
         };
         let mut budget = staged.budget.clone();
-        let (accepted, eligible) = context.verify(tx, &mut budget)?;
+        let verified = context.verify(tx, &mut budget)?;
+        for member in &verified.eligible {
+            let id = self.retirement_key(store.network(), member.key);
+            ensure!(
+                !staged.retirements.contains_key(&id)
+                    && store.system_record(id.as_slice())?.is_none(),
+                "Stake Snapshot would reactivate a retired validator"
+            );
+        }
+        let effective = self.config.effective_height(statement.epoch)?;
+        let mut retirements = staged.retirements.clone();
+        for key in verified.retired {
+            let id = self.retirement_key(store.network(), key);
+            if store.system_record(id.as_slice())?.is_none() {
+                retirements.entry(id).or_insert(effective);
+            }
+        }
+        ensure!(
+            retirements.len() <= fern_stake::MAX_RECORDS,
+            "block retirement record limit exceeded"
+        );
+        if let Some(committee) = verified.rotation {
+            staged.authority = Authority::new(guardian_generation(&committee), &committee)?;
+            staged.rotation = Some(committee);
+        }
         staged.budget = budget;
-        staged.state.accepted = accepted;
-        staged.state.eligible = eligible;
+        staged.retirements = retirements;
+        staged.state.accepted = verified.accepted;
+        staged.state.eligible = verified.eligible;
         staged.state.submitted = Some(tx.clone());
         let mut result = statement.epoch.to_le_bytes().to_vec();
         result.extend_from_slice(statement.commitment.as_slice());
@@ -175,17 +230,24 @@ impl Staking {
         &self,
         staged: StagedStake,
         height: u64,
-    ) -> Result<(Vec<(&'static [u8], Vec<u8>)>, Vec<Member>)> {
+    ) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, Vec<Member>)> {
         let StakeState {
             accepted,
             eligible,
             announced,
             submitted,
         } = staged.state;
-        let mut writes = Vec::new();
+        let mut writes = staged
+            .retirements
+            .into_iter()
+            .map(|(key, height)| (key.as_slice().to_vec(), height.to_le_bytes().to_vec()))
+            .collect::<Vec<_>>();
+        if let Some(rotation) = staged.rotation {
+            writes.push((AUTHORITY.to_vec(), encode_members(&rotation)));
+        }
         if let Some(tx) = submitted {
-            writes.push((SNAPSHOT, tx.as_slice().to_vec()));
-            writes.push((ACCEPTED, encode_accepted(accepted, &eligible)));
+            writes.push((SNAPSHOT.to_vec(), tx.as_slice().to_vec()));
+            writes.push((ACCEPTED.to_vec(), encode_accepted(accepted, &eligible)));
         }
         if accepted.epoch == 0 || self.config.update_height(accepted.epoch)? != height {
             return Ok((writes, vec![]));
@@ -217,7 +279,7 @@ impl Staking {
             }
         }
         updates.sort_unstable_by_key(|member| member.key);
-        writes.push((ANNOUNCED, encode_members(&eligible)));
+        writes.push((ANNOUNCED.to_vec(), encode_members(&eligible)));
         Ok((writes, updates))
     }
 }
@@ -225,6 +287,9 @@ impl Staking {
 pub(super) struct StagedStake {
     state: StakeState,
     budget: BlockBudget,
+    authority: Authority,
+    rotation: Option<Vec<Member>>,
+    retirements: BTreeMap<Byte32, u64>,
 }
 
 pub(super) struct StakeState {

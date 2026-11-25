@@ -13,6 +13,7 @@ pub mod checkpoint;
 mod evidence;
 pub mod history;
 pub mod l1;
+pub mod retirement;
 pub use evidence::{BlockId, DoubleVote, Liability, SignedVote, VoteKind};
 
 pub type Hash32 = [u8; 32];
@@ -21,7 +22,7 @@ pub type ValidatorKey = [u8; 32];
 pub const MAX_TOTAL_VOTING_POWER: u64 = (i64::MAX / 8) as u64;
 pub const MAX_RECORDS: usize = 256;
 const RECORD_BYTES: usize = 32 + 8 + 8 + 1 + 8 + 1 + 8 + 8 + 32;
-const REGISTRY_HEADER: usize = 32 + 8 + 32 + 2;
+const REGISTRY_HEADER: usize = 32 + 8 + 32 + 32 + 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -67,6 +68,7 @@ pub struct Registry {
     network_id: Hash32,
     sequence: u64,
     guardian_generation: Hash32,
+    retired_root: Hash32,
     records: Vec<StakeData>,
 }
 
@@ -75,6 +77,7 @@ impl Registry {
         network_id: Hash32,
         sequence: u64,
         guardian_generation: Hash32,
+        retired_root: Hash32,
         records: Vec<StakeData>,
     ) -> Result<Self> {
         if network_id == [0; 32] || guardian_generation == [0; 32] || records.len() > MAX_RECORDS {
@@ -89,10 +92,7 @@ impl Registry {
                 || (entry.first_inactive_height != 0
                     && entry.first_inactive_height <= entry.first_active_height)
                 || (entry.frozen && entry.first_active_height == 0)
-                || (entry.stake_cell_hash == [0; 32]
-                    && ((!entry.frozen && entry.exit_epoch.is_none())
-                        || entry.first_inactive_height == 0
-                        || entry.bonded_amount != 0))
+                || entry.stake_cell_hash == [0; 32]
                 || entry
                     .exit_epoch
                     .is_some_and(|exit| exit <= entry.activation_epoch)
@@ -108,6 +108,7 @@ impl Registry {
             network_id,
             sequence,
             guardian_generation,
+            retired_root,
             records,
         })
     }
@@ -117,7 +118,8 @@ impl Registry {
         let network = header[..32].try_into().unwrap();
         let sequence = u64::from_le_bytes(header[32..40].try_into().unwrap());
         let guardian_generation = header[40..72].try_into().unwrap();
-        let count = u16::from_le_bytes(header[72..74].try_into().unwrap()) as usize;
+        let retired_root = header[72..104].try_into().unwrap();
+        let count = u16::from_le_bytes(header[104..106].try_into().unwrap()) as usize;
         let body = &data[REGISTRY_HEADER..];
         if count > MAX_RECORDS || body.len() != count * RECORD_BYTES {
             return Err(Error::Encoding);
@@ -145,7 +147,13 @@ impl Registry {
                 stake_cell_hash: record[74..106].try_into().unwrap(),
             });
         }
-        Self::new(network, sequence, guardian_generation, records)
+        Self::new(
+            network,
+            sequence,
+            guardian_generation,
+            retired_root,
+            records,
+        )
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -153,6 +161,7 @@ impl Registry {
         data.extend_from_slice(&self.network_id);
         data.extend_from_slice(&self.sequence.to_le_bytes());
         data.extend_from_slice(&self.guardian_generation);
+        data.extend_from_slice(&self.retired_root);
         data.extend_from_slice(&(self.records.len() as u16).to_le_bytes());
         for entry in &self.records {
             data.extend_from_slice(&entry.validator_pubkey);
@@ -180,8 +189,21 @@ impl Registry {
         self.guardian_generation
     }
 
+    pub fn retired_root(&self) -> Hash32 {
+        self.retired_root
+    }
+
     pub fn records(&self) -> &[StakeData] {
         &self.records
+    }
+
+    pub fn retired_keys(&self, epoch: u64) -> impl Iterator<Item = ValidatorKey> + '_ {
+        self.records.iter().filter_map(move |stake| {
+            (stake.frozen
+                || stake.first_inactive_height != 0
+                || stake.exit_epoch.is_some_and(|exit| exit <= epoch))
+            .then_some(stake.validator_pubkey)
+        })
     }
 
     pub fn commitment(&self) -> Hash32 {
@@ -369,6 +391,7 @@ pub struct Attestation {
     pub signature: [u8; 64],
 }
 
+#[derive(Clone)]
 pub struct Authority {
     generation: Hash32,
     guardians: Vec<(VerifyingKey, u64)>,

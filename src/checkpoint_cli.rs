@@ -202,6 +202,11 @@ impl Prepare {
             spec.network == network,
             "archive network differs from trusted Fern genesis"
         );
+        let genesis = native_spec::verify_comet_genesis(&spec, &self.comet_genesis)?;
+        ensure!(
+            index.header(0)?.id(&network) == genesis,
+            "archive belongs to a different Fern genesis"
+        );
         let header = index.header(self.archive.height)?;
         let stake_snapshot = if let Some(stake) = spec.stake {
             ensure!(
@@ -243,7 +248,7 @@ impl Prepare {
             .arg("-genesis")
             .arg(&self.comet_genesis)
             .arg("-fern-genesis")
-            .arg(hex::encode(index.header(0)?.id(&network).as_slice()))
+            .arg(hex::encode(genesis.as_slice()))
             .arg("-commit")
             .arg(&self.signed_successor)
             .arg("-height")

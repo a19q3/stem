@@ -6,7 +6,7 @@ use ed25519_dalek::Signature;
 
 use crate::{
     Attestation, Authority, DoubleVote, Error, Hash32, Liability, Member, Registry, Result,
-    StakeData, ValidatorKey, digest, public_key,
+    StakeData, ValidatorKey, digest, public_key, retirement,
 };
 
 const EMPTY: Hash32 = [0; 32];
@@ -141,6 +141,15 @@ impl Policy<'_> {
     }
 }
 
+pub fn guardian_generation(members: &[Member]) -> Hash32 {
+    let mut bytes = Vec::with_capacity(40 * members.len());
+    for member in members {
+        bytes.extend_from_slice(&member.key);
+        bytes.extend_from_slice(&member.power.to_le_bytes());
+    }
+    digest(b"Fern CKB Stake authority\0", &[&bytes])
+}
+
 pub struct GuardianProof<'a> {
     pub committee: &'a [Member],
     pub votes: &'a [Attestation],
@@ -148,12 +157,7 @@ pub struct GuardianProof<'a> {
 
 impl GuardianProof<'_> {
     pub fn generation(&self) -> Hash32 {
-        let mut bytes = Vec::new();
-        for member in self.committee {
-            bytes.extend_from_slice(&member.key);
-            bytes.extend_from_slice(&member.power.to_le_bytes());
-        }
-        digest(b"Fern CKB Stake authority\0", &[&bytes])
+        guardian_generation(self.committee)
     }
 
     pub fn verify(&self, expected_generation: Hash32, message: &Hash32) -> Result<()> {
@@ -177,12 +181,12 @@ pub struct ChangeContext<'a> {
 }
 
 pub enum Action<'a> {
-    Register([u8; 64]),
+    Register([u8; 64], &'a [u8]),
     Increase,
     RequestExit,
     Activate(GuardianProof<'a>),
     Retire(GuardianProof<'a>),
-    Withdraw,
+    Withdraw(&'a [u8]),
     Freeze(DoubleVote),
     FinalizeSlash,
 }
@@ -192,6 +196,16 @@ impl ChangeContext<'_> {
         verify_sequence(self.policy, self.old_registry, self.new_registry)?;
         if self.old_registry.guardian_generation != self.new_registry.guardian_generation {
             return Err(Error::Authority);
+        }
+        let prior_root = self.old_registry.retired_root;
+        let next_root = match &action {
+            Action::Withdraw(path) => {
+                retirement::insert(&self.policy.network_id, &self.validator, &prior_root, path)?
+            }
+            _ => prior_root,
+        };
+        if next_root != self.new_registry.retired_root {
+            return Err(Error::Sequence);
         }
         let stake_data = |registry: &Registry| {
             registry
@@ -219,7 +233,7 @@ impl ChangeContext<'_> {
             return Err(Error::Sequence);
         }
         match action {
-            Action::Register(sig) => {
+            Action::Register(sig, path) => {
                 let (stake, cell) = self.new.ok_or(Error::Sequence)?;
                 if old_record.is_some()
                     || !self.owner_authorized
@@ -233,6 +247,7 @@ impl ChangeContext<'_> {
                     return Err(Error::Sequence);
                 }
                 self.policy.epoch_height(stake.activation_epoch)?;
+                retirement::insert(&self.policy.network_id, &self.validator, &prior_root, path)?;
                 public_key(&self.validator)?
                     .verify_strict(
                         &transition_digest(
@@ -296,29 +311,19 @@ impl ChangeContext<'_> {
             Action::Retire(proof) => {
                 let (before, old_cell) = self.old.ok_or(Error::Sequence)?;
                 let (_, new_cell) = self.new.ok_or(Error::Sequence)?;
-                let earliest = if before.frozen {
-                    old_cell
-                        .first_active_height
-                        .checked_add(1)
-                        .ok_or(Error::Overflow)?
-                } else {
-                    self.policy
-                        .epoch_height(before.exit_epoch.ok_or(Error::Epoch)?)?
-                };
-                if old_cell.first_inactive_height != 0
-                    || new_cell.first_inactive_height < earliest
-                    || new_cell
-                        != (StakeCell {
-                            first_inactive_height: new_cell.first_inactive_height,
-                            ..old_cell
-                        })
-                {
-                    return Err(Error::Epoch);
-                }
-                self.verify_cell_update(before, new_cell)?;
-                self.certify(b"Fern CKB Stake retirement\0", &proof)
+                let expected = retirement_cell(
+                    self.policy,
+                    &before,
+                    old_cell,
+                    new_cell.first_inactive_height,
+                )?;
+                self.verify_cell_update(before, expected)?;
+                proof.verify(
+                    self.old_registry.guardian_generation,
+                    &retirement_digest(self.policy, self.old_registry, self.new_registry),
+                )
             }
-            Action::Withdraw => {
+            Action::Withdraw(_) => {
                 let (before, cell) = self.old.ok_or(Error::Sequence)?;
                 if self.new.is_some()
                     || !self.owner_authorized
@@ -326,12 +331,7 @@ impl ChangeContext<'_> {
                     || (before.frozen && before.bonded_amount != 0)
                     || (self.since & !MAX_DELAY) != RELATIVE_BLOCKS
                     || (self.since & MAX_DELAY) < self.policy.unbonding_blocks
-                    || new_record
-                        != Some(StakeData {
-                            bonded_amount: 0,
-                            stake_cell_hash: EMPTY,
-                            ..before
-                        })
+                    || new_record.is_some()
                 {
                     return Err(Error::Sequence);
                 }
@@ -407,10 +407,38 @@ impl ChangeContext<'_> {
     }
 }
 
+pub fn retirement_cell(
+    policy: &Policy<'_>,
+    record: &StakeData,
+    cell: StakeCell,
+    inactive: i64,
+) -> Result<StakeCell> {
+    let earliest = if record.frozen {
+        cell.first_active_height
+            .checked_add(1)
+            .ok_or(Error::Overflow)?
+    } else {
+        policy.epoch_height(record.exit_epoch.ok_or(Error::Epoch)?)?
+    };
+    if cell.first_inactive_height != 0
+        || inactive < earliest
+        || inactive <= cell.first_active_height
+    {
+        return Err(Error::Epoch);
+    }
+    Ok(StakeCell {
+        first_inactive_height: inactive,
+        ..cell
+    })
+}
+
+pub fn retirement_digest(policy: &Policy<'_>, old: &Registry, new: &Registry) -> Hash32 {
+    transition_digest(b"Fern CKB Stake retirement\0", policy, old, new)
+}
+
 fn matches_cell(record: Option<StakeData>, cell: Option<(StakeData, StakeCell)>) -> bool {
     match (record, cell) {
         (Some(record), Some((stake, body))) => record == stake && body.matches_record(&record),
-        (Some(record), None) => record.stake_cell_hash == EMPTY,
         (None, None) => true,
         _ => false,
     }
@@ -435,7 +463,10 @@ pub fn verify_rotation(
     arriving: &GuardianProof<'_>,
 ) -> Result<()> {
     verify_sequence(policy, old, new)?;
-    if old.records != new.records || old.guardian_generation == new.guardian_generation {
+    if old.records != new.records
+        || old.retired_root != new.retired_root
+        || old.guardian_generation == new.guardian_generation
+    {
         return Err(Error::Authority);
     }
     let message = transition_digest(b"Fern CKB Stake authority rotation\0", policy, old, new);

@@ -81,6 +81,8 @@ class Scenario:
         self.authority = guardian_group(1)
         self.sequence = 0
         self.records = {}
+        self.retired = set()
+        self.retired_root = EMPTY
         self.deploy()
 
     def deploy(self):
@@ -126,25 +128,45 @@ class Scenario:
     def sign(self, label, tx, index):
         return self.fixture.sign(label, tx, [wallet_group(index, [self.fixture.faucet])])
 
-    def encode(self, sequence, records=None, authority=None):
+    def encode(self, sequence, records=None, authority=None, root=None):
         if records is None:
             records = self.records
         if authority is None:
             authority = self.authority
-        return (self.network + le(sequence, 8) + generation(authority) + le(len(records), 2)
+        if root is None:
+            root = self.retired_root
+        return (self.network + le(sequence, 8) + generation(authority) + root + le(len(records), 2)
                 + b"".join(records[key][0] for key in sorted(records)))
 
     def change(self, name, number, key, new_record=None, certificate=None, fee=FEE,
                since=0, expected=None, next_authority=None, capacity_adjustment=0):
         records = self.records.copy()
-        if new_record is not None:
+        root = self.retired_root
+        path = b""
+        if number in (0, 5):
+            if key in self.retired and number == 0:
+                path = bytes(32)
+            else:
+                archived = self.args.output / f"{name}-retired.json"
+                write_json(archived, [hex_bytes(item) for item in sorted(self.retired)])
+                marker = json.loads(run(self.args.binary, "stake", "retirement-proof", "--network", hex_bytes(self.network),
+                                        "--validator", hex_bytes(key), "--retired", archived))
+                if binary(marker["root"]) != root:
+                    raise AssertionError("retired key history differs from the L1 Registry")
+                path = binary(marker["proof"])
+                if number == 5:
+                    root = binary(marker["next"])
+        if number == 5:
+            records.pop(key)
+        elif new_record is not None:
             records[key] = new_record
-        state = self.encode(self.sequence + 1, records, next_authority)
+        state = self.encode(self.sequence + 1, records, next_authority, root)
         payload = bytes([number])
         if key is not None:
             payload += key
         if certificate:
             payload += certificate(self.state, state)
+        payload += path
         inputs = [point(self.registry_tx, 0)]
         outputs = [output(self.registry_capacity, self.lock, self.registry_type)]
         data = [hex_bytes(state)]
@@ -153,7 +175,7 @@ class Scenario:
             stake_point, capacity = self.stake_points[key]
             inputs.append(stake_point)
             change += capacity
-        keep_stake = new_record is not None and new_record[0][-32:] != EMPTY
+        keep_stake = new_record is not None and number != 5
         if keep_stake:
             stake_type = script(self.code_hash, hex_bytes(self.registry_id + key), "data2")
             stake_data = new_record[1]
@@ -184,6 +206,9 @@ class Scenario:
         self.registry_tx = self.l1.send(signed)
         self.sequence += 1
         self.records = records
+        self.retired_root = root
+        if number == 5:
+            self.retired.add(key)
         self.state = state
         self.fee_point = point(self.registry_tx, len(outputs) - 1)
         self.fee_capacity = change
@@ -193,35 +218,55 @@ class Scenario:
             self.stake_points.pop(key)
         return self.registry_tx
 
-    def observe(self, label, target_epoch, parent=None, missing=False, count=1, signing_anchor=None):
+    def observe(self, label, target_epoch, parent=None, missing=False, count=1, signing_anchor=None,
+                rotation=None):
         self.l1.mine(2)
         path = self.args.output / f"{label}-observe.json"
         request = {
             "fern_network_id": hex_bytes(self.network), "ckb_genesis": hex_bytes(self.genesis),
             "registry_type": self.registry_type, "registry": point(self.registry_tx, 0),
             "stake_cells": [self.stake_points[key][0] for key in sorted(self.stake_points)] if not missing else [],
-            "confirmations": 2, "target_epoch": target_epoch, "parent": parent,
+            "confirmations": 2, "anchor_height": int(self.l1.call("get_tip_block_number"), 16) - 2,
+            "target_epoch": target_epoch, "parent": parent,
             "guardians": [
                 {"ed25519": hex_bytes(key.public_key().public_bytes_raw()), "power": 1}
                 for key in self.authority
             ],
         }
+        signers = [(key, False) for key in self.authority[:count]]
+        if rotation:
+            previous, departing = rotation
+            request["rotation"] = {
+                "previous_registry": previous,
+                "departing_guardians": [
+                    {"ed25519": hex_bytes(key.public_key().public_bytes_raw()), "power": 1}
+                    for key in departing
+                ],
+            }
+            signers += [(key, True) for key in departing[:count]]
         write_json(path, request)
         def anchor(value):
             return (le(value["height"], 8) + binary(value["block_hash"])
                     + le(value["sequence"], 8) + binary(value["commitment"]))
 
         votes = []
-        for index, key in enumerate(self.authority[:count]):
-            key_path = self.args.output / f"stake-observer-{index}.key"
+        for index, (key, leaving) in enumerate(signers):
+            name = f"stake-observer-{index}"
+            if rotation or (self.args.output / f"{name}.key").exists() and not leaving:
+                existing = self.args.output / f"{name}.key"
+                if rotation or existing.read_bytes() != key.private_bytes_raw():
+                    name = f"stake-observer-{key.public_key().public_bytes_raw().hex()}"
+            key_path = self.args.output / f"{name}.key"
             if not key_path.exists():
-                key_path = write_key(self.args.output, f"stake-observer-{index}", key.private_bytes_raw())
+                key_path = write_key(self.args.output, name, key.private_bytes_raw())
             command = [
                 self.args.binary, "stake", "observe", "--request", path, "--l1-rpc", self.l1.url,
                 "--journal", self.args.output / f"stake-journal-{index}", "--key-file", key_path,
             ]
             if signing_anchor:
                 command.extend(["--fern-signing-anchor", signing_anchor])
+            if leaving:
+                command.append("--departing")
             if missing:
                 return reject_cli("incomplete Stake Cell set", *command)
             result = json.loads(run(*command))
@@ -378,6 +423,9 @@ class Scenario:
         if self.fee_capacity != before + stake_capacity - FEE:
             raise RuntimeError("Withdrawal did not return the full Stake Cell to the owner")
         results["unslashed_withdrawal_bonded_shannons"] = BOND
+        if self.records or len(self.retired) != 2:
+            raise AssertionError("retirement should release the Registry slots")
+        results["retired_root"] = hex_bytes(self.retired_root)
         results["final_sequence"] = self.sequence
         results["slash_inclusion"] = self.l1.prove_committed(results["slashed"])
         results["withdrawal_inclusion"] = self.l1.prove_committed(results["withdrawn"])

@@ -257,6 +257,15 @@ impl Store {
                 system_edit.set(id, Some(system.value_hash(&value)))?;
                 batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
             }
+            if let Some(genesis) = &spec.stake {
+                for key in genesis.registry.retired_keys(0) {
+                    let name = staking.retirement_key(&network, key);
+                    let id = system.record_key(name.as_slice());
+                    let effective = 1u64.to_le_bytes();
+                    system_edit.set(id, Some(system.value_hash(&effective)))?;
+                    batch.put(state_key(STATE_RECORD, Namespace::System, &id), effective);
+                }
+            }
             Some(staking)
         } else {
             None
@@ -366,15 +375,32 @@ impl Store {
     }
 
     pub fn prove_stake_snapshot(&self) -> Result<(Option<Vec<u8>>, Proof)> {
-        let key = self.system.record_key(staking::SNAPSHOT);
+        self.prove_system(staking::SNAPSHOT)
+    }
+
+    pub fn prove_stake_retirement(&self, validator: [u8; 32]) -> Result<(Option<u64>, Proof)> {
+        let staking = self
+            .staking
+            .as_ref()
+            .context("native staking is not configured")?;
+        let key = staking.retirement_key(&self.network, validator);
+        let (record, proof) = self.prove_system(key.as_slice())?;
+        let height = record
+            .map(|bytes| -> Result<_> { Ok(u64::from_le_bytes(bytes.as_slice().try_into()?)) })
+            .transpose()?;
+        Ok((height, proof))
+    }
+
+    fn prove_system(&self, name: &[u8]) -> Result<(Option<Vec<u8>>, Proof)> {
+        let key = self.system.record_key(name);
         let mut tree = self.system.edit(as_key(&self.tip.state.system_root), |id| {
             self.node(Namespace::System, id)
         });
         let (actual, proof) = tree.prove(&key)?;
-        let record = self.system_record(staking::SNAPSHOT)?;
+        let record = self.system_record(name)?;
         ensure!(
             actual == record.as_ref().map(|record| self.system.value_hash(record)),
-            "Stake Snapshot differs from its authenticated record"
+            "protocol state differs from its authenticated record"
         );
         Ok((record, proof))
     }
@@ -385,8 +411,36 @@ impl Store {
         record: Option<&[u8]>,
         proof: &Proof,
     ) -> bool {
+        Self::verify_system_record(network, header, staking::SNAPSHOT, record, proof)
+    }
+
+    pub fn verify_stake_retirement(
+        network: &Byte32,
+        header: &Header,
+        registry: [u8; 32],
+        validator: [u8; 32],
+        effective: u64,
+        proof: &Proof,
+    ) -> bool {
+        let key = staking::retirement_key(network, registry, validator);
+        Self::verify_system_record(
+            network,
+            header,
+            key.as_slice(),
+            Some(&effective.to_le_bytes()),
+            proof,
+        )
+    }
+
+    fn verify_system_record(
+        network: &Byte32,
+        header: &Header,
+        name: &[u8],
+        record: Option<&[u8]>,
+        proof: &Proof,
+    ) -> bool {
         let tree = Patricia::new(network.clone(), Namespace::System);
-        let key = tree.record_key(staking::SNAPSHOT);
+        let key = tree.record_key(name);
         tree.verify(
             &as_key(&header.state.system_root),
             &key,
@@ -610,7 +664,7 @@ impl Store {
             let (records, updates) = staking.finish(stake, height)?;
             validator_updates = updates;
             for (name, value) in records {
-                let id = self.system.record_key(name);
+                let id = self.system.record_key(&name);
                 system.set(id, Some(self.system.value_hash(&value)))?;
                 batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
             }

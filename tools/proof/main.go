@@ -132,6 +132,7 @@ func run() error {
 	commit := flag.String("commit", "", "signed CometBFT successor from the commit endpoint")
 	handoffs := flag.String("handoffs", "", "optional signed committee handoff history")
 	height := flag.Int64("height", 0, "native Fern application height")
+	excluded := flag.String("excluded-validator", "", "require the specified Ed25519 key to be absent from the signed committee")
 	metadata := flag.Bool("metadata", false, "output authenticated checkpoint metadata as JSON")
 	fernGenesis := flag.String("fern-genesis", "", "expected Fern genesis Header ID")
 	appHashArg := flag.String("app-hash", "", "expected native Fern AppHash")
@@ -185,6 +186,15 @@ func run() error {
 	}
 	if signed.Height != *height+1 || !bytes.Equal(signed.AppHash, appHash) {
 		return errors.New("commit does not authenticate this Fern height and AppHash")
+	}
+	if *excluded != "" {
+		key, err := hex.DecodeString(strings.TrimPrefix(*excluded, "0x"))
+		if err != nil || len(key) != ed25519.PubKeySize {
+			return errors.New("invalid excluded validator key")
+		}
+		if voters.HasAddress(ed25519.PubKey(key).Address()) {
+			return errors.New("validator is still in the signed committee")
+		}
 	}
 	if *metadata {
 		block := signed.LastBlockID

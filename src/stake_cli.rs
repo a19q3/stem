@@ -11,10 +11,11 @@ use ckb_types::{
 };
 use clap::{Args, Subcommand};
 use ed25519_dalek::Signer;
+use fern_ledger::protocol::ARRIVING_GUARDIAN;
 use fern_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, MAX_RECORDS, Member, Registry,
     RegistryAnchor, StakeConfig, StakeDomain, StakeSnapshot,
-    l1::{GuardianProof, Policy, StakeCell},
+    l1::{GuardianProof, Policy, StakeCell, guardian_generation},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,9 +25,11 @@ use crate::{
     l1::{Journal, Rpc},
 };
 
-#[derive(Deserialize)]
+mod retirement;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Validator {
+struct Guardian {
     ed25519: JsonBytes,
     power: i64,
 }
@@ -37,6 +40,17 @@ pub enum StakeCommand {
     Observe(Observe),
     /// Authenticate a threshold-certified snapshot against a pinned network and guardian set.
     Verify(Verify),
+    /// Verify finalized Fern exclusion and authorize CKB Stake Cell retirement.
+    AuthorizeRetirement(Box<retirement::AuthorizeRetirement>),
+    /// Build the compact absence proof for a registration or withdrawal.
+    RetirementProof {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        network: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        validator: H256,
+        #[arg(long)]
+        retired: PathBuf,
+    },
     /// Assemble a Stake Snapshot transaction from guardian observations.
     Snapshot {
         #[arg(long)]
@@ -57,6 +71,9 @@ pub struct Observe {
     /// Raw Fern Header ID at the scheduled signing height.
     #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
     fern_signing_anchor: Option<H256>,
+    /// Sign a confirmed rotation as a member of the departing authority.
+    #[arg(long, requires = "fern_signing_anchor")]
+    departing: bool,
 }
 
 #[derive(Args)]
@@ -75,7 +92,7 @@ struct Trust {
     registry_id: H256,
     target_epoch: u64,
     previous: Option<Previous>,
-    guardians: Vec<Validator>,
+    guardians: Vec<Guardian>,
     minimum_bond: u64,
     shannons_per_power: u64,
     max_validators: usize,
@@ -116,6 +133,8 @@ struct Observation {
 #[serde(deny_unknown_fields)]
 struct NativeVote {
     signing_anchor: H256,
+    guardian: u16,
+    arriving: Vec<Guardian>,
     signature: JsonBytes,
 }
 
@@ -152,9 +171,17 @@ struct Request {
     registry: OutPoint,
     stake_cells: Vec<OutPoint>,
     confirmations: u64,
+    anchor_height: Option<u64>,
     target_epoch: u64,
     parent: Option<ObservedRegistry>,
-    guardians: Vec<Validator>,
+    guardians: Vec<Guardian>,
+    rotation: Option<Rotation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rotation {
+    previous_registry: OutPoint,
+    departing_guardians: Vec<Guardian>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -195,6 +222,26 @@ impl StakeCommand {
         match self {
             Self::Observe(args) => args.run(),
             Self::Verify(args) => args.run(),
+            Self::AuthorizeRetirement(retirement) => retirement.run(),
+            Self::RetirementProof {
+                network,
+                validator,
+                retired,
+            } => {
+                use fern_stake::retirement::{RetirementTree, insert};
+                let network = network.as_bytes().try_into()?;
+                let validator = validator.as_bytes().try_into()?;
+                let mut tree = RetirementTree::new(network);
+                let keys: Vec<H256> = read_json_limited(&retired, 16 * 1024 * 1024)?;
+                for key in keys {
+                    tree.retire(key.as_bytes().try_into()?)?;
+                }
+                let root = tree.root();
+                let proof = tree.prove_absence(&validator)?;
+                let next = insert(&network, &validator, &root, &proof)?;
+                print_json(&json!({"root": H256::from(root), "next": H256::from(next),
+                                  "proof": JsonBytes::from_vec(proof)}))
+            }
             Self::Snapshot { observations } => build_native_snapshot(&observations),
         }
     }
@@ -306,13 +353,14 @@ impl Observe {
         let journal = Journal::open(&self.journal, id.pack())?;
         let previous_height = journal.validate(&l1)?;
         let tip: Uint64 = l1.call("get_tip_block_number", json!([]))?;
-        let height = tip
+        let confirmed_height = tip
             .value()
             .checked_sub(request.confirmations)
             .context("L1 chain has insufficient confirmations")?;
+        let height = request.anchor_height.unwrap_or(confirmed_height);
         ensure!(
-            previous_height.is_none_or(|previous| height >= previous),
-            "confirmed L1 height regressed"
+            height <= confirmed_height && previous_height.is_none_or(|previous| height >= previous),
+            "requested L1 anchor is outside the confirmed signing window"
         );
         let block_hash = l1.block_hash(height)?;
         let parent = request.parent.as_ref().map(RegistryAnchor::from);
@@ -359,11 +407,7 @@ impl Observe {
             );
         }
 
-        let live_records: Vec<_> = registry
-            .records()
-            .iter()
-            .filter(|stake| stake.stake_cell_hash != [0; 32])
-            .collect();
+        let live_records = registry.records();
         ensure!(
             request.stake_cells.len() == live_records.len(),
             "incomplete Stake Cell set"
@@ -396,22 +440,70 @@ impl Observe {
             .iter()
             .map(member)
             .collect::<Result<Vec<_>>>()?;
-        let generation = GuardianProof {
-            committee: &guardians,
-            votes: &[],
-        }
-        .generation();
+        let generation = guardian_generation(&guardians);
         ensure!(
             generation == registry.guardian_generation(),
             "guardian committee does not match the live Registry"
         );
         Authority::new(generation, &guardians)?;
+        let leaving = if let Some(rotation) = &request.rotation {
+            ensure!(
+                self.fern_signing_anchor.is_some() && request.target_epoch != 0,
+                "guardian rotation requires a native Stake Snapshot"
+            );
+            let parent = parent
+                .as_ref()
+                .context("rotation requires the prior accepted Registry")?;
+            let (output, previous) =
+                confirmed_cell(&l1, &rotation.previous_registry, parent.block.height)?;
+            ensure!(
+                output.type_().to_opt().as_ref() == Some(&registry_type)
+                    && output.lock() == expected_lock,
+                "prior guardian authority is not from the expected L1 Registry"
+            );
+            let previous = Registry::decode(previous.as_bytes())?;
+            let members = rotation
+                .departing_guardians
+                .iter()
+                .map(member)
+                .collect::<Result<Vec<_>>>()?;
+            let departing = guardian_generation(&members);
+            ensure!(
+                previous.sequence() == parent.sequence
+                    && previous.commitment() == parent.commitment
+                    && previous.guardian_generation() == departing
+                    && departing != generation,
+                "guardian rotation does not extend the accepted L1 Registry"
+            );
+            Authority::new(departing, &members)?;
+            Some(members)
+        } else {
+            None
+        };
         let key = read_key(&self.key_file)?;
-        let guardian = guardians
+        let signers = if self.departing {
+            leaving
+                .as_ref()
+                .context("missing departing guardian committee")?
+        } else {
+            &guardians
+        };
+        let guardian = signers
             .binary_search_by_key(&key.verifying_key().to_bytes(), |member| member.key)
             .map_err(|_| {
-                anyhow::anyhow!("signing key is outside the registered guardian committee")
+                anyhow::anyhow!("signing key is outside the requested guardian authority")
             })?;
+        let guardian = u16::try_from(guardian)?;
+        let arriving = if leaving.is_some() {
+            guardians.as_slice()
+        } else {
+            &[]
+        };
+        let native_guardian = if leaving.is_some() && !self.departing {
+            guardian | ARRIVING_GUARDIAN
+        } else {
+            guardian
+        };
         let snapshot = StakeSnapshot {
             domain: StakeDomain {
                 fern_network_id: policy.network_id,
@@ -431,7 +523,6 @@ impl Observe {
             guardian_generation: generation,
         };
 
-        journal.pin(&l1, height, &block_hash)?;
         let signature = key.sign(&snapshot.signing_digest()).to_bytes();
         let native = self
             .fern_signing_anchor
@@ -441,19 +532,35 @@ impl Observe {
                     "invalid native signing anchor"
                 );
                 let network = request.fern_network_id.pack();
-                let body = fern_ledger::protocol::snapshot_body(&snapshot, &registry);
+                let body = fern_ledger::protocol::snapshot_body(&snapshot, &registry, arriving)?;
                 let statement = fern_ledger::protocol::StakeSnapshot {
                     epoch: snapshot.target_epoch,
                     signing_anchor: anchor.pack(),
                     commitment: fern_ledger::protocol::snapshot_commitment(&network, &body),
                 };
                 let digest = fern_ledger::protocol::snapshot_digest(&network, &statement);
+                journal.pin_stake_snapshot(
+                    &l1,
+                    height,
+                    &block_hash,
+                    snapshot.target_epoch,
+                    &digest,
+                )?;
                 Ok(NativeVote {
                     signing_anchor: anchor,
+                    guardian: native_guardian,
+                    arriving: if arriving.is_empty() {
+                        vec![]
+                    } else {
+                        request.guardians.clone()
+                    },
                     signature: JsonBytes::from_vec(key.sign(digest.as_slice()).to_bytes().to_vec()),
                 })
             })
             .transpose()?;
+        if native.is_none() {
+            journal.pin(&l1, height, &block_hash)?;
+        }
         print_json(&json!({
             "fern_network_id": request.fern_network_id,
             "ckb_genesis": request.ckb_genesis,
@@ -469,7 +576,7 @@ impl Observe {
     }
 }
 
-fn member(validator: &Validator) -> Result<Member> {
+fn member(validator: &Guardian) -> Result<Member> {
     Ok(Member {
         key: validator.ed25519.as_bytes().try_into()?,
         power: validator.power.try_into()?,
@@ -485,6 +592,19 @@ fn live_cell(l1: &Rpc, point: &OutPoint, anchor_height: u64) -> Result<(CellOutp
     let live = status.cell.context("missing L1 live Cell")?;
     let output: CellOutput = live.output.into();
     let data = live.data.context("missing L1 live Cell Data")?.content;
+    let (committed, expected) = confirmed_cell(l1, point, anchor_height)?;
+    ensure!(
+        committed == output && expected == data,
+        "live Stake Cell differs from the committed transaction"
+    );
+    Ok((output, data))
+}
+
+fn confirmed_cell(
+    l1: &Rpc,
+    point: &OutPoint,
+    anchor_height: u64,
+) -> Result<(CellOutput, JsonBytes)> {
     let (raw, height, block_hash) = l1.committed(&point.tx_hash)?;
     ensure!(
         height <= anchor_height && l1.block_hash(height)? == block_hash,
@@ -492,15 +612,12 @@ fn live_cell(l1: &Rpc, point: &OutPoint, anchor_height: u64) -> Result<(CellOutp
     );
     let tx = Transaction::from_slice(raw.as_bytes())?.into_view();
     let index = point.index.value() as usize;
-    ensure!(
-        tx.output(index).as_ref() == Some(&output)
-            && tx
-                .outputs_data()
-                .get(index)
-                .is_some_and(|value| value.raw_data().as_ref() == data.as_bytes()),
-        "live Stake Cell differs from the committed transaction"
-    );
-    Ok((output, data))
+    let output = tx.output(index).context("missing Stake Cell output")?;
+    let data = tx
+        .outputs_data()
+        .get(index)
+        .context("missing Stake Cell Data")?;
+    Ok((output, JsonBytes::from_bytes(data.raw_data())))
 }
 
 pub(crate) fn native_genesis(
@@ -583,19 +700,24 @@ fn build_native_snapshot(observations: &std::path::Path) -> Result<()> {
     };
     let mut votes: Vec<Observation> = read_json_limited(observations, 16 * 1024 * 1024)?;
     ensure!(
-        (1..=MAX_RECORDS).contains(&votes.len()),
+        (1..=2 * MAX_RECORDS).contains(&votes.len()),
         "invalid guardian observations"
     );
-    votes.sort_unstable_by_key(|vote| vote.attestation.guardian);
+    votes.sort_unstable_by_key(|vote| vote.native.as_ref().map(|vote| vote.guardian));
     let first = &votes[0];
     let snapshot = first.snapshot();
-    let anchor = &first
+    let reference = first
         .native
         .as_ref()
-        .context("missing native Stake Snapshot signature")?
-        .signing_anchor;
+        .context("missing native Stake Snapshot signature")?;
+    let anchor = &reference.signing_anchor;
+    let arriving = reference
+        .arriving
+        .iter()
+        .map(member)
+        .collect::<Result<Vec<_>>>()?;
     let registry = Registry::decode(first.registry_data.as_bytes())?;
-    let body = snapshot_body(&snapshot, &registry);
+    let body = snapshot_body(&snapshot, &registry, &arriving)?;
     let network = first.fern_network_id.pack();
     let statement = fern_ledger::protocol::StakeSnapshot {
         epoch: snapshot.target_epoch,
@@ -612,11 +734,12 @@ fn build_native_snapshot(observations: &std::path::Path) -> Result<()> {
             ensure!(
                 observation.snapshot() == snapshot
                     && observation.registry_data == first.registry_data
-                    && &native.signing_anchor == anchor,
+                    && &native.signing_anchor == anchor
+                    && native.arriving == reference.arriving,
                 "guardians observed different native Stake Snapshots"
             );
             Ok(Attestation {
-                guardian: observation.attestation.guardian,
+                guardian: native.guardian,
                 signature: native.signature.as_bytes().try_into()?,
             })
         })

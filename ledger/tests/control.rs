@@ -368,7 +368,6 @@ fn permanent_replay_keys_are_distinct_and_budgeted() -> Result<()> {
     let retire = Key::Retirement {
         registry: hash(4),
         validator: hash(5),
-        generation: 6,
     };
     let mut block = InsertionBudget::new(1, 1, 0)?;
     block.reserve(&network, &deposit, 40_000, |_| Ok(false))?;
@@ -463,7 +462,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         first_inactive_height: 0,
         stake_cell_hash: [6; 32],
     };
-    let registry = Registry::new(domain.fern_network_id, 1, generation, vec![record])?;
+    let registry = Registry::new(domain.fern_network_id, 1, generation, [0; 32], vec![record])?;
     let previous = AcceptedSnapshot {
         epoch: 0,
         anchor: RegistryAnchor {
@@ -490,7 +489,7 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         guardian_generation: generation,
     };
     assert_eq!(RegistrySnapshot::decode(&snapshot.encode())?, snapshot);
-    let body = snapshot_body(&snapshot, &registry);
+    let body = snapshot_body(&snapshot, &registry, &[])?;
     let anchor = hash(11);
     let statement = StakeSnapshot {
         epoch: 1,
@@ -533,7 +532,8 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
     };
     let mut budget = BlockBudget::new(limits(0), limits(4), limits(0));
     let tx = sign(statement.clone(), body.clone(), 3)?;
-    let (accepted, committee) = context.verify(&tx, &mut budget)?;
+    let verified = context.verify(&tx, &mut budget)?;
+    let (accepted, committee) = (verified.accepted, verified.eligible);
     assert_eq!(accepted.epoch, 1);
     assert_eq!(
         committee,

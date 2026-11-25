@@ -93,7 +93,7 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
         return Err(Error::Registry);
     }
     let Some(input) = find_type(&registry_id, Source::Input)? else {
-        return if new.sequence() == 0 && new.records().is_empty() {
+        return if new.sequence() == 0 && new.records().is_empty() && new.retired_root() == [0; 32] {
             Ok(())
         } else {
             Err(Error::Registry)
@@ -168,9 +168,10 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
         },
     };
     match operation {
-        0 => context.verify(Action::Register(
-            payload.try_into().map_err(|_| Error::Encoding)?,
-        ))?,
+        0 => {
+            let (signature, path) = payload.split_at_checked(64).ok_or(Error::Encoding)?;
+            context.verify(Action::Register(signature.try_into().unwrap(), path))?;
+        }
         1 if payload.is_empty() => context.verify(Action::Increase)?,
         2 if payload.is_empty() => context.verify(Action::RequestExit)?,
         3 | 4 => {
@@ -189,7 +190,7 @@ fn verify_registry(script: &Script, args: &[u8]) -> Result<(), Error> {
             };
             context.verify(action)?;
         }
-        5 if payload.is_empty() => context.verify(Action::Withdraw)?,
+        5 => context.verify(Action::Withdraw(payload))?,
         6 if payload.len() == 2 * SignedVote::SIZE => {
             context.verify(Action::Freeze(DoubleVote {
                 first: SignedVote::decode(&payload[..SignedVote::SIZE])?,

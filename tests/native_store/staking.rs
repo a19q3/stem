@@ -5,11 +5,12 @@ use ckb_types::packed::Byte32;
 use ed25519_dalek::{Signer, SigningKey};
 use fern::native_store::StakeGenesis;
 use fern_ledger::protocol::{
-    self, Certificate, Operation, snapshot_body, snapshot_commitment, snapshot_digest,
+    self, ARRIVING_GUARDIAN, Certificate, Operation, snapshot_body, snapshot_commitment,
+    snapshot_digest,
 };
 use fern_stake::{
     Anchor, Attestation, Member, Registry, RegistryAnchor, StakeConfig, StakeData, StakeDomain,
-    StakeSnapshot,
+    StakeSnapshot, l1::guardian_generation,
 };
 use serde_json::Value;
 
@@ -26,7 +27,17 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     };
     let first = SigningKey::from_bytes(&[88; 32]).verifying_key().to_bytes();
     let second = SigningKey::from_bytes(&[77; 32]).verifying_key().to_bytes();
-    let generation = [9; 32];
+    let initial_guardians = vec![Member {
+        key: guardian.verifying_key().to_bytes(),
+        power: 10,
+    }];
+    let generation = guardian_generation(&initial_guardians);
+    let successor = SigningKey::from_bytes(&[55; 32]);
+    let arriving = vec![Member {
+        key: successor.verifying_key().to_bytes(),
+        power: 10,
+    }];
+    let next_generation = guardian_generation(&arriving);
     let domain = StakeDomain {
         fern_network_id: fixture.spec.network.unpack(),
         ckb_genesis: [50; 32],
@@ -46,6 +57,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         domain.fern_network_id,
         1,
         generation,
+        [0; 32],
         vec![make_stake(first, 10, 0, None)],
     )?;
     let registry_anchor = |state: &Registry, height, hash| RegistryAnchor {
@@ -76,14 +88,11 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         limits: protocol::Limits {
             operations: 1,
             bytes: 65536,
-            signatures: 1,
+            signatures: 2,
         },
         statement: initial,
         registry,
-        guardians: vec![Member {
-            key: guardian.verifying_key().to_bytes(),
-            power: 10,
-        }],
+        guardians: initial_guardians,
         signatures: vec![sign(&initial.signing_digest())],
     });
     let path = tempfile::tempdir()?;
@@ -94,15 +103,15 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         make_stake(second, 20, 1, None),
     ];
     stakes.sort_unstable_by_key(|stake| stake.validator_pubkey);
-    let next = Registry::new(domain.fern_network_id, 2, generation, stakes)?;
+    let next = Registry::new(domain.fern_network_id, 2, next_generation, [0; 32], stakes)?;
     let new = StakeSnapshot {
         domain,
-        guardian_generation: generation,
+        guardian_generation: next_generation,
         target_epoch: 1,
         parent: Some(initial.registry),
         registry: registry_anchor(&next, 2, 12),
     };
-    let body = snapshot_body(&new, &next);
+    let body = snapshot_body(&new, &next, &arriving)?;
     let make_tx = |signing_anchor| {
         let statement = protocol::StakeSnapshot {
             epoch: 1,
@@ -112,7 +121,16 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         let digest = snapshot_digest(&fixture.spec.network, &statement);
         Transaction::control(
             Operation::StakeSnapshot(statement),
-            Certificate::new(body.clone(), vec![sign(digest.as_slice())])?,
+            Certificate::new(
+                body.clone(),
+                vec![
+                    sign(digest.as_slice()),
+                    Attestation {
+                        guardian: ARRIVING_GUARDIAN,
+                        signature: successor.sign(digest.as_slice()).to_bytes(),
+                    },
+                ],
+            )?,
         )
     };
     let first_block = store.prepare(&[], TIME, false)?;
@@ -138,6 +156,11 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     drop(store);
 
     let mut store = Store::open(path.path(), &fixture.spec, Retention::Recent(4))?;
+    assert_eq!(
+        store.prove_stake_retirement(first)?.0,
+        Some(config.effective_height(1)?)
+    );
+    assert_eq!(store.prove_stake_retirement(second)?.0, None);
     for height in 3..=4 {
         let block = store.prepare(&[], TIME, true)?;
         assert_eq!(block.header().context.height, height);
@@ -156,8 +179,76 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         }
         store.commit(block)?;
     }
-    let next = store.prepare(&[], TIME, true)?;
-    assert!(next.validator_updates().is_empty());
+    for _ in 5..=6 {
+        let block = store.prepare(&[], TIME, true)?;
+        assert!(block.validator_updates().is_empty());
+        store.commit(block)?;
+    }
+    let later = StakeSnapshot {
+        target_epoch: 2,
+        parent: Some(new.registry),
+        registry: registry_anchor(&next, 3, 13),
+        ..new
+    };
+    let body = snapshot_body(&later, &next, &[])?;
+    let statement = protocol::StakeSnapshot {
+        epoch: 2,
+        signing_anchor: store.tip().id(store.network()),
+        commitment: snapshot_commitment(store.network(), &body),
+    };
+    let digest = snapshot_digest(store.network(), &statement);
+    let build = |key: &SigningKey| {
+        Transaction::control(
+            Operation::StakeSnapshot(statement.clone()),
+            Certificate::new(
+                body.clone(),
+                vec![Attestation {
+                    guardian: 0,
+                    signature: key.sign(digest.as_slice()).to_bytes(),
+                }],
+            )?,
+        )
+    };
+    assert!(store.check(&build(&guardian)?).is_err());
+    assert!(store.check(&build(&successor)?).is_ok());
+
+    let mut restored = next.records().to_vec();
+    restored
+        .iter_mut()
+        .find(|stake| stake.validator_pubkey == first)
+        .unwrap()
+        .exit_epoch = None;
+    let revived = Registry::new(
+        domain.fern_network_id,
+        3,
+        next_generation,
+        [0; 32],
+        restored,
+    )?;
+    let forged = StakeSnapshot {
+        registry: registry_anchor(&revived, 3, 13),
+        ..later
+    };
+    let body = snapshot_body(&forged, &revived, &[])?;
+    let statement = protocol::StakeSnapshot {
+        commitment: snapshot_commitment(store.network(), &body),
+        ..statement
+    };
+    let digest = snapshot_digest(store.network(), &statement);
+    let invalid = Transaction::control(
+        Operation::StakeSnapshot(statement),
+        Certificate::new(
+            body,
+            vec![Attestation {
+                guardian: 0,
+                signature: successor.sign(digest.as_slice()).to_bytes(),
+            }],
+        )?,
+    )?;
+    assert!(
+        format!("{:#}", store.check(&invalid).unwrap_err())
+            .contains("reactivate a retired validator")
+    );
     assert_eq!(store.fee_surplus()?, 0);
     Ok(())
 }

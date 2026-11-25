@@ -83,6 +83,10 @@ python3 tools/native_stake_localnet.py \
 
 The first runner checks the L1 contract's registration, increase, freeze, retirement, penalty, withdrawal and guardian rotation. The second uses actual L1 observations to initialize a CometBFT committee, add and remove a validator at H+2, verify both signed handoffs, and unbond the removed validator. Use the emitted evidence directories to inspect transaction proofs and exact block heights.
 
+Use `fern stake retirement-proof` with the retired public keys from confirmed CKB Registry history. Compare its returned root with the current Registry Cell. A registration supplies the absence proof after the 64-byte registration signature. A delayed withdrawal supplies the proof as its operation payload and installs the returned next root. The L1 Stake Cell and Registry are consumed atomically. The old public key stays retired after the active slot is released.
+
+`fern stake authorize-retirement` signs the next Registry state after checking an authenticated `/fern/stake-retirement` proof, the signed successor's committee, and the actual CKB Stake Cell. The L1 Stake Registry accepts the certificate only from the current guardian quorum. For a change of guardians, `fern stake observe` accepts the previous confirmed Registry OutPoint and outgoing committee in the rotation request. Collect observations from both sets before submitting the native snapshot.
+
 ## Exercise CKB Checkpoint publication
 
 Add `--checkpoint "$contracts_dir/checkpoint"` to the native stake runner. It builds an archive index, verifies signed Fern successors and committee handoffs, and prepares two Checkpoint Type ID transactions for the CKB devnet. The update rotates the checkpoint authority with both quorums. The runner also submits invalid transactions to check that CKB rejects a minority certificate, missing rotation signatures and a corrupted history extension.

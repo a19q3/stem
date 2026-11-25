@@ -109,12 +109,18 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
             stake_cell_hash: [i as u8 + 1; 32],
         })
         .collect();
-    let registry = Registry::new(domain.fern_network_id, 0, [14; 32], records.clone())?;
+    let registry = Registry::new(
+        domain.fern_network_id,
+        0,
+        [14; 32],
+        [0; 32],
+        records.clone(),
+    )?;
     assert_eq!(registry, Registry::decode(&registry.encode())?);
     let mut duplicate = records.clone();
     duplicate[1] = duplicate[0];
     assert_eq!(
-        Registry::new(domain.fern_network_id, 0, [14; 32], duplicate),
+        Registry::new(domain.fern_network_id, 0, [14; 32], [0; 32], duplicate),
         Err(Error::Encoding)
     );
     let mut not_eligible = records.clone();
@@ -122,7 +128,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
     not_eligible[1].first_active_height = 11;
     not_eligible[2].exit_epoch = Some(1);
     not_eligible[2].first_inactive_height = 11;
-    let limited = Registry::new(domain.fern_network_id, 0, [14; 32], not_eligible)?;
+    let limited = Registry::new(domain.fern_network_id, 0, [14; 32], [0; 32], not_eligible)?;
     assert_eq!(config.select(&limited, 0), Err(Error::Committee));
     assert_eq!(config.select(&limited, 1), Err(Error::Committee));
     let snapshot = StakeSnapshot {
@@ -153,7 +159,13 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         snapshot.verify(&domain, None, &registry, &authority, &votes[..2], &config),
         Err(Error::Quorum)
     );
-    let omitted = Registry::new(domain.fern_network_id, 0, [14; 32], records[..2].to_vec())?;
+    let omitted = Registry::new(
+        domain.fern_network_id,
+        0,
+        [14; 32],
+        [0; 32],
+        records[..2].to_vec(),
+    )?;
     assert_eq!(
         snapshot.verify(&domain, None, &omitted, &authority, &votes, &config),
         Err(Error::Sequence)
@@ -212,6 +224,38 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
             &config
         ),
         Err(Error::Anchor)
+    );
+    Ok(())
+}
+
+#[test]
+fn retirement_commitment_keeps_registry_slots_reusable() -> Result<()> {
+    use fern_stake::retirement::{EMPTY, RetirementTree, insert};
+
+    let network = [7; 32];
+    let first = [12; 32];
+    let mut next = first;
+    next[30] ^= 0x20;
+    let mut tree = RetirementTree::new(network);
+    let path = tree.prove_absence(&first)?;
+    let first_root = insert(&network, &first, &EMPTY, &path)?;
+    tree.retire(first)?;
+    assert_eq!(first_root, tree.root());
+    assert_eq!(tree.prove_absence(&first), Err(Error::Sequence));
+    assert_eq!(
+        insert(&network, &first, &first_root, &path),
+        Err(Error::Sequence)
+    );
+    let path = tree.prove_absence(&next)?;
+    assert_eq!(path.len(), 64);
+    let second_root = insert(&network, &next, &first_root, &path)?;
+    tree.retire(next)?;
+    assert_eq!(second_root, tree.root());
+    let mut damaged = path;
+    damaged[32] ^= 1;
+    assert_eq!(
+        insert(&network, &next, &first_root, &damaged),
+        Err(Error::Sequence)
     );
     Ok(())
 }

@@ -80,6 +80,41 @@ impl Journal {
         self.db.write_opt(&batch, &options)?;
         Ok(())
     }
+
+    pub fn pin_stake_snapshot(
+        &self,
+        node: &Rpc,
+        height: u64,
+        hash: &H256,
+        epoch: u64,
+        digest: &Byte32,
+    ) -> Result<()> {
+        let previous = self.validate(node)?;
+        ensure!(
+            previous.is_none_or(|previous| previous <= height) && node.block_hash(height)? == *hash,
+            "guardian halted: Stake Snapshot L1 anchor regressed or changed"
+        );
+        let mut stamp = self.key.as_slice().to_vec();
+        stamp.extend_from_slice(b"/snapshot");
+        if let Some(value) = self.db.get(&stamp)? {
+            ensure!(value.len() == 40, "invalid guardian Stake Snapshot journal");
+            let signed_epoch = u64::from_le_bytes(value[..8].try_into()?);
+            ensure!(
+                signed_epoch < epoch || (signed_epoch == epoch && &value[8..] == digest.as_slice()),
+                "guardian already chose a different Stake Snapshot for this epoch"
+            );
+        }
+        let mut anchor = height.to_le_bytes().to_vec();
+        anchor.extend_from_slice(hash.as_bytes());
+        let mut value = epoch.to_le_bytes().to_vec();
+        value.extend_from_slice(digest.as_slice());
+        let mut batch = WriteBatch::default();
+        batch.put(self.key.as_slice(), anchor)?;
+        batch.put(&stamp, value)?;
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        Ok(self.db.write_opt(&batch, &options)?)
+    }
 }
 
 impl Rpc {
