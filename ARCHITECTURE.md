@@ -18,7 +18,7 @@ The Cell and system roots use the same incremental Patricia implementation. Each
 
 ## CKB-VM host
 
-The [Stem VM crate](vm) owns the native ABI, verification cache and Group execution. The RISC-V backend is the exact upstream CKB-VM v0.24.15 source at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Stem uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)
+The [StemVM crate](vm) owns the native ABI, verification cache and Group execution. The RISC-V backend is the exact upstream CKB-VM v0.24.15 source at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Stem uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)
 
 The block verifier resolves transactions and stages their state transitions in proposal order. Its single bounded Rayon pool runs verified contexts in waves, sharing workers across transactions and using idle slots for Script Groups. A local bounded LRU estimates Group costs from previously successful runs. Estimation changes only the initial local budget used by speculative execution. A Group that hits it is retried against the exact remaining budget in canonical order. The verifier charges every observed cycle in transaction order and discards the full block overlay if a transaction or block limit fails.
 

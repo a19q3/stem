@@ -532,15 +532,12 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         || Ok((nodes[0].signed_height(&client)? >= target).then_some(())),
     )?;
     nodes[3].start(&comet, &peer_list(3))?;
-    poll(
-        "restarted validator catching up",
+    let replayed = poll(
+        "restarted validator executing through the target height",
         Duration::from_secs(20),
-        || Ok((nodes[3].signed_height(&client)? >= target).then_some(())),
+        || nodes[3].header(&client, target).map(Some),
     )?;
-    assert_eq!(
-        nodes[3].header(&client, target)?,
-        nodes[0].header(&client, target)?
-    );
+    assert_eq!(replayed, nodes[0].header(&client, target)?);
     let checkpoint = target.div_ceil(3) * 3;
     poll(
         "state sync checkpoint successors",
@@ -571,10 +568,10 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
             Ok(installed)
         },
     )?;
-    assert_eq!(
-        observer.header(&client, restored)?,
-        nodes[0].header(&client, restored)?
-    );
+    let installed = poll("restored Header RPC", Duration::from_secs(10), || {
+        observer.header(&client, restored).map(Some)
+    })?;
+    assert_eq!(installed, nodes[0].header(&client, restored)?);
     let window: u64 = history_window().parse()?;
     if checkpoint + 3 > window {
         poll(

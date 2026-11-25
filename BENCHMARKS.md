@@ -146,3 +146,21 @@ The run applied validator updates at heights 9 and 19, authenticated their
 successors and unbonded 250 CKB. The Checkpoint Type ID contract accepted
 publications for Stem heights 11 and 24. The [native stake runner](OPERATIONS.md#exercise-the-ckb-stake-registry)
 reproduces this workload with its optional funding and load-generator flags.
+
+
+## Extended payment bursts
+
+Four local replicas used the same cycle limits and 1,800 funded payments per
+run. Each request rate was a short delivery burst. Every offered payment
+was admitted and confirmed on all replicas with zero client drops.
+
+| Requested delivery TPS | Measured offered / admitted TPS | All-replica confirmed TPS | Visible p50 / p95 / p99 (s) |
+| ---: | ---: | ---: | ---: |
+| 2,000 | 1,998.88 / 1,998.88 | 118.54 | 6.782 / 13.235 / 14.332 |
+| 3,000 | 2,880.44 / 2,880.44 | 118.24 | 6.996 / 13.452 / 14.687 |
+| 5,000 | 4,997.24 / 4,997.24 | 116.31 | 7.423 / 13.886 / 15.151 |
+
+Increasing the delivery rate shortened submission and increased time spent
+in the queue. Confirmation stayed near 116–119 TPS in these runs. The
+[measurement archive](benchmarks/2026-11-25-stem-native.json.xz) includes
+process CPU, memory, physical writes and P2P counters for each window.

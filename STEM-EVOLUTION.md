@@ -10,7 +10,7 @@
 | 04 | Native Group Message | 已实现。消息进交易主体，通过 syscall 2123 读取。真实 Type Script 验证 Action 并拒绝缺失消息。 |
 | 05 | 完整输入签名 | 已实现标准完整交易授权。标准锁和 CLI 共用解析规则，绑定输入、显式依赖、展开成员、Header Deps、原始交易及非签名见证。部分授权语义仍待独立实现。 |
 | 06 | Native Block Context | 已实现候选高度、已提交父时间和父 Header。真实 RISC-V 测试覆盖时间边界与缓存。 |
-| 07 | Weighted Jolteon | 阅读了参考分支的加权两链实现和对照记录。Stem 保持 CometBFT，尚缺 Stem 的持久化锁定规则、TC 驱动恢复、交接和同负载验证。 |
+| 07 | Weighted Jolteon | 单 epoch 实验用真实 Ed25519 签名验证加权 QC、TC、领导者和直接绑定执行 Header 的两链证明。Stem 运行 CometBFT。持久化锁定、传输、跨 epoch 交接和同负载网络验证待实现。 |
 | 08 | StemVM 密码学 | 已接入固定计费的低 S secp256k1 恢复。与原 k256 路径差分验证。批量验证和通用加密 syscall 尚未启用。 |
 | 09 | StemVM 优化 | 加入有界 Live Cell 缓存，提交和状态恢复时清空。执行缓存绑定父 Header 和解析依赖。代码与译码专项缓存待剖析。 |
 | 10 | 状态与存储 | 现有 Patricia、MMR、回执、裁剪、原子提交和快照在新编码下通过测试。固定写入量下比较了 514 与 8,194 Cells，以及增加 512 块历史后的提交开销。批量路径算法与长期压缩仍有工作。 |
@@ -39,4 +39,8 @@ Telegraph 生成器和 Rust 读取运行时取自 v10 的 `7db6d0c4fa4eec07937c9
 
 加权参考实现位于 `codex/jolteon-experiment` 的 `90e0b1c49`，核心文件在 `consensus/karmadag/core/src/weighted_order/`。该实现的持久化、载荷可用性和视图计时器耦合到它自己的排序节点。已有实验的载荷、持久化条件和执行模型与 Stem 不同，适合指导实现，无法作为 Stem 的直接性能对照。其 Auto-Wake 同样依赖自身状态模型，Stem 预约功能需要以消费 Cell 的原子执行重新定义。
 
+`cargo test --locked --test weighted_finality` 运行固定 epoch 实验。它验证超过三分之二的权重、顺序和去重、TC 对每位签名人最高 QC 的绑定、不同网络与 epoch 的签名域，以及父子执行 Header 的相邻视图。两链证明的安全需要验证者执行并持久化签名锁定规则。该实验验证证书与提案条件，未运行节点视图计时与投票协议。[Jolteon 论文](https://arxiv.org/abs/2106.10362)
+
 CKB PoW 种子工具使用已固定高度和区块哈希，检查所读确认区间的连贯性。调用方依赖 RPC 观察，工具没有验证累计工作量。出块者可以尝试筛选候选哈希或扣留区块，预先确定的取样高度也让观察者在确认后提前知悉种子。出块选择、确认延迟、重组概率和有权重领导者抽样还需要独立证明和实验。开发链验证仅覆盖工具的确定性与错误处理。
+
+Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验证检查点 BLS 证明的思路。Stem 当前签名格式为独立 Ed25519，直接验证需要认证历届委员会并测量见证大小与 CKB-VM cycles。Image Cell 的状态导入和只读访问用于比较接口。对 Stem 而言，未消费状态仍需证明锚点上的 Live Cell 状态。[Axon 质押与检查点](https://github.com/axonweb3/axon/discussions/898) [Axon Image Cell](https://github.com/axonweb3/axon/discussions/896)
