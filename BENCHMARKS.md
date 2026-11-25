@@ -2127,3 +2127,42 @@ CKB devnet regression.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
 [Both replica rounds, failures and reproduction commands](benchmarks/2026-11-26-stem-keeper-batch.json.xz).
+
+## Prepaid bounded Keeper retries
+
+Revision `5e54460` exercised a signed three-attempt policy with an
+eight-block delay, two sponsors and four reserve Heads. Two runs used
+four native Jolteon replicas on one i9-13900H host. The Keeper carrier
+paid 8,000 shannons in the fixture, including 6,000 for reservations.
+The RISC-V Executor of the second member rejected the first attempt
+until its signed minimum height. A replica restarted between attempts.
+
+| Attempt in both runs | Finalized height | Signed bytes | Execution fee | Charged cycles |
+| --- | ---: | ---: | ---: | ---: |
+| First, recorded as waiting for retry | 93 | 1,667 | 0 shannons | 42,857,142 reserved |
+| Second, applied | 101 | 1,667 | 4,000 shannons | 15,472,003 |
+
+All replicas verified identical transaction bytes across attempts and
+the same receipt for each height. The 66-byte agenda record proved the
+next height and two remaining attempts after the first failure. The
+successful retry advanced all four Heads and cleared both sponsor
+reservations and the unused attempt. The first row measures charged
+slot capacity. It does not measure the RISC-V work before rollback.
+
+The local test exercised serial and parallel execution after snapshot
+restore, time-triggered exhaustion of a standalone job, cancellation
+and early termination after a secondary sponsor Cell was spent. It
+rejected an underfunded carrier, an invalid attempt count, divergent
+member policies and an expiry window too short for the signed
+interval. Successful execution fees were charged once. The fixture
+also checked that wallet JSON and the Rust API produced identical
+retry drafts.
+
+The Rust release workspace passed 456 tests with 13 ignored. The
+explicit four-replica test, Go proof suite and CometBFT comparison
+feature check passed. Bidirectional Intercell Messaging passed a real
+CKB devnet regression. Sustained replicated Keeper throughput was
+outside these runs.
+
+[Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
+[Both replica rounds, failures and reproduction commands](benchmarks/2026-11-26-stem-keeper-retry.json.xz).

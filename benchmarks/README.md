@@ -60,4 +60,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Keeper height and time scheduling for atomic Lineage batches | [Report](../BENCHMARKS.md#keeper-scheduling-for-atomic-lineage-batches), [both replica rounds, rollback cases and raw proofs](2026-11-26-stem-keeper-batch.json.xz) |
 
+| Prepaid bounded Keeper retries | [Report](../BENCHMARKS.md#prepaid-bounded-keeper-retries), [both replica rounds, failures and authenticated retry state](2026-11-26-stem-keeper-retry.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
