@@ -2,7 +2,7 @@
 //! column family and commit batch as the header, execution data, and MMR peaks.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     ops::Range,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
@@ -2148,7 +2148,11 @@ fn sync_with_consensus(
 ) -> Result<()> {
     let mut raw = WriteBatch::default();
     let mut bytes = measured.map(|_| BatchBytes::new(raw.size_in_bytes()));
+    let mut proposals = BTreeSet::new();
     for (key, entry) in &batch.writes {
+        if key.starts_with(b"jbody") {
+            proposals.insert(key[1..].as_ref());
+        }
         match entry {
             Some(value) => raw.put(key, value)?,
             None => raw.delete(key)?,
@@ -2158,7 +2162,16 @@ fn sync_with_consensus(
         }
     }
     for (key, value) in records {
-        let key = index_key(b'j', key);
+        let storage_key = index_key(b'j', key);
+        // A prior synchronous write already made this body durable. Preserve
+        // repeated-key ordering within this batch, and always write journal state.
+        if key.starts_with(b"body")
+            && proposals.insert(key.as_slice())
+            && db.get(&storage_key)?.as_deref() == Some(value.as_slice())
+        {
+            continue;
+        }
+        let key = storage_key;
         raw.put(&key, value)?;
         if let Some(bytes) = &mut bytes {
             bytes.add(&key, raw.size_in_bytes());

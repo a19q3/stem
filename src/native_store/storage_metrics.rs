@@ -171,3 +171,67 @@ impl StorageMetrics {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_store::{Batch, index_key, sync_with_consensus};
+    use ckb_db::internal::{DB, prelude::*};
+
+    #[test]
+    fn proposal_write_reuse_preserves_order_and_pruning() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut options = Options::default();
+        options.create_if_missing(true);
+        options.enable_statistics();
+        let db = DB::open(&options, root.path())?;
+        let metrics = StorageMetrics::new(options);
+        let body = b"body\0position".to_vec();
+        let state = b"state".to_vec();
+        let initial = vec![7; 1024];
+        let replacement = vec![8; 1024];
+
+        let write = |records: &[(Vec<u8>, Vec<u8>)], retired: &[std::ops::Range<Vec<u8>>]| {
+            sync_with_consensus(
+                &db,
+                &Batch::default(),
+                records,
+                retired,
+                Some((&metrics, Purpose::Finality)),
+            )
+        };
+        write(
+            &[(body.clone(), initial.clone()), (state.clone(), vec![1])],
+            &[],
+        )?;
+        let before = metrics.sample()?.writes.finality;
+        write(
+            &[(body.clone(), initial.clone()), (state.clone(), vec![1])],
+            &[],
+        )?;
+        let after = metrics.sample()?.writes.finality;
+        assert_eq!(after.writes, before.writes + 1);
+        assert_eq!(
+            after.batch_bytes.proposal_journal,
+            before.batch_bytes.proposal_journal
+        );
+        assert!(after.batch_bytes.consensus_records > before.batch_bytes.consensus_records);
+
+        write(
+            &[(body.clone(), replacement), (body.clone(), initial.clone())],
+            &[],
+        )?;
+        assert_eq!(
+            db.get(index_key(b'j', &body))?.as_deref(),
+            Some(initial.as_slice())
+        );
+        write(&[], &[b"body".to_vec()..b"bodz".to_vec()])?;
+        assert!(db.get(index_key(b'j', &body))?.is_none());
+        write(&[(body.clone(), initial.clone())], &[])?;
+        assert_eq!(
+            db.get(index_key(b'j', &body))?.as_deref(),
+            Some(initial.as_slice())
+        );
+        Ok(())
+    }
+}

@@ -186,8 +186,11 @@ A fee-exempt `L1AnchorUpdate` lets the bridge guardian quorum advance the anchor
 The optional native storage metrics query classifies bytes in each actual
 RocksDB WriteBatch before its shared synchronous commit. It also exposes
 RocksDB WAL, flush and compaction counters for the database as a whole.
-Measurements are local to a process and the sync boundary stays identical.
-The separate history index can be measured in its own process.
+Measurements are local to a process. A proposal body already durably stored
+under the same key is reused when its encoded bytes match. The replica
+continues to synchronize vote state, execution, finality and retirement
+ranges at the existing atomic boundaries. The separate history index can
+be measured in its own process.
 [Storage experiment and RPC](OPERATIONS.md#measure-native-storage-and-sustained-payments)
 
 ## Browser verification

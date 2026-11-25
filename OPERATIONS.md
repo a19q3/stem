@@ -826,8 +826,11 @@ records, both Patricia node namespaces and batch framing. Bootstrap, journal
 writes, finality commits and snapshot restoration have separate counters.
 Sync buckets use powers of two microseconds. Bucket zero covers zero and
 one microsecond. RocksDB reports WAL bytes and syncs plus bytes written
-to flush and compaction files. WAL, SSTs and file-system activity are
-shared across key families in the atomic store.
+to flush and compaction files. Check the RocksDB `EVENT_LOG_v1`
+`table_file_creation` entries when measuring SST output. The pinned
+RocksDB build can leave a flush ticker at zero while writing files.
+WAL, SSTs and file-system activity are shared across key families in
+the atomic store.
 
 Run the sustained fixture with the local filesystem used for the test:
 
