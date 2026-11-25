@@ -56,4 +56,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | Native OTX Group Actions and independent sponsorship | [Report](../BENCHMARKS.md#native-otx-action-authorization), [raw proofs, failures and Intercell regression](2026-11-26-stem-otx-actions.json.xz) |
 
+| Atomic Lineage batch settlement with independent sponsors | [Report](../BENCHMARKS.md#atomic-lineage-batch-settlement), [three replica rounds, failures and raw proofs](2026-11-26-stem-lineage-batch.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

@@ -2041,3 +2041,46 @@ passed.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
 [Raw proofs, runs, failures and commands](benchmarks/2026-11-26-stem-otx-actions.json.xz).
+
+## Atomic Lineage batch settlement
+
+Revision `4ea694e` combined two independently signed bilateral
+settlements, each with its own sponsor and two RISC-V asset Type
+Groups. The solver reviewed and assembled a shared ordered plan using
+the wallet CLI. Three runs with four native Jolteon replicas on one
+i9-13900H host finalized the batch at Stem heights 29, 30 and 29. In
+each run all four replicas verified the same receipt and finality
+proof. All four Lineage Head proofs showed version 1 after the existing
+Keeper fixture restarted a replica. The on-chain receipt recorded
+4,000 shannons and 15,471,432 VM cycles for a 1,633-byte envelope.
+
+| Matched fixture in one local Store | Wire bytes | Charged VM cycles |
+| --- | ---: | ---: |
+| Two separately authorized commands | 1,534 | 15,471,406 |
+| One atomic batch of the same commands | 1,633 | 15,471,406 |
+
+The local comparison used the same initial state, signed fee amounts,
+Executors and settlement payloads in each run. The batch added 99
+bytes and used the same charged cycles in that fixture. This measures
+transaction encoding and protocol charges. It does not measure
+throughput or wall time for batching.
+
+The four-replica admission test rejected a jointly signed batch whose
+second Executor returned an error. The local proposer then admitted a
+valid batch reusing the same fee Cells and targets after rejecting the
+failed batch in the same selection overlay. A separate RISC-V Type
+Script vetoed a late update, and a 12 million aggregate cycle limit
+rejected the batch. The tests also rejected individually submitted
+members, reordered or substituted members, duplicate fee inputs,
+overlapping targets, nested batches and altered seals. Serial and
+parallel replay produced the same Header and aggregate receipt.
+
+The archive preserves all three network rounds, signed plans,
+transaction and Head proofs, failures, commands and binary
+fingerprints. The Rust release workspace passed 454 tests with 13
+ignored. The explicit four-replica test, Go proof suite and CometBFT
+comparison feature check passed. Bidirectional Intercell Messaging
+passed the real CKB devnet regression.
+
+[Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
+[Original evidence and reproduction commands](benchmarks/2026-11-26-stem-lineage-batch.json.xz).
