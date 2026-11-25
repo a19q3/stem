@@ -2,6 +2,7 @@
 //! column family and commit batch as the header, execution data, and MMR peaks.
 
 use std::{
+    borrow::Borrow,
     collections::{BTreeMap, BTreeSet, HashMap},
     ops::Range,
     path::Path,
@@ -1344,9 +1345,9 @@ impl Store {
 
     /// The proposer filters stale entries and conflicts in the supplied order.
     /// Final proposal verification binds creation records to its actual transaction root.
-    pub fn select(
+    pub fn select<T: Borrow<Transaction>>(
         &self,
-        transactions: Vec<Transaction>,
+        transactions: impl IntoIterator<Item = T>,
         timestamp_ms: u64,
         max_bytes: u64,
     ) -> Result<Vec<Transaction>> {
@@ -1359,20 +1360,24 @@ impl Store {
         let due = self.due(context.height, &mut budget)?;
         self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
         let mut selected = Vec::new();
-        for tx in transactions {
+        for item in transactions {
             if selected.len() + due.commands.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
                 || wire_bytes == 0
             {
                 break;
             }
+            let tx = item.borrow();
             let len = tx.as_slice().len();
+            if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
+                continue;
+            }
             let entry_bytes = (1 + prost::length_delimiter_len(len) + len) as u64;
             let Some(next_wire) = wire_bytes.checked_sub(entry_bytes) else {
                 continue;
             };
             match self.stage(
-                &tx,
+                tx,
                 &context,
                 &origin,
                 &mut budget,
@@ -1382,7 +1387,7 @@ impl Store {
             ) {
                 Ok(_) => {
                     wire_bytes = next_wire;
-                    selected.push(tx);
+                    selected.push(tx.clone());
                 }
                 Err(error) if error.is::<StateReadFault>() => return Err(error),
                 Err(_) => {}

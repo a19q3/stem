@@ -140,8 +140,7 @@ impl App {
         let txs = request
             .txs
             .iter()
-            .filter_map(|raw| Transaction::from_slice(raw).ok())
-            .collect();
+            .filter_map(|raw| Transaction::from_slice(raw).ok());
         let max_tx_bytes = u64::try_from(request.max_tx_bytes)?;
         let selected = self
             .workers

@@ -699,6 +699,47 @@ impl DynamicLineage {
 }
 
 #[test]
+fn proposal_read_prefilter_preserves_a_fee_only_lineage_result() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.cell_reads = 34;
+    let registry = FixtureLineage::fund(&mut fixture)?;
+    let dynamic = DynamicLineage::fund_using(&mut fixture, &registry, 3, 3, None)?;
+    let directory = tempfile::tempdir()?;
+    let mut store = Store::open(directory.path(), &fixture.spec, Retention::Archive)?;
+    for index in 0..3 {
+        let register = dynamic.register(&fixture, index)?;
+        store.commit(store.prepare(&[register], TIME, false)?)?;
+    }
+    let first = dynamic.signed(&fixture, 0, &[0], (0, 2), 1)?;
+    let wide = dynamic.signed(&fixture, 1, &[0, 1, 2], (0, 2), 1)?;
+    // The first command spends 18 reads. The failed Executor's fee-only
+    // result fits the remaining 16, while the three-target command cannot fit.
+    let fee_only = dynamic.signed(&fixture, 2, &[0], (0, 2), 0)?;
+    assert!(
+        store
+            .prepare(&[first.clone(), wide.clone()], TIME, false)
+            .is_err()
+    );
+    let reference = store.prepare(&[first.clone(), fee_only.clone()], TIME, false)?;
+    let selected = store.select([first.clone(), wide, fee_only.clone()], TIME, u64::MAX)?;
+    assert_eq!(
+        selected
+            .iter()
+            .map(Transaction::as_slice)
+            .collect::<Vec<_>>(),
+        [first.as_slice(), fee_only.as_slice()]
+    );
+    let replay = store.prepare(&selected, TIME, true)?;
+    assert_eq!(replay.header(), reference.header());
+    assert_eq!(replay.receipts(), reference.receipts());
+    assert_eq!(
+        lineage::Outcome::decode(&replay.receipts()[1].protocol_result)?,
+        lineage::Outcome::Rejected
+    );
+    Ok(())
+}
+
+#[test]
 fn lineage_commands_resolve_latest_heads_and_commit_atomically() -> Result<()> {
     use lineage::Outcome;
     let mut fixture = Fixture::new()?;

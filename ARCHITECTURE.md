@@ -62,6 +62,14 @@ inclusion in the next block. Uncertified proposals and temporary queue
 saturation leave entries eligible for later selection. Committed
 reservations follow the Keeper state machine.
 
+The proposer walks borrowed mempool entries in order and copies only
+those it selects. It skips an entry if the remaining block bytes are
+too small or its Lineage command cannot fit the remaining logical reads.
+The read floor covers the Executor context and both resolutions of the
+fee input and declared dependencies. It also applies to a fee-only
+outcome, and sums across members of an atomic batch. Candidate execution
+and proposal verification still charge the exact resources.
+
 ## CKB-VM host
 
 The [StemVM crate](vm) owns the native ABI, verification cache and Group execution. The RISC-V backend is the exact upstream CKB-VM v0.24.15 source at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Stem uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)

@@ -352,6 +352,24 @@ pub(super) fn verify_authorization(
     Ok((fee_cycles + actor_cycles, actors))
 }
 
+fn executor_reads(command: &Command) -> u64 {
+    // The Executor code and fee Cell, plus each target's registry record and Live Cell.
+    2 + 2 * command.targets.len() as u64
+}
+
+pub(super) fn minimum_reads(tx: &Transaction) -> u64 {
+    if let Some(members) = tx.lineage_batch() {
+        return members.iter().map(minimum_reads).sum();
+    }
+    tx.lineage_command().map_or(0, |command| {
+        // Preflight and final resolution both load the fee input and declared deps.
+        // This remains a lower bound when execution leaves only the fee refund or
+        // a dep group expands to additional Cells.
+        let fee_scope_reads = 1 + tx.cell_deps().len() as u64;
+        executor_reads(command) + 2 * fee_scope_reads
+    })
+}
+
 pub(super) fn materialize(
     store: &Store,
     original: &Transaction,
@@ -406,8 +424,7 @@ pub(super) fn materialize(
         });
         loaded.push((head.out_point, cell.cell));
     }
-    let reads = 2 + 2 * command.targets.len() as u64;
-    let reads = reads + preflight.cell_reads() as u64;
+    let reads = executor_reads(command) + preflight.cell_reads() as u64;
     let read_bytes = read_bytes + preflight.resolved_cell_bytes() as u64;
     ensure!(
         reads <= budget.reads && read_bytes <= budget.read_bytes,

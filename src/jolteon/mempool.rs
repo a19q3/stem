@@ -54,8 +54,8 @@ impl Mempool {
         self.bytes
     }
 
-    pub(super) fn transactions(&self) -> Vec<Transaction> {
-        self.entries.values().map(|(tx, _)| tx.clone()).collect()
+    pub(super) fn transactions(&self) -> impl Iterator<Item = &Transaction> {
+        self.entries.values().map(|(tx, _)| tx)
     }
 
     pub(super) fn insert(&mut self, id: Hash32, tx: Transaction) -> anyhow::Result<()> {
