@@ -1,6 +1,6 @@
 # Stem 原生协议研发记录
 
-基线为 `29872505350e931a252ddee9f88d94edf410c83a`，历史数据见 [Fern 实验归档](FERN-BENCHMARKS.md)。[Stem 协议](STEM-PROTOCOL.md)描述当前运行路径，[基准测试](BENCHMARKS.md)记录可复现的测量。
+基线为 `29872505350e931a252ddee9f88d94edf410c83a`，历史数据见 [Fern 实验归档](FERN-BENCHMARKS.md)。[Stem 协议](STEM-PROTOCOL.md)描述当前运行路径，[基准测试](BENCHMARKS.md)记录可复现的测量。 各轮原始报告、重跑证据和未采用实验见[实验档案](benchmarks/README.md)。
 
 本轮从 `ee808c925186cc81629a1904093b416de311d8ba` 继续。以下以实际运行路径和已执行实验为准。
 

@@ -517,3 +517,47 @@ rates or network throughput.
 ```sh
 cargo test --locked --release -p stem-vm measure_signature_recovery_reuse -- --ignored --nocapture
 ```
+
+## Native Keeper
+
+Native Keeper was tested against the dynamic Lineage baseline
+`f955682`. The Keeper implementation is in `871004b`. Three sequential
+four-validator runs used CometBFT 0.38.26 and a fifth replica restored by
+remote snapshot. Each submitted two reservation carriers ahead of a
+common deadline, then produced a CometBFT block at the deadline with no
+submitted transactions. The native block contained two execution
+receipts. One command advanced the shared Head and the RISC-V Executor
+rejected the other, which committed its authorized fee refund. All
+replicas authenticated the same result against a signed successor.
+The last run also exported the pending queue proof with its signed
+successor.
+
+The local release benchmark used an Intel Core i9-13900H. It alternated
+measurement order across two RocksDB directories with identical genesis
+parameters. Both had Keeper enabled. At each of 31 heights the active
+database executed four pre-signed operations against one Head. The idle
+database processed the same heights with an empty queue. Signing and
+reservation ingestion occurred before measurement.
+
+| Configured Keeper workload | Prepare p50/p95/p99 | Sync commit p50/p95/p99 | Mean charged cycles per block |
+| --- | ---: | ---: | ---: |
+| Empty queue | 7 / 9 / 13 µs | 5 / 6 / 8 µs | 0 |
+| Four due operations on one Head | 2491 / 2595 / 2673 µs | 76 / 100 / 113 µs | 15,481,672 |
+
+These timings cover local block preparation and synchronous database
+commit. The network runs establish correctness, proof agreement and
+height-based wake behavior. A sustained multi-replica Keeper load has
+yet to be measured. The [raw report and evidence](benchmarks/2026-11-25-stem-keeper.json.xz)
+include each network run, public committees and the local comparison.
+See the [experiment archive](benchmarks/README.md) for earlier rounds and
+rejected experiments.
+
+```sh
+cargo test --locked --release --test native_store keeper -- --nocapture
+cargo test --locked --release --test native_store measure_keeper_slots -- --ignored --nocapture
+STEM_TEST_COMET="$PWD/target/stem-tools/cometbft" STEM_TEST_EVIDENCE_ROOT="$PWD/target/stem-runs" \
+  cargo test --locked --release --test native_store four_node_native_finality_restart_and_app_hash \
+  -- --ignored --nocapture
+STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
+  go -C tools/proof test -mod=readonly -run TestKeeperWakeSignatures -v .
+```

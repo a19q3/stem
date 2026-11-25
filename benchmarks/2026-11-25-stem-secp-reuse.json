@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-25",
+  "tested_revision": "6753a91",
+  "baseline": "559662b",
+  "machine": "13th Gen Intel(R) Core(TM) i9-13900H",
+  "rust": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "command": "cargo test --locked --release -p stem-vm measure_signature_recovery_reuse -- --ignored --nocapture",
+  "sample_order": [
+    "no_cache",
+    "miss",
+    "immediate_hit"
+  ],
+  "samples": 1000,
+  "percentile_order": [
+    50,
+    95,
+    99
+  ],
+  "no_cache_ns": [
+    23385,
+    26937,
+    32540
+  ],
+  "miss_ns": [
+    21927,
+    23680,
+    26784
+  ],
+  "hit_ns": [
+    33,
+    44,
+    50
+  ],
+  "fixed_cycles": 1900000,
+  "scope": "Single-thread recovery timings. Fixed sample ordering does not isolate miss overhead."
+}
