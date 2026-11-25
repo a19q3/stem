@@ -1406,3 +1406,47 @@ RISC-V contract checks passed.
 
 [Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
 [Raw evidence and run logs](benchmarks/2026-11-25-stem-stake-reward-claims.json.xz).
+
+## Accrued stake reward balances
+
+Revision `ebfd4b1`, compared with the bundled payout at `2822e9c`.
+The same 800 CKB fee workload used three Stem replicas and CKB 0.210.0
+devnet. The delegator's 52 CKB and 78 CKB shares accrued in two separate
+transactions at Stem heights 30 and 32. The first share fell below the
+61 CKB capacity required by the recipient Lock. Both accruals kept the
+native lane's first withdrawal nonce unused and recorded zero pending
+withdrawal liability. At height 32 the aggregate accrued liability was
+130 CKB and free fee reserve was 670 CKB.
+
+The runner killed the active archive validator after the second
+accrual and reopened the same node home. It recovered finalized height
+32 and independently authenticated the 130 CKB balance against a
+finality proof and the committed Patricia path. An altered value was
+rejected. A redemption using only the stale 52 CKB balance was also
+rejected.
+
+| Action | Stem height | Stem transaction bytes | CKB paid |
+| --- | ---: | ---: | ---: |
+| Accrue first delegation share | 30 | 652 | |
+| Accrue second delegation share | 32 | 652 | |
+| Claim and redeem validator share | 34 | 569 | 389.99999999 |
+| Redeem accrued delegation balance | 40 | 109 | 130.00000000 |
+
+The payout-only operation contained the CKB Lock and amount with an
+empty epoch list. The bundled one-shot baseline used one 865-byte
+transaction. Separating accrual and redemption used 1,413 bytes in
+three transactions. Each accrual could commit on its own timetable.
+The final delegator release used a 792-byte CKB proof and an estimated
+1,897,986 CKB cycles. The validator transfer and delegate transfer were
+reconciled at heights 38 and 44. All three replicas agreed at 44.
+
+Final accrued and pending amounts were zero. The reserve was
+27,748.00000001 CKB against 27,468 CKB in circulation, leaving
+280.00000001 CKB unallocated. Replayed accruals and rebundled positions
+after confirmed payment were rejected. Four-replica controls covered all
+four fixed fund payouts and CKB and xUDT round trips with treasury
+rotation and reserve movement. The release workspace passed 442 tests
+with 12 ignored. The Go proof suite and CometBFT build check passed.
+
+[Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
+[Raw accrual, recovery and regression evidence](benchmarks/2026-11-25-stem-stake-reward-accrual.json.xz).
