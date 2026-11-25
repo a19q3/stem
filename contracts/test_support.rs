@@ -11,7 +11,9 @@ pub fn native_lock(workspace: &Path) -> Result<Bytes> {
 
 pub fn native_contract(workspace: &Path, name: &str) -> Result<Bytes> {
     static BUILD: OnceLock<Result<(), String>> = OnceLock::new();
-    let target = workspace.join("target/stem-contracts");
+    let target = workspace
+        .join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()))
+        .join("stem-contracts");
     BUILD
         .get_or_init(|| build(workspace, &target).map_err(|error| format!("{error:#}")))
         .clone()

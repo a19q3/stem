@@ -13,7 +13,7 @@ import subprocess
 import time
 
 from jolteon_localnet import evidence_keys, genesis_and_payments
-from localnet import Rpc, config_value, process_resources, run, write_json
+from localnet import Rpc, comet_app_command, config_value, process_resources, run, write_json
 from native_bridge_localnet import wait_for
 
 
@@ -87,7 +87,7 @@ def run_scenario(args):
         for i, home in enumerate(homes):
             app = args.output / f"app{i}"
             apps.append(app)
-            children.append(start(args, [args.binary, "run", "--home", app, "--genesis", spec, "--archive"], f"app{i}.log"))
+            children.append(start(args, [args.binary, comet_app_command(args.binary), "--home", app, "--genesis", spec, "--archive"], f"app{i}.log"))
         wait_for(lambda: all((app / "abci.sock").is_socket() for app in apps), "baseline ABCI sockets", seconds=60)
         for i, home in enumerate(homes):
             socket = apps[i] / "abci.sock"

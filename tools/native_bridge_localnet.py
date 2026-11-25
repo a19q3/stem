@@ -16,7 +16,7 @@ from bridge_localnet import (
     vault_state, wallet_group, write_key,
 )
 from direct_checkpoint_localnet import Relay
-from localnet import Rpc, run, write_json
+from localnet import Rpc, comet_app_command, run, write_json
 from stake_localnet import witness
 
 
@@ -691,7 +691,7 @@ def main():
         token = deploy_token(args, l1, fixture, vault) if args.xudt else None
         comet, spec, spec_path, lane = native_spec(args, l1, fixture, vault, token)
         home = args.output / "stem"
-        children.append(start(args, [args.binary, "run", "--home", home, "--genesis", spec_path, "--archive"], "stem.log"))
+        children.append(start(args, [args.binary, comet_app_command(args.binary), "--home", home, "--genesis", spec_path, "--archive"], "stem.log"))
         wait_for(lambda: (home / "abci.sock").is_socket(), "Stem ABCI socket")
         children.append(start(args, [args.comet, "start", "--home", comet,
             "--proxy_app", f"unix://{home / 'abci.sock'}", "--rpc.laddr", f"tcp://127.0.0.1:{args.comet_port}",

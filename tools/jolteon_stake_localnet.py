@@ -185,8 +185,12 @@ def run_epochs(args, l1, scenario, fixture):
     def launch(key, initialize, home=None):
         pub = public(key)
         data_dir = home or args.output / f"node-{ports[pub]}"
-        command = [args.binary, "jolteon", "--home", data_dir, "--genesis", spec,
+        command = [args.binary, "run", "--home", data_dir, "--genesis", spec,
                    "--configuration", configuration, "--key-file", key_files[pub]]
+        if pub == public(incoming):
+            command.append("--archive")
+        else:
+            command += ["--history-window", "64"]
         phase = "initial" if initialize else "snapshot-restart" if home else "restart"
         if initialize:
             command.append("--initialize")
@@ -346,6 +350,7 @@ def run_epochs(args, l1, scenario, fixture):
             assert export["header_id"] == trusted[2:], export
             home = args.output / "restored-observer"
             restore = [args.binary, "jolteon-snapshot", "restore", "--home", home, "--genesis", spec,
+                       "--history-window", "64",
                        "--snapshot", snapshot, "--certificate", certificate, "--key-file", key_files[public(observer)]]
             wrong = subprocess.run([*restore, "--trusted-header", "11" * 32], capture_output=True, text=True)
             assert wrong.returncode != 0 and "pinned finalized Header" in wrong.stderr and not home.exists(), wrong

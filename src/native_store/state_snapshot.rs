@@ -225,7 +225,7 @@ impl Store {
             );
         }
         put_tip(&mut batch, &self.network, &image.header, &frontier);
-        sync_with_consensus(&self.db, &batch, consensus)?;
+        sync_with_consensus(&self.db, &batch, consensus, &[])?;
         self.tip = image.header;
         self.live_cache.get_mut().expect("Live Cell cache").clear();
         self.history = frontier;

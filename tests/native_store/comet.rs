@@ -64,15 +64,15 @@ fn spec(genesis: &Value, home: &Path) -> Result<Fixture> {
     Ok(fixture)
 }
 
-struct Asset {
-    code: Vec<(OutPoint, Cell)>,
-    point: OutPoint,
-    cell: Cell,
+pub(super) struct Asset {
+    pub(super) code: Vec<(OutPoint, Cell)>,
+    pub(super) point: OutPoint,
+    pub(super) cell: Cell,
     asset: Script,
 }
 
 impl Asset {
-    fn new(fixture: &Fixture, home: &Path) -> Result<Self> {
+    pub(super) fn new(fixture: &Fixture, home: &Path) -> Result<Self> {
         let mut code = Vec::new();
         let mut types = Vec::new();
         for (position, rule) in [1, 3].into_iter().enumerate() {
@@ -102,7 +102,7 @@ impl Asset {
         })
     }
 
-    fn transfer(&self, fixture: &Fixture, drop_policy: bool) -> Result<Transaction> {
+    pub(super) fn transfer(&self, fixture: &Fixture, drop_policy: bool) -> Result<Transaction> {
         let types = if drop_policy {
             vec![self.asset.clone()]
         } else {
@@ -125,7 +125,7 @@ impl Asset {
     }
 }
 
-fn compile_types(home: &Path) -> Result<()> {
+pub(super) fn compile_types(home: &Path) -> Result<()> {
     for rule in [1, 2, 3, 6] {
         let output =
             Command::new(std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into()))
@@ -188,10 +188,10 @@ fn read_json(path: &Path) -> Result<Value> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
-struct Process(Child);
+pub(super) struct Process(Child);
 
 impl Process {
-    fn spawn(command: &mut Command, log: &Path) -> Result<Self> {
+    pub(super) fn spawn(command: &mut Command, log: &Path) -> Result<Self> {
         let out = fs::OpenOptions::new().create(true).append(true).open(log)?;
         Ok(Self(
             command
@@ -232,7 +232,7 @@ impl Node {
             .join("stem-genesis.json");
         self.app = Some(Process::spawn(
             Command::new(env!("CARGO_BIN_EXE_stem"))
-                .args(["run", "--home"])
+                .args(["comet-abci", "--home"])
                 .arg(app_home)
                 .arg("--genesis")
                 .arg(spec)
@@ -312,7 +312,7 @@ impl Node {
     }
 }
 
-fn poll<T>(
+pub(super) fn poll<T>(
     label: &str,
     timeout: Duration,
     mut read: impl FnMut() -> Result<Option<T>>,

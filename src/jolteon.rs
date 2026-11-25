@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     net::SocketAddr,
+    ops::Range,
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -24,6 +25,7 @@ use stem_stake::{
 
 use crate::native_store::{Prepared, Store};
 
+mod client;
 mod recovery;
 pub mod snapshot;
 mod transport;
@@ -32,7 +34,10 @@ mod wire;
 use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
+pub use client::{Certificate, Client, QueryResult, Status};
+
 const STATE: &[u8] = b"state";
+const BODY: &[u8] = b"body";
 const MAX_BRANCH: usize = 192;
 const MAX_PENDING: usize = 512;
 const MAX_MEMPOOL_BYTES: usize = 16 * 1024 * 1024;
@@ -173,6 +178,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         "Stake Registry committee limit exceeds Jolteon capacity"
     );
     let public = key.verifying_key().to_bytes();
+    let history_window = store.history_window().unwrap_or_default();
     let keys = config
         .peers
         .iter()
@@ -216,6 +222,10 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 journal.identity == identity,
                 "validator journal identity mismatch"
             );
+            ensure!(
+                journal.history_window == history_window,
+                "history retention differs from the initialized replica"
+            );
             journal
         }
         None => {
@@ -228,6 +238,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 identity: identity.to_vec(),
                 high: genesis.encode(),
                 finalized: genesis.point.encode().to_vec(),
+                history_window,
                 ..Default::default()
             };
             store.persist_consensus(&[(STATE.to_vec(), journal.encode_to_vec())])?;
@@ -240,20 +251,23 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
     } else {
         let change = CommitteeChange::decode(&journal.committee)?;
         ensure!(change.epoch > 0, "unexpected persisted genesis committee");
-        let anchor = journal.anchor.as_slice().try_into()?;
+        let anchor = Header::decode(&journal.anchor)?;
+        ensure!(
+            anchor.context.height.checked_add(1) == Some(change.activation_height)
+                && anchor.context.height <= store.tip().context.height,
+            "persisted epoch anchor has the wrong height"
+        );
         if let Some(boundary) = store.header(change.activation_height - 1)? {
             ensure!(
-                boundary.id(store.network()).as_slice() == anchor,
+                boundary == anchor,
                 "persisted epoch anchor disagrees with execution"
             );
-        } else {
-            ensure!(journal.observer_only, "missing epoch boundary");
         }
         let committee = Committee::at_anchor(
             store.network().unpack(),
             store.genesis_id().unpack(),
             change.epoch,
-            anchor,
+            anchor.id(store.network()).unpack(),
             &change.members,
         )?;
         (committee, change.members)
@@ -700,7 +714,7 @@ impl Replica {
         let child = &self.candidates[&high.point].proposal;
         let old_epoch = self.committee.epoch();
         let mut successor = None;
-        let mut durable = vec![(STATE.to_vec(), self.journal.encode_to_vec())];
+        let mut durable = Vec::new();
         let commit_count = batches.len() - usize::from(!child.wire.seal);
         let proof = if child.wire.seal {
             let change = pending.context("terminal execution has no successor")?;
@@ -749,12 +763,11 @@ impl Replica {
             }
             .encode_to_vec()
         };
-        self.store
-            .persist_consensus(&durable)
-            .context(StorageFault)?;
         // Execution batches contain only real blocks. The outgoing seal produces no ledger changes.
         for (index, (point, prepared)) in branch.iter().zip(batches).take(commit_count).enumerate()
         {
+            let height = prepared.header().context.height;
+            let mut retired = self.expire_history(height).context(StorageFault)?;
             let proposal = &self.candidates[point].proposal.wire;
             self.journal.finalized = point.encode().to_vec();
             self.journal.lock = point.view;
@@ -766,15 +779,17 @@ impl Replica {
             let mut records = vec![
                 (proposal_key(old_epoch, *point), proposal.encode_to_vec()),
                 (
-                    finality_key(prepared.header().context.height),
+                    finality_key(height),
                     wire::Finalized {
                         proof: proof.clone(),
                         epoch: old_epoch,
                         handoff: successor.is_some(),
+                        view: point.view,
                     }
                     .encode_to_vec(),
                 ),
             ];
+            records.append(&mut durable);
             if let Some((change, next)) = successor.as_ref().filter(|_| index + 1 == commit_count) {
                 let anchor = next.genesis_quorum();
                 self.journal = wire::Journal {
@@ -783,15 +798,21 @@ impl Replica {
                     finalized: anchor.point.encode().to_vec(),
                     committed_transactions: self.journal.committed_transactions,
                     committee: change.encode(),
-                    anchor: anchor.point.header.to_vec(),
+                    anchor: prepared.header().encode().to_vec(),
                     observer_only: self.journal.observer_only,
+                    history_window: self.journal.history_window,
+                    proposal_floor: std::mem::take(&mut self.journal.proposal_floor),
                     ..Default::default()
                 };
                 records.push((handoff_key(old_epoch), proof.clone()));
+                let announced = known_handoff_key(old_epoch);
+                let mut end = announced.clone();
+                end.push(0);
+                retired.push(announced..end);
             }
             records.push((STATE.to_vec(), self.journal.encode_to_vec()));
             self.store
-                .commit_certified(&prepared, &records)
+                .commit_certified(&prepared, &records, &retired)
                 .context(StorageFault)?;
             self.finalized = *point;
             if let Some(change) = prepared.committee_change() {
@@ -842,6 +863,39 @@ impl Replica {
                 .retain(|(slot, _), _| slot.saturating_add(256) >= view);
         }
         Ok(())
+    }
+
+    fn expire_history(&mut self, height: u64) -> Result<Vec<Range<Vec<u8>>>> {
+        let Some(expired) = self
+            .store
+            .history_window()
+            .and_then(|window| height.checked_sub(window))
+        else {
+            return Ok(Vec::new());
+        };
+        let key = finality_key(expired);
+        let Some(bytes) = self.store.consensus_record(&key)? else {
+            // Genesis and heights preceding a restored image have no local certificate.
+            return Ok(Vec::new());
+        };
+        let record: wire::Finalized = wire::canonical(&bytes)?;
+        ensure!(
+            record.view > 0,
+            "retained finality record lacks its proposal position"
+        );
+        let boundary = match record.view.checked_add(1) {
+            Some(view) => proposal_prefix(record.epoch, view),
+            None => proposal_prefix(record.epoch.checked_add(1).context("epoch exhausted")?, 0),
+        };
+        let mut lower = std::mem::replace(&mut self.journal.proposal_floor, boundary.clone());
+        if lower.is_empty() {
+            lower = BODY.to_vec();
+        }
+        ensure!(
+            lower < boundary,
+            "consensus history floor failed to advance"
+        );
+        Ok(vec![lower..boundary, key..finality_key(expired + 1)])
     }
 
     fn vote_for(&mut self, point: Point) -> Result<()> {
@@ -1330,6 +1384,7 @@ impl Replica {
                 "catching_up": self.recovery.active,
                 "replayed_blocks": self.recovery.blocks,
                 "observer_only": self.journal.observer_only,
+                "history_window": self.store.history_window(),
                 "sent_bytes": self.net.traffic.sent.load(Ordering::Relaxed),
                 "received_bytes": self.net.traffic.received.load(Ordering::Relaxed),
                 "transport_drops": self.net.traffic.dropped.load(Ordering::Relaxed),
@@ -1405,11 +1460,18 @@ fn members(store: &Store) -> Result<Vec<Member>> {
 }
 
 fn journal_identity(genesis: &Committee, public: Hash32) -> Hash32 {
-    genesis.proposal_digest(Point {
+    let identity = genesis.proposal_digest(Point {
         view: 0,
         parent_view: 0,
         header: public,
-    })
+    });
+    ckb_hash::blake2b_256(
+        [
+            b"Stem Jolteon ordered history journal\0".as_slice(),
+            &identity,
+        ]
+        .concat(),
+    )
 }
 
 pub fn verify_finality(
@@ -1450,7 +1512,13 @@ pub fn verify_finality(
 }
 
 fn proposal_key(epoch: u64, point: Point) -> Vec<u8> {
-    [b"body".as_slice(), &epoch.to_be_bytes(), &point.encode()].concat()
+    let mut key = proposal_prefix(epoch, point.view);
+    key.extend_from_slice(&point.encode()[8..]);
+    key
+}
+
+fn proposal_prefix(epoch: u64, view: u64) -> Vec<u8> {
+    [BODY, &epoch.to_be_bytes(), &view.to_be_bytes()].concat()
 }
 
 fn handoff_key(epoch: u64) -> Vec<u8> {

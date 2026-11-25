@@ -6,6 +6,7 @@ import base64
 from bisect import bisect_left
 import concurrent.futures as futures
 import datetime
+from functools import lru_cache
 import hashlib
 import http.client
 import json
@@ -35,6 +36,15 @@ COMET_METRICS = P2P_COUNTERS + tuple(f"cometbft_mempool_{name}" for name in (
 
 def run(*command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
+
+
+@lru_cache(maxsize=None)
+def comet_app_command(binary):
+    if "comet-abci" in run(binary, "--help"):
+        return "comet-abci"
+    if "--configuration" not in run(binary, "run", "--help"):
+        return "run"
+    raise ValueError("Use the frozen CometBFT comparison binary or build with --features comet-benchmark")
 
 
 def write_json(path, data):
@@ -213,7 +223,7 @@ class Replica:
         response_queue = getattr(self.args, "abci_response_queue", None)
         queue_args = ["--abci-response-queue", str(response_queue)] if response_queue is not None else []
         app = subprocess.Popen(
-            [self.binary, "run", "--home", self.app, "--genesis",
+            [self.binary, comet_app_command(self.binary), "--home", self.app, "--genesis",
              self.args.output / "app-state.json", "--workers", str(self.vm_workers),
              *admission_args, *queue_args, *retention, *index, *history],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

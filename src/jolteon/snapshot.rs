@@ -36,8 +36,8 @@ fn advance(
     committee: &Committee,
     previous: u64,
     proof: &[u8],
-) -> Result<(Committee, CommitteeChange, FinalizedHeader)> {
-    let (change, header, _) = committee.verify_handoff(proof)?;
+) -> Result<(Committee, CommitteeChange, FinalizedHeader, Quorum)> {
+    let (change, header, seal) = committee.verify_handoff(proof)?;
     ensure!(
         header.height() > previous,
         "snapshot handoff does not advance the execution history"
@@ -49,7 +49,7 @@ fn advance(
         header.id(),
         &change.members,
     )?;
-    Ok((next, change, header))
+    Ok((next, change, header, seal))
 }
 
 pub fn export(store: &Store) -> Result<(StateSnapshot, Certificate)> {
@@ -67,7 +67,7 @@ pub fn export(store: &Store) -> Result<(StateSnapshot, Certificate)> {
         let raw = store
             .consensus_record(&handoff_key(committee.epoch()))?
             .context("archive is missing a snapshot committee handoff")?;
-        let (next, _, header) = advance(store, &committee, previous, &raw)?;
+        let (next, _, header, _) = advance(store, &committee, previous, &raw)?;
         previous = header.height();
         committee = next;
         handoffs.push(hex::encode(raw));
@@ -110,30 +110,31 @@ pub fn install(
     let mut journal = wire::Journal {
         identity: journal_identity(&committee, observer).to_vec(),
         observer_only: true,
+        history_window: store.history_window().unwrap_or_default(),
         ..Default::default()
     };
     let mut previous = 0;
     let mut records = Vec::new();
     for encoded in certificate.handoffs {
         let raw = hex::decode(encoded)?;
-        let (next, change, header) = advance(store, &committee, previous, &raw)?;
+        let (next, change, header, _) = advance(store, &committee, previous, &raw)?;
         records.push((handoff_key(committee.epoch()), raw));
-        journal.anchor = header.id().to_vec();
+        journal.anchor = header.as_bytes().to_vec();
         journal.committee = change.encode();
         previous = header.height();
         committee = next;
     }
     let epoch = committee.epoch();
     let proof = hex::decode(certificate.proof)?;
-    let verified = if certificate.terminal {
-        let (next, change, verified) = advance(store, &committee, previous, &proof)?;
+    let (verified, view) = if certificate.terminal {
+        let (next, change, verified, seal) = advance(store, &committee, previous, &proof)?;
         let anchor = next.genesis_quorum();
-        journal.anchor = anchor.point.header.to_vec();
+        journal.anchor = verified.as_bytes().to_vec();
         journal.committee = change.encode();
         journal.finalized = anchor.point.encode().to_vec();
         journal.high = anchor.encode();
         records.push((handoff_key(epoch), proof.clone()));
-        verified
+        (verified, seal.point.view)
     } else {
         let verified = committee.verify_finality(&proof)?;
         let pair = FinalityProof::decode(proof.as_slice())?;
@@ -141,7 +142,7 @@ pub fn install(
         journal.lock = parent.point.view;
         journal.finalized = parent.point.encode().to_vec();
         journal.high = pair.child_qc;
-        verified
+        (verified, parent.point.view)
     };
     ensure!(
         verified.height() > previous
@@ -155,6 +156,7 @@ pub fn install(
             proof,
             epoch,
             handoff: certificate.terminal,
+            view,
         }
         .encode_to_vec(),
     ));

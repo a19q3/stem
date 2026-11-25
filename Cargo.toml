@@ -8,6 +8,9 @@ description = "Stem, a CKB-native sidechain"
 repository = "https://github.com/a19q3/stem"
 publish = false
 
+[features]
+comet-benchmark = []
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true

@@ -48,7 +48,7 @@ def scenario(args):
 
     def launch(index, skewed=False, initialize=True):
         home = args.output / f"node{index}"
-        cmd = [args.binary, "jolteon", "--home", home, "--genesis", spec, "--configuration", config,
+        cmd = [args.binary, "run", "--home", home, "--genesis", spec, "--configuration", config,
                "--key-file", keys[index][1]]
         if initialize:
             cmd.append("--initialize")

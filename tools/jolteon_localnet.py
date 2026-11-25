@@ -135,8 +135,12 @@ def scenario(args):
 
     def launch(index, initialize):
         key = keys[index][1]
-        command = [args.binary, "jolteon", "--home", args.output / f"node{index}",
+        command = [args.binary, "run", "--home", args.output / f"node{index}",
                    "--configuration", configuration, "--genesis", spec, "--key-file", key]
+        if index == len(peers) - 1:
+            command.append("--archive")
+        elif args.history_window is not None:
+            command += ["--history-window", str(args.history_window)]
         if initialize:
             command.append("--initialize")
         nodes[index] = start(args, command, f"node{index}-{'initial' if initialize else 'restart'}.log")
@@ -218,10 +222,21 @@ def scenario(args):
         checked = json.loads(run(args.binary, "jolteon-proof", "--genesis", spec, "--proof", proof_file))
         if checked["height"] < agreed_height or (checked["height"] == agreed_height and checked != headers[0]):
             raise AssertionError("proof and committed Header disagree")
+        pruning = []
+        if args.check_pruning:
+            height = agreed_height - args.history_window
+            assert height > 0
+            for index in everybody:
+                old_header = rpc(peers[index], HEADER, struct.pack("<Q", height))
+                old_proof = rpc(peers[index], FINALITY, struct.pack("<Q", height))
+                assert ("header" in old_header) == (index == everybody[-1]), old_header
+                assert ("proof" in old_proof) == (index == everybody[-1]), old_proof
+                pruning.append({"replica": index, "height": height, "header": old_header, "proof": old_proof})
         report = {
             "validators": args.validators, "weights": weights, "offline": offline,
             "minimum_offline_blocks": args.offline_blocks, "restart_to_visibility_seconds": recovery_seconds,
             "payments": admitted, "elapsed_until_active_replica_visibility": elapsed, "active_confirmed_tps": admitted / elapsed,
+            "archival_replica": everybody[-1], "ordinary_history_window": args.history_window or 256, "pruning": pruning,
             "before": initial, "with_fault": active, "resumed": resumed, "agreement": headers[0], "two_chain_proof": proof["proof"], "proof_verification": checked,
             "processes": [process_resources(nodes[i].pid) for i in everybody],
             "processes_before": start_metrics,
@@ -260,6 +275,8 @@ def main():
     parser.add_argument("--offline", type=int, default=0)
     parser.add_argument("--offline-blocks", type=int, default=4)
     parser.add_argument("--recovery-seconds", type=int, default=45)
+    parser.add_argument("--history-window", type=int)
+    parser.add_argument("--check-pruning", action="store_true")
     parser.add_argument("--port", type=int, default=22000)
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)
@@ -267,6 +284,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.validators <= 128 or min(args.transactions, args.offline_blocks, args.recovery_seconds) < 1:
         parser.error("invalid fixture size")
+    if args.check_pruning and (args.history_window is None or args.offline_blocks <= args.history_window):
+        parser.error("pruning requires an explicit history window shorter than the offline gap")
     args.output.mkdir(mode=0o700, parents=True)
     result = scenario(args)
     print(f"{result['validators']} validators finalized {result['payments']} payments "

@@ -10,7 +10,7 @@ mod l1;
 mod native_spec;
 #[cfg(unix)]
 mod native_wallet;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "comet-benchmark"))]
 use stem::socket;
 #[cfg(unix)]
 mod stake_cli;
@@ -29,7 +29,7 @@ use clap::{Parser, Subcommand};
 
 #[cfg(unix)]
 #[derive(Parser)]
-#[command(about = "CKB Cell execution service for CometBFT", version)]
+#[command(about = "Stem native Cell network", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -72,7 +72,7 @@ enum Command {
         header: bool,
     },
     /// Run Stem's weighted Jolteon replica.
-    Jolteon {
+    Run {
         #[arg(long)]
         home: PathBuf,
         #[arg(long)]
@@ -84,6 +84,10 @@ enum Command {
         /// Create a new durable validator journal.
         #[arg(long)]
         initialize: bool,
+        #[arg(long)]
+        archive: bool,
+        #[arg(long, default_value_t = 256)]
+        history_window: u64,
     },
     /// Verify a two-chain execution proof and any preceding committee handoffs.
     JolteonProof {
@@ -103,7 +107,9 @@ enum Command {
         #[command(subcommand)]
         command: SnapshotCommand,
     },
-    Run {
+    /// Run the ABCI application for CometBFT comparison experiments.
+    #[cfg(feature = "comet-benchmark")]
+    CometAbci {
         #[arg(long)]
         home: PathBuf,
         #[arg(long)]
@@ -161,6 +167,10 @@ enum SnapshotCommand {
         trusted_header: String,
         #[arg(long, default_value_t = 512 * 1024 * 1024)]
         max_bytes: u64,
+        #[arg(long)]
+        archive: bool,
+        #[arg(long, default_value_t = 256)]
+        history_window: u64,
     },
 }
 
@@ -197,6 +207,8 @@ impl SnapshotCommand {
                 key_file,
                 trusted_header,
                 max_bytes,
+                archive,
+                history_window,
             } => {
                 let target =
                     hex::decode(trusted_header.strip_prefix("0x").unwrap_or(&trusted_header))?;
@@ -220,7 +232,8 @@ impl SnapshotCommand {
                 let staged = tempfile::TempDir::new_in(parent)?;
                 let db = staged.path().join("db");
                 let header = {
-                    let mut store = Store::open(&db, &spec, Retention::Archive)?;
+                    let mut store =
+                        Store::open(&db, &spec, node_retention(archive, history_window))?;
                     snapshot::install(&mut store, image, evidence, target, observer)?
                 };
                 DirBuilder::new().mode(0o700).create(&home)?;
@@ -232,6 +245,15 @@ impl SnapshotCommand {
                 }))
             }
         }
+    }
+}
+
+#[cfg(unix)]
+fn node_retention(archive: bool, window: u64) -> stem::native_store::Retention {
+    if archive {
+        stem::native_store::Retention::Archive
+    } else {
+        stem::native_store::Retention::Recent(window)
     }
 }
 
@@ -259,12 +281,14 @@ fn main() -> Result<()> {
             };
             bridge_cli::print_json(&format!("0x{encoded}"))
         }
-        Command::Jolteon {
+        Command::Run {
             home,
             genesis,
             configuration,
             key_file,
             initialize,
+            archive,
+            history_window,
         } => {
             let spec = native_spec::load(&genesis)?;
             let config = bridge_cli::read_json_limited(&configuration, 64 * 1024)?;
@@ -280,7 +304,7 @@ fn main() -> Result<()> {
             let store = stem::native_store::Store::open(
                 &home.join("db"),
                 &spec,
-                stem::native_store::Retention::Archive,
+                node_retention(archive, history_window),
             )?;
             stem::jolteon::run(store, key, config, initialize)
         }
@@ -315,7 +339,8 @@ fn main() -> Result<()> {
             }))
         }
         Command::JolteonSnapshot { command } => command.run(),
-        Command::Run {
+        #[cfg(feature = "comet-benchmark")]
+        Command::CometAbci {
             home,
             genesis,
             workers,
@@ -351,12 +376,11 @@ fn main() -> Result<()> {
                 metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
                 "application home must be a private directory with mode 0700"
             );
-            let retention = if archive {
-                stem::native_store::Retention::Archive
-            } else {
-                stem::native_store::Retention::Recent(history_window)
-            };
-            let store = stem::native_store::Store::open(&home.join("db"), &spec, retention)?;
+            let store = stem::native_store::Store::open(
+                &home.join("db"),
+                &spec,
+                node_retention(archive, history_window),
+            )?;
             let app = stem::native_abci::App::new(
                 store,
                 workers,

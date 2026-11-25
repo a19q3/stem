@@ -99,8 +99,10 @@ def bridge_round(args, l1, fixture, children):
     clients = [Client(args, port, network) for port in ports]
     homes = [args.output / f"node-{port}" for port in ports]
     for i, (_, key) in enumerate(keys):
-        command = [args.binary, "jolteon", "--home", homes[i], "--genesis", spec_path, "--configuration",
+        command = [args.binary, "run", "--home", homes[i], "--genesis", spec_path, "--configuration",
                    configuration, "--key-file", key, "--initialize"]
+        if i == 0:
+            command.append("--archive")
         children.append(start(args, command, f"jolteon-{i}.log"))
     client = clients[0]
     wait_for(lambda: all(peer.status()["height"] >= 2 for peer in clients), "native bridge replicas")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a four-validator Linux deployment using the installed user service templates."""
+"""Run the frozen CometBFT comparison with its installed user service templates."""
 
 import argparse
 import base64
@@ -35,11 +35,12 @@ def service_units(node, rpc_index):
         "STEM_BINARY": node.args.binary,
         "COMETBFT_BINARY": node.args.comet,
         "APP_HOME": node.app,
-        "APP_STATE": node.args.output / "app-state.json",
+        "STEM_GENESIS": node.args.output / "app-state.json",
         "COMET_HOME": node.home,
         "ABCI_ADDRESS": f"unix://{node.app}/abci.sock",
         "VM_WORKERS": node.args.vm_workers,
-        "RETAIN_CONSENSUS_BLOCKS": 0,
+        "HISTORY_WINDOW": 256,
+        "SNAPSHOT_INTERVAL": 32,
     }
     if rpc_index:
         environment["RPC_INDEX_ARGS"] = "--rpc-index"

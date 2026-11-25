@@ -19,31 +19,48 @@ go build -o target/stem-tools/stem-loadgen tools/loadgen/main.go
 
 The Stem genesis JSON requires `chain_id`, a 32-byte `network_id`, `genesis_time_ms`, storage-bond terms, and explicit byte, cycle, read and write limits. A stake-backed genesis supplies `stake.trust` and `stake.observations` from CKB guardians, a signing window, and snapshot limits. The `development_validators` and `development_cells` fields are for fixture networks. A bridged spec pins the CKB genesis and anchor, the vault Type IDs and initial OutPoints, wrapped code, payout Lock templates, and the bridge guardian set.
 
-Compute `stem genesis-hash --genesis stem.json`. Set CometBFT `app_state.stem_genesis` to this hex value without the `0x` prefix, set the same chain ID and genesis time, and use the exact Stem genesis committee. Start Stem in a private home and set CometBFT's ABCI address to the absolute socket path.
+Compute `stem genesis-hash --genesis stem.json` and verify that every replica
+uses the same specification. The configuration file lists `peers` as
+`{key, address}` entries in ascending Ed25519 public-key order, as well as
+`view_timeout_ms`, `proposal_interval_ms` and optional `vm_workers`. A
+replica uses one private 32-byte Ed25519 seed.
 
 ```sh
-target/release/stem run --home /path/to/stem-home --genesis stem.json --workers 2
-target/stem-tools/cometbft start --home /path/to/comet-home \
-  --proxy_app unix:///path/to/stem-home/abci.sock
+stem run --initialize --home /srv/stem/app --genesis /srv/stem/stem.json \
+  --configuration /srv/stem/replicas.json --key-file /srv/stem/validator.key
 ```
 
-Ordinary replicas prune application execution bodies and Header indices and request CometBFT block pruning after `--history-window`. The window must cover Header Deps and the stake signing window. CometBFT retains metadata required for its own evidence deadlines. Serve older executions, handoff bundles and CKB anchor proofs from an archive replica. `--archive` preserves application bodies and Headers as they arrive. Snapshots export canonical state records and a recent Header suffix. State-sync consumers authenticate the AppHash through CometBFT's light client and rebuild the two state roots before installing. Configure `[statesync]` on a fresh observer with two reachable RPC servers, a trusted signed block height and hash, and reachable P2P peers. `--snapshot-interval` controls asynchronous exports and `--snapshot-bytes` caps the received artifact size.
+On subsequent starts omit `--initialize`. Keep the private home, key and
+voting journal together. Ordinary replicas retain the latest 256 blocks by
+default, including their Headers, execution records, proposal bodies and
+finality records. Choose `--history-window` when initializing to cover both
+the Header Dep and stake signing horizons. Use `--archive` at initialization
+to serve older bodies and proofs. Restarts use the same retention policy.
+Both roles keep verified committee handoffs and the active epoch anchor.
+Keep a reachable archive for replicas recovering from beyond the ordinary
+window. Create a fresh development home when replacing an older research
+build whose database predates ordered pruning.
 
 ## Operate a replica under systemd
 
-The `ops/systemd` units run the native ABCI app and CometBFT under one target. Put both binaries on the host, initialize a distinct CometBFT home per replica, and give each instance a private Stem home and a `node.env` derived from the example. Set `ROLE_ARGS=--archive` on archive replicas. Install the supplied unit files for the service user and start the target for the absolute directory containing `node.env`.
+Install the `ops/systemd/stem@.service` unit for the service user and derive
+`node.env` from the example. Initialize the private home once with the same
+key and history role. Set `ROLE_ARGS=--archive` for an archive replica.
 
 ```sh
 instance=$(systemd-escape --path /srv/stem)
-systemctl --user start "stem@${instance}.target"
-journalctl --user -u "stem-app@${instance}.service" -u "stem-comet@${instance}.service"
+systemctl --user start "stem@${instance}.service"
+journalctl --user -u "stem@${instance}.service"
 ```
 
-Keep CometBFT's private validator key and signing state together during recovery. Each key must have a single signing process. Back up the Stem specification, CKB guardian trust and CometBFT signing state independently of disposable state-sync snapshots. Enable CometBFT's Prometheus instrumentation on an operator interface when collecting consensus metrics.
+Each validator key requires a single signing process. Back up the Stem
+specification, guardian trust, and validator key and journal independently
+of disposable observer snapshots. The peer directory is static and the
+transport is intended for a private network.
 
 ## Exercise the native Jolteon path
 
-Use a fresh development genesis and a separate home per replica. `stem jolteon` accepts one 32-byte Ed25519 seed and a JSON config with `peers` as `{key, address}` entries in ascending Ed25519 public-key order, `view_timeout_ms`, `proposal_interval_ms`, and an optional `vm_workers`. Run once with `--initialize`. To restart, keep the same home and key and omit that flag. The runner defaults to two VM workers. It generates disposable keys for a private loopback network.
+The fixture starts ordinary replicas and one archive using `stem run`. It generates disposable keys for a private loopback network.
 
 ```sh
 python3 tools/jolteon_localnet.py \
@@ -67,7 +84,8 @@ fixture perturbs realtime for the first leader and leaves the pacemaker clock
 running normally. Its `.so` is built from a local C fixture.
 
 Exercise long-gap replay with `tools/jolteon_localnet.py --offline 1
---offline-blocks 220 --cadence 20 --timeout 250 --recovery-seconds 15`
+--offline-blocks 220 --cadence 20 --timeout 250 --recovery-seconds 30
+--history-window 64 --check-pruning`
 along with the binary, lock and output settings above. The restarted replica
 must report a positive `replayed_blocks` count and agree with the survivors
 on the execution Header. Recovery peers must have retained the missing
@@ -148,14 +166,13 @@ proof. `stem checkpoint jolteon-bundle` reads an archive and constructs a
 CKB witness with the previous frontier, history suffix and finality proof.
 
 To test permissionless payouts and stake liability, build the CKB consumers
-for the native checkpoint. Each deployed binary selects its verifier at build
-time. A new deployment pins the corresponding CKB code hash and Type ID.
+for the native checkpoint. The default contract build selects Jolteon checkpoint verification. A new deployment pins the corresponding CKB code hash and Type ID.
 
 ```sh
 RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
   cargo build --locked --release --manifest-path contracts/Cargo.toml \
   --target riscv64imac-unknown-none-elf --target-dir target/stem-jolteon-contracts \
-  --features jolteon --bin jolteon-checkpoint --bin stake-registry --bin vault-type \
+  --bin jolteon-checkpoint --bin stake-registry --bin vault-type \
   --bin deposit-lock --bin xudt-gate
 native_dir=target/stem-jolteon-contracts/riscv64imac-unknown-none-elf/release
 programs_dir=target/stem-contracts/riscv64imac-unknown-none-elf/release
@@ -182,13 +199,27 @@ the JSON array of preceding hex handoff proofs when the certificate is from
 a successor committee. The optional CometBFT comparison arguments select
 the frozen comparison verifier explicitly.
 
-## Exercise the native CometBFT path
+Verify actual RISC-V composition through the default runner with
+`cargo test --locked --release --test native_store native_default_preserves_polytype_intent_lineage_and_keeper -- --ignored --nocapture`.
+The Rust SDK exposes `stem::jolteon::Client` for admission, Status, Headers,
+two-chain proofs, handoffs and native application queries. Verify a received
+certificate against the configured genesis and prior handoffs. A certificate
+for a later descendant requires proof of the requested Header's ancestry.
+
+## Reproduce the CometBFT comparison
+
+The frozen comparison source is commit `12744bf`. A fresh comparison build
+from the current source exposes `stem comet-abci` with
+`--features comet-benchmark`. Use CKB contracts from
+`--no-default-features` for the CometBFT-specific Vault and Registry fixtures.
+The matching systemd units are in `ops/comet-benchmark/systemd` for the
+frozen executable.
 
 ```sh
 cargo test --locked -p stem-ledger encoding_tests -- --nocapture
 cargo test --locked -p stem-vm --test native -- --nocapture
 STEM_TEST_COMET=target/stem-tools/cometbft \
-  cargo test --locked --test native_store four_node_native_finality_restart_and_app_hash \
+  cargo test --locked --features comet-benchmark --test native_store four_node_native_finality_restart_and_app_hash \
   -- --ignored --nocapture
 ```
 

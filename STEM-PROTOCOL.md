@@ -2,15 +2,15 @@
 
 ## 1. 网络定位
 
-Stem 是一条以 CKB 计价、由 CometBFT 最终确认的 Cell 网络。Stem 使用唯一的原生 Polytype Cell 模型与交易格式。一个 Cell 可同时绑定多个 Type Scripts，内核按完整 Script 身份派生并执行所有验证组。CKB L1 的真实质押决定验证者权重，独立桥金库负责 CKB 和 xUDT 的兑付。Stem 不发行独立原生代币。可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
+Stem 是一条以 CKB 计价、由加权 Jolteon 最终确认的 Cell 网络。Stem 使用唯一的原生 Polytype Cell 模型与交易格式。一个 Cell 可同时绑定多个 Type Scripts，内核按完整 Script 身份派生并执行所有验证组。CKB L1 的真实质押决定验证者权重，独立桥金库负责 CKB 和 xUDT 的兑付。Stem 不发行独立原生代币。可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
 
-每个网络用全新的 genesis、数据库、签名域和桥实例启动。网络身份由 canonical network spec 和一次性网络盐导出。该预部署 spec 包含 CKB genesis、初始权限与经济配置，排除依赖网络身份才能部署的 Registry Type ID、金库 Type ID、Checkpoint Type ID 及初始化签名。部署完成后，Stem genesis 再固定这些 L1 合约身份和第一份已认证的完整质押快照。CKB Checkpoint Cell 的身份与初始认证方也由 genesis 固定。CometBFT chain ID 由网络身份确定性导出，并符合 CometBFT 的长度约束。所有交易、证明和链间认证都明确绑定该网络。
+每个网络用全新的 genesis、数据库、签名域和桥实例启动。网络身份由 canonical network spec 和一次性网络盐导出。该预部署 spec 包含 CKB genesis、初始权限与经济配置，排除依赖网络身份才能部署的 Registry Type ID、金库 Type ID、Checkpoint Type ID 及初始化签名。部署完成后，Stem genesis 再固定这些 L1 合约身份和第一份已认证的完整质押快照。CKB Checkpoint Cell 的身份与初始认证方也由 genesis 固定。链身份与创世 Header 承诺进入 Jolteon 签名域。所有交易、证明和链间认证都明确绑定该网络。
 
 | 组件 | 权责 |
 | --- | --- |
 | Stem Kernel | Cell 编码、交易验证、状态转换、资源计量、状态与执行承诺 |
 | CKB-VM | 固定 RISC-V 执行配置和只读交易上下文 |
-| CometBFT | 交易顺序、最终性、历史委员会及 ABCI 交接 |
+| 加权 Jolteon | 交易排序、执行 Header 最终性、历史委员会与 epoch 交接 |
 | CKB Stake Registry | 质押保管、唯一记录、退出延时、证据与处罚 |
 | L1 状态认证 guardians | 认证 CKB 上的 Registry、桥储备和历史。各用途分别固定权限与签名域 |
 | L1 金库 | 独立的托管权限与兑付顺序，执行实际跨链交割 |
@@ -87,7 +87,7 @@ Executor 通过 syscall 2126 的 source 2 按索引读取已验证参与者 ID�
 
 Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_height` 和正数预约费 `reservation_fee`。Keeper 使用原有 Lineage 执行路径。先签一条包含确定执行高度 `execute_at` 的 Lineage 命令，再由普通 Cell 交易提交封存命令和预约费。命令字节上限为 8 KiB。两笔签名分别授权执行费和整个预约交易，付款 Cell 与预约交易输入分开。预约时验证实际付款 Lock 和签名，若携带业务参与者也逐一验签，付款 OutPoint 在所有待执行高度间只能占用一个预约。配对 OTX 签名无法授权新增预约或取消。
 
-待处理队列按执行高度写入 SystemRoot，队内按付款 OutPoint 的规范字节排序。每块先读取当前高度队列，依次解析 Head 并执行一次，再处理用户提交的交易。带 `execute_at` 的命令只能由已提交队列触发。相同高度的写入共享同一串行覆盖层。预约、执行与结束均随同一次 RocksDB 提交持久化。执行列表和回执按相同顺序纳入 Header 承诺并可通过 `/stem/execution` 证明。CometBFT 提案正文只携带用户提交的交易。
+待处理队列按执行高度写入 SystemRoot，队内按付款 OutPoint 的规范字节排序。每块先读取当前高度队列，依次解析 Head 并执行一次，再处理用户提交的交易。带 `execute_at` 的命令只能由已提交队列触发。相同高度的写入共享同一串行覆盖层。预约、执行与结束均随同一次 RocksDB 提交持久化。执行列表和回执按相同顺序纳入 Header 承诺并可通过 `/stem/execution` 证明。Jolteon 提案正文携带纳入块的用户交易，预约触发由所有节点确定性执行。
 
 每个预约单独拥有由区块上限计算出的字节、读取、写入和 cycles 份额。提交预约时另付正常交易资源费用。执行成功或遇到已授权的业务失败时，按 Lineage 规则扣除已签名执行费。付款 Cell 已被消费、Head 版本失效或份额不足时，到期结果为 2（跳过），只结束预约，不产生 Cell 或新增手续费。跳过回执的 cycles 记录保留份额，供区块资源计账。一次性尝试结束后删除队列和占用记录。直接花费付款 Cell 会使后续尝试跳过。到期之前，也可用经正常 Lock 授权并消费该付款 Cell 的取消交易立即腾出预约名额。此规则使用共识高度，网络停摆期间预约高度不会推进。
 
@@ -105,7 +105,7 @@ Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_he
 
 ### Stem Header 与时间
 
-原生 Stem Header 编码高度、共识时间、父 Header ID、状态承诺和执行承诺。运行交易前，以高度、共识时间、父 Header ID 和交易根计算独立的区块上下文 ID，用于认证同块新建 Cell 的创建信息。完整 Header ID 在状态与执行承诺得出后计算。CometBFT 的签名 Header 与 Stem 的执行 Header 分别承担共识证明和应用上下文。Stem 原生 Header 没有 CKB PoW nonce、compact target、难度、Uncle 承诺或 DAO 字段。交易执行删除 NC-Max Proposal Window、Cellbase、Cellbase Maturity、一级与二级发行、矿工奖励和 Nervos DAO 的特殊验证、取款补偿与容量例外。CKB PoW、DAO 等 L1 字段可用于核验真正的 L1 数据，L1 协议继续独立运行。 [CKB L1 区块结构](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0027-block-structure/0027-block-structure.md)
+原生 Stem Header 编码高度、共识时间、父 Header ID、状态承诺和执行承诺。运行交易前，以高度、共识时间、父 Header ID 和交易根计算独立的区块上下文 ID，用于认证同块新建 Cell 的创建信息。完整 Header ID 在状态与执行承诺得出后计算。Jolteon 投票认证完整 Stem 执行 Header。Stem 原生 Header 没有 CKB PoW nonce、compact target、难度、Uncle 承诺或 DAO 字段。交易执行删除 NC-Max Proposal Window、Cellbase、Cellbase Maturity、一级与二级发行、矿工奖励和 Nervos DAO 的特殊验证、取款补偿与容量例外。CKB PoW、DAO 等 L1 字段可用于核验真正的 L1 数据，L1 协议继续独立运行。 [CKB L1 区块结构](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0027-block-structure/0027-block-structure.md)
 
 合约可以读取候选高度、已提交父区块的 Unix 毫秒时间及父 Header。候选时间只在提交后供下一块的合约使用。CheckTx、提案准备与执行都提供相同的确定性接口，无需预先知道候选交易根或执行结果。
 
@@ -116,7 +116,7 @@ Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_he
 | Stem 共识时间 | 已提交 Header 的 Unix 毫秒 | 绝对时间与相对时间锁 |
 | CKB L1 高度与时间 | CKB 自己的 PoW 链和共识规则 | 解除质押、存款确认、桥兑付及检查点锚定 |
 
-CometBFT v0.38.26 首块使用 genesis 时间，之后从上一高度提交中按该高度的实际验证者权重计算时间戳的中位数。Stem 以截断到 Unix 毫秒的共识时间入账。候选 Header 的毫秒时间允许相同，禁止倒退。Stem 内核读取**前一已提交 Header**的时间作为时间锁参考。它省去额外滚动窗口，安全假设仍是 CometBFT 的验证者权重与诚实时钟假设。 [CometBFT v0.38.26 BFT Time 规范](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/consensus/bft-time.md) · [对应版本的时间实现](https://github.com/cometbft/cometbft/blob/v0.38.26/state/state.go#L234-L292)
+冻结的 CometBFT v0.38.26 对照以 genesis 时间启动，之后从上一高度提交中按该高度的实际验证者权重计算时间戳的中位数。Stem 以截断到 Unix 毫秒的共识时间入账。候选 Header 的毫秒时间允许相同，禁止倒退。Stem 内核读取**前一已提交 Header**的时间作为时间锁参考。它省去额外滚动窗口，安全假设仍是 CometBFT 的验证者权重与诚实时钟假设。 [CometBFT v0.38.26 BFT Time 规范](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/consensus/bft-time.md) · [对应版本的时间实现](https://github.com/cometbft/cometbft/blob/v0.38.26/state/state.go#L234-L292)
 
 Jolteon 验证者只给严格推进父时间的执行 Header 投票。投票时，提案签名绑定的时间须处于验证者实时钟的过去 30 秒与未来 1 秒之间，策略绑定到共识签名域。历史重放使用已认证 Header 原有的时间，epoch 交接 seal 重复边界 Header。已提交时间的准确性依赖诚实投票权重及其时钟同步，Pacemaker 超时使用本地单调时钟。合约和时间锁继续使用父执行 Header，不读取本地实时钟。
 
@@ -226,13 +226,13 @@ CKB L1 Registry 用 Type ID 保证唯一性。Stake Cell Type Script 绑定 Regi
 
 退休证明编码一个 32 字节位图和按层号由低至高排列的非零兄弟哈希。合约验证当前根下公钥不存在。提现同时将该公钥插入退休根，释放 Registry 名额。历史公钥始终保留在认证根中。曾结清的质押公钥永久退休，后续验证者注册使用新公钥。仍在责任窗口内的 Stake Cell 无法通过更换 OutPoint 或重新注册解除责任。
 
-### 快照窗口与 H+2
+### 快照签署窗口
 
 快照承诺 Stem 网络、CKB genesis、CKB 锚点高度与哈希、Registry 身份及序号、完整 Registry 状态、前一已接受 Stem 快照及 L1 锚点、目标 epoch、guardian 代次，以及签署窗口的 Stem 锚点。 原生控制交易将目标 epoch、签署锚点 Header ID 与证书正文承诺写入原始交易。正文包含规范快照及整个 Registry。签名绑定网络和原始声明。快照正文依次编码两字节小端快照长度、规范快照、两字节小端的新认证方数量、按公钥升序排列的新认证方条目和完整 Registry。每条为 32 字节公钥与 8 字节小端权重。平常快照的新认证方数量为零。通过验证后才允许替换候选覆盖层中的已接受快照。观察者从可信 CKB 全节点验证 UTXO、质押容量、确认深度和链历史，持久化签过的 L1 锚点和最近一次签署的目标 epoch 与消息摘要。同一 epoch 只允许再次签署完全相同的消息。Stem 共识依据已提交字节与签名验证快照。独立的快照签名域要求超过三分之二已授权 guardian 权重。
 
 令 epoch 生效高度为 `A(e) = 1 + e × blocks_per_epoch`。对非 genesis epoch，网络固定整数 `W`，满足 `3 ≤ W < blocks_per_epoch`。签署锚点为已最终确定的 `A(e)−W−1` 区块。只能从下一块开始签发与提交，到 `A(e)−2` 截止，过期证书不得转用于其他 epoch。每个 epoch 最多接受一个快照。Registry 序号不可倒退，同序号只能对应相同承诺。后续快照必须延续前一已认证 L1 锚点。深重组跨过该锚点时停签新授权，并重新核验仍受锁定的质押和桥负债。已确定的 Stem 历史继续有效。
 
-先排除未激活、已退休、已冻结和已到退出 epoch 的记录。对其余合格记录按质押从高到低排列，公钥字节序打破平局，取配置规模。票权为 `bonded_shannons / shannons_per_power` 的整数商。非空、最小质押、正权重和总权重上限全部是确定性检查。genesis 委员会通过同一认证路径直接生效。正常交接在 `FinalizeBlock(A−2)` 发出 `ValidatorUpdate`。旧委员会签名的 `A−1` Header 绑定新 `NextValidatorsHash`，新委员会签名的 `A` Header 绑定实际新 `ValidatorsHash`。交接证明包含这两个 Header 和签名，以及快照与更新执行证明。缺少新快照时，只有旧委员会对应质押仍锁在 L1 的情况下，旧委员会才能继续按原权重执行。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
+先排除未激活、已退休、已冻结和已到退出 epoch 的记录。对其余合格记录按质押从高到低排列，公钥字节序打破平局，取配置规模。票权为 `bonded_shannons / shannons_per_power` 的整数商。非空、最小质押、正权重和总权重上限全部是确定性检查。genesis 委员会通过同一认证路径直接生效。Jolteon 在 `A−2` 认证下一届名单，在 `A−1` 执行后由旧委员会提交终结证明。新委员会自高度 `A` 开始。冻结的 CometBFT 对照在 `A−2` 发出 `ValidatorUpdate`，验证新旧委员会的签名 Header。缺少新快照时，只有旧委员会对应质押仍锁在 L1 的情况下，旧委员会才能继续按原权重执行。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
 
 ### Jolteon 委员会交接
 
@@ -246,18 +246,18 @@ CKB L1 Registry 用 Type ID 保证唯一性。Stake Cell Type Script 绑定 Regi
 
 1. **请求退出。** 所有者在 L1 更新 Registry 和 Stake Cell。资金继续锁定。在快照中因排名下降离开委员会的记录仍可参加后续选举。
 2. **登记终止。** Stem 接受包含到期退出、冻结或已退休记录的快照，同时在 SystemRoot 写入该公钥的退出生效高度。未来快照如果试图把该公钥重新加入委员会，则整份快照被拒绝。
-3. **证明实际退出。** Registry 在 L1 固定直接检查点的代码哈希和 Type ID。中继者用该检查点证明已签署的 Stem Header，并提交 SystemRoot 下的退休标记 Patricia 路径。L1 验证检查点的网络、CKB genesis、CometBFT chain ID，以及由 Registry 标识和验证者公钥推导出的记录键。Path 必须证明标记中的退出生效高度等于新 Stake Cell 的终止高度，并且该高度不晚于检查点认证的原生高度。签署窗口提前写入的标记要等到实际生效才可使用。
+3. **证明实际退出。** Registry 在 L1 固定直接检查点的代码哈希和 Type ID。中继者用该检查点证明已签署的 Stem Header，并提交 SystemRoot 下的退休标记 Patricia 路径。L1 验证检查点的 Stem 网络、CKB genesis、固定的检查点身份，以及由 Registry 标识和验证者公钥推导出的记录键。Path 必须证明标记中的退出生效高度等于新 Stake Cell 的终止高度，并且该高度不晚于检查点认证的原生高度。签署窗口提前写入的标记要等到实际生效才可使用。
 4. **执行 L1 退出。** 任何付费中继者都可消费 Registry 和 Stake Cell 并提交该证明。所有者才能消费退休后的 Stake Cell 提款。CKB 执行相对区块锁，提现与释放 Registry 名额、更新永久退休根原子完成。仍在责任期的记录可以提交客观双签证据。已冻结的质押先执行罚没，再走剩余容量的取回流程。
 
 L1 Registry 轮换由旧集合和新集合共同签署并在 CKB 确认。Stem 侧，第一份携带新轮换代次的快照必须在其目标 epoch 的签署窗口内提交，并由两个集合对同一消息各提供超过三分之二权重的签名。签名索引最高位标记新集合，其余位为该集合内按公钥排序的索引。快照提交后，Stem 原子更新协议状态中的认证方，后续快照只接受新集合。提议快照也须延续最近已接受的 CKB 锚点和 Registry 序号。已经退休的公钥继续受 Stem 标记和 L1 退休根约束。桥和独立检查点使用各自的认证方流程。
 
 ### 双签、罚没和停摆
 
-L1 验证真实 CometBFT canonical vote sign bytes。两票需对应同一 chain ID、公钥、高度、round、vote type，不同的完整 Block ID 和各自有效签名。证据高度必须落入该质押代次已认证的实际活跃区间，包含退出等待期内仍可追责的历史区间。证据键按投票位置去重。罚没额与去向由网络规则指定。证据通过后，L1 冻结罚没部分。Stem 认证冻结状态后将该代次排除出候选集合，并以与退休相同的机制提交终止记录。实际移除该代次前，资金继续作为 L1 受约束资产锁定。完成移除后才执行资产结算。开发链已实测双签冻结、提前结算拒绝和退休后全额罚没。 [CometBFT v0.38.26 投票签名源码](https://github.com/cometbft/cometbft/blob/v0.38.26/types/vote.go)
+冻结的 CometBFT 对照验证 canonical vote sign bytes。两票需对应同一 chain ID、公钥、高度、round、vote type，不同的完整 Block ID 和各自有效签名。证据高度必须落入该质押代次已认证的实际活跃区间，包含退出等待期内仍可追责的历史区间。证据键按投票位置去重。罚没额与去向由网络规则指定。证据通过后，L1 冻结罚没部分。Stem 认证冻结状态后将该代次排除出候选集合，并以与退休相同的机制提交终止记录。实际移除该代次前，资金继续作为 L1 受约束资产锁定。完成移除后才执行资产结算。开发链已实测双签冻结、提前结算拒绝和退休后全额罚没。 [CometBFT v0.38.26 投票签名源码](https://github.com/cometbft/cometbft/blob/v0.38.26/types/vote.go)
 
 Jolteon 罚没使用同一 epoch、同一视图、同一成员的两份有效签名，签名绑定各自的候选点及其执行 Header。当前 CKB 检查点的 SystemRoot 认证历史 epoch 的结束高度，尚未公告后继的 epoch 使用不存在证明。创世名单由部署参数固定，后续历史名单由 epoch 启动 Header 的 Patricia 路径与检查点的 MMR 包含证明认证。两份投票的执行高度同时受实际委员任期和 Stake Cell 责任区间约束。冻结、认证移除、罚没以及等待后领取剩余容量均由 CKB 交易执行。[双签与退休实验](BENCHMARKS.md#jolteon-withdrawals-retirement-and-slashing)
 
-活跃权重不足以形成超过三分之二的签名时，Stem 接受停摆。L1 可接收证据并冻结资产。停摆期间的 L1 处罚不会跳过委员会交接，也不能替 Stem 选择后续区块。原网络在当前委员会恢复合法法定人数后，按 CometBFT 的正常规则从最后已确定区块继续。若长期无法恢复，另建网络需要新的网络身份和 genesis。新网络只能使用独立储备，原金库负债先按已验证的原历史核对，同一笔资产只能承担一条历史的兑付。首轮方案没有同身份紧急换委员会的应急路径。
+活跃权重不足以形成超过三分之二的签名时，Stem 接受停摆。L1 可接收证据并冻结资产。停摆期间的 L1 处罚不会跳过委员会交接，也不能替 Stem 选择后续区块。原网络在当前委员会恢复合法法定人数后，按 Jolteon 规则从最后已确定区块继续。若长期无法恢复，另建网络需要新的网络身份和 genesis。新网络只能使用独立储备，原金库负债先按已验证的原历史核对，同一笔资产只能承担一条历史的兑付。首轮方案没有同身份紧急换委员会的应急路径。
 
 ## 6. 桥、储备与提款
 
@@ -276,7 +276,7 @@ Jolteon 罚没使用同一 epoch、同一视图、同一成员的两份有效签
 - **储备调拨。** 声明携带源通道、目标通道、确定的 CKB Capacity，以及两个金库前后 OutPoint。两个金库在同一笔已确认的 L1 交易里被替换。源额扣减和目标额增加等量原子完成，各通道仍须覆盖原有预留，资产单位、待付款和出款 nonce 保持原值。跨通道只调拨原生 CKB Capacity。
 - **顺序与重放。** 认证以候选区块内先前操作形成的锚点及金库 OutPoint 为准。重复使用已经被核销的票据、旧金库输入或已被替换的认证代次均拒绝。跟踪全局认证 L1 锚点时，新结算声明需推进该锚点。
 
-Stem 验证者质押、桥状态认证与金库托管分别授权。L1 归集、调拨和轮换必须消费一个由当前 CKB 多签锁授权的输入。L1 兑付依据 Stem 共识认证的待付款记录。Stem 对 L1 存款和已兑付记录的确认仍依赖 guardians 对确认链历史的核验。直接检查点沿历届 CometBFT 委员会验证 Stem 状态。
+Stem 验证者质押、桥状态认证与金库托管分别授权。L1 归集、调拨和轮换必须消费一个由当前 CKB 多签锁授权的输入。L1 兑付依据 Stem 共识认证的待付款记录。Stem 对 L1 存款和已兑付记录的确认仍依赖 guardians 对确认链历史的核验。原生检查点沿历届 Jolteon 委员会验证 Stem 状态。
 
 ## 7. 状态承诺、执行回执与锚定快照
 
@@ -362,11 +362,11 @@ HeaderID(H)    = H("Stem Header", network_id, Context(H), StateCommitment(H), Ex
 AppHash(H)     = H("Stem AppHash", network_id, H, HeaderID(H))
 ```
 
-执行前先确定交易根与区块上下文。执行时新建 Cell 只引用这个上下文 ID。执行完成后计算 Cell 根、系统状态根和回执根，再构造完整 Header。历史累积器本块追加的 Header 属于前一高度。三者依赖方向固定。CometBFT 的 `H+1` Header 认证高度 `H` 的 AppHash。轻客户端验证 `H+1` 的合法提交和相应委员会，然后用提供的 Stem Header 重算 AppHash 并比对。状态、交易及回执证明对照该 Stem Header 的承诺验证。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
+执行前先确定交易根与区块上下文。执行时新建 Cell 只引用这个上下文 ID。执行完成后计算 Cell 根、系统状态根和回执根，再构造完整 Header。历史累积器本块追加的 Header 属于前一高度。三者依赖方向固定。Jolteon 的两链证明直接认证已最终确定的原生 Header。验证者亲自执行候选分支，再签署其完整执行 Header ID。验证者变更由前一届委员会签署的终结证书及名单证明认证。状态、交易及回执证明对照已认证 Header 的承诺验证。 [CometBFT v0.38.26 ABCI 方法](https://github.com/cometbft/cometbft/blob/v0.38.26/spec/abci/abci%2B%2B_methods.md#finalizeblock)
 
 ### 原子提交、锚定快照与节点形态
 
-`ProcessProposal` 与 `FinalizeBlock` 共享执行内核。如果候选块字节、父状态及共识上下文完全匹配，可复用该候选块的验证结果。`Commit` 为每个区块执行一次同步 RocksDB WriteBatch。规范 Cell 与协议记录、Patricia 变更路径、Header、累积器叶数及峰值、保留的交易与回执、提交点一起原子可见。该约束适用于 Stem 应用提交，CometBFT 保持自己的共识持久化路径。
+提案、投票和历史追赶共用执行内核。如果候选块字节、父状态及上下文完全匹配，可复用该候选块的验证结果。每个最终确认区块同步执行一次 RocksDB WriteBatch。规范 Cell 与协议记录、Patricia 变更路径、Header、历史峰值、保留的执行记录、最终性证明和投票日志一起原子可见。签名前另行持久化投票水位及其载荷。
 
 锚定快照从同一已提交高度的稳定读取视图导出规范 Cell 与协议记录、原生 Header、BFT 证明、MMR 叶数和峰值，以及恢复必需的委员会交接和检查点材料。快照导出规范状态记录，Patricia 节点由接收方重建。交易根和回执根随认证 Header 提供，旧区块的逐块 Merkle 证明由保存的交易与回执正文重建。客户端先验证 Header 和 AppHash，再重建 Cell 根与系统状态根，按峰值核验历史根，匹配后原子安装。创建元数据、待兑付负债、峰值或委员会材料被篡改都会使恢复失败。快照导出在提交路径之外运行。
 
@@ -375,17 +375,17 @@ AppHash(H)     = H("Stem AppHash", network_id, H, HeaderID(H))
 | 普通节点，验证者默认 | 当前 Live Cells、协议状态与 Patricia 节点、MMR 叶数及峰值、近期 Header、交易和回执。按保留窗口自动裁剪，持续保留未结提款、委员会交接与继续共识所需材料 |
 | 归档节点 | 普通节点的全部能力，加完整 Header、交易和回执历史、锚定快照服务与可选历史证明索引。从快照起步时，使用已认证的归档历史补齐早期正文 |
 
-历史证明索引从已提交归档记录异步构建或重建。归档索引、钱包扫描和快照导出独立于区块提交。普通节点按保留窗口裁剪应用状态正文，并向 CometBFT 请求裁剪对应历史区块。交易只引用共识配置允许的近期 Header Deps，两种节点按同一规则验证。客户端通过归档索引查询更早的 Header 和历史包含证明。
+历史证明索引从已提交归档记录异步构建或重建。归档索引、钱包扫描和快照导出独立于区块提交。普通节点在同一提交中按窗口裁剪旧 Header 索引、执行正文、候选载荷和逐高度最终性证明。签名日志保留当前 epoch 锚，交接证明与已发现的双签证据独立保留。交易只引用共识配置允许的近期 Header Deps，两种节点按同一规则验证。客户端通过归档索引查询更早的 Header 和历史包含证明。
 
-钱包与 RPC 使用 Stem 原生交易格式。本地钱包可按完整 Lock 或 Type Script Hash 查询 Live Cells，ABCI 按 OutPoint 提供 Cell 证明，并可查询指定交易位置的执行结果。提款和委员会的证明由相应工具验证。交易意图由 Lock 和 OTX 标准表达，内核继续验证精确 OutPoint、已签名输入和实际输出。
+钱包与 RPC 使用 Stem 原生交易格式。本地钱包可按完整 Lock 或 Type Script Hash 查询 Live Cells，原生查询按 OutPoint 提供 Cell 证明，并可查询指定交易位置的执行结果。提款和委员会的证明由相应工具验证。交易意图由 Lock 和 OTX 标准表达，内核继续验证精确 OutPoint、已签名输入和实际输出。
 
-### 空块与 H+1 证明
+### 空块与直接最终性
 
-空块依然追加父 Header，AppHash 因而继续变化。CometBFT v0.38.26 会在应用哈希改变后主动提议证明块，`create_empty_blocks=false` 或非零的空闲出块间隔都不能将这些证明块暂停。原生集成采用明确的常规出块配置，允许空块并关闭 `skip_timeout_commit`。空载节奏由部署的共识提交等待参数测量。区块头、历史峰值和一次原子提交仍是每个空块的工作内容。无交易时使用规范的空交易和空回执根。节点只有在已取得签名的后继 Header 时才向客户端提供高度 `H` 的 H+1 证明。停摆时，最后一个高度的应用根可能仍在等待后继 Header。 [CometBFT v0.38.26 证明块判定](https://github.com/cometbft/cometbft/blob/v0.38.26/consensus/state.go#L1098-L1126)
+空块依然追加父 Header，验证者按配置节奏提案。无交易时使用规范的空交易和空回执根。相邻视图的认证父子块最终确定父块及其祖先，终结 seal 可认证 epoch 边界。停摆期间最后一个已投票的候选可能等待合法后继证书。已最终确定的 Header 继续可证明。
 
 ### CKB PoW 检查点锚定
 
-部署独立的 CKB Checkpoint Type ID Cell。独立发布进程按网络配置的低频间隔收集已经提交的 Stem 证明并提交 L1 交易。每次更新消费上一 Checkpoint Cell，验证唯一继任者、严格递增的序号与 Stem 高度，以及上一检查点的 OutPoint 与承诺。新记录绑定 Stem 网络和 CKB genesis、Stem 高度及最终区块完整 Block ID、原生 Header ID、AppHash、历史根及叶数、承载该 AppHash 的后续 CometBFT Header 身份、当前和下一委员会承诺、质押快照承诺及委员会交接证明的摘要。
+部署独立的 CKB Checkpoint Type ID Cell。检查点更新消费上一 Checkpoint Cell，并验证唯一继任者、严格递增的 Stem 高度、有效的两链或交接证明和 MMR 扩展。输出保留固定的网络绑定、当前 epoch 锚、委员会承诺和完整执行 Header。普通更新可跨越同一 epoch 多个区块，交接更新推进委员会承诺。自动发布策略仍待部署。
 
 锚定认证方独立于金库。它核验从上一锚到新锚的 Stem 最终性、对应 AppHash、新旧历史根的追加一致性、旧锚的 Header 在新根中的包含性及期间的每次委员会交接后，按专门签名域对记录签名。CKB 合约验证当前固定锚定认证方超过三分之二签名与继任顺序。轮换由旧、新集合分别认证。该首轮合约由认证方证明 Stem 历史，签名责任之外的证明仍需客户端独立复核。
 
@@ -397,7 +397,7 @@ AppHash(H)     = H("Stem AppHash", network_id, H, HeaderID(H))
 | --- | --- | --- |
 | P0 | Cell、VM、时间、签名和共识切换 | 四副本使用同一原生交易格式。删除 CKB Header 旧字段与 DAO 容量例外，验证创世、同块消费、过期高度、时间跳跃、重启和跨 epoch 的边界。钱包与 RPC 支持该格式。串行重放和并行验证结果一致，拒绝冲突及恶意提案 |
 | P0 | 质押终止、快照窗口和罚没 | 真实 L1 注册、增押、退出及双签。拒绝抢跑退休、先签后提交的旧快照、过期签名与退役认证方。在丧失法定人数的实网确认 L1 可冻结而 Stem 不发生强制换组 |
-| P0 | 状态与执行承诺、桥接守恒 | 真实 CKB 与 xUDT 往返、储备对账、金库轮换。多资产原子入队。小额聚合后达到 L1 最低容量才入队。某通道暂停时其他 nonce 正常推进，拒绝重复使用 Capacity。验证空块 H+1 认证、历史包含及追加一致性、回执位置和锚定快照，拒绝被篡改的创建元数据与负债，并跨裁剪与恢复重测存款和退休代次重放 |
+| P0 | 状态与执行承诺、桥接守恒 | 真实 CKB 与 xUDT 往返、储备对账、金库轮换。多资产原子入队。小额聚合后达到 L1 最低容量才入队。某通道暂停时其他 nonce 正常推进，拒绝重复使用 Capacity。验证空块两链最终性、历史包含及追加一致性、回执位置和锚定快照，拒绝被篡改的创建元数据与负债，并跨裁剪与恢复重测存款和退休代次重放 |
 | P1 | 裁剪、归档证明与 Capacity 定价 | 在不同 Live Cell 总量下固定每块变更量，分别测量状态树、回执树、历史累积器、读写放大与提交延迟。验证裁剪后的 Header Dep、证明重建、重启和状态同步。用结果确定开发网抵押成本 |
 | P1 | CKB Checkpoint Cell | 真实 L1 发布和轮换。验证客户端接受合法锚和交接证明，拒绝冲突、缺漏历史与失效分叉 |
 | P2 | 多维费率及净盈余分配 | 对齐确定性计量、费用上限、应付费收与真实 L1 出账，验证分配后的储备覆盖 |
@@ -431,10 +431,10 @@ Polytype 的边际成本采用控制实验。固定输入数量和数据、输�
 | 状态承诺与恢复 | RocksDB 同步提交 Patricia、MMR 和执行树；四节点重启追赶、第五节点实际 CometBFT 快照恢复；归档索引生成历史证明，CKB devnet 锚定高度 11 和 24 并完成认证方轮换 | 独立生产发布与锚定源的重组演练 |
 | 性能 | 同机四节点以 120 TPS 投递并确认全部 1,200 笔支付，全副本确认速率 103.67 TPS，可见延迟 p99 为 2.06 秒。3 亿 block cycles 下，更快的短时投递对应约 116–119 的全副本确认 TPS | 更长时间运行、大状态与压缩尾延迟 |
 
-实际运行由 CometBFT v0.38.26 和本地 CKB devnet 完成。Stem 的 L1 状态认证依赖各自配置的 guardian 法定人数与受信 CKB 完整节点。详见 [操作与复现](OPERATIONS.md) 和 [测量](BENCHMARKS.md)。
+本节保留 CometBFT v0.38.26 和本地 CKB devnet 的对照记录。Stem 的 L1 状态认证依赖各自配置的 guardian 法定人数与受信 CKB 完整节点。详见 [操作与复现](OPERATIONS.md) 和 [测量](BENCHMARKS.md)。
 
 同一普通支付夹具使用内联 Strand 时为 312 B。三 Type Script 组合 Cell 的输出向量为 285 B，CKB 三个单独输出及 Data 向量为 590 B。标准锁的恢复调用计费 1,900,000 cycles，完整交易另计其余执行开销。早期 Molecule 编码、k256 锁与对应吞吐数据保存在[历史实验归档](FERN-BENCHMARKS.md)。[当前性能记录](BENCHMARKS.md)
 
-已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。Jolteon 实际网络覆盖 4 至 128 副本，并在 CKB devnet 核验跨 epoch 交接、观察节点恢复与原生检查点发布。当前默认节点使用 CometBFT。独立的 Jolteon 部署已在 CKB devnet 验证无许可兑付、退休、解押和双签罚没。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
+已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。Jolteon 实际网络覆盖 4 至 128 副本，并在 CKB devnet 核验跨 epoch 交接、观察节点恢复与原生检查点发布。当前默认入口为加权 Jolteon，CometBFT 保留为冻结的实验对照。默认节点已在 CKB devnet 验证无许可兑付、退休、解押和双签罚没。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
 
 CKB 历史输出验证器从可信区块哈希重算 Header、交易及见证根，并按 OutPoint 提取原始输出。确认策略由调用方执行。锚点上的 Cell 存活与后续消费需要额外认证，本轮该验证器用于 Rust 客户端和离线 CLI。

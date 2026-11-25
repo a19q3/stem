@@ -9,7 +9,8 @@ license = "MIT"
 publish = false
 
 [features]
-# Selects the checkpoint proof accepted by the deployed vault and Registry binaries.
+# Disable the default only when rebuilding the frozen CometBFT comparison.
+default = ["jolteon"]
 jolteon = []
 
 [dependencies]

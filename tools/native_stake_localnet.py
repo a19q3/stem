@@ -14,7 +14,7 @@ import subprocess
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, point, reject_cli, script_hash
-from localnet import Rpc, config_value, run, write_json
+from localnet import Rpc, comet_app_command, config_value, run, write_json
 import checkpoint_localnet
 import direct_checkpoint_localnet
 from native_bridge_localnet import bridge_configuration, deploy as deploy_bridge, start, wait_for
@@ -136,7 +136,7 @@ def stake_round(args, l1, scenario, fixture):
     try:
         for n, home in enumerate(homes):
             app = args.output / f"app-{n}"
-            nodes.append(start(args, [args.binary, "run", "--home", app, "--genesis", spec_path, "--archive"], f"stem-{n}.log"))
+            nodes.append(start(args, [args.binary, comet_app_command(args.binary), "--home", app, "--genesis", spec_path, "--archive"], f"stem-{n}.log"))
             wait_for(lambda: (app / "abci.sock").is_socket(), f"Stem node {n}")
             nodes.append(start(args, [args.comet, "start", "--home", home, "--proxy_app", f"unix://{app / 'abci.sock'}",
                 "--rpc.laddr", f"tcp://127.0.0.1:{args.comet_port + n}",

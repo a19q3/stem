@@ -85,6 +85,10 @@ pub struct Journal {
     pub anchor: Vec<u8>,
     #[prost(bool, tag = "11")]
     pub observer_only: bool,
+    #[prost(uint64, tag = "12")]
+    pub history_window: u64,
+    #[prost(bytes, tag = "13")]
+    pub proposal_floor: Vec<u8>,
 }
 
 #[derive(Clone, Message)]
@@ -95,6 +99,8 @@ pub struct Finalized {
     pub epoch: u64,
     #[prost(bool, tag = "3")]
     pub handoff: bool,
+    #[prost(uint64, tag = "4")]
+    pub view: u64,
 }
 
 pub fn canonical<T: Message + Default>(raw: &[u8]) -> Result<T> {

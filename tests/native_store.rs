@@ -536,6 +536,9 @@ fn rejects_expiry_same_block_relative_locks_and_unfunded_outputs() -> Result<()>
 #[path = "native_store/comet.rs"]
 mod comet;
 
+#[path = "native_store/jolteon.rs"]
+mod jolteon;
+
 #[path = "native_store/staking.rs"]
 mod staking;
 

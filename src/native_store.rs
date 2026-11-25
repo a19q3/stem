@@ -3,6 +3,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    ops::Range,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
 };
@@ -533,6 +534,13 @@ impl Store {
                 .height
                 .checked_sub(window)
                 .map_or(0, |height| height + 1),
+        }
+    }
+
+    pub(crate) fn history_window(&self) -> Option<u64> {
+        match self.retention {
+            Retention::Recent(window) => Some(window),
+            Retention::Archive => None,
         }
     }
 
@@ -1505,20 +1513,21 @@ impl Store {
     }
 
     pub fn commit(&mut self, prepared: Prepared) -> Result<()> {
-        self.commit_certified(&prepared, &[])
+        self.commit_certified(&prepared, &[], &[])
     }
 
     pub(crate) fn commit_certified(
         &mut self,
         prepared: &Prepared,
         records: &[(Vec<u8>, Vec<u8>)],
+        retired: &[Range<Vec<u8>>],
     ) -> Result<()> {
         ensure!(self.branch.is_empty(), "cannot commit a speculative view");
         ensure!(
             prepared.parent == self.tip.id(&self.network),
             "stale prepared block"
         );
-        sync_with_consensus(&self.db, &prepared.batch, records)?;
+        sync_with_consensus(&self.db, &prepared.batch, records, retired)?;
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
         self.live_cache.get_mut().expect("Live Cell cache").clear();
@@ -1717,10 +1726,15 @@ impl Batch {
 }
 
 fn sync(db: &DB, batch: &Batch) -> Result<()> {
-    sync_with_consensus(db, batch, &[])
+    sync_with_consensus(db, batch, &[], &[])
 }
 
-fn sync_with_consensus(db: &DB, batch: &Batch, records: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+fn sync_with_consensus(
+    db: &DB,
+    batch: &Batch,
+    records: &[(Vec<u8>, Vec<u8>)],
+    retired: &[Range<Vec<u8>>],
+) -> Result<()> {
     let mut raw = WriteBatch::default();
     for (key, entry) in &batch.writes {
         match entry {
@@ -1730,6 +1744,9 @@ fn sync_with_consensus(db: &DB, batch: &Batch, records: &[(Vec<u8>, Vec<u8>)]) -
     }
     for (key, value) in records {
         raw.put(index_key(b'j', key), value)?;
+    }
+    for range in retired {
+        raw.delete_range(index_key(b'j', &range.start), index_key(b'j', &range.end))?;
     }
     let mut options = WriteOptions::default();
     options.set_sync(true);
