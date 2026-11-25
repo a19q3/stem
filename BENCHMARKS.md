@@ -1255,3 +1255,55 @@ fixture attempt and the first successful withdrawal run.
 
 [Run instructions](OPERATIONS.md#exercise-ckb-delegation) ·
 [Raw runs and fingerprints](benchmarks/2026-11-25-stem-delegation-reduction.json.xz).
+
+## Compact delegation and position-specific liability
+
+The compact delegation used 154 CKB of occupied Capacity on CKB 0.210.0.
+The Cell has 8 Capacity bytes, a 33-byte Lock with empty args, a 65-byte
+Type Script with its 32-byte identity commitment, and 48 bytes of
+position data. Every transition supplies the identity preimage in the
+Registry witness. The devnet rejected an altered preimage. Occupancy
+per Cell fell by 113 CKB from the 267 CKB in-term reduction layout and
+by 89 CKB from the earlier 243 CKB retirement-only layout.
+
+For the earlier 175 plus 70 CKB comparison with two positions, replacing
+their occupied Capacity yields 553 CKB locked and a 44.3% principal
+fraction, compared with 731 CKB and 33.5% in the 243 CKB layout.
+The new workload activated a 100 CKB genesis position and separate 75
+and 70 CKB positions at the first handoff. Its three positions used
+707 CKB of total Capacity and 245 CKB of principal, a 34.7% fraction.
+The separate top-up position retained its own liability rather than
+merging with the genesis position.
+
+The two active validators moved from voting weights 495 and 400 to
+360 and 400 at Stem height 21 after in-term requests for 65 and 70
+CKB. The normal settlement repaid 65 CKB and kept 35 CKB active.
+It returned 224 CKB to close the second position, including its recoverable
+storage Capacity. That payout funded an 8 CKB position with the other
+validator. The new position was confirmed on CKB at its activation
+height of 31, and the online validators agreed on weights 360 and 408.
+
+The historical run froze the validator for two votes at Stem height 3.
+The same proof forfeited 65 CKB of pending principal from the genesis
+position and failed against the position activated at height 11. The
+later position recovered all 70 CKB and its occupied Capacity. Evidence
+from height 22 also failed against the pending position excluded at
+height 21. Ordinary retirement, in-term withdrawal and orphaned CKB
+anchor rejection passed on the compact layout.
+
+| Operation | Transaction bytes | Estimated CKB cycles |
+| --- | ---: | ---: |
+| Create the genesis position | 1,423 | 1,980,492 |
+| Activate the 75 CKB position | 2,250 | 2,215,090 |
+| Confirm the first reduction | 2,148 | 2,174,481 |
+| Apply its historical penalty | 3,148 | 6,457,736 |
+| Close the 70 CKB position | 1,491 | 2,047,761 |
+
+The Rust release workspace passed 440 tests, with 12 ignored. The Go
+proof suite passed and the comparison Stake Registry compiled for
+RISC-V. The archive retains the initial failed 25 CKB partial payout
+attempt. Its output was below the beneficiary Lock's occupied Capacity.
+The later runs used 65 CKB.
+
+[Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
+[Raw evidence, fingerprints and failure](benchmarks/2026-11-25-stem-delegation-window.json.xz).
