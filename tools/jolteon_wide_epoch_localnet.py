@@ -247,8 +247,14 @@ def run_epochs(args, l1, stake, fixture):
         relay.advance(after_height, stake.secp, proof_file=later, probe=True)
         intercell = None
         if mailbox:
-            _, successor_send = mailbox.send(client, "successor", 42, b"after the committee change",
+            retired = binary(changes["retiring"])
+            observer = Client(args, ports[retired], hex_bytes(stake.network))
+            observer_before = observer.status()
+            assert observer_before["epoch"] == 1 and observer_before["member"] is None, observer_before
+            _, successor_send = mailbox.send(observer, "successor", 42, b"after the committee change",
                 point("0x" + sent["hash"], 0), mint["payment_capacity"] - FEE, mint["lock_dep"])
+            wait_for(lambda: statuses((archive,), successor_send["height"], 1),
+                     "retired observer's transaction finalized on archive", seconds=30)
             new_proof = mailbox.proof(client, message)
             assert new_proof[0] >= successor_send["height"] > after_height
             wait_for(lambda: statuses(ports, new_proof[0], 1), "Outbox proof height on all replicas", seconds=30)
@@ -257,6 +263,7 @@ def run_epochs(args, l1, stake, fixture):
             checkpoint = relay.advance(new_proof[0], stake.secp)
             intercell = mailbox.deliver(relay, message, old_proof, new_proof, checkpoint)
             intercell.update({"mint": mint, "source_send": sent, "successor_send": successor_send,
+                              "successor_submitter": hex_bytes(retired), "submitter_status": observer_before,
                               "agreed_successor_header": tip})
         native = {
             "validators": args.validators, "processes": len(ports), "initial_committee": roster,

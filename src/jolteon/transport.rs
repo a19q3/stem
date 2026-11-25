@@ -174,6 +174,20 @@ impl Network {
         }
     }
 
+    pub(super) fn relay(&self, routes: &[Option<u16>], body: &[u8]) {
+        let mut frame = None;
+        for (index, route) in routes.iter().enumerate() {
+            if let Some(id) = route
+                && !routes[..index].contains(route)
+                && let Some(peer) = &self.peers[usize::from(*id)]
+            {
+                let message = frame
+                    .get_or_insert_with(|| self.frame(self.epoch, wire::RELAY_TX, body.to_vec()));
+                self.enqueue(peer, wire::RELAY_TX, message.clone());
+            }
+        }
+    }
+
     fn enqueue(&self, peer: &PeerQueues, kind: u32, frame: Arc<Vec<u8>>) {
         let queue = if kind == wire::RELAY_TX {
             &peer.relay

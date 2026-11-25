@@ -74,6 +74,14 @@ target/release/stem jolteon-proof --genesis /tmp/stem-jolteon-16/genesis.json \
 
 The fixture checks consecutive failed Leaders, watches surviving weight finalize payments, restarts stopped replicas and checks the execution Header at a common height. It retains the public genesis, signed workload, execution proof and replica diagnostics. For the nominal scale sweep use `--offline 0 --transactions 32 --offered 16 --cadence 300 --timeout 2500` and separate output and port ranges for each size. The `tools/comet_matrix_localnet.py` comparator uses the same fixture against a pinned CometBFT application build. Its `--comet` argument takes the CometBFT executable.
 
+Add `--require-relay-retry` with `--offline 2` to submit the first
+payment while both initial relay targets are stopped. The fixture waits
+for a single local submission to become visible on every live replica
+and checks the source retry counter before sending the remaining
+payments. The admission reply reports an in-memory entry. Keep the
+signed transaction until finality so the client can resubmit after
+failure or a process restart.
+
 Use synchronized realtime clocks on validators. A Jolteon vote authenticates
 an execution timestamp within 30 seconds behind or 1 second ahead of the
 local clock. The `last_untimely_view` status field shows the latest rejection.
@@ -902,7 +910,8 @@ views, observed timeout certificates, and the most recent view whose
 proposal failed the local timestamp window.
 
 The `admission` status counters report client requests, received
-transaction relays, Store checks and accumulated check microseconds.
+transaction relays, Store checks, accumulated check microseconds and
+local relay retry attempts.
 Use start and end deltas in load tests. The fixed-state comparison
 isolates verification of signed AMM commands over a single tip.
 

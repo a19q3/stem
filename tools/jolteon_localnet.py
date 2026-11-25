@@ -202,7 +202,31 @@ def scenario(args):
         before_view = max(item["view"] for item in fresh)
         started = time.perf_counter()
         admitted = 0
-        for index, item in enumerate(payments):
+        relay_retry = None
+        if args.require_relay_retry:
+            source = serving[0]
+
+            def blocked_routes():
+                state = rpc(peers[source], STATUS)
+                slot = state["view"] - 1
+                leaders = [schedule[(slot + offset) % len(schedule)] for offset in (0, 1)]
+                return (state, leaders) if all(leader in offline for leader in leaders) else None
+
+            state, leaders = wait_for(blocked_routes, "two stopped relay targets", seconds=45)
+            reply = rpc(peers[source], SUBMIT, binary(payments[0]))
+            after = rpc(peers[source], STATUS)
+            assert "admitted" in reply and state["view"] == after["view"], (state, reply, after)
+            admitted = 1
+            delivered = wait_for(lambda: observed(serving, before, admitted),
+                                 "single submission delivered through a relay retry", seconds=35)
+            retries = delivered[0]["admission"]["relay_retry_attempts"] - state["admission"]["relay_retry_attempts"]
+            assert retries > 0 and delivered[0]["admission"]["client_requests"] == 1, delivered[0]
+            relay_retry = {"source": source, "leaders": leaders, "before": state, "after_admission": after,
+                           "admission": reply, "retries": retries, "delivery": delivered,
+                           "seconds_to_visibility": time.perf_counter() - started}
+            write_json(args.output / "relay-retry.json", relay_retry)
+
+        for index, item in enumerate(payments[admitted:], start=admitted):
             target = serving[index % len(serving)]
             reply = rpc(peers[target], SUBMIT, binary(item))
             if "admitted" not in reply:
@@ -259,6 +283,7 @@ def scenario(args):
             "payments": admitted, "elapsed_until_active_replica_visibility": elapsed, "active_confirmed_tps": admitted / elapsed,
             "archival_replica": everybody[-1], "ordinary_history_window": args.history_window or 256, "pruning": pruning,
             "before": initial, "with_fault": active, "resumed": resumed, "agreement": headers[0], "two_chain_proof": proof["proof"], "proof_verification": checked,
+            "relay_retry": relay_retry,
             "processes": [process_resources(nodes[i].pid) for i in everybody],
             "processes_before": start_metrics,
         }
@@ -325,11 +350,15 @@ def main():
     parser.add_argument("--checkpoint-proofs", type=int, choices=range(0, 5), default=0,
                         help="save verified consecutive exact-height proofs from the live archive")
     parser.add_argument("--fee-calibration", action="store_true")
+    parser.add_argument("--require-relay-retry", action="store_true",
+                        help="submit one payment when both of its initial relay targets are offline")
     args = parser.parse_args()
     if not 1 <= args.validators <= 128 or min(args.transactions, args.offline_blocks, args.recovery_seconds) < 1:
         parser.error("invalid fixture size")
     if args.check_pruning and (args.history_window is None or args.offline_blocks <= args.history_window):
         parser.error("pruning requires an explicit history window shorter than the offline gap")
+    if args.require_relay_retry and args.offline < 2:
+        parser.error("relay retry requires at least two offline leaders")
     args.output.mkdir(mode=0o700, parents=True)
     result = scenario(args)
     print(f"{result['validators']} validators finalized {result['payments']} payments "

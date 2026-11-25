@@ -158,9 +158,18 @@ same signatures and state transitions.
 
 Admission checks individual transactions against the finalized tip.
 The receiver computes the full witnessed wire digest once and reuses
-it for deduplication and the client reply. Node status records client
-and relayed requests, checks performed against the Store and the
-elapsed time in those checks.
+it for deduplication and the client reply. An admitted client
+transaction goes to the current and next Leader. The receiving replica
+checks the transaction before storing it. The origin retries an
+unconfirmed transaction after two seconds, starting with the latest
+known Leader routes and then stepping through the active committee.
+Only locally submitted transactions are eligible. Each tick processes
+at most eight ready retries, and each pending transaction gets at most
+one pass through the committee in the same epoch. Finality and expiry
+remove the relay entry with the transaction. The next epoch's first
+retry uses the new roster. Proposals carry full transaction bytes for
+execution on every voting replica. Node status records client and
+relayed requests, Store checks, check time and relay retries.
 
 The application includes the next epoch, activation height and ordered roster in the authenticated `stake/announced` record at height `A−2`. The final execution height for the outgoing validators is `A−1`. Before starting the successor, the old epoch certifies an adjacent parent and seal pair. The seal commits the same boundary Header in a separate domain. After a timeout, the seal can extend an earlier seal for that boundary, preserving the adjacent-view finality rule. Only executed blocks advance the Header history. The boundary execution, handoff proof and new vote journal commit in one RocksDB batch. Signed handoffs and certified payloads remain available to a replica that rejoins across a committee change.
 

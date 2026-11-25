@@ -26,6 +26,8 @@ pub struct AdmissionMetrics {
     pub relayed_requests: u64,
     pub checks: u64,
     pub verification_us: u64,
+    #[serde(default)]
+    pub relay_retry_attempts: u64,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]

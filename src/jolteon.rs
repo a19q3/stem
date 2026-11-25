@@ -44,6 +44,7 @@ const MAX_BRANCH: usize = 192;
 const MAX_PENDING: usize = 512;
 const MAX_MEMPOOL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROPOSAL_BYTES: u64 = 16 * 1024 * 1024;
+const RELAY_RETRIES_PER_TICK: usize = 8;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1250,7 +1251,37 @@ impl Replica {
                 }
             }
         }
+        self.retry_relays();
         Ok(())
+    }
+
+    fn relay_leaders(&self) -> [Option<u16>; 2] {
+        [Some(self.view), self.view.checked_add(1)].map(|view| {
+            let member = self.committee.leader(view?).ok()?;
+            self.routes[usize::from(member)]
+        })
+    }
+
+    fn retry_relays(&mut self) {
+        let now = Instant::now();
+        let [current, next] = self.relay_leaders();
+        let epoch = self.committee.epoch();
+        for _ in 0..RELAY_RETRIES_PER_TICK {
+            let Some((tx, cursor)) = self.mempool.retry(now, epoch, self.routes.len()) else {
+                break;
+            };
+            let alternate = self.routes[cursor];
+            let routes = if cursor == 0 {
+                // Start with the current view after allowing an initial
+                // proposal to finalize. Later retries step through members.
+                [current, next, alternate]
+            } else {
+                [alternate, None, None]
+            };
+            self.net.relay(&routes, tx.as_slice());
+            self.admission.relay_retry_attempts =
+                self.admission.relay_retry_attempts.saturating_add(1);
+        }
     }
 
     fn handle(&mut self, event: Incoming) -> Result<()> {
@@ -1350,7 +1381,7 @@ impl Replica {
         Ok(())
     }
 
-    fn insert_tx(&mut self, raw: &[u8], client: bool) -> Result<(Hash32, bool)> {
+    fn insert_tx(&mut self, raw: &[u8], client: bool) -> Result<Hash32> {
         let requests = if client {
             &mut self.admission.client_requests
         } else {
@@ -1359,7 +1390,7 @@ impl Replica {
         *requests = requests.saturating_add(1);
         let id = ckb_hash::blake2b_256(raw);
         if self.mempool.contains(&id) {
-            return Ok((id, false));
+            return Ok(id);
         }
         ensure!(
             raw.len() <= stem_ledger::MAX_TRANSACTION_BYTES
@@ -1376,7 +1407,7 @@ impl Replica {
             .saturating_add(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX));
         checked?;
         self.mempool.insert(id, tx)?;
-        Ok((id, true))
+        Ok(id)
     }
 
     fn client(&mut self, kind: u32, body: Vec<u8>) -> Result<serde_json::Value> {
@@ -1404,9 +1435,12 @@ impl Replica {
                 "admission": self.admission,
             })),
             wire::SUBMIT => {
-                let (id, inserted) = self.insert_tx(&body, true)?;
-                if inserted {
-                    self.net.broadcast(wire::RELAY_TX, body);
+                let id = self.insert_tx(&body, true)?;
+                if self
+                    .mempool
+                    .track_local(id, Instant::now(), self.committee.epoch())
+                {
+                    self.net.relay(&self.relay_leaders(), &body);
                 }
                 Ok(json!({"admitted": hex::encode(id)}))
             }
