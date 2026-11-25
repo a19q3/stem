@@ -1715,3 +1715,42 @@ lifecycle begins with an original CKB Spore.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-spore-settlement) ·
 [Raw runs, signed rejections and fingerprints](benchmarks/2026-11-26-stem-spore-settlement.json.xz).
+
+## Native compound object settlement over CKB
+
+Revision `df181fd` tested a Stem-issued object with two actual Type
+Groups on four Jolteon replicas and CKB 0.210.0. The original spent
+into escrow with its identity, separate approval Type Script, immutable
+data and 200 CKB capacity. A finalized export drove the CKB issuance
+of one mapped object. The new owner burned the mapping after a CKB
+transfer. The confirmed burn allowed Stem to restore the original
+under the requested recipient with its two Type Scripts and contents
+intact. The Stem escrow bond remained 120 CKB. The final replicas
+agreed at height 27.
+
+| Operation in the final run | Signed bytes | Cycles |
+| --- | ---: | ---: |
+| Stem native issue with independent approval | 1,215 | 3,897,492 Stem receipt |
+| Stem export with independent approval | 1,708 | 3,991,191 Stem receipt |
+| CKB mapped issue | 2,179 | 4,250,919 CKB estimate |
+| CKB transfer with two independent Locks | 886 | 3,281,177 CKB estimate |
+| CKB mapped burn | 1,523 | 3,408,568 CKB estimate |
+| Stem restoration | 2,555 | 14,063,850 Stem receipt |
+
+The final fixture rejected 15 invalid transitions, including a forged
+native identity, removal of the independent policy, missing approval
+on both chains, changed recipient or content, messages addressed
+to reserved custody Locks, and replay after the CKB representation
+had already been burned. All three object runs are archived.
+The first used a 250 CKB mapped output. CKB rejected it because this
+fixture's occupied capacity was 256 CKB. The two successful rounds
+used 360 CKB.
+
+CKB/xUDT payout and generic Intercell regressions passed. Rebuilt
+native UDT and CKB Spore routes passed the same remote-custody
+recipient rejection checks in both directions, alongside their
+normal settlement paths. The Rust workspace passed 448 tests with 12
+ignored. The Go proof suite passed.
+
+[Reproduction](OPERATIONS.md#exercise-stem-native-object-settlement) ·
+[Full runs, signed rejections, and build fingerprints](benchmarks/2026-11-26-stem-object-settlement.json.xz).
