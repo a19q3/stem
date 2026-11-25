@@ -10,6 +10,10 @@ pub fn native_lock(workspace: &Path) -> Result<Bytes> {
 }
 
 pub fn native_contract(workspace: &Path, name: &str) -> Result<Bytes> {
+    // Comparison fixtures can share the exact RISC-V bytes across checkouts.
+    if let Some(directory) = std::env::var_os("STEM_TEST_CONTRACT_DIR") {
+        return Ok(Bytes::from(fs::read(Path::new(&directory).join(name))?));
+    }
     static BUILD: OnceLock<Result<(), String>> = OnceLock::new();
     let target = workspace
         .join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()))
