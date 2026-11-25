@@ -9,7 +9,9 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use ckb_crypto::secp::Privkey;
 use ckb_hash::{blake2b_256, new_blake2b};
-use ckb_jsonrpc_types::{JsonBytes, Transaction as JsonTransaction};
+use ckb_jsonrpc_types::{
+    HeaderView, JsonBytes, Transaction as JsonTransaction, TransactionAndWitnessProof,
+};
 use ckb_types::{
     bytes::Bytes,
     core::TransactionView,
@@ -20,7 +22,7 @@ use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::bridge_cli::{print_json, read_json_limited, read_key};
+use crate::bridge_cli::{parse_hash, print_json, read_json_limited, read_key};
 
 #[derive(Subcommand)]
 pub enum CkbWallet {
@@ -38,6 +40,28 @@ pub enum CkbWallet {
         #[arg(long)]
         groups: PathBuf,
     },
+    /// Verify a historical CKB output against a trusted block hash.
+    VerifyInclusion {
+        /// File containing a JSON hex packed CKB transaction.
+        #[arg(long)]
+        transaction: PathBuf,
+        /// File with the CKB RPC header and transaction-and-witness proof.
+        #[arg(long)]
+        proof: PathBuf,
+        #[arg(long, value_parser = parse_hash)]
+        block_hash: ckb_types::H256,
+        #[arg(long, value_parser = parse_hash)]
+        tx_hash: ckb_types::H256,
+        #[arg(long)]
+        output_index: u32,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Inclusion {
+    header: HeaderView,
+    proof: TransactionAndWitnessProof,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +102,33 @@ impl CkbWallet {
                     "hash": format!("{:#x}", signed.hash()),
                     "json": JsonTransaction::from(packed.clone()),
                     "molecule": JsonBytes::from_bytes(packed.as_bytes()),
+                }))
+            }
+            Self::VerifyInclusion {
+                transaction,
+                proof,
+                block_hash,
+                tx_hash,
+                output_index,
+            } => {
+                let bytes: JsonBytes = read_json_limited(&transaction, 8 * 1024 * 1024)?;
+                let tx = packed::Transaction::from_slice(bytes.as_bytes())?.into_view();
+                let Inclusion { header, proof } = read_json_limited(&proof, 16 * 1024)?;
+                let header: ckb_types::core::HeaderView = header.into();
+                let point = packed::OutPoint::new(tx_hash.into(), output_index);
+                let (output, data) = stem::l1_proof::verify_output(
+                    &(&block_hash).into(),
+                    &header,
+                    &point,
+                    &tx,
+                    &proof,
+                )?;
+                print_json(&json!({
+                    "block_number": ckb_jsonrpc_types::BlockNumber::from(header.number()),
+                    "block_hash": block_hash,
+                    "out_point": ckb_jsonrpc_types::OutPoint::from(point),
+                    "output": ckb_jsonrpc_types::CellOutput::from(output),
+                    "data": JsonBytes::from_bytes(data),
                 }))
             }
         }

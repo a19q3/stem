@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use ckb_types::bytes::Bytes;
 
 use crate::{
+    protocol::compact64,
     telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
@@ -78,11 +79,10 @@ impl BridgeBacking {
     }
 
     pub fn encode(&self) -> Bytes {
-        let field = |value: u64| wire::CompactUint64::new_builder().set(value.into()).build();
         wire::BridgeBacking::new_builder()
-            .liquid(field(self.liquid))
-            .circulating(field(self.circulating))
-            .pending(field(self.pending))
+            .liquid(compact64(self.liquid))
+            .circulating(compact64(self.circulating))
+            .pending(compact64(self.pending))
             .build()
             .as_bytes()
     }

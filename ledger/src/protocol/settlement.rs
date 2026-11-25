@@ -1,9 +1,20 @@
 use anyhow::{Context, Result, ensure};
-use ckb_types::packed::{Byte32, OutPoint};
+use ckb_types::{
+    bytes::Bytes,
+    packed::{Byte32, OutPoint},
+    prelude::Entity,
+};
 use stem_stake::Authority;
 
-use super::{BlockBudget, L1Anchor, Operation, SettlementAction, VaultUpdate, verify_settlement};
-use crate::Transaction;
+use super::{
+    BlockBudget, L1Anchor, Operation, SettlementAction, VaultUpdate, compact64, out_point,
+    verify_settlement,
+};
+use crate::{
+    Transaction,
+    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    wire,
+};
 
 /// Counters derived from the authenticated L1 vault and pending receipts.
 /// The vault Capacity is liquid Capacity, excluding its L1 storage collateral.
@@ -15,6 +26,46 @@ pub struct Lane {
     pub units: u128,
     pub reserved_capacity: u64,
     pub reserved_units: u128,
+}
+
+impl Lane {
+    /// `next_request` is the next nonce to allocate, while `next_nonce` is
+    /// the oldest request eligible for settlement.
+    pub fn encode(&self, next_request: u64) -> Bytes {
+        let units = |value: u128| {
+            wire::Uint128::new_unchecked(Bytes::copy_from_slice(&value.to_le_bytes()))
+        };
+        wire::BridgeLane::new_builder()
+            .vault(out_point(&self.vault))
+            .next_nonce(compact64(self.next_nonce))
+            .next_request(compact64(next_request))
+            .capacity(compact64(self.capacity))
+            .reserved_capacity(compact64(self.reserved_capacity))
+            .units(units(self.units))
+            .reserved_units(units(self.reserved_units))
+            .build()
+            .as_bytes()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<(Self, u64)> {
+        let data = wire::BridgeLane::from_slice(bytes)?;
+        let lane = Self {
+            vault: OutPoint::new_unchecked(data.vault().as_bytes()),
+            next_nonce: data.next_nonce().as_reader().value().try_into()?,
+            capacity: data.capacity().as_reader().value().try_into()?,
+            reserved_capacity: data.reserved_capacity().as_reader().value().try_into()?,
+            units: u128::from_le_bytes(data.units().as_slice().try_into()?),
+            reserved_units: u128::from_le_bytes(data.reserved_units().as_slice().try_into()?),
+        };
+        let next_request = data.next_request().as_reader().value().try_into()?;
+        ensure_liquid(&lane)?;
+        ensure!(
+            lane.next_nonce <= next_request
+                && (lane.next_nonce == next_request) == (lane.reserved_capacity == 0),
+            "bridge nonce and pending capacity disagree"
+        );
+        Ok((lane, next_request))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

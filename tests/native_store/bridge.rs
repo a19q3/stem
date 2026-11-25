@@ -294,6 +294,24 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
         (MINT, MINT - FEE)
     );
     assert_eq!((quote.units, quote.reserved_units), (100, 100));
+    let (lane_record, proof) = store.prove_bridge_lane(&asset_lane)?;
+    assert_eq!(lane_record, (quote, 1));
+    assert!(Store::verify_bridge_lane(
+        store.network(),
+        store.tip(),
+        &asset_lane,
+        &lane_record,
+        &proof,
+    ));
+    assert!(!Store::verify_bridge_lane(
+        store.network(),
+        store.tip(),
+        &ckb_lane,
+        &lane_record,
+        &proof,
+    ));
+    let (lane, _) = lane_record;
+    assert!(stem_ledger::protocol::Lane::decode(&lane.encode(0)).is_err());
     let paid = BridgeSettlement {
         l1_genesis: genesis,
         authority,
@@ -338,6 +356,15 @@ fn bridge_mint_burn_and_payout_commit_backing_and_replay_state() -> Result<()> {
     let mut restored = Store::open(restore_path.path(), &fixture.spec, Retention::Recent(2))?;
     restored.install_state(snapshot, &trusted)?;
     assert_eq!(restored.bridge_lane(&asset_lane)?, quote);
+    let (record, proof) = restored.prove_bridge_lane(&asset_lane)?;
+    assert_eq!(record, (quote, 1));
+    assert!(Store::verify_bridge_lane(
+        restored.network(),
+        restored.tip(),
+        &asset_lane,
+        &record,
+        &proof,
+    ));
     assert!(restored.bridge_receipt(&asset_lane, 0)?.is_none());
     assert_eq!(restored.fee_surplus()?, FEE);
     let (restored_backing, proof) = restored.prove_bridge_backing()?;

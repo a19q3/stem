@@ -215,7 +215,7 @@ impl Bridge {
                 reserved_capacity: 0,
                 reserved_units: 0,
             };
-            records.insert(key(LANE, &name, None), Some(encode_lane(&lane, 0)));
+            records.insert(key(LANE, &name, None), Some(lane.encode(0).to_vec()));
         }
 
         config.extend_from_slice(&u32::try_from(spec.recipient_locks.len())?.to_le_bytes());
@@ -344,7 +344,7 @@ impl Bridge {
             .insert(BACKING.to_vec(), Some(backing.encode().to_vec()));
         changes.records.insert(
             key(LANE, &observation.vault.lane, None),
-            Some(encode_lane(&lane, next_request)),
+            Some(lane.encode(next_request).to_vec()),
         );
         changes
             .records
@@ -443,7 +443,7 @@ impl Bridge {
 
             let name = key(LANE, &lane_id, None);
             let (mut lane, nonce) = match changes.records.get(&name).and_then(Option::as_ref) {
-                Some(encoded) => decode_lane(encoded)?,
+                Some(encoded) => Lane::decode(encoded)?,
                 None => View {
                     store,
                     staged: &state.records,
@@ -488,7 +488,9 @@ impl Bridge {
                 "withdrawal nonce already pending"
             );
             changes.records.insert(pending_key, Some(pending));
-            changes.records.insert(name, Some(encode_lane(&lane, next)));
+            changes
+                .records
+                .insert(name, Some(lane.encode(next).to_vec()));
             changes.omit_outputs.insert(index);
             withdrawal_capacity = withdrawal_capacity
                 .checked_add(cell.capacity())
@@ -537,9 +539,10 @@ impl Bridge {
         };
         for (id, lane) in &settlement.lanes {
             let (_, next_request) = view.lane_state(id)?;
-            changes
-                .records
-                .insert(key(LANE, id, None), Some(encode_lane(lane, next_request)));
+            changes.records.insert(
+                key(LANE, id, None),
+                Some(lane.encode(next_request).to_vec()),
+            );
         }
         if let Some((lane, nonce)) = settlement.paid {
             let paid = view.pending(&lane, nonce)?;
@@ -597,12 +600,35 @@ impl Store {
     }
 
     pub fn bridge_lane(&self, lane: &Byte32) -> Result<Lane> {
-        Ok(decode_lane(
+        Ok(Lane::decode(
             &self
                 .system_record(&key(LANE, lane, None))?
                 .context("unknown bridge lane")?,
         )?
         .0)
+    }
+
+    pub fn prove_bridge_lane(&self, id: &Byte32) -> Result<((Lane, u64), super::Proof)> {
+        let (record, proof) = self.prove_system(&key(LANE, id, None))?;
+        let record = record.context("unknown bridge lane")?;
+        Ok((Lane::decode(&record)?, proof))
+    }
+
+    pub fn verify_bridge_lane(
+        network: &Byte32,
+        header: &super::Header,
+        id: &Byte32,
+        record: &(Lane, u64),
+        proof: &super::Proof,
+    ) -> bool {
+        let (lane, next_request) = record;
+        Self::verify_system_record(
+            network,
+            header,
+            &key(LANE, id, None),
+            Some(&lane.encode(*next_request)),
+            proof,
+        )
     }
 
     pub fn bridge_receipt(&self, lane: &Byte32, nonce: u64) -> Result<Option<Vec<u8>>> {
@@ -637,7 +663,7 @@ impl View<'_> {
     }
 
     fn lane_state(&self, lane: &Byte32) -> Result<(Lane, u64)> {
-        decode_lane(
+        Lane::decode(
             &self
                 .read(&key(LANE, lane, None))?
                 .context("missing vault lane")?,
@@ -709,30 +735,4 @@ fn decode_units(data: &[u8]) -> Result<u128> {
     );
     ensure!(units != 0, "wrapped asset amount must be positive");
     Ok(units)
-}
-
-fn encode_lane(lane: &Lane, next_request: u64) -> Vec<u8> {
-    let mut bytes = lane.vault.as_slice().to_vec();
-    bytes.extend_from_slice(&lane.next_nonce.to_le_bytes());
-    bytes.extend_from_slice(&lane.capacity.to_le_bytes());
-    bytes.extend_from_slice(&lane.units.to_le_bytes());
-    bytes.extend_from_slice(&lane.reserved_capacity.to_le_bytes());
-    bytes.extend_from_slice(&lane.reserved_units.to_le_bytes());
-    bytes.extend_from_slice(&next_request.to_le_bytes());
-    bytes
-}
-
-fn decode_lane(bytes: &[u8]) -> Result<(Lane, u64)> {
-    ensure!(bytes.len() == 100, "invalid bridge lane encoding");
-    Ok((
-        Lane {
-            vault: OutPoint::from_slice(&bytes[..36])?,
-            next_nonce: u64::from_le_bytes(bytes[36..44].try_into()?),
-            capacity: u64::from_le_bytes(bytes[44..52].try_into()?),
-            units: u128::from_le_bytes(bytes[52..68].try_into()?),
-            reserved_capacity: u64::from_le_bytes(bytes[68..76].try_into()?),
-            reserved_units: u128::from_le_bytes(bytes[76..92].try_into()?),
-        },
-        u64::from_le_bytes(bytes[92..100].try_into()?),
-    ))
 }

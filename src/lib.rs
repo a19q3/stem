@@ -1,3 +1,4 @@
+pub mod l1_proof;
 #[cfg(unix)]
 pub mod native_abci;
 #[cfg(unix)]

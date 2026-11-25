@@ -739,6 +739,19 @@
         { "name": "circulating", "type": "CompactUint64" },
         { "name": "pending", "type": "CompactUint64" }
       ]
+    },
+    {
+      "name": "BridgeLane",
+      "kind": "sequence",
+      "fields": [
+        { "name": "vault", "type": "OutPoint" },
+        { "name": "next_nonce", "type": "CompactUint64" },
+        { "name": "next_request", "type": "CompactUint64" },
+        { "name": "capacity", "type": "CompactUint64" },
+        { "name": "reserved_capacity", "type": "CompactUint64" },
+        { "name": "units", "type": "Uint128" },
+        { "name": "reserved_units", "type": "Uint128" }
+      ]
     }
   ]
 }

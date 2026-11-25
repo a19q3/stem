@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use bytes::Bytes;
-use ckb_types::prelude::Entity;
+use ckb_types::{packed::Byte32, prelude::Entity};
 use serde::Deserialize;
 use tendermint_proto::{
     google::protobuf::Timestamp,
@@ -315,6 +315,19 @@ impl App {
                     "circulating_shannons": ckb_jsonrpc_types::Uint64::from(backing.circulating()),
                     "pending_shannons": ckb_jsonrpc_types::Uint64::from(backing.pending()),
                     "unallocated_shannons": ckb_jsonrpc_types::Uint64::from(backing.unallocated()),
+                }))?
+                .into()
+            }
+            "/stem/bridge-lane" if request.prove => {
+                ensure!(
+                    requested == tip,
+                    "bridge lane proof requires the current height"
+                );
+                let id = Byte32::from_slice(&request.data)?;
+                let ((lane, next_request), proof) = store.prove_bridge_lane(&id)?;
+                serde_json::to_vec(&serde_json::json!({
+                    "record": format!("0x{}", hex::encode(lane.encode(next_request))),
+                    "proof": format!("0x{}", hex::encode(proof.encode()?)),
                 }))?
                 .into()
             }

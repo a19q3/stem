@@ -511,6 +511,56 @@ def reconcile_backing(comet_rpc, report):
     return {"height": response["height"], **backing}
 
 
+def lane_proof(comet_rpc, lane):
+    response = comet_rpc.call("abci_query", path=json.dumps("/stem/bridge-lane"),
+                              data=lane, prove="true")["response"]
+    if response["code"] != 0:
+        raise AssertionError(response)
+    result = json.loads(base64.b64decode(response["value"]))
+    if any(not binary(result[key]) for key in ("record", "proof")):
+        raise AssertionError(result)
+    return {"height": response["height"], **result}
+
+
+def verify_l1_output(args, l1, payout, vault_spent):
+    txid = payout["l1_payout"]
+    bundle = payout["l1_payout_proof"]
+    packed = l1.call("get_transaction", txid, "0x0", True)["transaction"]
+    transaction_path = args.output / "ckb-payout-packed.json"
+    proof_path = args.output / "ckb-payout-inclusion.json"
+    write_json(transaction_path, packed)
+    write_json(proof_path, bundle)
+    verify = [
+        args.binary, "ckb-wallet", "verify-inclusion",
+        "--block-hash", bundle["header"]["hash"], "--tx-hash", txid,
+    ]
+    command = [*verify, "--transaction", transaction_path]
+    result = json.loads(run(*command, "--proof", proof_path, "--output-index", "0"))
+    if int(result["output"]["capacity"], 16) != payout["capacity"]:
+        raise AssertionError("authenticated CKB output differs from the payout receipt")
+    altered = json.loads(json.dumps(bundle))
+    indices = altered["proof"]["witnesses_proof"]["indices"]
+    indices[0] = hex(int(indices[0], 16) ^ 1)
+    altered_path = args.output / "ckb-payout-inclusion-altered.json"
+    write_json(altered_path, altered)
+    reject_cli("matching transaction and witness position", *command,
+               "--proof", altered_path, "--output-index", "0")
+    changed_witness = bytearray(binary(packed))
+    changed_witness[-1] ^= 1
+    changed_path = args.output / "ckb-payout-witness-altered.json"
+    write_json(changed_path, hex_bytes(changed_witness))
+    reject_cli("does not match the Header", *verify, "--transaction", changed_path, "--proof", proof_path,
+               "--output-index", "0")
+    evidence = {"payout": result}
+    if vault_spent:
+        old_vault = json.loads(run(*command, "--proof", proof_path, "--output-index", "1"))
+        status = l1.call("get_live_cell", old_vault["out_point"], True)["status"]
+        if status == "live":
+            raise AssertionError("reserve transfer did not consume the old CKB vault")
+        evidence.update(historical_vault=old_vault, historical_vault_current_status=status)
+    return evidence
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("binary", "l1", "comet", "vault", "deposit-lock", "native-lock", "wrapped", "proof-verifier", "output"):
@@ -548,6 +598,11 @@ def main():
                                                              report["xudt"], spec_path, comet_rpc)
             print(f"CKB xUDT payout {report['xudt']['withdrawal']['l1_payout']} for {report['xudt']['units']} units")
         report["backing"] = reconcile_backing(comet_rpc, report)
+        report["authenticated_ckb_outputs"] = verify_l1_output(args, l1, payout, token is not None)
+        report["lane_proofs"] = {lane: lane_proof(comet_rpc, lane)}
+        if token:
+            asset_lane = report["xudt"]["lane"]
+            report["lane_proofs"][asset_lane] = lane_proof(comet_rpc, asset_lane)
         write_json(args.output / "native-bridge-report.json", report)
         print(f"CKB payout {payout['l1_payout']} for {payout['capacity']} shannons, native settlement height {payout['settlement']['height']}")
         print(f"CKB consolidation {result['l1_consolidation']}, native Stem mint {result['mint_id']}, height {result['mint']['height']}")

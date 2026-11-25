@@ -555,6 +555,10 @@ fn uint64(value: u64) -> wire::Uint64 {
     wire::Uint64::new_unchecked(Bytes::copy_from_slice(&value.to_le_bytes()))
 }
 
+fn compact64(value: u64) -> wire::CompactUint64 {
+    wire::CompactUint64::new_builder().set(value.into()).build()
+}
+
 fn number(value: wire::Uint64) -> u64 {
     u64::from_le_bytes(value.as_slice().try_into().expect("Uint64"))
 }
