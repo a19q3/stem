@@ -2593,3 +2593,40 @@ comparison check passed.
 
 [Reproduction and trust assumptions](OPERATIONS.md#verify-security-domain-capital-and-income) ·
 [All runs, public evidence, commands and fingerprints](benchmarks/2026-11-26-stem-security-domain-audit.json.xz).
+
+## Authenticated per-vault fee attribution
+
+Revision `f4c8c49` was tested on CKB 0.210.0 devnet with four native
+Jolteon replicas on one i9-13900H. The final CKB/xUDT round committed
+two fee-paying burns totaling 2,000,000 shannons. The first burn
+used a parent with native-only reserves. Before the second burn,
+recognized reserves were 4,599,201,000,000 shannons in the native
+lane and 120,000,000,000 in the xUDT lane.
+
+| Final round | Vault allocations | Real CKB movements verified |
+| --- | --- | --- |
+| CKB and xUDT | 1,974,571 shannons native and 25,429 xUDT-lane shannons | Both withdrawals, 500,000-shannon reserve transfer, custody rotation |
+| Four ordinary fund payouts | 800 CKB gross to the native lane | 800 CKB paid from that lane |
+| PoW checkpoint expense fixture | 4,000 CKB gross to the native lane | 4,000 CKB fund payments, including two PoW funding outputs and checkpoint fee spends |
+
+The allocation record remained identical through reserve transfer and
+custody rotation, and across each fund payout sequence. The two
+Patricia paths and Strand record in the final dual-vault round were
+481, 583 and 74 bytes, respectively, before JSON encoding. All eight
+queried Headers in the three final rounds were independently verified
+using `stem jolteon-proof`. The verifier rejected a substituted
+network or global tally. The Rust test also rejected a redistribution
+that kept the total unchanged, checked serial and parallel first
+mint plus same-block payment, and verified the record after state
+snapshot restoration.
+
+The initial and final rounds and an initial fixture compilation failure
+are preserved. The release workspace passed 458 tests with 14 ignored.
+Go proof tests and the frozen CometBFT feature check passed. Separate
+Intercell and CKB stake reward devnet regressions passed. These runs
+measure records and two fixed lane configurations. Large lane
+catalogues and their effect on sustained fee-paying throughput remain
+unmeasured.
+
+[Verification workflow](OPERATIONS.md#verify-per-vault-revenue) ·
+[Raw rounds, finality proofs, failures and build fingerprints](benchmarks/2026-11-26-stem-vault-revenue.json.xz).
