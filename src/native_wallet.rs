@@ -110,7 +110,11 @@ struct Draft {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum KeeperRequest {
     Schedule(JsonBytes),
-    Cancel { height: u64, fee_input: OutPoint },
+    Cancel {
+        height: Option<u64>,
+        timestamp_ms: Option<u64>,
+        fee_input: OutPoint,
+    },
 }
 
 #[derive(Deserialize)]
@@ -259,9 +263,19 @@ impl Wallet {
                             let command = stem_ledger::keeper::decode_command(bytes.as_bytes())?;
                             stem_ledger::keeper::Action::schedule(&command)?
                         }
-                        KeeperRequest::Cancel { height, fee_input } => {
+                        KeeperRequest::Cancel {
+                            height,
+                            timestamp_ms,
+                            fee_input,
+                        } => {
+                            use stem_ledger::keeper::Trigger;
+                            let trigger = match (height, timestamp_ms) {
+                                (Some(height), None) => Trigger::Height(height),
+                                (None, Some(timestamp)) => Trigger::Time(timestamp),
+                                _ => anyhow::bail!("choose a single Keeper trigger"),
+                            };
                             stem_ledger::keeper::Action::Cancel {
-                                height,
+                                trigger,
                                 fee_input: fee_input.into(),
                             }
                         }

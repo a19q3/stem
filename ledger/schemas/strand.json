@@ -491,6 +491,39 @@
       "item": "LineageCommand"
     },
     {
+      "name": "KeeperTriggerKind",
+      "kind": "fixed",
+      "size": 1,
+      "allowed_values": [0, 1]
+    },
+    {
+      "name": "KeeperTrigger",
+      "kind": "struct",
+      "fields": [
+        { "name": "kind", "type": "KeeperTriggerKind" },
+        { "name": "value", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "KeeperTriggerOpt",
+      "kind": "optional",
+      "item": "KeeperTrigger"
+    },
+    {
+      "name": "KeeperTimedEntry",
+      "kind": "struct",
+      "fields": [
+        { "name": "timestamp_ms", "type": "Uint64" },
+        { "name": "valid_before_height", "type": "Uint64" },
+        { "name": "fee_input", "type": "OutPoint" }
+      ]
+    },
+    {
+      "name": "KeeperTimedAgenda",
+      "kind": "dense_vector",
+      "item": "KeeperTimedEntry"
+    },
+    {
       "name": "KeeperActionKind",
       "kind": "fixed",
       "size": 1,
@@ -569,8 +602,8 @@
           "bit": 4
         },
         {
-          "name": "execute_at",
-          "type": "Uint64Opt",
+          "name": "keeper_trigger",
+          "type": "KeeperTriggerOpt",
           "bit": 5
         },
         {

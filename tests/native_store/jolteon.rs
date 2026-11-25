@@ -11,6 +11,7 @@ use stem::jolteon::{Client, verify_finality};
 use stem_ledger::{
     Transaction,
     block::{Header, Receipt},
+    keeper::decode_agenda,
     lineage::{Head, Outcome},
     patricia::Proof,
     proof::InclusionProof,
@@ -106,6 +107,10 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     let lineage = FixtureLineage::fund(&mut fixture)?;
     let dynamic = DynamicLineage::fund_using(&mut fixture, &lineage, 5, 2, None)?;
     keeper::fund_carriers(&mut fixture, 2)?;
+    fixture.spec.keeper.as_mut().unwrap().time = Some(stem::native_store::KeeperTimePolicy {
+        per_height: 2,
+        max_delay_ms: 60_000,
+    });
     let spec = output.join("genesis.json");
     write_spec(&spec, &fixture.spec)?;
     let verifier_dir = tempfile::tempdir()?;
@@ -225,14 +230,96 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         &scheduled,
         Some(Outcome::Applied),
     )?;
+    let before = clients[0].status()?.height;
+    let target = clients[0].header(before)?.context.timestamp_ms + 4_000;
+    let timed = dynamic.timed(&fixture, 4, (3, 3), 5, target, before + 55)?;
+    submit(
+        "Keeper time reservation",
+        &keeper::schedule(&fixture, 1, &timed)?,
+        None,
+    )?;
+    let point = dynamic.fee_points[4].as_slice();
+    let query = clients[0].query("/stem/keeper-time", 0, &[], true)?;
+    let agenda: Value = serde_json::from_slice(&query.value)?;
+    let record = bytes(&agenda, "record")?;
+    let entries = decode_agenda(&record)?;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].timestamp_ms, target);
+    assert_eq!(entries[0].fee_input.as_slice(), point);
+    assert!(Store::verify_keeper_agenda(
+        network,
+        &clients[0].header(query.height)?,
+        Some(&record),
+        &Proof::decode(&bytes(&agenda, "proof")?)?
+    ));
+    let query = clients[0].query("/stem/keeper-time", 0, point, true)?;
+    let pending: Value = serde_json::from_slice(&query.value)?;
+    assert_eq!(bytes(&pending, "record")?, timed.as_slice());
+    assert!(Store::verify_keeper_timed_command(
+        network,
+        &clients[0].header(query.height)?,
+        &dynamic.fee_points[4],
+        Some(timed.as_slice()),
+        &Proof::decode(&bytes(&pending, "proof")?)?
+    ));
+
+    let restart = std::time::Instant::now();
+    drop(replicas.pop().context("missing replica")?);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_stem"));
+    command
+        .args(["run", "--home"])
+        .arg(output.join("node-3"))
+        .arg("--configuration")
+        .arg(&configuration)
+        .arg("--genesis")
+        .arg(&spec)
+        .arg("--key-file")
+        .arg(output.join("validator-3.key"));
+    replicas.push(Process::spawn(
+        &mut command,
+        &output.join("node-3-restart.log"),
+    )?);
+
+    let mut next = before + 2;
+    let timed_height = poll("time-triggered Keeper execution", WAIT, || {
+        while next <= clients[0].status()?.height {
+            let candidate = next;
+            next += 1;
+            if clients[0].header(candidate - 1)?.context.timestamp_ms >= target {
+                return Ok(Some(candidate));
+            }
+        }
+        Ok(None)
+    })?;
+    let timestamp = clients[0].header(timed_height - 1)?.context.timestamp_ms;
+    assert!(clients[0].header(timed_height - 2)?.context.timestamp_ms < target);
+    let timed_wake = prove_execution(
+        &clients,
+        &verifier,
+        timed_height,
+        0,
+        &timed,
+        Some(Outcome::Applied),
+    )?;
+    let restart_to_visibility_ms = restart.elapsed().as_millis();
+    let query = clients[0].query("/stem/keeper-time", 0, point, true)?;
+    let consumed: Value = serde_json::from_slice(&query.value)?;
+    assert!(consumed["record"].is_null());
+    assert!(Store::verify_keeper_timed_command(
+        network,
+        &clients[0].header(query.height)?,
+        &dynamic.fee_points[4],
+        None,
+        &Proof::decode(&bytes(&consumed, "proof")?)?
+    ));
     let heads = clients
         .iter()
         .map(|client| -> Result<Value> {
             let query = client.query("/stem/lineage", 0, dynamic.ids[0].as_slice(), true)?;
             let payload: Value = serde_json::from_slice(&query.value)?;
             let head = Head::decode(&bytes(&payload, "record")?)?;
-            assert_eq!(head.version, 3);
-            assert_eq!(head.out_point, OutPoint::new(scheduled.id(network), 1));
+            assert_eq!(head.version, 4);
+            assert_eq!(head.out_point, OutPoint::new(timed.id(network), 1));
             assert!(Store::verify_lineage(
                 network,
                 &client.header(query.height)?,
@@ -248,10 +335,13 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         serde_json::to_vec_pretty(&json!({
             "rejected_policy_removal": invalid, "executions": executions,
             "keeper_wake_height": due, "keeper_wake": wake, "heads": heads,
+            "timed": {"requested_ms": target, "parent_ms": timestamp, "height": timed_height,
+                "pending": pending, "agenda": agenda, "consumed": consumed,
+                "proof": timed_wake, "restart_to_visibility_ms": restart_to_visibility_ms},
         }))?,
     )?;
     println!(
-        "four default native replicas verified Polytype, sponsored OTX, atomic Lineage and Keeper at height {due}"
+        "four native replicas verified Polytype, sponsored OTX, atomic Lineage and Keeper at heights {due} and {timed_height}"
     );
     Ok(())
 }

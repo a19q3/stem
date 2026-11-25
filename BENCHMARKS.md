@@ -1798,3 +1798,45 @@ proof suite passed.
 
 [Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
 [All runs, signed transactions and build fingerprints](benchmarks/2026-11-26-stem-checkpoint-publisher.json.xz).
+
+## Consensus-time Keeper
+
+Two four-process Jolteon runs executed an exact-height reservation at
+height 32 and a timed reservation at height 53 with real RISC-V
+Lineage authorization. The second run authenticated the pending agenda
+and command body, restarted one validator while the command waited,
+then verified the same execution and receipt proofs on all four
+replicas. The parent Header crossed the requested timestamp by 15 ms,
+and all replicas could serve the receipt 3.857 seconds after the
+restart began. That interval includes time spent waiting for the signed
+trigger. It does not isolate restart catch-up latency.
+
+The storage fixture held the same target and genesis policy constant.
+It alternated an empty agenda and a full sleeping agenda across 31
+blocks in each condition. The funded agenda occupied 1,668 bytes for
+32 entries and rejected a 33rd reservation. It then crossed the
+timestamp in a proposal and drained the state over eight blocks of four
+successful commands. The threshold-crossing proposal itself executed
+none of the commands. Times below come from the final single-process
+local run.
+
+| Agenda condition | Blocks | Prepare p50 / p95 / p99 | Sync commit p50 / p95 / p99 |
+| --- | ---: | ---: | ---: |
+| Empty | 31 | 7.4 / 13.3 / 15.8 µs | 0.518 / 0.577 / 1.516 ms |
+| 32 sleeping | 31 | 14.8 / 24.6 / 24.6 µs | 0.503 / 0.615 / 0.658 ms |
+| Four applied per block | 8 | 2.496 / 2.647 / 2.647 ms | 0.649 / 0.716 / 0.716 ms |
+
+Each active block charged 15,481,672 cycles for the four attempts.
+The initial benchmark configuration reserved all eight transaction slots
+and was rejected at genesis. The measured run reserved two exact-height
+slots and four timed slots, leaving capacity for submitted transactions.
+The raw archive retains the rejected setup and both measured runs.
+These measurements cover local block preparation and synchronous writes.
+
+The workspace passed 449 tests with 13 ignored. The four-replica fixture
+and storage benchmark ran separately. The Go proof suite and the frozen
+CometBFT feature check passed. The CKB devnet round exercised
+bidirectional Intercell with the current native transaction schema.
+
+[Reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
+[Raw timings, proofs and the rejected configuration](benchmarks/2026-11-26-stem-keeper-time.json.xz).

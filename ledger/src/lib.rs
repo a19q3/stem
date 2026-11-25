@@ -299,7 +299,7 @@ pub struct Transaction {
     encoded: wire::Transaction,
     lineage_command: Option<Arc<lineage::Command>>,
     lineage_intent: Option<Arc<lineage::Intent>>,
-    execute_at: Option<u64>,
+    keeper_trigger: Option<keeper::Trigger>,
     keeper: Option<keeper::Action>,
 }
 
@@ -479,10 +479,11 @@ impl Transaction {
             .map(lineage::Command::decode)
             .transpose()?
             .map(Arc::new);
-        let execute_at = raw
-            .execute_at()
+        let keeper_trigger = raw
+            .keeper_trigger()
             .to_opt()
-            .map(|height| u64::from_le_bytes(height.as_slice().try_into().expect("Uint64")));
+            .map(|trigger| keeper::Trigger::decode(trigger.as_slice()))
+            .transpose()?;
         let keeper = raw
             .keeper()
             .to_opt()
@@ -498,17 +499,19 @@ impl Transaction {
             encoded,
             lineage_command,
             lineage_intent,
-            execute_at,
+            keeper_trigger,
             keeper,
         };
-        if let Some(height) = tx.execute_at {
+        if let Some(trigger) = tx.keeper_trigger {
             ensure!(
                 tx.has_lineage_command()
-                    && height != 0
-                    && tx
-                        .valid_before_height()
-                        .is_some_and(|expiry| height < expiry),
-                "invalid Keeper execution height"
+                    && tx.valid_before_height().is_some_and(|expiry| {
+                        match trigger {
+                            keeper::Trigger::Height(height) => height < expiry,
+                            keeper::Trigger::Time(_) => expiry > 1,
+                        }
+                    }),
+                "invalid Keeper trigger or expiry"
             );
         }
         ensure!(
@@ -753,24 +756,27 @@ impl Transaction {
         self.lineage_command.is_some()
     }
 
-    pub fn execute_at(&self) -> Option<u64> {
-        self.execute_at
+    pub fn keeper_trigger(&self) -> Option<keeper::Trigger> {
+        self.keeper_trigger
     }
 
-    /// Restrict a Lineage command to the on-chain Keeper at this exact height.
     pub fn with_execute_at(&self, height: u64) -> Result<Self> {
+        self.with_keeper_trigger(keeper::Trigger::Height(height))
+    }
+
+    pub fn with_keeper_trigger(&self, trigger: keeper::Trigger) -> Result<Self> {
         ensure!(
             self.witnesses().len() == 0,
-            "set Keeper height before signing"
+            "set Keeper trigger before signing"
         );
         let raw = self
             .encoded
             .raw()
             .as_builder()
-            .execute_at(
-                wire::Uint64Opt::new_builder()
-                    .set(Some(wire::Uint64::new_unchecked(
-                        height.to_le_bytes().to_vec().into(),
+            .keeper_trigger(
+                wire::KeeperTriggerOpt::new_builder()
+                    .set(Some(wire::KeeperTrigger::new_unchecked(
+                        trigger.encode().to_vec().into(),
                     )))
                     .build(),
             )

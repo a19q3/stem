@@ -42,11 +42,11 @@ The common Lineage authorization preflight recovers the actor keys, verifies the
 
 ### Keeper scheduling
 
-Height-indexed Strand queues and exact fee OutPoint reservations live in SystemRoot. The carrier uses the ordinary Cell transaction and complete Lock signature. At registration the kernel verifies the embedded command's fee authorization and charges both authorization work and the carrier's state updates. The maximum active queue size is the configured delay times the per-height limit. At each height the kernel reads one bucket, with work per retained reservation independent of historical block count.
+The Keeper uses height buckets and an ordered index of timed reservations in the same SystemRoot and atomic commit. Each reservation uses the same exclusive fee OutPoint record and complete Lock authorization. Timed entries commit a target time and an exclusive execution expiry. The index holds up to 32 fixed-size entries, with command bodies in individual state records. A block reads the compact index and loads bodies only for selected attempts. Independent slot limits keep a timed burst from delaying exact-height reservations.
 
-Before user transactions, the Store runs the due bucket through the existing Lineage materializer, RISC-V Executor and validation path. Each attempt has a block-derived resource share. Stale or unaffordable attempts consume a prepaid share and record a skip. Local state read faults abort block preparation. Phase mutations, deletion of processed reservations and normal transaction deltas commit together. Snapshots include the pending state through the existing SystemRoot record stream.
+The Store selects work from the parent Header and parent state before user transactions. Timed expiry is processed in height order, followed by ready entries ordered by target time and fee OutPoint. Every selected command goes through the same Lineage materializer, RISC-V Executor and mandatory Script Groups. Each attempt has a block-derived resource share. A stale, expired or unaffordable attempt records a skip and leaves fee capacity untouched. State read faults abort block preparation. One atomic batch advances the index, deletes processed records and applies the normal Cell deltas. Snapshots include outstanding reservations.
 
-The native transaction and receipt Merkle trees contain due commands first, including skipped commands, followed by proposal transactions. Query results for scheduled commands are authenticated by the same two-chain finality proof as all other execution receipts.
+Execution and receipt trees commit the height attempts, time attempts and submitted transactions in that order. The agenda and pending bodies support separate authenticated inclusion and absence proofs. The same Jolteon finality proof authenticates their SystemRoot and the eventual execution receipt.
 
 
 ## CKB-VM host

@@ -69,6 +69,7 @@ struct Request {
     fee_input: Option<OutPoint>,
     valid_before_height: u64,
     execute_at: Option<u64>,
+    execute_after_ms: Option<u64>,
     executor: H256,
     executor_dep: OutPoint,
     executor_cycles: u64,
@@ -148,9 +149,13 @@ impl Command {
                 } else {
                     tx
                 };
-                match request.execute_at {
-                    Some(height) => tx.with_execute_at(height)?,
-                    None => tx,
+                match (request.execute_at, request.execute_after_ms) {
+                    (Some(height), None) => tx.with_execute_at(height)?,
+                    (None, Some(time)) => {
+                        tx.with_keeper_trigger(stem_ledger::keeper::Trigger::Time(time))?
+                    }
+                    (None, None) => tx,
+                    _ => anyhow::bail!("choose a single Keeper trigger"),
                 }
             }
             Self::Actor { key_file } => {

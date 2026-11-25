@@ -33,7 +33,7 @@ pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
 pub use history_index::HistoryIndex;
 mod keeper;
-pub use keeper::KeeperPolicy;
+pub use keeper::{KeeperPolicy, KeeperTimePolicy};
 mod lineage;
 pub use lineage::LineageProof;
 mod staking;
@@ -1039,15 +1039,21 @@ impl Store {
             .height
             .checked_add(1)
             .context("block height overflow")?;
-        let due = self.due(height)?;
+        let mut budget = Budget::new(self.limits);
+        let due = self.due(height, &mut budget)?;
         ensure!(
-            transactions.len().saturating_add(due.len()) <= self.limits.transaction_count as usize,
+            transactions.len().saturating_add(due.commands.len())
+                <= self.limits.transaction_count as usize,
             "block transaction count exceeded"
         );
-        let mut budget = Budget::new(self.limits);
         let mut overlay = self.overlay()?;
-        let with_due =
-            (!due.is_empty()).then(|| due.iter().chain(transactions).cloned().collect::<Vec<_>>());
+        let with_due = (!due.commands.is_empty()).then(|| {
+            due.commands
+                .iter()
+                .chain(transactions)
+                .cloned()
+                .collect::<Vec<_>>()
+        });
         let execution = with_due.as_deref().unwrap_or(transactions);
         let total_bytes = execution
             .iter()
@@ -1258,7 +1264,7 @@ impl Store {
             next,
             history,
             receipts,
-            keeper_receipts: due.len(),
+            keeper_receipts: due.commands.len(),
             validator_updates,
             committee_change,
             batch,
@@ -1279,11 +1285,11 @@ impl Store {
         let context =
             HeaderContext::after(&self.network, &self.tip, timestamp_ms, Byte32::default())?;
         let origin = Origin::new(&self.network, &context);
-        let due = self.due(context.height)?;
+        let due = self.due(context.height, &mut budget)?;
         self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
         let mut selected = Vec::new();
         for tx in transactions {
-            if selected.len() + due.len() == self.limits.transaction_count as usize
+            if selected.len() + due.commands.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
                 || wire_bytes == 0
             {
@@ -1362,9 +1368,11 @@ impl Store {
         budget: Budget,
     ) -> Result<Option<lineage::Materialized>> {
         ensure!(
-            tx.execute_at()
-                .is_none_or(|height| overlay.keeper.running && context.height == height),
-            "height-bound Lineage command requires its committed Keeper reservation"
+            tx.keeper_trigger().is_none_or(|trigger| {
+                overlay.keeper.running
+                    && trigger.ready(context.height, self.tip.context.timestamp_ms)
+            }),
+            "trigger-bound Lineage command requires its committed Keeper reservation"
         );
         tx.lineage_command()
             .map(|command| {

@@ -55,6 +55,21 @@ pub(crate) fn query(
             }))?
             .into()
         }
+        "/stem/keeper-time" if prove => {
+            ensure!(requested == tip, "Keeper proof requires the current height");
+            let (record, proof) = if data.is_empty() {
+                store.prove_keeper_agenda()?
+            } else {
+                let point = OutPoint::from_slice(data)?;
+                store.prove_keeper_timed_command(&point)?
+            };
+            let hex = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
+            serde_json::to_vec(&serde_json::json!({
+                "record": record.as_deref().map(hex),
+                "proof": hex(&proof.encode()?),
+            }))?
+            .into()
+        }
         "/stem/header" if !prove => store
             .header(requested)?
             .context("Header outside local retention window")?

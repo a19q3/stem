@@ -632,6 +632,23 @@ impl DynamicLineage {
         self.sign_command(fixture, tx)
     }
 
+    pub(super) fn timed(
+        &self,
+        fixture: &Fixture,
+        fee: usize,
+        versions: (u64, u64),
+        increment: u64,
+        timestamp_ms: u64,
+        expiry: u64,
+    ) -> Result<Transaction> {
+        let tx = self
+            .signed(fixture, fee, &[0], versions, increment)?
+            .with_witnesses(vec![])?
+            .with_valid_before_height(expiry)?
+            .with_keeper_trigger(stem_ledger::keeper::Trigger::Time(timestamp_ms))?;
+        self.sign_command(fixture, tx)
+    }
+
     fn signed_payload(
         &self,
         fixture: &Fixture,
