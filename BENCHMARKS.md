@@ -716,3 +716,26 @@ command, native query and witness builder. The
 [raw bridge evidence](benchmarks/2026-11-25-stem-direct-payout.json.xz)
 preserves both rounds, signed transactions, CKB inclusion, proof
 bundles, node output and executable fingerprints.
+
+### CKB-funded committee regression
+
+The same vault executable supplied confirmed CKB funding for the separate
+two-replica stake runner. The first load attempt hit a CometBFT RPC
+window at height 17. The block store reported the height before its ABCI
+results were readable. The observer was changed to retry that height
+without advancing its cursor. The initial attempt has no throughput
+measurement.
+
+The rerun offered and admitted 384 payments at 8.00 TPS. All 384 appeared
+on both replicas with zero client drops. The rate including drain was
+7.57 TPS. The observer recorded p50, p95 and p99 visibility of 2.001,
+3.453 and 3.747 seconds. Sampled peak RSS was 178,216,960 bytes, process
+writes totaled 31,023,104 bytes and CPU time totaled 6.47 seconds. The
+measurement observed both the validator addition and removal. The full
+scenario also verified a weight increase to 450, five CKB checkpoints and
+250 CKB of delayed unbonding.
+
+This is a low-rate shared-host regression. The
+[raw stake evidence](benchmarks/2026-11-25-stem-bridge-funded-stake-rerun.json.xz)
+preserves both attempts, the error, the workload, measured events and
+the public chain evidence.
