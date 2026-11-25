@@ -80,5 +80,6 @@ available. Published network evidence contains public genesis and proof data.
 | Sustained native payments and durable write attribution | [Report](../BENCHMARKS.md#sustained-native-payments-and-durable-write-attribution), [signed workloads, timing samples and regression logs](2026-11-26-stem-storage-load.json.xz) |
 | Intercell delivery with multiple CKB references | [Report](../BENCHMARKS.md#intercell-delivery-with-multiple-ckb-references), [signed transactions, reference certificates, proofs and failed runs](2026-11-26-stem-intercell-composition.json.xz) |
 | Intercell delivery across funded committee handoffs | [Report](../BENCHMARKS.md#intercell-delivery-across-funded-committee-handoffs), [4-, 16- and 128-voter runs, signed transactions, P2P and rejection evidence](2026-11-26-stem-intercell-epoch.json.xz) |
+| Sustained replicated Lineage and AMM contention | [Report](../BENCHMARKS.md#sustained-replicated-lineage-and-amm-contention), [signed workloads, timing, stress controls and failure logs](2026-11-26-stem-lineage-load.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

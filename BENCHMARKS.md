@@ -457,9 +457,10 @@ supplies. Each command updates the pool and the payer's reserve with a
 signed minimum amount, so the eight swaps share a common Head. The
 correctness test also covers slippage and the rejection of a payer
 that lacks the participant reserve's authorization. These are local
-block preparation and sync-write timings. Sustained replicated
-throughput, concurrent mempool admission and an independent AMM load
-generator remain unmeasured.
+block preparation and sync-write timings. The newer
+[replicated Lineage experiments](#sustained-replicated-lineage-and-amm-contention)
+measure concurrent admission and sustained confirmation with both
+shared and independent AMM pools.
 
 ```sh
 cargo test --locked --release --test native_store measure_dynamic_lineage_updates -- --ignored --nocapture
@@ -2842,3 +2843,87 @@ tests with 15 ignored, and the Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
 [Raw CKB spends, witnesses, P2P traces, rejected attempts and commands](benchmarks/2026-11-26-stem-intercell-epoch.json.xz).
+
+## Sustained replicated Lineage and AMM contention
+
+Revision `3d861a0` reuses the timed submission, storage and network
+counters from the [sustained payment fixture](#sustained-native-payments-and-durable-write-attribution).
+Each node ran on the same i9-13900H host, with a 250 ms proposal
+interval, two VM workers unless stated, a 2-billion-cycle block cap
+and 8,192 logical Cell reads per block. Three ordinary replicas and
+one archive ran in the four-replica tests. The 16-replica tests used
+one archive and 15 ordinary replicas. All ordinary replicas kept 64
+blocks. Registrations finished before the offer window.
+
+The AMM comparison starts from identical four-replica genesis state.
+Each transaction uses a different funded fee Cell, changes the pool
+and trader together, and runs both asset Type Groups. One workload
+uses a single pool shared by all 32 trader reserves. The other uses
+32 disjoint pool and trader pairs. The one-worker comparison reuses
+the exact signed distributed workload. The 16-replica pressure run
+reuses the signed four-replica hotspot workload. Counter fixtures
+cover independent Heads, a mix of shared and disjoint Heads, and an
+atomic group of eight Heads.
+
+| Replicas, workload, planned TPS and offer window | Actual offer / admission / common visibility TPS in window | Offered / client drops | Visible by end of drain | Visibility p50/p95/p99 in seconds |
+| --- | ---: | ---: | ---: | ---: |
+| 4, 32 AMM pools, 240, 30 s | 237.13 / 236.83 / 218.77 | 7,114 / 86 | 7,114 | 2.000 / 2.606 / 2.746 |
+| 4, one AMM pool, 240, 30 s | 234.43 / 234.37 / 217.37 | 7,033 / 167 | 7,033 | 2.230 / 2.877 / 2.975 |
+| 4, 32 AMM pools, one worker, 240, 30 s | 236.33 / 236.13 / 219.90 | 7,090 / 110 | 7,090 | 2.091 / 2.695 / 2.833 |
+| 16, one AMM pool, 240, 30 s | 144.70 / 142.63 / 5.83 | 4,341 / 2,859 | 2,794 | 21.781 / 33.167 / 36.524 |
+| 16, one AMM pool, 80, 30 s | 80.00 / 80.00 / 76.80 | 2,400 / 0 | 2,400 | 1.234 / 1.733 / 1.894 |
+| 4, eight-Head atomic, 240, 25 s | 227.36 / 227.12 / 142.48 | 5,684 / 316 | 5,342 | 2.903 / 24.587 / 29.711 |
+| 4, eight-Head atomic, 120, 20 s | 120.00 / 119.85 / 113.15 | 2,400 / 0 | 2,400 | 1.067 / 1.322 / 1.362 |
+| 4, mixed counters, 240, 25 s | 240.00 / 239.40 / 227.76 | 6,000 / 0 | 6,000 | 1.008 / 1.242 / 1.303 |
+| 4, independent counters, 240, 25 s | 240.00 / 240.00 / 231.44 | 6,000 / 0 | 6,000 | 0.893 / 1.104 / 1.140 |
+
+The 30-second runs observed an additional 12 seconds of drain.
+The 25-second counter runs observed ten seconds and the 20-second
+atomic run observed eight. Latency samples
+include only transactions seen at common finality, so the upper
+percentiles in the overloaded runs omit still-pending transactions.
+In the 16-replica pressure run, 38 RPC submissions timed out and 25
+of those transactions were subsequently observed. No reported P2P
+transport drops or invalid messages occurred. The 16 processes
+shared one host and the run observed only 11 common finalized
+blocks during the sample. These results give a local overload
+point. They leave the effects of replica count, CPU contention and
+full-mesh pressure unresolved. The 80 TPS control finalized all
+2,400 offers with zero RPC observation errors.
+
+| Run | Aggregate CPU seconds | Peak sampled RSS MB | Linux process writes / RocksDB WAL MB | P2P frame bytes sent / received MB |
+| --- | ---: | ---: | ---: | ---: |
+| 4, 32 AMM pools | 75.96 | 337.69 | 160.12 / 102.73 | 37.13 / 41.28 |
+| 4, one AMM pool | 73.98 | 321.57 | 144.31 / 91.53 | 36.68 / 40.78 |
+| 4, 32 AMM pools, one worker | 73.28 | 321.00 | 155.44 / 101.43 | 36.95 / 41.08 |
+| 16, one AMM pool at 240 planned TPS | 543.33 | 1,175.40 | 211.16 / 157.59 | 292.38 / 294.90 |
+| 16, one AMM pool at 80 planned TPS | 249.85 | 884.55 | 497.61 / 197.63 | 85.52 / 87.00 |
+| 4, eight-Head atomic at 240 planned TPS | 88.59 | 320.78 | 115.77 / 88.33 | 39.45 / 43.80 |
+| 4, eight-Head atomic at 120 planned TPS | 34.17 | 227.85 | 107.95 / 51.63 | 14.02 / 15.87 |
+
+The four-replica single-pool and distributed AMM samples stayed
+within 1% on common visibility throughput. The single pool added
+about 229 ms to measured p99. The one-worker comparison gives no
+measured throughput improvement from the second worker at this
+offered rate. Each is one run. The eight-Head commands recorded
+42,736 Head updates and charged 3,960,347 cycles per applied command.
+Their repeated 178-command blocks match the fixture's logical read
+limit at 46 reads per command. The single-pool and distributed AMM
+commands both charged about 3.922 million cycles. The 16-replica
+pressure run reached 341 swaps per block during drain, matching
+the same budget at 24 reads per swap. The lower atomic run finalized
+all 2,400 commands and verified 19,200 Head updates.
+
+The audit replayed all finalized blocks through the observed common
+height in a serial Store. It checked Headers, receipts, every Head
+version and both authenticated paths. The AMM audit checked both
+asset supplies. It found only applied Lineage outcomes among the
+measured finalizations. The independent payment control used the
+same load driver and finalized all 160 payments.
+
+The archive includes both initial compiler failures, the smoke runs,
+and all control and pressure runs. The locked Rust release workspace
+passed 460 tests with 16 ignored. The Go proof suite passed.
+
+[Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
+[Signed workloads, per-transaction timing, replay proofs and failures](benchmarks/2026-11-26-stem-lineage-load.json.xz).
