@@ -114,6 +114,7 @@ enum KeeperRequest {
         height: Option<u64>,
         timestamp_ms: Option<u64>,
         fee_input: OutPoint,
+        command_id: H256,
     },
 }
 
@@ -267,6 +268,7 @@ impl Wallet {
                             height,
                             timestamp_ms,
                             fee_input,
+                            command_id,
                         } => {
                             use stem_ledger::keeper::Trigger;
                             let trigger = match (height, timestamp_ms) {
@@ -277,6 +279,7 @@ impl Wallet {
                             stem_ledger::keeper::Action::Cancel {
                                 trigger,
                                 fee_input: fee_input.into(),
+                                command_id: command_id.pack(),
                             }
                         }
                     };

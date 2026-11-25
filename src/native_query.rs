@@ -55,6 +55,17 @@ pub(crate) fn query(
             }))?
             .into()
         }
+        "/stem/keeper-reservation" if prove => {
+            ensure!(requested == tip, "Keeper proof requires the current height");
+            let point = OutPoint::from_slice(data)?;
+            let (record, proof) = store.prove_keeper_reservation(&point)?;
+            let hex = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
+            serde_json::to_vec(&serde_json::json!({
+                "record": record.as_deref().map(hex),
+                "proof": hex(&proof.encode()?),
+            }))?
+            .into()
+        }
         "/stem/keeper-time" if prove => {
             ensure!(requested == tip, "Keeper proof requires the current height");
             let (record, proof) = if data.is_empty() {

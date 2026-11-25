@@ -4,7 +4,10 @@ use anyhow::ensure;
 use ckb_jsonrpc_types::JsonBytes;
 use ckb_types::prelude::*;
 use serde_json::{Value, json};
-use stem_ledger::lineage::{self, Outcome};
+use stem_ledger::{
+    keeper::{Action, Reservation, Trigger, decode_agenda, decode_queue},
+    lineage::{self, Outcome},
+};
 
 use super::{
     Bytes, Cell, Context, FEE, Fixture, GroupWitness, OutPoint, Privkey, Result, Retention, Store,
@@ -17,11 +20,26 @@ pub(super) struct BatchFixture {
     sponsors: [Privkey; 2],
 }
 
+pub(super) struct Schedule {
+    pub(super) trigger: Trigger,
+    pub(super) expires: [u64; 2],
+    pub(super) version: u64,
+    pub(super) fees: [usize; 2],
+}
+
 impl BatchFixture {
     pub(super) fn fund(fixture: &mut Fixture, registry: &FixtureLineage) -> Result<Self> {
+        Self::fund_with_fees(fixture, registry, 1)
+    }
+
+    pub(super) fn fund_with_fees(
+        fixture: &mut Fixture,
+        registry: &FixtureLineage,
+        fees: usize,
+    ) -> Result<Self> {
         let mut markets = [
-            SponsoredLineage::fund_at(fixture, registry, 1, 130, [96, 97])?,
-            SponsoredLineage::fund_at(fixture, registry, 1, 134, [98, 99])?,
+            SponsoredLineage::fund_at(fixture, registry, fees, 130, [96, 97])?,
+            SponsoredLineage::fund_at(fixture, registry, fees, 134, [98, 99])?,
         ];
         let sponsors = [101, 102].map(|seed| Privkey::from_slice(&[seed; 32]));
         for (market, sponsor) in markets.iter_mut().zip(&sponsors) {
@@ -38,13 +56,15 @@ impl BatchFixture {
                 Bytes::new(),
             )?;
             market.dynamic.fee_cell = cell.clone();
-            fixture
-                .spec
-                .development_cells
-                .iter_mut()
-                .find(|(point, _)| point == &market.dynamic.fee_points[0])
-                .context("missing batch sponsor Cell")?
-                .1 = cell;
+            for fee in &market.dynamic.fee_points {
+                fixture
+                    .spec
+                    .development_cells
+                    .iter_mut()
+                    .find(|(point, _)| point == fee)
+                    .context("missing batch sponsor Cell")?
+                    .1 = cell.clone();
+            }
         }
         Ok(Self { markets, sponsors })
     }
@@ -64,8 +84,43 @@ impl BatchFixture {
         ])
     }
 
-    fn signed_members(&self, fixture: &Fixture, second_amount: u128) -> Result<Vec<Transaction>> {
-        let drafts = self.drafts(second_amount)?;
+    fn scheduled_drafts(
+        &self,
+        second_amount: u128,
+        schedule: &Schedule,
+    ) -> Result<[Transaction; 2]> {
+        let [a, b] = [
+            self.markets[0].draft(schedule.version, 40, 70)?,
+            self.markets[1].draft(schedule.version, second_amount, 60)?,
+        ];
+        let bind = |(index, draft): (usize, Transaction)| {
+            draft
+                .with_lineage_fee(
+                    self.markets[index].dynamic.fee_points[schedule.fees[index]].clone(),
+                    FEE,
+                )?
+                .with_valid_before_height(schedule.expires[index])?
+                .with_keeper_trigger(schedule.trigger)
+        };
+        Ok([bind((0, a))?, bind((1, b))?])
+    }
+
+    pub(super) fn scheduled(
+        &self,
+        fixture: &Fixture,
+        second_amount: u128,
+        schedule: &Schedule,
+    ) -> Result<Transaction> {
+        Transaction::new_lineage_batch(
+            self.signed_members(fixture, self.scheduled_drafts(second_amount, schedule)?)?,
+        )
+    }
+
+    fn signed_members(
+        &self,
+        fixture: &Fixture,
+        drafts: [Transaction; 2],
+    ) -> Result<Vec<Transaction>> {
         let plan = Transaction::lineage_batch_plan(&fixture.spec.network, &drafts)?;
         drafts
             .iter()
@@ -78,7 +133,7 @@ impl BatchFixture {
     }
 
     pub(super) fn sdk_batch(&self, fixture: &Fixture, second_amount: u128) -> Result<Transaction> {
-        Transaction::new_lineage_batch(self.signed_members(fixture, second_amount)?)
+        Transaction::new_lineage_batch(self.signed_members(fixture, self.drafts(second_amount)?)?)
     }
 
     pub(super) fn wallet_batch(
@@ -86,6 +141,31 @@ impl BatchFixture {
         fixture: &Fixture,
         genesis: &Path,
         directory: &Path,
+    ) -> Result<Transaction> {
+        self.wallet_for_drafts(fixture, genesis, directory, self.drafts(30)?)
+    }
+
+    pub(super) fn wallet_scheduled(
+        &self,
+        fixture: &Fixture,
+        genesis: &Path,
+        directory: &Path,
+        schedule: &Schedule,
+    ) -> Result<Transaction> {
+        self.wallet_for_drafts(
+            fixture,
+            genesis,
+            directory,
+            self.scheduled_drafts(30, schedule)?,
+        )
+    }
+
+    fn wallet_for_drafts(
+        &self,
+        fixture: &Fixture,
+        genesis: &Path,
+        directory: &Path,
+        drafts: [Transaction; 2],
     ) -> Result<Transaction> {
         fs::create_dir_all(directory)?;
         let command = |verb: &str| {
@@ -97,7 +177,7 @@ impl BatchFixture {
             command
         };
         let mut plan = command("plan");
-        for (index, draft) in self.drafts(30)?.iter().enumerate() {
+        for (index, draft) in drafts.iter().enumerate() {
             let file = directory.join(format!("draft-{index}.json"));
             fs::write(
                 &file,
@@ -134,7 +214,7 @@ impl BatchFixture {
             fs::write(
                 &fee,
                 serde_json::to_vec(&ckb_jsonrpc_types::OutPoint::from(
-                    market.dynamic.fee_points[0].clone(),
+                    drafts[index].input(0).unwrap().previous_output,
                 ))?,
             )?;
             let mut assemble = command("assemble");
@@ -190,6 +270,57 @@ impl BatchFixture {
         fs::write(directory.join("batch.json"), serde_json::to_vec(&signed)?)?;
         let bytes: JsonBytes = serde_json::from_value(signed)?;
         Transaction::from_slice(bytes.as_bytes())
+    }
+
+    fn cancel(
+        &self,
+        fixture: &Fixture,
+        market: usize,
+        fee: usize,
+        command: &Transaction,
+    ) -> Result<Transaction> {
+        let market_config = &self.markets[market].dynamic;
+        let point = market_config.fee_points[fee].clone();
+        let cell = &market_config.fee_cell;
+        let lock = cell.lock();
+        let tx = Transaction::new(
+            market_config.deps.clone(),
+            vec![],
+            vec![super::CellInput::new(point.clone(), None)],
+            vec![Cell::new(
+                cell.capacity() - FEE,
+                lock.clone(),
+                vec![],
+                Bytes::new(),
+            )?],
+            vec![],
+        )?
+        .with_keeper_action(Action::Cancel {
+            trigger: command.keeper_trigger().unwrap(),
+            fee_input: point,
+            command_id: command.id(&fixture.spec.network),
+        })?;
+        let digest = tx.signing_digest(
+            &fixture.spec.network,
+            0,
+            &lock,
+            |point| {
+                fixture
+                    .spec
+                    .development_cells
+                    .iter()
+                    .find(|(id, _)| id == point)
+                    .map(|(_, cell)| cell.clone())
+                    .context("missing fixture Cell")
+            },
+            |_| anyhow::bail!("no Header Deps"),
+        )?;
+        let seal = self.sponsors[market].sign_recoverable(&digest.unpack())?;
+        tx.with_witnesses(vec![GroupWitness {
+            group_index: 0,
+            proof_data: Bytes::new(),
+            seal: Bytes::from(seal.serialize()),
+        }])
     }
 }
 
@@ -445,5 +576,217 @@ fn a_child_type_script_vetoes_the_entire_lineage_batch() -> Result<()> {
         }
         assert!(store.live_cell(&market.dynamic.fee_points[0])?.is_some());
     }
+    Ok(())
+}
+
+#[test]
+fn keeper_batches_recover_and_release_all_sponsor_reservations() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let registry = FixtureLineage::fund(&mut fixture)?;
+    let batch = BatchFixture::fund_with_fees(&mut fixture, &registry, 3)?;
+    super::keeper::fund_carriers(&mut fixture, 5)?;
+    fixture.spec.limits.cell_reads = 512;
+    fixture.spec.keeper.as_mut().unwrap().time = Some(stem::native_store::KeeperTimePolicy {
+        per_height: 2,
+        max_delay_ms: 60_000,
+    });
+    let temp = tempfile::tempdir()?;
+    let mut store = Store::open(
+        &temp.path().join("origin"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    store.commit(store.prepare(&batch.registrations(&fixture)?, TIME, false)?)?;
+    let plan = Schedule {
+        trigger: Trigger::Height(4),
+        expires: [7, 6],
+        version: 0,
+        fees: [0, 0],
+    };
+    let command = batch.scheduled(&fixture, 30, &plan)?;
+    let points = |tx: &Transaction| -> Vec<_> {
+        tx.lineage_batch()
+            .unwrap()
+            .iter()
+            .map(|member| member.input(0).unwrap().previous_output)
+            .collect()
+    };
+    let assert_links = |state: &Store, command: &Transaction, pending: bool| -> Result<()> {
+        let fees = points(command);
+        for fee in &fees {
+            let (record, proof) = state.prove_keeper_reservation(fee)?;
+            assert_eq!(record.is_some(), pending);
+            assert!(Store::verify_keeper_reservation(
+                state.network(),
+                state.tip(),
+                fee,
+                record.as_deref(),
+                &proof,
+            ));
+            if let Some(record) = record {
+                let reservation = Reservation::decode(&record)?;
+                assert_eq!(reservation.primary_fee, fees[0]);
+                assert_eq!(reservation.command_id, command.id(state.network()));
+                assert_eq!(Some(reservation.trigger), command.keeper_trigger());
+            }
+        }
+        Ok(())
+    };
+    assert_eq!(command.valid_before_height(), Some(6));
+    assert!(store.check(&command).is_err());
+    let children = command.lineage_batch().unwrap();
+    assert!(Action::schedule(&children[0]).is_err());
+    let [a, b] = batch.scheduled_drafts(30, &plan)?;
+    assert!(Transaction::lineage_batch_plan(store.network(), &[a, b.with_execute_at(5)?]).is_err());
+    let mut forged_seal = children[1].witness(0).unwrap();
+    forged_seal.seal = Bytes::from_static(&[255; 65]);
+    let forged = Transaction::new_lineage_batch(vec![
+        children[0].clone(),
+        children[1].with_witnesses(vec![forged_seal])?,
+    ])?;
+    assert!(
+        store
+            .check(&super::keeper::schedule(&fixture, 0, &forged)?)
+            .is_err()
+    );
+    let carrier = super::keeper::schedule(&fixture, 0, &command)?;
+    store.commit(store.prepare(&[carrier], TIME, false)?)?;
+    assert_links(&store, &command, true)?;
+    let queue = store.prove_keeper_queue(4)?.0.unwrap();
+    assert_eq!(decode_queue(&queue, 4)?[0].as_slice(), command.as_slice());
+    let conflict = batch.scheduled(
+        &fixture,
+        25,
+        &Schedule {
+            fees: [1, 0],
+            ..plan
+        },
+    )?;
+    let error = store
+        .check(&super::keeper::schedule(&fixture, 1, &conflict)?)
+        .unwrap_err();
+    assert!(error.to_string().contains("requires fresh fee Cells"));
+    eprintln!("secondary fee cannot be reserved twice: {error:#}");
+
+    let mut restored = Store::open(
+        &temp.path().join("restored"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    restored.install_state(
+        store.export_state()?,
+        &store.tip().app_hash(store.network()),
+    )?;
+    assert_links(&restored, &command, true)?;
+    for state in [&mut store, &mut restored] {
+        state.commit(state.prepare(&[], TIME, false)?)?;
+    }
+    let serial = store.prepare(&[], TIME, false)?;
+    let parallel = restored.prepare(&[], TIME, true)?;
+    assert_eq!(serial.header(), parallel.header());
+    assert_eq!(serial.receipts(), parallel.receipts());
+    let receipt = &parallel.receipts()[0];
+    assert_eq!(receipt.fee, 2 * FEE);
+    assert_eq!(Outcome::decode(&receipt.protocol_result)?, Outcome::Applied);
+    eprintln!(
+        "height batch after snapshot restore: {} bytes, {} charged cycles",
+        command.as_slice().len(),
+        receipt.cycles
+    );
+    restored.commit(parallel)?;
+    assert_links(&restored, &command, false)?;
+    assert!(restored.prove_keeper_queue(4)?.0.is_none());
+    for fee in points(&command) {
+        assert!(restored.live_cell(&fee)?.is_none());
+    }
+
+    let timed = Schedule {
+        trigger: Trigger::Time(TIME + 100),
+        expires: [12, 10],
+        version: 1,
+        fees: [1, 1],
+    };
+    let failure = batch.scheduled(&fixture, 501, &timed)?;
+    let claim = super::keeper::schedule(&fixture, 1, &failure)?;
+    restored.commit(restored.prepare(&[claim], TIME, false)?)?;
+    let agenda = decode_agenda(&restored.prove_keeper_agenda()?.0.unwrap())?;
+    assert_eq!(agenda[0].valid_before_height, 10);
+    assert_links(&restored, &failure, true)?;
+    let jumped = restored.prepare(&[], TIME + 100, false)?;
+    assert!(jumped.receipts().is_empty());
+    restored.commit(jumped)?;
+    let attempt = restored.prepare(&[], TIME + 100, true)?;
+    assert_eq!(attempt.receipts()[0].fee, 0);
+    assert_eq!(
+        Outcome::decode(&attempt.receipts()[0].protocol_result)?,
+        Outcome::Skipped
+    );
+    eprintln!(
+        "failed timed batch: {} execution fee, {} reserved cycles",
+        attempt.receipts()[0].fee,
+        attempt.receipts()[0].cycles
+    );
+    restored.commit(attempt)?;
+    assert_links(&restored, &failure, false)?;
+    assert!(restored.prove_keeper_agenda()?.0.is_none());
+    for fee in points(&failure) {
+        assert!(restored.live_cell(&fee)?.is_some());
+    }
+    for market in &batch.markets {
+        for target in market.head_ids() {
+            assert_eq!(
+                restored
+                    .prove_current_lineage(&target)?
+                    .head
+                    .unwrap()
+                    .0
+                    .version,
+                1
+            );
+        }
+    }
+
+    let cancellable = Schedule {
+        trigger: Trigger::Time(TIME + 1_000),
+        expires: [17, 16],
+        ..timed
+    };
+    let old = batch.scheduled(&fixture, 25, &cancellable)?;
+    let replacement = batch.scheduled(
+        &fixture,
+        30,
+        &Schedule {
+            fees: [1, 2],
+            ..cancellable
+        },
+    )?;
+    let stale_cancel = batch.cancel(&fixture, 0, 1, &old)?;
+    let secondary_cancel = batch.cancel(&fixture, 1, 1, &old)?;
+    let reserve_old = super::keeper::schedule(&fixture, 2, &old)?;
+    restored.commit(restored.prepare(&[reserve_old], TIME + 100, false)?)?;
+    restored.commit(restored.prepare(&[secondary_cancel], TIME + 100, false)?)?;
+    assert_links(&restored, &old, false)?;
+    let next = super::keeper::schedule(&fixture, 3, &replacement)?;
+    restored.commit(restored.prepare(&[next], TIME + 100, false)?)?;
+    let error = restored.check(&stale_cancel).unwrap_err();
+    assert!(error.to_string().contains("does not match a reservation"));
+    assert_links(&restored, &replacement, true)?;
+    eprintln!(
+        "secondary cancellation releases both links; old cancellation rejected against replacement"
+    );
+
+    fixture.spec.limits.block_cycles = 100_000_000;
+    let mut capped = Store::open(
+        &temp.path().join("capped"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    capped.commit(capped.prepare(&batch.registrations(&fixture)?, TIME, false)?)?;
+    let error = capped
+        .check(&super::keeper::schedule(&fixture, 0, &command)?)
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("cycles"));
+    assert_links(&capped, &command, false)?;
+    eprintln!("combined signing and VM budgets rejected by the Keeper slot: {error:#}");
     Ok(())
 }

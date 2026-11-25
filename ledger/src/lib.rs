@@ -612,10 +612,6 @@ impl Transaction {
                 .lineage_command()
                 .context("business authorization requires a Lineage command")?;
             ensure!(
-                intent.batch.is_none() || tx.keeper_trigger.is_none(),
-                "batch-bound Lineage intents cannot be scheduled individually"
-            );
-            ensure!(
                 command.fee <= intent.max_fee
                     && command
                         .targets
@@ -710,6 +706,12 @@ impl Transaction {
             .valid_before_height()
             .to_opt()
             .map(|value| u64::from_le_bytes(value.as_slice().try_into().expect("Uint64")))
+            .or_else(|| {
+                self.lineage_batch()?
+                    .iter()
+                    .filter_map(Self::valid_before_height)
+                    .min()
+            })
     }
 
     /// Set the exclusive height bound before signing the transaction.
@@ -774,6 +776,7 @@ impl Transaction {
 
     pub fn keeper_trigger(&self) -> Option<keeper::Trigger> {
         self.keeper_trigger
+            .or_else(|| self.lineage_batch()?.first()?.keeper_trigger())
     }
 
     pub fn with_execute_at(&self, height: u64) -> Result<Self> {
@@ -782,7 +785,7 @@ impl Transaction {
 
     pub fn with_keeper_trigger(&self, trigger: keeper::Trigger) -> Result<Self> {
         ensure!(
-            self.witnesses().len() == 0,
+            self.witnesses().len() == 0 && self.lineage_seals().is_empty(),
             "set Keeper trigger before signing"
         );
         let raw = self
@@ -846,7 +849,7 @@ impl Transaction {
     fn decode_lineage_batch(members: &[Bytes]) -> Result<Arc<[Self]>> {
         let mut fees = HashSet::new();
         let mut heads = HashSet::new();
-        members
+        let parsed = members
             .iter()
             .map(|bytes| {
                 let wire = wire::Transaction::from_slice(bytes)?;
@@ -876,7 +879,14 @@ impl Transaction {
                 );
                 Ok(member)
             })
-            .collect::<Result<Arc<_>>>()
+            .collect::<Result<Arc<[_]>>>()?;
+        ensure!(
+            parsed
+                .iter()
+                .all(|member| member.keeper_trigger() == parsed[0].keeper_trigger()),
+            "Lineage batch members must agree on the Keeper trigger"
+        );
+        Ok(parsed)
     }
 
     /// Bind this unsigned sponsored command to a plan before collecting its business seals.
@@ -900,8 +910,8 @@ impl Transaction {
         leaves.push(members.len() as u8);
         for member in members {
             ensure!(
-                member.keeper_trigger().is_none(),
-                "scheduled command cannot enter a Lineage batch"
+                member.keeper_trigger() == members[0].keeper_trigger(),
+                "Lineage batch members must agree on the Keeper trigger"
             );
             let mut intent = member
                 .lineage_intent()

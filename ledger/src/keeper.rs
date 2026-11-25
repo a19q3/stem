@@ -1,7 +1,11 @@
 //! Canonical actions and pending commands for the native Keeper.
 
 use anyhow::{Result, bail, ensure};
-use ckb_types::{bytes::Bytes, packed::OutPoint, prelude::*};
+use ckb_types::{
+    bytes::Bytes,
+    packed::{Byte32, OutPoint},
+    prelude::*,
+};
 
 use crate::{
     Transaction,
@@ -57,6 +61,78 @@ impl Trigger {
             Self::Time(target) => parent_time_ms >= target,
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reservation {
+    pub trigger: Trigger,
+    pub primary_fee: OutPoint,
+    pub command_id: Byte32,
+}
+
+impl Reservation {
+    pub const SIZE: usize = Trigger::SIZE + OutPoint::TOTAL_SIZE + 32;
+
+    pub fn encode(&self) -> Vec<u8> {
+        [
+            self.trigger.encode().as_slice(),
+            self.primary_fee.as_slice(),
+            self.command_id.as_slice(),
+        ]
+        .concat()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() == Self::SIZE,
+            "incorrect Keeper reservation size"
+        );
+        let trigger = Trigger::decode(&bytes[..Trigger::SIZE])?;
+        let end = Trigger::SIZE + OutPoint::TOTAL_SIZE;
+        let primary_fee = OutPoint::from_slice(&bytes[Trigger::SIZE..end])?;
+        let command_id = Byte32::from_slice(&bytes[end..])?;
+        ensure!(
+            !primary_fee.is_null() && command_id != Byte32::default(),
+            "Keeper reservation must identify a fee Cell and command"
+        );
+        Ok(Self {
+            trigger,
+            primary_fee,
+            command_id,
+        })
+    }
+}
+
+/// Use the same view for an individual command and a batch of commands.
+pub fn members(command: &Transaction) -> &[Transaction] {
+    command
+        .lineage_batch()
+        .unwrap_or_else(|| std::slice::from_ref(command))
+}
+
+pub fn primary_fee(command: &Transaction) -> Option<OutPoint> {
+    members(command)
+        .first()?
+        .input(0)
+        .map(|input| input.previous_output)
+}
+
+fn validate_command(command: &Transaction) -> Result<()> {
+    ensure!(
+        command.keeper_trigger().is_some()
+            && (command.lineage_batch().is_some()
+                || (command.has_lineage_command()
+                    && command.witness(0).is_some()
+                    && command
+                        .lineage_intent()
+                        .is_none_or(|intent| intent.batch.is_none()))),
+        "Keeper requires a sealed standalone command or a complete Lineage batch with a trigger"
+    );
+    ensure!(
+        command.as_slice().len() <= MAX_COMMAND_BYTES,
+        "Keeper command exceeds size limit"
+    );
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -132,28 +208,32 @@ pub enum Action {
     Cancel {
         trigger: Trigger,
         fee_input: OutPoint,
+        command_id: Byte32,
     },
 }
 
 impl Action {
     pub fn schedule(command: &Transaction) -> Result<Self> {
-        ensure!(
-            command.keeper_trigger().is_some()
-                && command.witness(0).is_some()
-                && command.as_slice().len() <= MAX_COMMAND_BYTES,
-            "Keeper requires a sealed Lineage command with a trigger"
-        );
+        validate_command(command)?;
         Ok(Self::Schedule(Bytes::copy_from_slice(command.as_slice())))
     }
 
     pub(crate) fn encode(&self) -> wire::KeeperAction {
         let (kind, payload) = match self {
             Self::Schedule(command) => (0u8, command.clone()),
-            Self::Cancel { trigger, fee_input } => (
+            Self::Cancel {
+                trigger,
+                fee_input,
+                command_id,
+            } => (
                 1u8,
-                [trigger.encode().as_slice(), fee_input.as_slice()]
-                    .concat()
-                    .into(),
+                [
+                    trigger.encode().as_slice(),
+                    fee_input.as_slice(),
+                    command_id.as_slice(),
+                ]
+                .concat()
+                .into(),
             ),
         };
         wire::KeeperAction::new_builder()
@@ -166,11 +246,13 @@ impl Action {
         let payload = action.payload().raw_data();
         match action.kind().as_slice()[0] {
             0 if (1..=MAX_COMMAND_BYTES).contains(&payload.len()) => Ok(Self::Schedule(payload)),
-            1 if payload.len() == Trigger::SIZE + OutPoint::TOTAL_SIZE => {
-                let trigger = Trigger::decode(&payload[..Trigger::SIZE])?;
-                let fee_input = OutPoint::from_slice(&payload[Trigger::SIZE..])?;
-                ensure!(!fee_input.is_null(), "invalid Keeper cancellation");
-                Ok(Self::Cancel { trigger, fee_input })
+            1 => {
+                let decoded = Reservation::decode(&payload)?;
+                Ok(Self::Cancel {
+                    trigger: decoded.trigger,
+                    fee_input: decoded.primary_fee,
+                    command_id: decoded.command_id,
+                })
             }
             _ => bail!("invalid Keeper action"),
         }
@@ -207,10 +289,7 @@ pub fn decode_queue(bytes: &[u8], height: u64) -> Result<Vec<Transaction>> {
                 command.keeper_trigger() == Some(Trigger::Height(height)),
                 "incorrect Keeper queue height"
             );
-            let point = command
-                .input(0)
-                .expect("validated Keeper fee input")
-                .previous_output;
+            let point = primary_fee(&command).expect("validated Keeper fee input");
             ensure!(
                 previous.as_ref().is_none_or(|prior| prior < &point),
                 "unordered Keeper queue"
@@ -227,9 +306,6 @@ pub fn decode_command(bytes: &[u8]) -> Result<Transaction> {
         "Keeper command exceeds size limit"
     );
     let command = Transaction::from_slice(bytes)?;
-    ensure!(
-        command.keeper_trigger().is_some() && command.witness(0).is_some(),
-        "Keeper requires a sealed Lineage command with a trigger"
-    );
+    validate_command(&command)?;
     Ok(command)
 }

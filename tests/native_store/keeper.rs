@@ -59,6 +59,7 @@ fn cancel(
     dynamic: &DynamicLineage,
     fee: usize,
     trigger: Trigger,
+    scheduled: &Transaction,
 ) -> Result<Transaction> {
     let point = dynamic.fee_points[fee].clone();
     let lock = dynamic.fee_cell.lock();
@@ -72,6 +73,7 @@ fn cancel(
     .with_keeper_action(Action::Cancel {
         trigger,
         fee_input: point,
+        command_id: scheduled.id(&fixture.spec.network),
     })?;
     let digest = tx.signing_digest(
         &fixture.spec.network,
@@ -119,7 +121,13 @@ fn keeper_automatically_executes_committed_commands_after_restore() -> Result<()
     assert!(store.check(&schedule(&fixture, 7, &forged)?).is_err());
     assert!(
         store
-            .check(&cancel(&fixture, &dynamic, 3, Trigger::Height(4))?)
+            .check(&cancel(
+                &fixture,
+                &dynamic,
+                3,
+                Trigger::Height(4),
+                &canceled
+            )?)
             .is_err()
     );
 
@@ -171,7 +179,7 @@ fn keeper_automatically_executes_committed_commands_after_restore() -> Result<()
             .collect::<Vec<_>>()
     );
 
-    let cancel = cancel(&fixture, &dynamic, 3, Trigger::Height(4))?;
+    let cancel = cancel(&fixture, &dynamic, 3, Trigger::Height(4), &canceled)?;
     store.commit(store.prepare(&[cancel], TIME, false)?)?;
     let mut restored = Store::open(&dir.path().join("b"), &fixture.spec, Retention::Archive)?;
     restored.install_state(
@@ -382,7 +390,13 @@ fn keeper_time_uses_parent_header_and_bounded_slots_after_restore() -> Result<()
     assert!(store.check(&schedule(&fixture, 5, &duplicate)?).is_err());
     assert!(
         store
-            .check(&cancel(&fixture, &dynamic, 3, Trigger::Time(target))?)
+            .check(&cancel(
+                &fixture,
+                &dynamic,
+                3,
+                Trigger::Time(target),
+                &canceled
+            )?)
             .is_err()
     );
     let (agenda, path) = store.prove_keeper_agenda()?;
@@ -413,7 +427,7 @@ fn keeper_time_uses_parent_header_and_bounded_slots_after_restore() -> Result<()
 
     // This proposal jumps across the scheduled time. It is not a committed
     // time until the following block and cannot trigger an early execution.
-    let cancel = cancel(&fixture, &dynamic, 3, Trigger::Time(target + 1))?;
+    let cancel = cancel(&fixture, &dynamic, 3, Trigger::Time(target + 1), &canceled)?;
     let jumped = store.prepare(&[cancel], target + 1_000, false)?;
     assert_eq!(jumped.receipts().len(), 1);
     store.commit(jumped)?;

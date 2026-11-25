@@ -11,7 +11,7 @@ use stem::jolteon::{Client, verify_finality};
 use stem_ledger::{
     Transaction,
     block::{Header, Receipt},
-    keeper::decode_agenda,
+    keeper::{Reservation, Trigger, decode_agenda, primary_fee},
     lineage::{Head, Outcome},
     patricia::Proof,
     proof::InclusionProof,
@@ -23,7 +23,7 @@ use super::{
     intent::{Swap, altered_action},
     keeper,
     lineage::{DynamicLineage, FixtureLineage},
-    lineage_batch::BatchFixture,
+    lineage_batch::{BatchFixture, Schedule},
 };
 
 const WAIT: Duration = Duration::from_secs(20);
@@ -108,8 +108,9 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     let action_swap = Swap::fund_with_actions(&mut fixture, &output)?;
     let lineage = FixtureLineage::fund(&mut fixture)?;
     let dynamic = DynamicLineage::fund_using(&mut fixture, &lineage, 5, 2, None)?;
-    let batch_markets = BatchFixture::fund(&mut fixture, &lineage)?;
-    keeper::fund_carriers(&mut fixture, 2)?;
+    let batch_markets = BatchFixture::fund_with_fees(&mut fixture, &lineage, 3)?;
+    keeper::fund_carriers(&mut fixture, 4)?;
+    fixture.spec.limits.cell_reads = 512;
     fixture.spec.keeper.as_mut().unwrap().time = Some(stem::native_store::KeeperTimePolicy {
         per_height: 2,
         max_delay_ms: 60_000,
@@ -254,31 +255,84 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         &keeper::schedule(&fixture, 0, &scheduled)?,
         None,
     )?;
+    let height_batch = batch_markets.wallet_scheduled(
+        &fixture,
+        &spec,
+        &output.join("lineage-height-batch"),
+        &Schedule {
+            trigger: Trigger::Height(due),
+            expires: [due + 8, due + 6],
+            version: 1,
+            fees: [1, 1],
+        },
+    )?;
+    submit(
+        "Keeper height batch reservation",
+        &keeper::schedule(&fixture, 2, &height_batch)?,
+        None,
+    )?;
+    let height_pending = keeper_batch_links(&clients[0], &verifier, &height_batch, true)?;
+    let height_index = u32::from(primary_fee(&height_batch) > primary_fee(&scheduled));
     wait_height(&clients, due)?;
     let wake = prove_execution(
         &clients,
         &verifier,
         due,
-        0,
+        1 - height_index,
         &scheduled,
         Some(Outcome::Applied),
     )?;
+    let height_batch_wake = prove_execution(
+        &clients,
+        &verifier,
+        due,
+        height_index,
+        &height_batch,
+        Some(Outcome::Applied),
+    )?;
+    let height_cleared = keeper_batch_links(&clients[0], &verifier, &height_batch, false)?;
     let before = clients[0].status()?.height;
-    let target = clients[0].header(before)?.context.timestamp_ms + 4_000;
+    let target = clients[0].header(before)?.context.timestamp_ms + 7_000;
     let timed = dynamic.timed(&fixture, 4, (3, 3), 5, target, before + 55)?;
     submit(
         "Keeper time reservation",
         &keeper::schedule(&fixture, 1, &timed)?,
         None,
     )?;
+    let time_batch = batch_markets.wallet_scheduled(
+        &fixture,
+        &spec,
+        &output.join("lineage-time-batch"),
+        &Schedule {
+            trigger: Trigger::Time(target),
+            expires: [before + 55, before + 50],
+            version: 2,
+            fees: [2, 2],
+        },
+    )?;
+    submit(
+        "Keeper time batch reservation",
+        &keeper::schedule(&fixture, 3, &time_batch)?,
+        None,
+    )?;
+    let time_pending = keeper_batch_links(&clients[0], &verifier, &time_batch, true)?;
+    let time_index = u32::from(primary_fee(&time_batch) > primary_fee(&timed));
     let point = dynamic.fee_points[4].as_slice();
     let query = clients[0].query("/stem/keeper-time", 0, &[], true)?;
     let agenda: Value = serde_json::from_slice(&query.value)?;
     let record = bytes(&agenda, "record")?;
     let entries = decode_agenda(&record)?;
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].timestamp_ms, target);
-    assert_eq!(entries[0].fee_input.as_slice(), point);
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|entry| entry.timestamp_ms == target));
+    assert_eq!(entries[1 - time_index as usize].fee_input.as_slice(), point);
+    assert_eq!(
+        Some(entries[time_index as usize].fee_input.clone()),
+        primary_fee(&time_batch)
+    );
+    assert_eq!(
+        entries[time_index as usize].valid_before_height,
+        before + 50
+    );
     assert!(Store::verify_keeper_agenda(
         network,
         &clients[0].header(query.height)?,
@@ -330,10 +384,19 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         &clients,
         &verifier,
         timed_height,
-        0,
+        1 - time_index,
         &timed,
         Some(Outcome::Applied),
     )?;
+    let time_batch_wake = prove_execution(
+        &clients,
+        &verifier,
+        timed_height,
+        time_index,
+        &time_batch,
+        Some(Outcome::Applied),
+    )?;
+    let time_cleared = keeper_batch_links(&clients[3], &verifier, &time_batch, false)?;
     let restart_to_visibility_ms = restart.elapsed().as_millis();
     let query = clients[0].query("/stem/keeper-time", 0, point, true)?;
     let consumed: Value = serde_json::from_slice(&query.value)?;
@@ -364,7 +427,7 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
     let mut batch_heads = Vec::new();
-    for member in good_batch.lineage_batch().unwrap() {
+    for member in time_batch.lineage_batch().unwrap() {
         let child_id = member.id(network);
         for (index, target) in member.lineage_command().unwrap().targets.iter().enumerate() {
             let mut replicas = Vec::new();
@@ -372,7 +435,7 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
                 let query = client.query("/stem/lineage", 0, target.id.as_slice(), true)?;
                 let payload: Value = serde_json::from_slice(&query.value)?;
                 let head = Head::decode(&bytes(&payload, "record")?)?;
-                assert_eq!(head.version, 1);
+                assert_eq!(head.version, 3);
                 assert_eq!(
                     head.out_point,
                     OutPoint::new(child_id.clone(), index as u32 + 1)
@@ -399,15 +462,45 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
             "lineage_batch": {"rejections": batch_rejections, "heads": batch_heads,
                 "rejected_transaction": hex::encode(bad_batch.as_slice())},
             "keeper_wake_height": due, "keeper_wake": wake, "heads": heads,
+            "keeper_batches": {
+                "height": {"height": due, "pending": height_pending, "cleared": height_cleared, "proof": height_batch_wake},
+                "time": {"height": timed_height, "pending": time_pending, "cleared": time_cleared, "proof": time_batch_wake},
+            },
             "timed": {"requested_ms": target, "parent_ms": timestamp, "height": timed_height,
                 "pending": pending, "agenda": agenda, "consumed": consumed,
                 "proof": timed_wake, "restart_to_visibility_ms": restart_to_visibility_ms},
         }))?,
     )?;
     println!(
-        "four native replicas verified Polytype, sponsored OTX, atomic Lineage batches and Keeper at heights {due} and {timed_height}"
+        "four native replicas verified Polytype, sponsored OTX, atomic Lineage and scheduled batches at heights {due} and {timed_height}"
     );
     Ok(())
+}
+
+fn keeper_batch_links(
+    client: &Client,
+    store: &Store,
+    batch: &Transaction,
+    pending: bool,
+) -> Result<Vec<Value>> {
+    batch.lineage_batch().unwrap().iter().map(|member| {
+        let fee = member.input(0).unwrap().previous_output;
+        let query = client.query("/stem/keeper-reservation", 0, fee.as_slice(), true)?;
+        let payload: Value = serde_json::from_slice(&query.value)?;
+        let record = (!payload["record"].is_null()).then(|| bytes(&payload, "record")).transpose()?;
+        assert_eq!(record.is_some(), pending);
+        if let Some(record) = &record {
+            let link = Reservation::decode(record)?;
+            assert_eq!(Some(link.primary_fee), primary_fee(batch));
+            assert_eq!(link.command_id, batch.id(store.network()));
+            assert_eq!(Some(link.trigger), batch.keeper_trigger());
+        }
+        assert!(Store::verify_keeper_reservation(
+            store.network(), &client.header(query.height)?, &fee, record.as_deref(),
+            &Proof::decode(&bytes(&payload, "proof")?)?,
+        ));
+        Ok(json!({"fee_input": hex::encode(fee.as_slice()), "height": query.height, "proof": payload}))
+    }).collect()
 }
 
 fn wait_height(clients: &[Client], height: u64) -> Result<()> {
