@@ -21,6 +21,7 @@ pub mod l1;
 pub mod patricia;
 pub mod retirement;
 pub mod rewards;
+pub mod security;
 mod sparse;
 pub use evidence::{BlockId, DoubleVote, Liability, SignedVote, VoteKind};
 

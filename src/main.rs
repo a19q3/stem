@@ -15,6 +15,8 @@ mod native_wallet;
 #[cfg(all(unix, feature = "comet-benchmark"))]
 use stem::socket;
 #[cfg(unix)]
+mod security_cli;
+#[cfg(unix)]
 mod stake_cli;
 
 #[cfg(unix)]
@@ -59,6 +61,11 @@ enum Command {
     Intercell {
         #[command(subcommand)]
         command: intercell_cli::Intercell,
+    },
+    /// Prepare CKB security domains and sign paid application service reports.
+    SecurityDomain {
+        #[command(subcommand)]
+        command: security_cli::Command,
     },
     /// Observe the confirmed CKB Stake Registry and sign a snapshot.
     Stake {
@@ -272,6 +279,7 @@ fn main() -> Result<()> {
         Command::Bridge { command } => command.run(),
         Command::Intercell { command } => command.run(),
         Command::Stake { command } => command.run(),
+        Command::SecurityDomain { command } => command.run(),
         Command::Checkpoint { command } => command.run(),
         Command::GenesisHash { genesis, header } => {
             use ckb_types::prelude::Entity;

@@ -50,5 +50,6 @@ available. Published network evidence contains public genesis and proof data.
 | Sparse CKB checkpoint publisher | [Report](../BENCHMARKS.md#sparse-ckb-checkpoint-publication), [successful and failed publisher and Intercell runs](2026-11-26-stem-checkpoint-publisher.json.xz) |
 | Consensus-time Keeper scheduling | [Report](../BENCHMARKS.md#consensus-time-keeper), [raw samples, replica proofs and first failed measurement](2026-11-26-stem-keeper-time.json.xz) |
 | L1 checkpoint expenses from the PoW Security Fund | [Report](../BENCHMARKS.md#ckb-checkpoint-fees-from-the-pow-security-fund), [paired estimates, canonical proofs, failed runs and regressions](2026-11-26-stem-checkpoint-fee-fund.json.xz) |
+| Paid CKB application security domain | [Report](../BENCHMARKS.md#paid-ckb-application-security-domain), [raw service, penalty, exit and Stem receipt runs](2026-11-26-stem-security-domain.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

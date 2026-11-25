@@ -461,6 +461,60 @@ Collect strictly more than two-thirds of bridge guardian weight in `anchor-votes
 
 Compile `stem-l1-reference` with the [RISC-V contract build flags](#build). Run `tools/jolteon_bridge_localnet.py` with the native CKB bridge options and `--reference-script /path/to/stem-l1-reference`. The fixture deposits the real sample Type Script into Stem, verifies both reference kinds, checks expiry, refreshes the anchor without moving any vault Cells and replaces the observed CKB fork.
 
+### Exercise a paid CKB security domain
+
+Build a CKB Data2 contract and run the real devnet fixture.
+
+```sh
+export CARGO_TARGET_DIR=/tmp/stem-security-domain-build
+cargo build --locked --release --bin stem
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --bin security-domain
+python3 tools/security_domain_localnet.py \
+  --binary "$CARGO_TARGET_DIR/release/stem" --l1 /path/to/ckb \
+  --contract "$CARGO_TARGET_DIR/riscv64imac-unknown-none-elf/release/security-domain" \
+  --output /tmp/stem-security-domain-devnet
+```
+
+Use `stem security-domain domain --request domain.json` to derive the Lock,
+Type ID, roster state and minimum funding. Fields include the deployed Data2
+`code_hash`, first input `seed` (zero Since), `output_index`, `ckb_genesis`,
+`network`, `operator`, `penalty`, `quorum_bps`, `challenge_blocks`, and
+`members` entries with `public_key`, `beneficiary` and `bond`. Payees use
+20-byte standard CKB Sighash arguments. Bond amounts use shannons and
+must cover full payout capacity. Include the CKB genesis as the first
+Header Dep of the registration transaction.
+
+Derive a buyer escrow Lock with `stem security-domain request --request
+request.json`. Include `code_hash`, `domain` (the domain Type Script hash),
+`buyer`, `subject` (packed CKB OutPoint expressed as RPC JSON),
+`refund_height`, and `receipt_capacity` in shannons. A receipt needs
+at least 194 CKB. Fund the request for that capacity plus the service fee.
+Budget at least 61 CKB for each selected Sighash payout. A signer runs
+`stem security-domain sign --l1-rpc URL --domain domain-point.json --request
+request-point.json --code-hash HASH --key-file KEY --journal PRIVATE_DIR`.
+Each point file contains one RPC OutPoint. Keep the private signer journal
+to preserve the one-result rule after restart.
+
+For service, consume the domain and request as inputs 0 and 1. Put the
+requested OutPoint first as a direct Code Cell Dep. Put operation byte 0,
+the result hash, the roster-order bitmap and the ordered 64-byte signatures
+in input 0's WitnessArgs `input_type`. Output 0 preserves the domain.
+The payouts follow in signer order, then the receipt. Its Type args
+concatenate the 32-byte domain hash and 36-byte request OutPoint. It stores
+the 32-byte result. An ordinary fee input pays the CKB fee. The Rust
+`stem_stake::security` module exposes canonical encodings, report digests
+and verification. See the fixture for retirement, double-report evidence,
+bond release and request refund transaction layouts.
+
+To exercise the Stem consuming application, use the Jolteon bridge
+fixture with `--security-domain PATH --reference-script PATH`. It
+confirms the CKB receipt, builds a historical L1 Cell Reference after
+that receipt has been spent, and requires the reference in a real
+RISC-V Type Script. It also tests rejection of a missing or modified
+record. [Run the Jolteon bridge fixture](#exercise-the-native-jolteon-path)
+
 ### Exercise Intercell Messaging
 
 Build the native CKB `intercell-mailbox` binary and use the normal Jolteon bridge fixture with its `--intercell-mailbox` option. The deployer fixes the CKB genesis, the active Stem network, the mailbox owner Lock hash, and the same checkpoint used by genesis. The mailbox Type Script uses Data2 addressing and its arguments concatenate Type ID, CKB genesis, Stem network, owner Lock hash, Checkpoint code hash and Checkpoint Type ID, in that order. Initial data consists of a zero little-endian nonce and a zero 32-byte replay root. The deployment supplies the CKB genesis as its first Header Dep.

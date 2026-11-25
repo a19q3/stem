@@ -151,6 +151,12 @@ The bridge anchor record commits CKB height and hash plus the Stem adoption heig
 
 A fee-exempt `L1AnchorUpdate` lets the bridge guardian quorum advance the anchor during periods without deposits or settlements. It uses a distinct signing domain and shares the bridge guardian journal for reorg detection. Each update extends the exact accepted predecessor and charges its separate operation, byte and signature budget. Only the anchor record changes. Vault OutPoints, reserve accounting and nonce state remain stable. A transaction can read the new anchor once it is in the parent state.
 
+## Application security domains
+
+A CKB Type ID cell holds independently funded service positions. Its policy fixes the CKB and Stem identities, the eligible roster, the original bond denominator and the application challenge interval. Active domains deliver paid observations of a specified CKB Live Cell. The CKB transaction opens that precise Cell Dep, recomputes its commitment, checks a weighted Ed25519 certificate and divides the buyer's escrow among signers and one typed receipt. Domain and request consumption bind the receipt to a single initial escrow. The holder can later consume the receipt while its historical inclusion remains provable.
+
+Two conflicting signed reports for the same request transfer the responsible bond to the pinned penalty address and excludes that position. Retirement freezes service and starts a relative CKB challenge period. Remaining capital is released only after the latest retired state matures. Stem references the application's typed CKB output through its existing CKB observation proof. That proof uses the bridge's separate guardian quorum and does not change either the Stem committee or the application's service quorum. [Developer workflow](OPERATIONS.md#exercise-a-paid-ckb-security-domain)
+
 ## Intercell Messaging
 
 Intercell uses one shared codec for the message identity and payload. Its two reserved Group Actions enter the ordinary transaction signing digest. Execution locates the actual consuming Lock group, checks the relevant endpoint, and records the full message under a direction and nonce ID in SystemRoot. A read against both the block overlay and committed state prevents duplicate use. The existing commit batch records the message alongside the application changes. Ordinary byte, state access and VM accounting also applies to Intercell.

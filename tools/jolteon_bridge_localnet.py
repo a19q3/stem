@@ -13,6 +13,7 @@ import subprocess
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, script, write_key
 from jolteon_checkpoint_localnet import PublisherFixture, Relay
 from intercell_localnet import intercell_round
+from security_domain_localnet import use_stem_receipt
 from checkpoint_fee_fund_localnet import deploy_fee_lock, use_fee_fund
 from asset_export_localnet import asset_round
 from spore_settlement_localnet import spore_round
@@ -451,6 +452,8 @@ def bridge_round(args, l1, fixture, children):
     elif args.intercell_mailbox:
         report["intercell"] = intercell_round(args, l1, fixture, vault, spec, spec_path,
                                               mint, clients, relay, commands, children, publisher=publisher)
+    elif args.security_domain:
+        report["security_domain"] = use_stem_receipt(args, l1, fixture, vault, spec, spec_path, mint, client)
     elif args.reference_script:
         report["references"] = reference_round(args, l1, fixture, spec, spec_path, lane, mint, client)
     elif args.fee_funds:
@@ -502,6 +505,8 @@ def main():
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
     parser.add_argument("--exercise-publisher", action="store_true", help="use the sparse publisher for Intercell checkpoints")
     parser.add_argument("--reference-script", type=lambda path: Path(path).resolve())
+    parser.add_argument("--security-domain", type=lambda path: Path(path).resolve(),
+                        help="consume a real CKB security receipt through a native L1 reference")
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
     args = parser.parse_args()
@@ -522,6 +527,8 @@ def main():
         parser.error("--full-udt-return requires the UDT settlement fixture")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--intercell-mailbox uses the native CKB lane on its own")
+    if args.security_domain and not args.reference_script:
+        parser.error("--security-domain requires --reference-script")
     if args.reference_script and (args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--reference-script uses the native CKB lane without the fee-fund fixture")
     if bool(args.xudt) != bool(args.xudt_gate):
@@ -544,6 +551,8 @@ def main():
             print(f"Verified Stem native UDT export and return at agreed height {report['agreed']['height']}")
         elif args.intercell_mailbox:
             print(f"Verified bidirectional Intercell messages at agreed height {report['agreed']['height']}")
+        elif args.security_domain:
+            print(f"Verified the real CKB security receipt in a Stem transaction at height {report['security_domain']['stem']['height']}")
         elif args.reference_script:
             print(f"Verified historical and live-at-anchor CKB references at agreed height {report['agreed']['height']}")
         elif args.fee_funds:

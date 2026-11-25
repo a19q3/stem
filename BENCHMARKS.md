@@ -1890,3 +1890,57 @@ bridge devnets passed their regressions. The Rust workspace passed
 
 [Reproduction](OPERATIONS.md#fund-ckb-checkpoint-fees) ·
 [Raw measurements, transactions, proofs and failed attempts](benchmarks/2026-11-26-stem-checkpoint-fee-fund.json.xz).
+
+## Paid CKB application security domain
+
+The final integration fixture ran the RISC-V security domain contract
+on CKB 0.210.0. Four independently keyed service positions locked 800
+CKB of principal and 498 CKB of occupied capacity. The 75% application
+quorum used the original pledged denominator. Two successful requests
+each paid 600 CKB to the actual signers and issued a typed receipt with
+194 CKB of buyer-controlled capacity. CKB rejected a false Live Cell
+result with a valid service quorum and denied use of the active bond
+as capital in another domain.
+
+Two objective double reports caused CKB to transfer 180 and 100 CKB
+of collateral to the configured penalty address. The second penalty
+executed during retirement and restarted the relative 12-block
+challenge period for the remaining capital. After maturity, CKB
+returned 520 CKB to the two remaining positions and released the
+498 CKB reserve. A pending request recovered its full buyer escrow
+after domain closure. The test also verified that the first receipt
+owner could recover its capacity without reissuing the receipt.
+
+| Canonical CKB operation | Signed bytes | CKB estimated cycles |
+| --- | ---: | ---: |
+| Register four bonded positions | 986 | 2,248,924 |
+| Serve the first request with three signers | 1,930 | 8,935,881 |
+| Serve after the first penalty | 1,930 | 8,807,290 |
+| Verify two conflicting signatures and slash | 1,365 | 6,405,416 |
+| Slash during retirement | 1,365 | 6,377,009 |
+| Close after the challenge period | 788 | 2,308,265 |
+| Refund the pending request | 570 | 1,707,829 |
+
+Four Jolteon replicas finalized the Stem application transaction at
+height 37. The transaction used a historical CKB reference to the
+already spent first receipt and a RISC-V Type Script that required
+the exact record. It used 970 bytes and 13,953,027 receipt cycles.
+The guardian rejected the spent receipt as a live reference, while
+the application rejected both a missing and a substituted record.
+The final fixture ran 17 CKB or provider rejection checks and three
+Stem or guardian rejection checks.
+
+The archive retains both successful and failed runs. One early
+negative test accidentally redirected a principal payment to its
+existing destination because the penalty address was also a member
+beneficiary. A distinct penalty address and a different output
+destination made the final test exercise the intended rejection.
+The records also include compiler diagnostics, actual payout
+transactions, and canonical CKB inclusion proofs.
+
+The Rust workspace passed 451 tests with 13 ignored. The Go proof
+suite, bidirectional Intercell devnet, and CKB-backed Jolteon
+committee and penalty regressions passed.
+
+[Reproduction](OPERATIONS.md#exercise-a-paid-ckb-security-domain) ·
+[Raw transactions, proof data, measurements, and unsuccessful attempts](benchmarks/2026-11-26-stem-security-domain.json.xz).

@@ -20,6 +20,8 @@ Lineage commands can authorize work on registered Cells by stable ID. Stem resol
 
 Bridged networks expose SystemRoot proofs at `/stem/bridge-backing`, `/stem/bridge-lane` and `/stem/bridge-withdrawal`. They authenticate Stem's accounting of certified CKB observations, including recognized reserve, circulating Capacity, pending withdrawals and lane nonces. StemVM contracts can read guardian-certified historical CKB outputs and live-at-anchor observations. The fee tally is available at `/stem/extinguished-fees`. Networks that configure fee funds expose `/stem/fee-funds` for the four accounts and `/stem/stake-reward-claim` for position-level claims. [CKB Cell reference workflow](OPERATIONS.md#read-a-ckb-cell-from-stemvm)
 
+Applications can fund independent CKB security domains for paid Live Cell attestations. The service emits typed receipts and enforces objective penalties and delayed release on CKB. Stem applications can authenticate those receipts through the L1 reference interface. [Run a security domain](OPERATIONS.md#exercise-a-paid-ckb-security-domain)
+
 Configured networks carry Intercell messages between Stem and a CKB Mailbox. The native checkpoint verifies delivery on CKB, and guardians certify the CKB output used for delivery on Stem. Both chains enforce replay protection. A Stem application can escrow its native UDT, issue a CKB representation, and redeem the underlying asset after a confirmed burn. The basic Spore V2 route restores the original CKB Spore after ownership moves on Stem. A native Stem object can also travel in the opposite direction with its transfer approval enforced on both chains. [Intercell workflow](OPERATIONS.md#exercise-intercell-messaging)
 
 - [Protocol](STEM-PROTOCOL.md)
