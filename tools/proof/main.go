@@ -136,7 +136,11 @@ func run() error {
 	metadata := flag.Bool("metadata", false, "output authenticated checkpoint metadata as JSON")
 	stemGenesis := flag.String("stem-genesis", "", "expected Stem genesis Header ID")
 	appHashArg := flag.String("app-hash", "", "expected native Stem AppHash")
+	direct := flag.String("direct-bundle", "", "export consecutive signed commits for the direct CKB verifier")
 	flag.Parse()
+	if *direct != "" {
+		return exportDirect(*genesis, *direct)
+	}
 	appHash, err := hex.DecodeString(strings.TrimPrefix(*appHashArg, "0x"))
 	if err != nil || len(appHash) != 32 || *height < 1 || *height == math.MaxInt64 ||
 		*genesis == "" || *commit == "" || flag.NArg() != 0 {

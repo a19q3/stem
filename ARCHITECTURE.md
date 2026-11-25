@@ -117,3 +117,23 @@ Archive replicas preserve committed Headers. The proof index follows those recor
 The CKB Checkpoint Type ID contract verifies the incumbent authority's quorum, strict sequence and height, the actual predecessor OutPoint and an exact MMR extension. The extension starts by appending the old published Header itself to its prior peaks. Authority rotation requires both independent quorums. The signed record also binds the complete Stem Block ID and signed successor Block ID, the successor's current and next committee hashes, the authority-verified Stake Snapshot and the verified handoff bundle. AppHash is derived from the network, height and recorded Stem Header ID.
 
 The off-chain preparer authenticates the Stem genesis and the CometBFT successor, verifies its handoffs, and checks the Patricia Stake Snapshot proof independently. On CKB, the checkpoint authority certifies the successor and handoff interpretation. Clients still need a trusted view of the CKB chain, and can independently recheck the available Stem bundle.
+
+
+### Direct CKB finality verifier
+
+The direct Checkpoint Type ID stores the last authenticated Comet Block
+ID, the next committee hash and the canonical native Header. The deployment
+pins chain ID, network, L1 genesis, genesis committee and genesis AppHash.
+The public witness contains up to eight consecutive full Comet headers,
+the PartSet IDs and rounds, weighted Ed25519 precommits and native Headers.
+A repeated committee within one proof is referenced by an empty committee
+entry. The verifier recalculates the Comet v0.38 header and validator-set
+hashes and the Stem H+1 AppHash. Parent Block IDs and native Header IDs
+enforce continuity at both levels. The same CKB lock pattern and Type ID
+uniqueness protect the update Cell. The Go exporter accepts public Comet
+RPC responses and the host CLI uses the same Rust verifier as the contract.
+
+Exact progression requires relaying every intervening commit. The contract
+does not enforce a trusting period or validate the underlying Stem execution.
+The bridge's custody path and the old authority-published checkpoint are
+separate from the directly verified Cell.

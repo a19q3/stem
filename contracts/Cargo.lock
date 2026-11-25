@@ -530,6 +530,7 @@ dependencies = [
  "ckb-hash",
  "ed25519-dalek",
  "prost",
+ "sha2 0.10.9",
  "tendermint-proto",
 ]
 

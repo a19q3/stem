@@ -3707,6 +3707,7 @@ dependencies = [
  "ckb-hash 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ed25519-dalek",
  "prost",
+ "sha2",
  "tendermint-proto",
 ]
 

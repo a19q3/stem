@@ -607,3 +607,66 @@ STEM_TEST_COMET="$PWD/target/stem-tools/cometbft" STEM_TEST_EVIDENCE_ROOT="$PWD/
 STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
   go -C tools/proof test -mod=readonly -run TestSponsoredLineageSignatures -v .
 ```
+
+## Direct CKB finality
+
+On the local Intel Core i9-13900H, two Stem replicas ran CometBFT 0.38.26
+against CKB devnet 0.210.0. The direct contract advanced the unique
+checkpoint Cell across 32 signed CometBFT headers. It followed committee
+voting powers `[250]`, `[400, 250]`, `[400]`, and `[450]` from
+genesis. Relayers used the public commits and native Headers as inputs
+to the Go proof exporter. Rust and CKB-VM verified the resulting proof.
+
+| Stem checkpoint height | Consecutive signed commits | Proof bytes | Estimated full CKB transaction cycles | CKB inclusion height |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 1 | 707 | 4,234,658 | 51 |
+| 8 | 8 | 5,977 | 21,339,974 | 55 |
+| 16 | 8 | 6,601 | 36,101,557 | 59 |
+| 24 | 8 | 6,291 | 27,745,707 | 63 |
+| 31 | 7 | 5,275 | 18,875,683 | 67 |
+
+CKB rejected transactions with a modified signature, insufficient
+voting power, a forged committee, a skipped commit, a replayed commit
+or an altered native execution root. The first network round used
+the latest Header where the genesis Header was required and stopped
+before publication. The second reached CKB with a RISC-V atomic
+instruction left in the contract and failed VM execution. The successful
+round explicitly exported the genesis Header and used the build flags in
+the [runbook](OPERATIONS.md#exercise-the-direct-ckb-checkpoint).
+
+A separate probe ran the same Rust verifier in CKB-VM V2 against
+Go-signed single-header fixtures. The weighted quorum profile included
+the shortest prefix of the power-sorted committee with strictly more
+than two-thirds of the power. The cycle counts cover the VM probe;
+they exclude a CKB transaction and its other scripts.
+
+| Committee | All signatures | All proof bytes | All cycles | Quorum signatures | Quorum proof bytes | Quorum cycles |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 4 | 889 | 8,941,602 | 2 | 733 | 4,728,375 |
+| 16 | 16 | 2,305 | 34,801,904 | 8 | 1,681 | 17,809,734 |
+| 32 | 32 | 4,193 | 69,262,400 | 17 | 3,023 | 37,448,333 |
+| 64 | 64 | 7,969 | 138,082,882 | 32 | 5,473 | 70,135,930 |
+| 100 | 100 | 12,217 | 215,574,594 | 50 | 8,317 | 109,434,187 |
+| 128 | 128 | 15,521 | 276,124,141 | 65 | 10,607 | 142,378,670 |
+
+The larger committee figures measure proof verification from an anchored
+genesis. The network experiment exercised small committees on shared
+hardware. Neither test measures finality latency at scale.
+
+```sh
+mkdir -p target/stem-runs/direct-cost
+STEM_DIRECT_COST_DIR="$PWD/target/stem-runs/direct-cost" \
+  go -C tools/proof test -mod=readonly -run TestDirectCertificateCostFixtures -count=1 .
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --target-dir target/stem-contracts \
+  --example direct-finality-cost
+STEM_DIRECT_COST_DIR="$PWD/target/stem-runs/direct-cost" \
+  STEM_DIRECT_COST_ELF="$PWD/target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/direct-finality-cost" \
+  cargo test --locked --release --test direct_finality_cost -- --ignored --nocapture
+```
+
+The [raw report](benchmarks/2026-11-25-stem-direct-finality.json.xz)
+includes all three network rounds, public headers and votes, rejected
+transaction errors, confirmed CKB proofs, 12 VM fixtures and build
+fingerprints.

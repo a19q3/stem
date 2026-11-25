@@ -10,6 +10,7 @@ use stem_ledger::patricia::Proof;
 use stem_stake::{
     BlockId,
     checkpoint::{Checkpoint, Domain, Update, ZERO_OUT_POINT, stake_snapshot_commitment},
+    finality::{self, Tip, Trust},
 };
 
 use crate::{
@@ -23,6 +24,8 @@ pub enum CheckpointCommand {
     Prepare(Box<Prepare>),
     /// Verify the canonical publication certificate before embedding it in a CKB witness.
     Verify(Box<Verify>),
+    /// Verify a direct CometBFT bundle and its native checkpoint tip.
+    VerifyDirect(Box<VerifyDirect>),
     /// Rebuild the archive index as needed and produce a historical Header proof.
     History {
         #[command(flatten)]
@@ -106,6 +109,67 @@ pub struct Verify {
     previous_data: Option<PathBuf>,
 }
 
+#[derive(Args)]
+pub struct VerifyDirect {
+    #[arg(long)]
+    network: String,
+    #[arg(long)]
+    chain_id: String,
+    #[arg(long)]
+    initial_committee: String,
+    #[arg(long)]
+    genesis_app_hash: String,
+    /// Proof bundle exported by stem-proof -direct-bundle.
+    #[arg(long)]
+    bundle: PathBuf,
+    /// JSON hex for previously authenticated CKB Checkpoint Cell data.
+    #[arg(long)]
+    previous_tip: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+struct DirectBundle {
+    proof: String,
+    tip: String,
+    native_height: u64,
+}
+
+impl VerifyDirect {
+    fn run(self) -> Result<()> {
+        let trust = Trust {
+            network: decode(&self.network)?,
+            chain_id: &self.chain_id,
+            initial_committee: decode(&self.initial_committee)?,
+            genesis_app_hash: decode(&self.genesis_app_hash)?,
+        };
+        let bundle: DirectBundle =
+            read_json_limited(&self.bundle, 2 * finality::MAX_PROOF_BYTES + 4096)?;
+        let previous = self
+            .previous_tip
+            .map(|path| -> Result<Tip> {
+                let raw: String = read_json_limited(&path, 2 * Tip::SIZE + 16)?;
+                Ok(Tip::decode(&restricted_bytes(&raw, Tip::SIZE)?)?)
+            })
+            .transpose()?;
+        let tip = finality::verify(
+            &trust,
+            previous.as_ref(),
+            &restricted_bytes(&bundle.proof, finality::MAX_PROOF_BYTES)?,
+        )
+        .context("direct CometBFT finality proof rejected")?;
+        ensure!(
+            tip.encode() == restricted_bytes(&bundle.tip, Tip::SIZE)?
+                && tip.height() == bundle.native_height,
+            "exported bundle tip differs from verified execution"
+        );
+        print_json(&json!({
+            "height": tip.height(),
+            "app_hash": encode(tip.app_hash(&trust.network)),
+            "next_committee": encode(tip.next_committee),
+        }))
+    }
+}
+
 #[derive(Deserialize)]
 struct Metadata {
     block: CompleteBlockId,
@@ -166,6 +230,7 @@ impl CheckpointCommand {
         match self {
             Self::Prepare(args) => args.run(),
             Self::Verify(args) => args.run(),
+            Self::VerifyDirect(args) => args.run(),
             Self::History { archive, header } => {
                 let (network, index) = archive.open()?;
                 let historical = index.header(header)?;

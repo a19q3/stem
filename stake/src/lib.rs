@@ -12,6 +12,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 pub mod checkpoint;
 pub mod compact;
 mod evidence;
+pub mod finality;
 pub mod history;
 pub mod l1;
 pub mod retirement;

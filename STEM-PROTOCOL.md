@@ -392,6 +392,14 @@ AppHash(H)     = H("Stem AppHash", network_id, H, HeaderID(H))
 
 Polytype 的边际成本采用控制实验。固定输入数量和数据、输出数量、Lock 分组、签名算法与密钥、依赖读取、数据总尺寸和 VM 配置，改变独立 Type Groups 的数量。每个变体按真实交易内容重新签名。等长夹具能做到时使用等长编码，其他差异应记录。分别记录 Lock 与 Type 的 cycles、缓存冷暖、上下文载入、状态根更新及完整四节点吞吐，保留原始数据、命令和构建指纹。
 
+### CKB 直接最终性检查点
+
+`direct-checkpoint` 使用独立的 CKB Type ID 状态 Cell。部署时固定 Stem 网络身份、CometBFT chain ID、创世委员会哈希、创世 AppHash 和目标 CKB 创世标识。首批证明从 CometBFT 高度 1 验证。后续每次消费当前检查点，提交最多八个连续的 CometBFT Header、区块 Precommit、实际验证者集合和对应的 Stem Header。
+
+合约重新计算 CometBFT 的 SHA-256 Header 与委员会根，并核验超过三分之二权重的规范 Ed25519 Precommit。每个 Header 的当前委员会必须等于前一个已认证的 `NextValidatorsHash`。改变权重和成员时使用同一条验证规则。合约检查完整父 Block ID 以及原生父 Header ID，并用 CometBFT 高度 H+1 的 AppHash 验证原生高度 H 的完整 Header。这个 Header 包含执行与状态承诺。签名人、状态承诺与历史连续性均由合约直接检查。中继者只需支付 CKB 交易手续费。
+
+安全依赖固定的创世信任参数、Stem 各历史委员会的安全阈值以及用户选择的 CKB 锚点。检查点验证提交证书和应用承诺。执行有效性由 Stem 共识负责。合约逐高度验证，尚无跳高证明或强制的新鲜度界限。长期断更时，需要按信任假设重新获得可信 CKB 锚点。现有桥金库、质押退出以及独立权威检查点各自的运行规则见对应章节。
+
 ## 9. 当前实现与实测证据
 
 | 项目 | 已验证 | 尚待集成 |

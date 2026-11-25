@@ -24,7 +24,7 @@ pub struct Domain {
 }
 
 impl BlockId {
-    fn decode(bytes: &mut &[u8]) -> Result<Self> {
+    pub(crate) fn decode(bytes: &mut &[u8]) -> Result<Self> {
         let block = Self {
             hash: take(bytes)?,
             parts: u32::from_le_bytes(take(bytes)?),
@@ -36,7 +36,7 @@ impl BlockId {
         Ok(block)
     }
 
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.hash);
         bytes.extend_from_slice(&self.parts.to_le_bytes());
         bytes.extend_from_slice(&self.part_set_hash);

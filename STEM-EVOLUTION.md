@@ -22,7 +22,7 @@
 | 14 | 多维资源计费 | 已实现 genesis 费率、计费和缓存一致性测试。当前收费按交易容量差额冲销负债。系统操作继续走独立资源预算。 |
 | 15 | 开放委托质押 | CKB devnet 重新验证自质押和委员会变更。尚无委托份额、收益或责任分摊。 |
 | 16 | DevFund / Ecosystem Fund | SystemRoot 认证手续费冲销总额，也认证已观察的 CKB 储备、流通负债及待兑余额。实际 CKB 和 xUDT 往返后对账通过。逐金库收入归属、分配份额、可兑付应付款及授权支出待实现。 |
-| 17 | CKB 直接验证 Stem 最终性 | 当前 CKB Checkpoint 合约验证独立检查点权威，完整 Stem 最终性及交接验证由链下工具负责。本轮另测 CKB-VM V2 的两种证书签名验证成本，输入委员会由夹具认证。 |
+| 17 | CKB 直接验证 Stem 最终性 | 直接检查点合约验证 CometBFT 签名、完整区块链接、委员会交接和 Stem 执行头。实际 CKB devnet 确认五次发布，覆盖三次委员会变化并拒绝六种无效提交。4–128 委员的 Ed25519 成本另由 CKB-VM 探针测量。兑付、退休及通用消息仍待接入该证明。 |
 | 18 | Intercell Messaging | 现有 CKB 和 xUDT 通道重新验证。通用认证消息和无许可中继待实现。 |
 | 19 | L1 Cell Reference | Rust 与 CLI 可使用可信 CKB Header、交易与见证 Merkle 路径独立验证历史输出。CKB devnet 用实际兑付和已消费的金库输出验证历史查询。StemVM 只读引用与锚点存活认证仍待实现。 |
 | 20 | UDT / Spore 结算 | CKB 与 xUDT 双向路径已用实际 devnet 复验。Stem 原生 UDT 和 Spore 导出需独立身份、生命周期和供应规则。 |

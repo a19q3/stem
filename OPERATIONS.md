@@ -185,3 +185,35 @@ For independent publication, use an archive Stem replica started with `--archive
 The CKB Type Script uses Data2 with the 32-byte Type ID, 32-byte Stem network, 32-byte CKB genesis and 32-byte initial authority generation, in that order. The Lock uses the same code with the 32-byte complete Type Script hash followed by zero. Put the encoded publication certificate in the input WitnessArgs `input_type` of the checkpoint input, or of input zero when creating the Cell. The certificate starts with the little-endian u16 MMR suffix count and corresponding hashes. Then encode the incumbent authority and signatures. For each authority, write a u16 member count, sorted 32-byte Ed25519 keys with little-endian u64 weight, a u16 vote count, and sorted u16 signer indices with 64-byte signatures. A rotation appends a second authority certificate. The L1 script enforces a maximum of 16 members for each authority.
 
 Use `stem checkpoint verify` with pinned trust parameters before broadcasting through the CKB wallet. `stem checkpoint history` indexes committed Headers in a separate RocksDB database and produces an MMR inclusion path. Authenticate the target Header's history root before consuming its proofs. The archive index needs retained data from genesis. CKB depth and reorganization monitoring are the publisher's responsibility.
+
+
+## Exercise the direct CKB checkpoint
+
+Compile the L1 contract for CKB-VM and build the Go proof exporter.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --target-dir target/stem-contracts \
+  --bin direct-checkpoint --bin stake-registry
+mkdir -p target/stem-tools
+go -C tools/proof build -mod=readonly -o ../../target/stem-tools/stem-proof .
+cargo build --locked --release --bin stem
+python3 tools/native_stake_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb --comet target/stem-tools/cometbft \
+  --stake-registry target/stem-contracts/riscv64imac-unknown-none-elf/release/stake-registry \
+  --proof-verifier target/stem-tools/stem-proof \
+  --direct-checkpoint target/stem-contracts/riscv64imac-unknown-none-elf/release/direct-checkpoint \
+  --output target/stem-runs/direct-checkpoint
+```
+
+The runner derives the native genesis bytes with
+`stem genesis-hash --genesis SPEC --header`. For each successive height,
+collect the public Comet `commit` and `validators` responses and the
+preceding native Header. `stem-proof -genesis COMET_GENESIS -direct-bundle SOURCE`
+exports a JSON object containing the witness and its expected tip.
+`stem checkpoint verify-direct --help` lists the trust and previous-tip
+arguments for off-chain verification. The actual publication places the direct
+proof in `WitnessArgs.input_type` and the verified tip in the unique Cell.
+The test output directory retains the individual bundles, estimated cycles
+and L1 transaction-and-witness inclusion proofs.

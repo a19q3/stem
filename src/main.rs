@@ -67,6 +67,9 @@ enum Command {
     GenesisHash {
         #[arg(long)]
         genesis: PathBuf,
+        /// Emit the canonical native genesis Header instead of its ID.
+        #[arg(long)]
+        header: bool,
     },
     Run {
         #[arg(long)]
@@ -104,7 +107,7 @@ fn main() -> Result<()> {
         Command::Bridge { command } => command.run(),
         Command::Stake { command } => command.run(),
         Command::Checkpoint { command } => command.run(),
-        Command::GenesisHash { genesis } => {
+        Command::GenesisHash { genesis, header } => {
             use ckb_types::prelude::Entity;
             let spec = native_spec::load(&genesis)?;
             let directory = tempfile::tempdir()?;
@@ -113,7 +116,12 @@ fn main() -> Result<()> {
                 &spec,
                 stem::native_store::Retention::Archive,
             )?;
-            bridge_cli::print_json(&format!("0x{}", hex::encode(store.genesis_id().as_slice())))
+            let encoded = if header {
+                hex::encode(store.tip().encode())
+            } else {
+                hex::encode(store.genesis_id().as_slice())
+            };
+            bridge_cli::print_json(&format!("0x{encoded}"))
         }
         Command::Run {
             home,

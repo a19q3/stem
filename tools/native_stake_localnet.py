@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from bridge_localnet import CKB, Fixtures, L1, binary, ckb_hash, hex_bytes, le, point, reject_cli, script_hash, write_key
 from localnet import Rpc, config_value, run, write_json
 import checkpoint_localnet
+import direct_checkpoint_localnet
 from native_bridge_localnet import bridge_configuration, deploy as deploy_bridge, start, wait_for
 import stake_load_localnet
 from stake_localnet import CHAIN, DELAY, EMPTY, Scenario, committee as guardian_bytes, guardian_group, mk_record, proof, signable
@@ -219,6 +220,12 @@ def stake_round(args, l1, scenario, fixture):
                 args, scenario, spec_path, homes[0] / "config/genesis.json",
                 transitions, first_checkpoint, second_checkpoint,
                 funding=vault["change_point"] if vault else None)
+        direct_checkpoint = None
+        if args.direct_checkpoint:
+            progress(32)
+            direct_checkpoint = direct_checkpoint_localnet.publish(
+                args, scenario, spec_path, homes[0] / "config/genesis.json", clients[0], header,
+                funding=vault["change_point"] if vault else None)
         retired = owner + le(1, 8) + le(21, 8) + EMPTY
         request = args.output / "retirement-request.json"
         write_json(request, {
@@ -258,7 +265,7 @@ def stake_round(args, l1, scenario, fixture):
         return {"initial_registration": registered, "incoming_registration": incoming, "stake_join": joined,
                 "exit_requested": exit_requested, "stake_exit": excluded, "retirement": retirement,
                 "unbonded": released, "unbonded_shannons": low, "l1_proof": l1.prove_committed(released),
-                "committee_proof": validated, "checkpoint": checkpoint_report,
+                "committee_proof": validated, "checkpoint": checkpoint_report, "direct_checkpoint": direct_checkpoint,
                 "guardian_rotation": rotation_tx, "next_guardian_snapshot": succeeding,
                 "increased_bond": increased, "increased_power_at_height_31": 450,
                 "guardian_conflicting_epoch_rejected": True,
@@ -284,7 +291,9 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve(), required=True)
     for name in ("loadgen", "vault", "deposit-lock", "native-lock", "wrapped"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
-    parser.add_argument("--checkpoint", type=lambda path: Path(path).resolve())
+    checkpoint = parser.add_mutually_exclusive_group()
+    checkpoint.add_argument("--checkpoint", type=lambda path: Path(path).resolve())
+    checkpoint.add_argument("--direct-checkpoint", type=lambda path: Path(path).resolve())
     parser.add_argument("--l1-port", type=int, default=43300)
     parser.add_argument("--comet-port", type=int, default=43310)
     args = parser.parse_args()
@@ -299,6 +308,8 @@ def main():
         print(result["committee_proof"], f"unbonded {result['unbonded_shannons']} shannons")
         if result["checkpoint"]:
             print(f"published CKB checkpoints at Stem heights {[item['height'] for item in result['checkpoint']['publications']]}")
+        if result["direct_checkpoint"]:
+            print(f"verified direct CKB checkpoints at Stem heights {[item['height'] for item in result['direct_checkpoint']['publications']]}")
         if result["load"]:
             print(json.dumps(result["load"], indent=2))
     finally:
