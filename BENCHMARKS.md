@@ -857,6 +857,11 @@ height 2. The longer retry reached readiness and stopped when the P2P
 monitor RPC disconnected. The final retry was interrupted to clean the
 workspace target directories. All rounds are retained. [Public run archive](benchmarks/2026-11-25-stem-jolteon-runtime.json.xz)
 
+A clean rebuild at `ec2b23e` repeated the four-replica test with one
+offline validator. All 32 payments finalized, the survivors formed a
+TC at view 9, and the restarted replica agreed at height 12. The
+workspace run passed 437 tests and left 10 opt-in tests ignored. [Clean rebuild evidence](benchmarks/2026-11-25-stem-jolteon-post-clean.json)
+
 See [commands and timing options](OPERATIONS.md#exercise-the-native-jolteon-path).
 
 ## Jolteon verifier in CKB-VM
