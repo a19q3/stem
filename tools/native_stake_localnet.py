@@ -278,7 +278,7 @@ def stake_round(args, l1, scenario, fixture):
         increased_power = 450 * CKB
         increased = scenario.change("increase-active-validator", 1, new_key,
                                     mk_record(new_key, increased_power, 1, None, incoming_active))
-        _, succeeding = snapshot(3, parent)
+        succeeding_registry, succeeding = snapshot(3, parent)
         progress(31)
         if committee(30) != {new_key: 400} or committee(31) != {new_key: 450}:
             raise AssertionError("CKB bond increase did not change power at the expected height")
@@ -385,11 +385,12 @@ def stake_round(args, l1, scenario, fixture):
                 "guardian_conflicting_epoch_rejected": True,
                 "load": measured.result(timeout=90) if loader else None}
         write_json(args.output / "native-stake-pre-reorg.json", report)
-        height = int(succeeding["height"])
+        height = int(succeeding_registry["height"])
+        observed = succeeding_registry["block_hash"]
         l1.call("truncate", l1.call("get_block_hash", hex(height - 1)))
         l1.mine(3)
         replacement = l1.call("get_block_hash", hex(height))
-        if replacement == succeeding["block_hash"]:
+        if replacement == observed:
             raise AssertionError("failure to reorganize the observed CKB anchor")
         observer = scenario.authority[0].public_key().public_bytes_raw().hex()
         reason = reject_cli(
@@ -398,7 +399,7 @@ def stake_round(args, l1, scenario, fixture):
             "--l1-rpc", l1.url, "--journal", args.output / "stake-journal-0",
             "--key-file", args.output / f"stake-observer-{observer}.key",
         )
-        report["reorganized_ckb_anchor"] = {"observed": succeeding["block_hash"], "replacement": replacement,
+        report["reorganized_ckb_anchor"] = {"observed": observed, "replacement": replacement,
                                             "height": height, "rejected": reason}
         return report
     finally:
