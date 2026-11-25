@@ -549,3 +549,6 @@ mod intent;
 mod keeper;
 #[path = "native_store/lineage.rs"]
 mod lineage;
+
+#[path = "native_store/sponsored_lineage.rs"]
+mod sponsored_lineage;

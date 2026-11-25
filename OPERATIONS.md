@@ -57,7 +57,7 @@ The four-node test prints its evidence directory. It generates a fresh network, 
 
 ```sh
 STEM_NATIVE_EVIDENCE=/path/to/printed/evidence \
-  go -C tools/proof test -mod=readonly -run 'Test(NativeCommit|LineageCommand|KeeperWake)Signatures' -v .
+  go -C tools/proof test -mod=readonly -run 'Test(NativeCommit|LineageCommand|KeeperWake|SponsoredLineage)Signatures' -v .
 ```
 
 The benchmark uses the same four-node harness. Set `STEM_TEST_LOADGEN`, `STEM_TEST_LOAD_RATE`, `STEM_TEST_LOAD_COUNT` and `STEM_TEST_LOAD_KIND`. Workloads are `payment`, `single`, `double`, `multi` and `settlement`. Set `STEM_TEST_EVIDENCE_ROOT=target/stem-runs` to keep evidence on the workspace filesystem. Set `STEM_TEST_VALIDATORS` to vary the same-host benchmark from 4 to 32 replicas. Use `--release` for throughput characterization.
@@ -102,6 +102,8 @@ For an ordinary exact spend of a Head or fee Cell, use
 transaction, Lock, context and key arguments.
 
 Use `lineage::Outcome::decode` on the authenticated receipt protocol result. Position 0 always refers to fee change. On success each ordered target's output follows it. On a fee-only failure no target outputs are created. The four-node runner exports `lineage-commands.json` containing the real command results and the state and certificate evidence.
+
+**Sponsored Lineage intent.** Use `stem wallet lineage actor --key-file KEY` to derive each business ID. Include `"business":{"actors":[…],"max_fee":2000}` with sorted actor IDs in the Lineage build request. Bind at least one target to an exact version. The business draft may omit `fee_input` and `fee`. Each party reviews the full business payload and uses `stem wallet lineage sign-business --genesis SPEC --transaction DRAFT --executor-hash HASH --key-file KEY`. The collector then runs `stem wallet lineage assemble --genesis SPEC --transaction DRAFT --fee-input OUTPOINT_JSON --fee SHANNONS --seal PARTY_A_JSON --seal PARTY_B_JSON`. Only the fee payer seals the assembled transaction with `stem wallet lineage sign`. For Keeper, set `execute_at` before collecting the business seals and reserve the fully authorized transaction.
 
 **Keeper.** Enable `keeper` in the genesis JSON of a Lineage-enabled network. The research fixture uses `{"max_delay":64,"per_height":4,"reservation_fee":2000}`. Choose limits such that the configured schedule fits the block. Add an `execute_at` height earlier than `valid_before_height` to the Lineage build request, then sign the command as above. Include the resulting hex string under `"keeper": {"schedule": "0x…"}` in an ordinary wallet build request and sign that carrier with its own funding inputs. Fees must cover the reservation charge and ordinary resource prices. Broadcast the carrier. The signed command becomes executable only through the committed queue.
 

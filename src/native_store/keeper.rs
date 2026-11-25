@@ -204,9 +204,12 @@ pub(super) fn change(
             escrow.resolved_cell_bytes() as u64 + escrow.inputs()[0].cell.as_slice().len() as u64,
             "Keeper authorization read bytes",
         )?;
-        let cycles = store
-            .cache
-            .verify(escrow, authorization_limit.min(budget.cycles), false)?;
+        let (cycles, _) = lineage::verify_authorization(
+            store,
+            &command,
+            escrow,
+            authorization_limit.min(budget.cycles),
+        )?;
         charge(&mut budget.cycles, cycles, "Keeper authorization cycles")?;
         queue.insert(entry.expect_err("new reservation"), command);
         (Some(height), policy.reservation_fee, cycles)

@@ -378,7 +378,9 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         let dynamic =
             super::lineage::DynamicLineage::fund_using(&mut fixture, &lineage, 5, 2, None)?;
         super::keeper::fund_carriers(&mut fixture, 3)?;
-        Some((swap, lineage, dynamic))
+        let sponsored =
+            super::sponsored_lineage::SponsoredLineage::fund(&mut fixture, &lineage, 2)?;
+        Some((swap, lineage, dynamic, sponsored))
     } else {
         None
     };
@@ -649,7 +651,7 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     println!(
         "native payment H={height}, two Type Groups H={composed_height} cycles={total_cycles}, four replicas share H+1 AppHash, restarted replica agrees at H={target}, remote snapshot H={restored}"
     );
-    let (swap, lineage, dynamic) = scenarios.context("missing network scenarios")?;
+    let (swap, lineage, dynamic, sponsored) = scenarios.context("missing network scenarios")?;
     let intent = swap.sign(&fixture, &spec_path, 500)?;
     let confirmed = nodes[2].rpc(
         &client,
@@ -839,6 +841,125 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         "pre-signed Lineage commands and fee-only rollback verified on four validators and a snapshot observer"
     );
     verify_keeper_execution(&nodes, &observer, &client, &fixture, &dynamic, &output)?;
+    verify_sponsored_lineage(&nodes, &observer, &client, &fixture, &sponsored, &output)?;
+    Ok(())
+}
+
+fn verify_sponsored_lineage(
+    nodes: &[Node],
+    observer: &Node,
+    client: &reqwest::blocking::Client,
+    fixture: &Fixture,
+    trade: &super::sponsored_lineage::SponsoredLineage,
+    output: &Path,
+) -> Result<()> {
+    use stem_ledger::{block::Receipt, lineage::Outcome, proof::InclusionProof};
+
+    let broadcast = |transaction: &Transaction| -> Result<Value> {
+        let outcome = nodes[0].rpc(
+            client,
+            &format!(
+                "broadcast_tx_commit?tx=0x{}",
+                hex::encode(transaction.as_slice())
+            ),
+        )?;
+        ensure!(
+            outcome["check_tx"]["code"].as_u64() == Some(0)
+                && outcome["tx_result"]["code"].as_u64() == Some(0),
+            "sponsored Lineage transaction failed: {outcome}"
+        );
+        Ok(outcome)
+    };
+    for reserve in trade.registers(fixture)? {
+        broadcast(&reserve)?;
+    }
+    let immediate = trade.signed(fixture, 0, 0, 40, 70, None)?;
+    let first = broadcast(&immediate)?;
+    let data = STANDARD.decode(
+        first["tx_result"]["data"]
+            .as_str()
+            .context("immediate receipt")?,
+    )?;
+    let receipt = Receipt::decode(&data)?;
+    assert_eq!(Outcome::decode(&receipt.protocol_result)?, Outcome::Applied);
+    assert_eq!(receipt.fee, FEE);
+    let due = nodes[0].signed_height(client)? + 5;
+    let scheduled = trade.signed(fixture, 1, 1, 5, 7, Some(due))?;
+    let ticket = broadcast(&super::keeper::schedule(fixture, 2, &scheduled)?)?;
+    poll("sponsored Lineage wake", Duration::from_secs(20), || {
+        let heights = nodes
+            .iter()
+            .chain([observer])
+            .map(|node| node.signed_height(client))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(heights.into_iter().all(|height| height > due).then_some(()))
+    })?;
+    let header = nodes[0].header(client, due)?;
+    let network = &fixture.spec.network;
+    let query = nodes[0].rpc(
+        client,
+        &format!(
+            "abci_query?path=%22%2Fstem%2Fexecution%22&prove=true&height={due}&data=0x00000000"
+        ),
+    )?;
+    let response = &query["response"];
+    assert_eq!(response["code"].as_u64(), Some(0));
+    let value = STANDARD.decode(response["value"].as_str().context("scheduled receipt")?)?;
+    let wake: Value = serde_json::from_slice(&value)?;
+    let result = Receipt::decode(&hex::decode(
+        wake["receipt"].as_str().context("scheduled receipt")?,
+    )?)?;
+    let proof: ckb_jsonrpc_types::JsonBytes = serde_json::from_value(wake["proof"].clone())?;
+    let (tx_path, receipt_path) = InclusionProof::decode_execution_pair(proof.as_bytes())?;
+    assert!(tx_path.verify_execution(
+        network,
+        &header.execution(),
+        &scheduled,
+        &receipt_path,
+        &result
+    ));
+    assert_eq!(Outcome::decode(&result.protocol_result)?, Outcome::Applied);
+    assert_eq!(result.fee, FEE);
+    let successor = nodes[0].rpc(client, &format!("commit?height={}", due + 1))?;
+    assert_eq!(
+        hex::decode(
+            successor["signed_header"]["header"]["app_hash"]
+                .as_str()
+                .context("Keeper AppHash")?
+        )?,
+        header.app_hash(network).as_slice()
+    );
+    let mut heads = vec![];
+    for (rank, (id, (x, y))) in trade
+        .head_ids()
+        .into_iter()
+        .zip([(455, 107), (65, 723)])
+        .enumerate()
+    {
+        heads.push(verify_lineage_heads(
+            nodes,
+            observer,
+            client,
+            fixture,
+            &id,
+            2,
+            &OutPoint::new(scheduled.id(network), (rank + 1) as u32),
+            Some(&trade.reserve(rank, x, y)),
+        )?);
+    }
+    fs::write(
+        output.join("sponsored-lineage.json"),
+        serde_json::to_vec_pretty(&json!({
+            "first": first, "immediate_bytes": immediate.as_slice().len(), "immediate_cycles": receipt.cycles,
+            "reservation": ticket, "wake": wake, "scheduled_bytes": scheduled.as_slice().len(),
+            "scheduled_cycles": result.cycles, "due": due,
+            "header": hex::encode(header.encode()), "app_hash": hex::encode(header.app_hash(network).as_slice()),
+            "signed_successor": successor, "heads": heads
+        }))?,
+    )?;
+    println!(
+        "Two business actors and their separate sponsor settled immediately and through Keeper H={due}"
+    );
     Ok(())
 }
 

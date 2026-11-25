@@ -440,6 +440,19 @@
       "item": "Bytes"
     },
     {
+      "name": "LineageIntent",
+      "kind": "sequence",
+      "fields": [
+        { "name": "actors", "type": "Byte32Vec" },
+        { "name": "max_fee", "type": "CompactUint64" }
+      ]
+    },
+    {
+      "name": "LineageIntentOpt",
+      "kind": "optional",
+      "item": "LineageIntent"
+    },
+    {
       "name": "RawTransaction",
       "kind": "flagged",
       "fields": [
@@ -489,6 +502,11 @@
           "name": "keeper",
           "type": "KeeperActionOpt",
           "bit": 6
+        },
+        {
+          "name": "lineage_intent",
+          "type": "LineageIntentOpt",
+          "bit": 7
         }
       ],
       "flag_bytes": 1
@@ -535,6 +553,11 @@
           "name": "certificate",
           "type": "CertificateOpt",
           "bit": 0
+        },
+        {
+          "name": "lineage_seals",
+          "type": "Bytes",
+          "bit": 1
         }
       ],
       "flag_bytes": 1

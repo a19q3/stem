@@ -47,6 +47,8 @@ fn build(workspace: &Path, target: &Path) -> Result<()> {
             "--bin",
             "stem-lineage-swap",
             "--bin",
+            "stem-lineage-match",
+            "--bin",
             "stem-lineage-reserve-udt",
         ])
         .arg("--manifest-path")

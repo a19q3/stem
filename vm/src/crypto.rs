@@ -57,7 +57,7 @@ impl<M: SupportMachine> Syscalls<M> for Recover {
 
 /// Local reuse of successful, pure recoveries. Current-cell and group
 /// authorization still run in the caller, and the syscall always charges.
-fn recover_cached(seal: [u8; 65], digest: [u8; 32]) -> Option<[u8; 33]> {
+pub(super) fn recover_cached(seal: [u8; 65], digest: [u8; 32]) -> Option<[u8; 33]> {
     let key = (seal, digest);
     RECOVERED.with_borrow_mut(|cache| {
         if let Some(public_key) = cache.get(&key) {

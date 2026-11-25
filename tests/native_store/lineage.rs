@@ -457,12 +457,12 @@ fn measure_explicit_lineage_updates() -> Result<()> {
 pub(super) struct DynamicLineage {
     pub(super) marker: Byte32,
     pub(super) ids: Vec<Byte32>,
-    anchors: Vec<OutPoint>,
+    pub(super) anchors: Vec<OutPoint>,
     pub(super) fee_points: Vec<OutPoint>,
     pub(super) fee_cell: Cell,
     head_lock: Script,
-    executor: Byte32,
-    executor_dep: OutPoint,
+    pub(super) executor: Byte32,
+    pub(super) executor_dep: OutPoint,
     pub(super) deps: Vec<CellDep>,
 }
 
@@ -479,6 +479,17 @@ impl DynamicLineage {
         heads: usize,
         typed: Option<usize>,
     ) -> Result<Self> {
+        Self::fund_with_prefix(fixture, register, fees, heads, typed, 231)
+    }
+
+    pub(super) fn fund_with_prefix(
+        fixture: &mut Fixture,
+        register: &FixtureLineage,
+        fees: usize,
+        heads: usize,
+        typed: Option<usize>,
+        prefix: u8,
+    ) -> Result<Self> {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
         let lock = super::contract::native_contract(workspace, "stem-lineage-lock")?;
         let counter = super::contract::native_contract(workspace, "stem-lineage-counter")?;
@@ -494,7 +505,7 @@ impl DynamicLineage {
         )?;
         let head_lock = lineage::lock(&lock_code, owner, true);
         let anchors: Vec<_> = (0..heads as u32)
-            .map(|index| OutPoint::new([231; 32].pack(), index))
+            .map(|index| OutPoint::new([prefix; 32].pack(), index))
             .collect();
         let ids = anchors
             .iter()
@@ -512,9 +523,9 @@ impl DynamicLineage {
             ));
         }
         let mut deps = register.deps.clone();
-        let executor_dep = OutPoint::new([232; 32].pack(), 1);
+        let executor_dep = OutPoint::new([prefix + 1; 32].pack(), 1);
         for (index, code) in [lock, counter].into_iter().enumerate() {
-            let point = OutPoint::new([232; 32].pack(), index as u32);
+            let point = OutPoint::new([prefix + 1; 32].pack(), index as u32);
             fixture.spec.development_cells.push((
                 point.clone(),
                 Cell::new(
@@ -527,7 +538,7 @@ impl DynamicLineage {
             deps.push(CellDep::new_builder().out_point(point).build());
         }
         let fee_points: Vec<_> = (0..fees as u32)
-            .map(|index| OutPoint::new([233; 32].pack(), index))
+            .map(|index| OutPoint::new([prefix + 2; 32].pack(), index))
             .collect();
         for point in &fee_points {
             fixture
@@ -549,6 +560,15 @@ impl DynamicLineage {
     }
 
     pub(super) fn register(&self, fixture: &Fixture, index: usize) -> Result<Transaction> {
+        self.register_with_lock(fixture, index, self.head_lock.clone())
+    }
+
+    pub(super) fn register_with_lock(
+        &self,
+        fixture: &Fixture,
+        index: usize,
+        lock: Script,
+    ) -> Result<Transaction> {
         let marker = lineage::marker(&self.marker, &self.ids[index]);
         let anchor_cell = &fixture
             .spec
@@ -569,12 +589,7 @@ impl DynamicLineage {
             self.deps.clone(),
             vec![],
             vec![CellInput::new(self.anchors[index].clone(), None)],
-            vec![Cell::new(
-                FUND - FEE,
-                self.head_lock.clone(),
-                types,
-                anchor_cell.data(),
-            )?],
+            vec![Cell::new(FUND - FEE, lock, types, anchor_cell.data())?],
             vec![],
         )?
         .with_messages(vec![GroupMessage {
@@ -652,7 +667,11 @@ impl DynamicLineage {
         self.sign_command(fixture, transaction)
     }
 
-    fn sign_command(&self, fixture: &Fixture, transaction: Transaction) -> Result<Transaction> {
+    pub(super) fn sign_command(
+        &self,
+        fixture: &Fixture,
+        transaction: Transaction,
+    ) -> Result<Transaction> {
         let digest = transaction.lineage_signing_digest(&fixture.spec.network, &self.fee_cell)?;
         transaction.with_witnesses(vec![stem_ledger::GroupWitness {
             group_index: 0,
@@ -903,7 +922,7 @@ fn measure_dynamic_batches(
     Ok(())
 }
 
-fn reserve_data(x: u128, y: u128, tag: u8, owner: [u8; 32]) -> Bytes {
+pub(super) fn reserve_data(x: u128, y: u128, tag: u8, owner: [u8; 32]) -> Bytes {
     let mut bytes = Vec::with_capacity(65);
     bytes.extend_from_slice(&x.to_le_bytes());
     bytes.extend_from_slice(&y.to_le_bytes());

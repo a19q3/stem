@@ -298,6 +298,7 @@ fn validate_script(script: &Script) -> Result<()> {
 pub struct Transaction {
     encoded: wire::Transaction,
     lineage_command: Option<Arc<lineage::Command>>,
+    lineage_intent: Option<Arc<lineage::Intent>>,
     execute_at: Option<u64>,
     keeper: Option<keeper::Action>,
 }
@@ -445,9 +446,16 @@ impl Transaction {
             .to_opt()
             .map(keeper::Action::decode)
             .transpose()?;
+        let lineage_intent = raw
+            .lineage_intent()
+            .to_opt()
+            .map(lineage::Intent::decode)
+            .transpose()?
+            .map(Arc::new);
         let tx = Self {
             encoded,
             lineage_command,
+            lineage_intent,
             execute_at,
             keeper,
         };
@@ -528,6 +536,30 @@ impl Transaction {
                             && witness.seal.len() == 65
                     }),
                 "Lineage command requires one fee seal at index zero"
+            );
+        }
+        let lineage_seals = tx.lineage_seals();
+        if let Some(intent) = tx.lineage_intent() {
+            let command = tx
+                .lineage_command()
+                .context("business authorization requires a Lineage command")?;
+            ensure!(
+                command.fee <= intent.max_fee
+                    && command
+                        .targets
+                        .iter()
+                        .any(|target| target.min_version == target.max_version),
+                "Lineage intent requires its fee cap and an exact target version"
+            );
+            ensure!(
+                lineage_seals.len() == intent.actors.len() * lineage::SEAL_LEN
+                    || (lineage_seals.is_empty() && tx.witnesses().len() == 0),
+                "incomplete Lineage business seals"
+            );
+        } else {
+            ensure!(
+                lineage_seals.is_empty(),
+                "unexpected Lineage business seals"
             );
         }
         let mut previous = None;
@@ -707,8 +739,113 @@ impl Transaction {
         Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
     }
 
+    pub fn lineage_intent(&self) -> Option<&lineage::Intent> {
+        self.lineage_intent.as_deref()
+    }
+
+    pub fn lineage_seals(&self) -> Bytes {
+        self.encoded.lineage_seals().raw_data()
+    }
+
+    pub fn with_lineage_intent(&self, intent: lineage::Intent) -> Result<Self> {
+        ensure!(
+            self.witnesses().len() == 0 && self.lineage_seals().is_empty(),
+            "set Lineage intent before signing"
+        );
+        let raw = self
+            .encoded
+            .raw()
+            .as_builder()
+            .lineage_intent(
+                wire::LineageIntentOpt::new_builder()
+                    .set(Some(intent.encode()))
+                    .build(),
+            )
+            .build();
+        Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
+    }
+
+    pub fn with_lineage_seals(&self, seals: Bytes) -> Result<Self> {
+        ensure!(
+            self.witnesses().len() == 0,
+            "attach business seals before the fee seal"
+        );
+        Self::from_entity(
+            self.encoded
+                .clone()
+                .as_builder()
+                .lineage_seals(wire::Bytes::new_unchecked(seals.pack().as_bytes()))
+                .build(),
+        )
+    }
+
+    pub fn with_lineage_fee(&self, point: OutPoint, fee: u64) -> Result<Self> {
+        ensure!(
+            self.lineage_intent().is_some() && self.witnesses().len() == 0,
+            "choose the sponsored fee before adding the fee seal"
+        );
+        let mut command = self.lineage_command().expect("validated intent").clone();
+        command.fee = fee;
+        let raw = self
+            .encoded
+            .raw()
+            .as_builder()
+            .inputs(
+                wire::CellInputVec::new_builder()
+                    .set(vec![CellInput::new(point, None).encode()])
+                    .build(),
+            )
+            .lineage_command(
+                wire::LineageCommandOpt::new_builder()
+                    .set(Some(command.encode()))
+                    .build(),
+            )
+            .build();
+        Self::from_entity(self.encoded.clone().as_builder().raw(raw).build())
+    }
+
+    pub fn lineage_intent_digest(&self, network: &Byte32) -> Result<Byte32> {
+        ensure!(self.lineage_intent().is_some(), "expected a Lineage intent");
+        // Normalize only the fields delegated to the sponsor. The complete
+        // remaining canonical RawTransaction stays inside the business scope.
+        let mut terms = self.lineage_command().expect("validated intent").clone();
+        terms.fee = 0;
+        let raw = self
+            .encoded
+            .raw()
+            .as_builder()
+            .inputs(wire::CellInputVec::new_builder().build())
+            .lineage_command(
+                wire::LineageCommandOpt::new_builder()
+                    .set(Some(terms.encode()))
+                    .build(),
+            )
+            .build();
+        Ok(hash(
+            b"Stem Lineage business authorization\0",
+            network,
+            &[raw.as_slice()],
+        ))
+    }
+
     pub fn lineage_signing_digest(&self, network: &Byte32, fee_cell: &Cell) -> Result<Byte32> {
         ensure!(self.has_lineage_command(), "expected a Lineage command");
+        if let Some(intent) = self.lineage_intent() {
+            let seals = self.lineage_seals();
+            ensure!(
+                seals.len() == intent.actors.len() * lineage::SEAL_LEN,
+                "fee seal requires complete business seals"
+            );
+            return Ok(hash(
+                b"Stem sponsored Lineage fee authorization\0",
+                network,
+                &[
+                    self.id(network).as_slice(),
+                    fee_cell.content_hash().as_slice(),
+                    &seals,
+                ],
+            ));
+        }
         Ok(hash(
             b"Stem Lineage command authorization\0",
             network,

@@ -13,11 +13,44 @@ use ckb_vm::{
     machine::VERSION2,
     registers::{A0, A1, A2, A3, A4, A7},
 };
-use stem_ledger::lineage::MAX_DATA_BYTES;
+use stem_ledger::{
+    Transaction,
+    lineage::{MAX_DATA_BYTES, SEAL_LEN, actor_id},
+};
+
+use crate::crypto::{SECP256K1_RECOVERY_CYCLES, recover_cached};
 
 pub const LOAD_EXECUTOR_CONTEXT: u64 = 2126;
 pub const LOAD_EXECUTOR_DATA: u64 = 2127;
 pub const WRITE_EXECUTOR_OUTPUT: u64 = 2128;
+
+pub fn business_signature_cycles(tx: &Transaction) -> u64 {
+    tx.lineage_intent().map_or(0, |intent| {
+        intent.actors.len() as u64 * SECP256K1_RECOVERY_CYCLES
+    })
+}
+
+/// Recover every actor from the same business scope, in canonical actor order.
+pub fn verify_business_actors(tx: &Transaction, network: &Byte32) -> Result<Vec<Byte32>> {
+    let Some(intent) = tx.lineage_intent() else {
+        return Ok(vec![]);
+    };
+    let seals = tx.lineage_seals();
+    ensure!(
+        seals.len() == intent.actors.len() * SEAL_LEN,
+        "missing Lineage business seals"
+    );
+    let digest: [u8; 32] = tx.lineage_intent_digest(network)?.unpack();
+    for (expected, seal) in intent.actors.iter().zip(seals.chunks_exact(SEAL_LEN)) {
+        let key = recover_cached(seal.try_into().expect("fixed business seal"), digest)
+            .context("invalid Lineage business signature")?;
+        ensure!(
+            &actor_id(&key) == expected,
+            "Lineage business signature names another actor"
+        );
+    }
+    Ok(intent.actors.clone())
+}
 
 pub struct Input {
     pub id: Byte32,
@@ -36,6 +69,7 @@ pub struct ContextData {
     pub height: u64,
     pub parent_time_ms: u64,
     pub payer_lock: Byte32,
+    pub actors: Vec<Byte32>,
     pub payload: Bytes,
     pub inputs: Vec<Input>,
 }
@@ -114,6 +148,11 @@ impl<M: SupportMachine> Syscalls<M> for Executor {
                             input.data.as_ref()
                         }
                     }),
+                    (LOAD_EXECUTOR_CONTEXT, 2, index) => self
+                        .context
+                        .actors
+                        .get(index as usize)
+                        .map(|actor| actor.as_slice()),
                     _ => None,
                 };
                 if let Some(data) = data {

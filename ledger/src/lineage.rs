@@ -225,3 +225,69 @@ impl Outcome {
         }
     }
 }
+
+pub const MAX_ACTORS: usize = 8;
+pub const SEAL_LEN: usize = 65;
+
+/// Public identity in the application authorization namespace.
+pub fn actor_id(compressed_key: &[u8; 33]) -> Byte32 {
+    let mut digest = [0; 32];
+    let mut hasher = ckb_hash::new_blake2b();
+    hasher.update(b"Stem Lineage actor\0");
+    hasher.update(compressed_key);
+    hasher.finalize(&mut digest);
+    digest.pack()
+}
+
+/// All listed business parties sign the complete operation with only the exact
+/// fee amount and fee input left for a sponsor to choose.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Intent {
+    pub actors: Vec<Byte32>,
+    pub max_fee: u64,
+}
+
+impl Intent {
+    pub(crate) fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=MAX_ACTORS).contains(&self.actors.len())
+                && self.actors[0] != Byte32::default()
+                && self.actors.windows(2).all(|pair| pair[0] < pair[1]),
+            "invalid or unordered Lineage business actors"
+        );
+        ensure!(self.max_fee > 0, "Lineage fee cap must be positive");
+        Ok(())
+    }
+
+    pub(crate) fn encode(&self) -> wire::LineageIntent {
+        let actors = self
+            .actors
+            .iter()
+            .map(|actor| wire::Byte32::new_unchecked(actor.as_bytes()));
+        wire::LineageIntent::new_builder()
+            .actors(wire::Byte32Vec::new_builder().set(actors.collect()).build())
+            .max_fee(
+                wire::CompactUint64::new_builder()
+                    .set(self.max_fee.into())
+                    .build(),
+            )
+            .build()
+    }
+
+    pub(crate) fn decode(intent: wire::LineageIntent) -> Result<Self> {
+        let actors = intent.actors();
+        ensure!(
+            actors.len() <= MAX_ACTORS,
+            "too many Lineage business actors"
+        );
+        let intent = Self {
+            actors: actors
+                .into_iter()
+                .map(|actor| Byte32::new_unchecked(actor.as_bytes()))
+                .collect(),
+            max_fee: intent.max_fee().as_reader().value().try_into()?,
+        };
+        intent.validate()?;
+        Ok(intent)
+    }
+}

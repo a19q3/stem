@@ -184,3 +184,69 @@ func TestKeeperWakeSignatures(t *testing.T) {
 	}
 	t.Logf("verified five signed successor responses for the Keeper wake at height %d", evidence.Due)
 }
+
+// Verifies the wake certificate and both reserve Head proof bundles.
+func TestSponsoredLineageSignatures(t *testing.T) {
+	root := os.Getenv("STEM_NATIVE_EVIDENCE")
+	if root == "" {
+		t.Skip("set STEM_NATIVE_EVIDENCE to the four-node test output")
+	}
+	genesis, err := types.GenesisDocFromFile(filepath.Join(root, "net/node0/config/genesis.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	voters, err := genesisCommittee(genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := readLimited(filepath.Join(root, "sponsored-lineage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type anchor struct {
+		Height    int64           `json:"height"`
+		AppHash   string          `json:"app_hash"`
+		Successor json.RawMessage `json:"signed_successor"`
+	}
+	var evidence struct {
+		Due       int64           `json:"due"`
+		AppHash   string          `json:"app_hash"`
+		Successor json.RawMessage `json:"signed_successor"`
+		Heads     [][]anchor      `json:"heads"`
+	}
+	if err := json.Unmarshal(raw, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Due <= 0 || len(evidence.Heads) != 2 {
+		t.Fatal("unexpected sponsored Lineage evidence shape")
+	}
+	check := func(entry anchor) {
+		expected, err := hex.DecodeString(entry.AppHash)
+		if err != nil || len(expected) != 32 {
+			t.Fatal("invalid sponsored execution AppHash")
+		}
+		var proof core.ResultCommit
+		if err := cmtjson.Unmarshal(entry.Successor, &proof); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyCommit(genesis.ChainID, proof.SignedHeader, voters); err != nil {
+			t.Fatal(err)
+		}
+		if proof.Height != entry.Height+1 || !bytes.Equal(proof.AppHash, expected) {
+			t.Fatalf("invalid signed successor at %d", entry.Height)
+		}
+	}
+	check(anchor{Height: evidence.Due, AppHash: evidence.AppHash, Successor: evidence.Successor})
+	for _, head := range evidence.Heads {
+		if len(head) != 5 {
+			t.Fatal("missing reserve replica")
+		}
+		for _, proof := range head {
+			if proof.Height < evidence.Due {
+				t.Fatal("reserve proof predates scheduled settlement")
+			}
+			check(proof)
+		}
+	}
+	t.Logf("verified the sponsored Keeper wake at height %d and ten reserve successor responses", evidence.Due)
+}

@@ -324,6 +324,21 @@ pub(super) fn resolve_fee(
     })
 }
 
+pub(super) fn verify_authorization(
+    store: &Store,
+    original: &Transaction,
+    fee_scope: Arc<ResolvedTransaction>,
+    limit: u64,
+) -> Result<(u64, Vec<Byte32>)> {
+    let actor_cycles = executor::business_signature_cycles(original);
+    let fee_limit = limit
+        .checked_sub(actor_cycles)
+        .context("Lineage business signatures exceed authorization cycles")?;
+    let fee_cycles = store.cache.verify(fee_scope, fee_limit, false)?;
+    let actors = executor::verify_business_actors(original, &store.network)?;
+    Ok((fee_cycles + actor_cycles, actors))
+}
+
 pub(super) fn materialize(
     store: &Store,
     original: &Transaction,
@@ -386,20 +401,26 @@ pub(super) fn materialize(
         "Lineage resolution exceeds the block read budget"
     );
     let cycle_limit = store.limits.transaction_cycles.min(budget.cycles);
-    let fee_cycles = store.cache.verify(
-        preflight,
-        cycle_limit
-            .checked_sub(command.executor_cycles)
-            .and_then(|limit| limit.checked_sub(command.validation_cycles))
-            .context("signed Lineage budgets exceed remaining transaction cycles")?,
-        false,
-    )?;
+    let authorization_limit = cycle_limit
+        .checked_sub(command.executor_cycles)
+        .and_then(|limit| limit.checked_sub(command.validation_cycles))
+        .context("signed Lineage budgets exceed remaining transaction cycles")?;
+    let (fee_cycles, actors) =
+        verify_authorization(store, original, preflight, authorization_limit)?;
+    let payer_lock = if actors.is_empty() {
+        fee_cell.lock().calc_script_hash()
+    } else {
+        // Sponsorship is chosen after business signing. The Executor must
+        // derive effects from the signed actors and terms, not the payer.
+        Byte32::default()
+    };
     let run = executor::run(
         &executor_code.data(),
         executor::ContextData {
             height: block.candidate.height,
             parent_time_ms: block.parent.context.timestamp_ms,
-            payer_lock: fee_cell.lock().calc_script_hash(),
+            payer_lock,
+            actors,
             payload: command.payload.clone(),
             inputs,
         },
