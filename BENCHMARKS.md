@@ -892,3 +892,55 @@ the trusted committee. A complete L1 checkpoint transaction also needs
 Type ID, continuity, committee handoff and Cell validation. The reported
 proofs contain two QCs, so these figures measure a different workload
 from a single signed CometBFT step. [Raw cycle record](benchmarks/2026-11-25-stem-jolteon-ckb-vm.json) [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
+
+## CKB-funded Jolteon handoffs
+
+Two disposable CKB devnets accepted Stake Cells before three Stem replicas
+started. Each network authenticated its first 250-power voter from CKB.
+The join run added the 400-power voter at height 11 and removed the old
+voter at height 21. In the replacement run the old roster and new roster
+at height 11 were disjoint. The incoming validator then increased its L1
+bond from 400 to 450 CKB, and its weight changed at height 21.
+
+An observer stopped at height 6 and missed both transitions. On restart
+it requested the old proofs and certified payloads and agreed with the
+voters' execution Header at height 25. The outgoing replica also
+restarted after leaving the roster. An offline verifier rejected a
+modified committee proof and the epoch-2 execution proof supplied
+without the second handoff. The independent CKB-VM probe accepted both
+handoffs and rejected the omitted handoff in both configurations.
+
+The CKB Type ID contract committed bridge-independent checkpoints at
+Stem heights 10, 20 and 25 in each run. The first two publications
+verified a handoff and updated the roster commitment. The third verified
+a regular two-chain proof under the certified successor. Every update
+authenticated the sparse history suffix against the live checkpoint
+input. The successor transactions used an independent fee-paying key.
+The CKB node rejected a changed output execution root and a handoff
+replayed against its already-updated successor.
+
+| Roster scenario | Stem height | CKB witness bytes | CKB node estimated cycles |
+| --- | ---: | ---: | ---: |
+| Join and exit | 10 | 1,336 | 6,182,155 |
+| Join and exit | 20 | 1,286 | 10,313,945 |
+| Join and exit | 25 | 885 | 6,035,273 |
+| Disjoint replacement and increase | 10 | 1,296 | 6,188,135 |
+| Disjoint replacement and increase | 20 | 1,116 | 6,198,077 |
+| Disjoint replacement and increase | 25 | 885 | 6,088,341 |
+
+The cost column uses CKB's transaction estimator on the same transaction
+subsequently confirmed by CKB. The assembly CKB-VM probe measured
+17,084,077 cycles for the join history and 12,989,857 for the replacement
+history when it verified two preceding handoffs and the latest execution
+proof together. These committee sizes are the functional fixtures.
+The 128-member cost remains the separate fixed-epoch proof experiment.
+
+After changing the peer directory, the fixed-epoch regression confirmed
+64 real payments on 16 replicas with two consecutive Leaders stopped and
+agreed at height 17 after restart. The default CometBFT path separately
+passed the CKB retirement and slashing regression and published six
+direct checkpoints through Stem height 34. The initial two Jolteon
+publication attempts stopped before CKB submission because the runner
+had an unbound genesis roster variable. Both are recorded with the
+passing reruns. The workspace run passed 438 tests with 10 opt-in tests
+ignored. [Public evidence and all nine runs](benchmarks/2026-11-25-stem-jolteon-handoffs.json.xz) [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
