@@ -2752,3 +2752,45 @@ included in the archive.
 
 [Run the fixture and inspect the storage query](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw timing samples, signed workloads and regression logs](benchmarks/2026-11-26-stem-storage-load.json.xz).
+
+## Intercell delivery with multiple CKB references
+
+Revision `4fc9181` used four Jolteon replicas and CKB 0.210.0 in
+each round. It sent 4,096-byte payloads in both directions and rejected
+4,097 bytes at the originating chain. CKB consumed Stem nonces 41 and
+8 in that order. The second delivery used the original Outbox proof
+after checkpoint advancement. Two reorgs per round exercised
+redelivery on a replacement CKB chain and rejection of a guardian
+certificate for an unaccepted anchor. The restarted Stem replica
+served the committed inbox proof and rejected a new transaction
+trying to consume the same message.
+
+| Checkpoint publication | Older Outbox → checkpoint height | 4 KiB CKB send B / cycles | 4 KiB CKB delivery B / cycles | Stem receive B / cycles | Agreed Stem height |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct | 20 → 25 | 4,905 / 1,677,290 | 6,157 / 6,197,880 | 19,337 / 37,925,251 | 44 |
+| Sparse publisher | 21 → 26 | 4,905 / 1,684,053 | 6,157 / 6,253,246 | 19,337 / 37,925,251 | 47 |
+
+Sizes use the signed transactions. The CKB runner recorded
+`estimate_cycles` and verified the committed transaction and witness
+paths. Stem cycles come from the execution receipt. Each Stem
+receive used nine guardian signatures over three CKB references. The
+matching historical output had already been spent. A different
+historical output from the same Mailbox and a live untyped output with
+copied message bytes could accompany delivery. Providing only those
+two references was rejected. Each round recorded 33 expected
+rejections. These are functional and per-operation cost samples.
+
+The first pair of runs hit CKB occupied Capacity on the fixture's
+untyped output. The second pair hit the initial 20-million-cycle
+Stem cap when verifying multiple certificates. The final runs funded
+that fixed test output and set a 50-million-cycle transaction cap in
+the generic Intercell test genesis. The archive includes each attempt.
+
+Separate CKB devnet regressions passed for CKB and xUDT redemption,
+four fee fund payouts, both kinds of L1 Cell Reference, and CKB-backed
+stake handoffs and rewards. The locked Rust release workspace passed
+460 tests with 15 ignored. The Go proof suite and frozen CometBFT
+feature check passed.
+
+[Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
+[Signed transactions, reference certificates, proofs and failed runs](benchmarks/2026-11-26-stem-intercell-composition.json.xz).

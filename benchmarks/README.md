@@ -78,5 +78,6 @@ available. Published network evidence contains public genesis and proof data.
 | Authenticated per-vault fee attribution | [Report](../BENCHMARKS.md#authenticated-per-vault-fee-attribution), [dual-vault and fee-fund proofs, regressions and failures](2026-11-26-stem-vault-revenue.json.xz) |
 | Browser WASM transaction and proof SDK | [Report](../BENCHMARKS.md#browser-wasm-transaction-and-proof-sdk), [browser, npm and CKB-backed proof runs](2026-11-26-stem-wasm-sdk.json.xz) |
 | Sustained native payments and durable write attribution | [Report](../BENCHMARKS.md#sustained-native-payments-and-durable-write-attribution), [signed workloads, timing samples and regression logs](2026-11-26-stem-storage-load.json.xz) |
+| Intercell delivery with multiple CKB references | [Report](../BENCHMARKS.md#intercell-delivery-with-multiple-ckb-references), [signed transactions, reference certificates, proofs and failed runs](2026-11-26-stem-intercell-composition.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

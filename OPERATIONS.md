@@ -725,7 +725,7 @@ python3 tools/jolteon_bridge_localnet.py \
   --output /tmp/stem-intercell-devnet
 ```
 
-Add `--exercise-publisher` to drive the fixture through the sparse publisher. The fixture first delivers against an exact checkpoint, then advances it and delivers an older Outbox proof with a history path.
+Add `--exercise-publisher` to drive the fixture through the sparse publisher. The fixture first delivers against an exact checkpoint, then advances it and delivers an older Outbox proof with a history path. The generic bidirectional fixture sets a 50-million-cycle transaction cap to verify three separately certified CKB references in one receive. It exercises the 4,096-byte payload limit on both chains.
 
 Use `stem intercell encode --request message.json`. The request fields are `source`, `destination`, `sender`, `receiver`, `nonce` and hex `payload`. The result contains the hex message `record` and stable `id`. Include the record as a Group Action with kind 65280 for sending or 65281 for receiving. For a receive, use `attest-reference` with `live_at_anchor: false` against the currently accepted anchor. Put the resulting observations and any application reference observations in the same `--observations` array for `attach-references`. Exactly one historical reference must match the complete outgoing record. A historical reference can prove an outgoing mailbox record after its output is spent. Sign the assigned consuming Lock group after attaching the references.
 
