@@ -8,10 +8,13 @@ use ckb_types::{H256, prelude::*};
 use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
-use stem::native_store::Store;
-use stem_bridge_wire::intercell::{MAX_PAYLOAD, Message, delivery};
-use stem_ledger::{block::Header, patricia::Proof};
-use stem_stake::intercell::Inbox;
+use stem_bridge_wire::intercell::{Delivery, MAX_PAYLOAD, Message, record_key};
+use stem_ledger::block::Header;
+use stem_stake::{
+    finality::NATIVE_HEADER_BYTES,
+    intercell::{Inbox, outbox_system_root},
+    patricia::{Commitment, Namespace, decode_path},
+};
 
 use crate::bridge_cli::{print_json, read_json_limited};
 
@@ -33,8 +36,12 @@ pub enum Intercell {
     DeliveryWitness {
         #[arg(long)]
         request: PathBuf,
+        /// Canonical execution Header in the live checkpoint dependency.
         #[arg(long)]
         header: PathBuf,
+        /// Output of checkpoint history for an older Outbox proof.
+        #[arg(long)]
+        history: Option<PathBuf>,
     },
 }
 
@@ -51,11 +58,35 @@ struct Request {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Delivery {
+struct DeliveryRequest {
     record: JsonBytes,
     proof: JsonBytes,
     consumed: Vec<H256>,
     expected_root: H256,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryProof {
+    header: JsonBytes,
+    id: H256,
+    frontier: JsonBytes,
+    siblings: Vec<H256>,
+}
+
+fn historical_evidence(path: PathBuf, network: &[u8; 32]) -> Result<Vec<u8>> {
+    let proof: HistoryProof = read_json_limited(&path, 16 * 1024)?;
+    let header = Header::decode(proof.header.as_bytes())?;
+    ensure!(
+        header.id(&network.pack()).as_slice() == proof.id.as_bytes() && proof.siblings.len() <= 63,
+        "invalid Intercell history proof"
+    );
+    let mut bytes = proof.header.into_bytes().to_vec();
+    bytes.extend_from_slice(proof.frontier.as_bytes());
+    for sibling in proof.siblings {
+        bytes.extend_from_slice(sibling.as_bytes());
+    }
+    Ok(bytes)
 }
 
 impl Intercell {
@@ -89,22 +120,35 @@ impl Intercell {
                     "nonce": message.nonce, "payload": JsonBytes::from_vec(message.payload.to_vec()),
                 }))
             }
-            Self::DeliveryWitness { request, header } => {
-                let request: Delivery = read_json_limited(&request, 64 * 1024 * 1024)?;
+            Self::DeliveryWitness {
+                request,
+                header,
+                history,
+            } => {
+                let request: DeliveryRequest = read_json_limited(&request, 64 * 1024 * 1024)?;
                 let raw_header: JsonBytes = read_json_limited(&header, 4096)?;
-                let header = Header::decode(raw_header.as_bytes())?;
+                Header::decode(raw_header.as_bytes())?;
+                let checkpoint: &[u8; NATIVE_HEADER_BYTES] = raw_header
+                    .as_bytes()
+                    .try_into()
+                    .context("invalid Intercell checkpoint Header")?;
                 let raw = request.record.as_bytes();
                 let message = Message::decode(raw).context("invalid Intercell message")?;
+                let history = history
+                    .map(|path| historical_evidence(path, &message.source))
+                    .transpose()?
+                    .unwrap_or_default();
+                let root = outbox_system_root(&message.source, checkpoint, &history)
+                    .context("invalid Intercell checkpoint ancestry")?;
                 let id = message.id();
                 let proof = request.proof.as_bytes();
+                let commitment = Commitment::new(message.source, Namespace::System);
                 ensure!(
-                    Store::verify_intercell(
-                        &message.source.pack(),
-                        &header,
-                        false,
-                        &id,
-                        Some(raw),
-                        &Proof::decode(proof)?
+                    commitment.verify(
+                        &root,
+                        &commitment.record_key(&record_key(false, &id)),
+                        Some(&commitment.value_hash(raw)),
+                        decode_path(proof)?.into_iter(),
                     ),
                     "invalid Intercell outbox proof"
                 );
@@ -121,12 +165,14 @@ impl Intercell {
                 let bytes = [
                     &u32::try_from(raw.len())?.to_le_bytes()[..],
                     &u32::try_from(proof.len())?.to_le_bytes(),
+                    &u32::try_from(history.len())?.to_le_bytes(),
                     raw,
                     proof,
+                    &history,
                     &path,
                 ]
                 .concat();
-                delivery(&bytes).context("Intercell witness exceeds limits")?;
+                Delivery::decode(&bytes).context("Intercell witness exceeds limits")?;
                 print_json(&json!({
                     "id": H256::from(id),
                     "input_type": JsonBytes::from_vec(bytes),

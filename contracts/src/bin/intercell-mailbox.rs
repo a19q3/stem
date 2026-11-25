@@ -13,11 +13,11 @@ use ckb_std::{
     },
     type_id,
 };
-use stem_bridge_wire::intercell::{MailboxPolicy, MailboxState, Message, delivery, record_key};
+use stem_bridge_wire::intercell::{Delivery, MailboxPolicy, MailboxState, Message, record_key};
 use stem_contracts::load_checkpoint;
 use stem_stake::{
     finality::CheckpointId,
-    intercell::consume,
+    intercell::{consume, outbox_system_root},
     patricia::{Commitment, Namespace, decode_path},
 };
 
@@ -94,8 +94,8 @@ fn verify() -> Result<(), Error> {
         .to_opt()
         .ok_or(Error::Encoding)?
         .raw_data();
-    let (record, proof, replay) = delivery(&input_type).ok_or(Error::Encoding)?;
-    let message = Message::decode(record).ok_or(Error::Encoding)?;
+    let delivery = Delivery::decode(&input_type).ok_or(Error::Encoding)?;
+    let message = Message::decode(delivery.record).ok_or(Error::Encoding)?;
     if message.source != policy.stem_network
         || message.destination != policy.ckb_genesis
         || message.receiver != mailbox
@@ -112,17 +112,26 @@ fn verify() -> Result<(), Error> {
         None,
     )?
     .ok_or(Error::Proof)?;
+    let system_root = outbox_system_root(
+        &policy.stem_network,
+        &checkpoint.tip.header,
+        delivery.history,
+    )
+    .map_err(|_| Error::Proof)?;
     let id = message.id();
     let commitment = Commitment::new(policy.stem_network, Namespace::System);
     if !commitment.verify(
-        &checkpoint.state.system_root,
+        &system_root,
         &commitment.record_key(&record_key(false, &id)),
-        Some(&commitment.value_hash(record)),
-        decode_path(proof).map_err(|_| Error::Proof)?.into_iter(),
+        Some(&commitment.value_hash(delivery.record)),
+        decode_path(delivery.outbox)
+            .map_err(|_| Error::Proof)?
+            .into_iter(),
     ) {
         return Err(Error::Proof);
     }
-    let expected = consume(&mailbox, &id, &previous.consumed, replay).map_err(|_| Error::Replay)?;
+    let expected =
+        consume(&mailbox, &id, &previous.consumed, delivery.replay).map_err(|_| Error::Replay)?;
     if expected != next.consumed {
         return Err(Error::Replay);
     }

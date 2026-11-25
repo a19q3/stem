@@ -136,18 +136,39 @@ impl<'a> MailboxState<'a> {
 
 pub const MAX_PATRICIA_PATH: usize = 64 * 1024;
 pub const MAX_REPLAY_PATH: usize = 32 * 257;
+// 208-byte execution Header, 8-byte leaf count, at most 64 peaks and 63 siblings.
+pub const MAX_HISTORY_PROOF: usize = 208 + 8 + HASH_SIZE * (64 + 63);
 
-/// CKB input_type witness for delivery. The replay path occupies the remainder.
-pub fn delivery(raw: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
-    let (lengths, raw) = raw.split_at_checked(8)?;
-    let record_len = u32::from_le_bytes(lengths[..4].try_into().ok()?) as usize;
-    let proof_len = u32::from_le_bytes(lengths[4..].try_into().ok()?) as usize;
-    if record_len > MAX_MESSAGE || proof_len > MAX_PATRICIA_PATH {
-        return None;
+pub struct Delivery<'a> {
+    pub record: &'a [u8],
+    pub outbox: &'a [u8],
+    pub history: &'a [u8],
+    pub replay: &'a [u8],
+}
+
+impl<'a> Delivery<'a> {
+    /// The three little-endian lengths are followed by their fields, then the replay path.
+    pub fn decode(raw: &'a [u8]) -> Option<Self> {
+        let (lengths, raw) = raw.split_at_checked(12)?;
+        let record_len = u32::from_le_bytes(lengths[..4].try_into().ok()?) as usize;
+        let outbox_len = u32::from_le_bytes(lengths[4..8].try_into().ok()?) as usize;
+        let history_len = u32::from_le_bytes(lengths[8..].try_into().ok()?) as usize;
+        if record_len > MAX_MESSAGE
+            || outbox_len > MAX_PATRICIA_PATH
+            || history_len > MAX_HISTORY_PROOF
+        {
+            return None;
+        }
+        let (record, raw) = raw.split_at_checked(record_len)?;
+        let (outbox, raw) = raw.split_at_checked(outbox_len)?;
+        let (history, replay) = raw.split_at_checked(history_len)?;
+        (replay.len() <= MAX_REPLAY_PATH).then_some(Self {
+            record,
+            outbox,
+            history,
+            replay,
+        })
     }
-    let (record, raw) = raw.split_at_checked(record_len)?;
-    let (proof, replay) = raw.split_at_checked(proof_len)?;
-    (replay.len() <= MAX_REPLAY_PATH).then_some((record, proof, replay))
 }
 
 #[cfg(test)]

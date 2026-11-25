@@ -15,7 +15,7 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     asset::{AssetTransfer, CKB_ESCROW_FIELDS},
-    intercell::{Identity, MailboxPolicy, MailboxState, Message, delivery},
+    intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
 };
 
 entry!(main);
@@ -85,7 +85,7 @@ fn mailbox_lock(script: &Script, fields: &[[u8; 32]; CKB_ESCROW_FIELDS]) -> Resu
     if state.outgoing.is_empty() {
         let witness = load_witness_args(0, Source::GroupInput).map_err(|_| 103)?;
         let input_type = witness.input_type().to_opt().ok_or(103)?.raw_data();
-        let (record, _, _) = delivery(&input_type).ok_or(103)?;
+        let record = Delivery::decode(&input_type).ok_or(103)?.record;
         let message = Message::decode(record).ok_or(103)?;
         let transfer = AssetTransfer::decode(message.payload).ok_or(103)?;
         let output = total(Source::Output, Some(&token), Some(&transfer.recipient)).ok_or(104)?;

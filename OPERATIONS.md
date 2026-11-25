@@ -678,11 +678,22 @@ python3 tools/jolteon_bridge_localnet.py \
   --output /tmp/stem-intercell-devnet
 ```
 
-Add `--exercise-publisher` to drive the fixture through the sparse publisher. Generate the Intercell outbox proof first. Submit its exact Header height as the publication request so the CKB checkpoint matches the proof.
+Add `--exercise-publisher` to drive the fixture through the sparse publisher. The fixture first delivers against an exact checkpoint, then advances it and delivers an older Outbox proof with a history path.
 
 Use `stem intercell encode --request message.json`. The request fields are `source`, `destination`, `sender`, `receiver`, `nonce` and hex `payload`. The result contains the hex message `record` and stable `id`. Include the record as a Group Action with kind 65280 for sending or 65281 for receiving. Sign the assigned consuming Lock group only after attaching any required historical CKB observation. For a receive, use `attest-reference` with `live_at_anchor: false` against the currently accepted anchor, then collect and attach the certificates with `attach-references`. A historical reference can prove an outgoing mailbox record after its output is spent.
 
-For CKB delivery, query `/stem/intercell/outbox` with the message ID as hex `data` and `prove=true`. Publish the corresponding finalized execution Header using the Jolteon checkpoint flow. Pass the query's `record` and `proof`, the list of consumed IDs in the mailbox's current history, and its current `expected_root` to `stem intercell delivery-witness --request delivery.json --header header.json`. The Header file holds its canonical bytes as a JSON hex string. The command checks the claimed outbox path and reconstructs the current inbox root. Put the returned `input_type` in the mailbox input's Molecule WitnessArgs and the `successor_root` in the successor data. Keep the outbound nonce and use empty outgoing bytes. The CKB transaction references the matching checkpoint and the owner signs the transaction. Store the consumed IDs or an equivalent derived sparse tree to generate subsequent paths.
+For CKB delivery, query `/stem/intercell/outbox` with the message ID as hex `data` and `prove=true`. Use a live Jolteon Checkpoint Cell at or after the proof height. Save the Outbox proof while its height is the Stem tip. Pass the query's `record` and `proof`, the list of consumed IDs in the mailbox's current history, and its current `expected_root` to `stem intercell delivery-witness --request delivery.json --header header.json`. The Header file holds the execution Header from the live Checkpoint Cell as a JSON hex string. The command checks the claimed outbox path and reconstructs the current inbox root. Put the returned `input_type` in the mailbox input's Molecule WitnessArgs and the `successor_root` in the successor data. Keep the outbound nonce and use empty outgoing bytes. The CKB transaction references that live checkpoint and the owner signs the transaction. Store the consumed IDs or an equivalent derived sparse tree to generate subsequent paths.
+
+If the live checkpoint has advanced beyond the Outbox proof, generate a history proof from an archive. The historical proof uses the checkpoint height as its MMR leaf count. If the checkpoint advances again before the CKB transaction commits, rebuild the history proof for the new checkpoint and sign the updated CKB transaction. The saved Outbox proof can be reused.
+
+```sh
+stem checkpoint history --archive-db "$stem_archive_db" --index "$history_index" \
+  --network "$stem_network" --height "$checkpoint_height" --header "$outbox_height" > history.json
+stem intercell delivery-witness --request delivery.json --header checkpoint-header.json \
+  --history history.json
+```
+
+Build the Mailbox, Stem CLI and any CKB settlement Locks that consume its witness from the same revision. The delivery witness has three segment lengths for the record, Outbox path and optional history proof. The witness ends with the replay path.
 
 If the relay loses its local inbox index, use the live CKB mailbox OutPoint and the pinned complete Mailbox Type Script hash to rebuild it with a CKB full node that serves historical transactions and witnesses.
 

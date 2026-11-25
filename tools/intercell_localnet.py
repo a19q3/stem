@@ -157,14 +157,19 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     proof_height = proofs[0][0]
     for i, (_, proof) in enumerate(proofs):
         assert proof["record"] == outgoing[i]["record"]
-    if publisher is None:
-        checkpoint = relay.advance(proof_height, secp, probe=True)
-    else:
-        published = publisher.publish("anchor-intercell-outbox", proof_height)
-        assert published["stem_height"] == proof_height, published
-        checkpoint = dependency(point(published["transaction"], 0))
-    header = args.output / "intercell-outbox-header.json"
-    write_json(header, hex_bytes(relay.header(proof_height)))
+    def anchor_checkpoint(label, height, *, probe=False):
+        if publisher is None:
+            return relay.advance(height, secp, probe=probe)
+        published = publisher.publish(label, height)
+        assert published["stem_height"] == height, published
+        return dependency(point(published["transaction"], 0))
+
+    checkpoint = anchor_checkpoint("anchor-intercell-outbox", proof_height, probe=True)
+    exact_header = args.output / "intercell-outbox-header.json"
+    write_json(exact_header, hex_bytes(relay.header(proof_height)))
+    checkpoint_header, history_path = exact_header, None
+    historical_anchor = None
+    history_prefix = 12
     ckb_deliveries = []
     recoveries = {}
 
@@ -194,9 +199,19 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
         assert recovered["consumed"] == [msg["id"] for msg in outgoing[:i]]
         request = args.output / f"intercell-delivery-{label}.json"
         write_json(request, {**proof, "consumed": recovered["consumed"], "expected_root": recovered["expected_root"]})
-        result = json.loads(run(args.binary, "intercell", "delivery-witness", "--request", request, "--header", header))
+        command = [args.binary, "intercell", "delivery-witness", "--request", request, "--header", checkpoint_header]
+        if history_path:
+            command += ["--history", history_path]
+        result = json.loads(run(*command))
         write_json(args.output / f"intercell-witness-{label}.json", result)
         return result
+
+    def history_bounds(wire):
+        record_size = int.from_bytes(wire[:4], "little")
+        outbox_size = int.from_bytes(wire[4:8], "little")
+        history_size = int.from_bytes(wire[8:12], "little")
+        start = history_prefix + record_size + outbox_size
+        return start, start + history_size
 
     recover("ckb_recovery_wrong_mailbox", ckb_head, mailbox=hex_bytes(script_hash(foreign_type)),
             reason="Type Script mismatch")
@@ -205,6 +220,38 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     replay_witness = None
     delivery_fork = None
     for i in (0, 1):
+        if i == 1:
+            old_witness = delivery(i, "before-advancing-checkpoint")
+            # Change the SystemRoot so that an old Patricia path alone cannot open it.
+            later = prepare("checkpoint-advance", network, genesis, native_owner, mailbox_id, 99, b"new outbox state")
+            stem_commit(sign_stem("checkpoint-advance", point("0x" + stems[0]["hash"], 0),
+                                  [cell(part - 2 * FEE, native_lock)], later))
+            checkpoint_height, latest = query(client, "/stem/intercell/outbox", outgoing[i]["id"])
+            assert checkpoint_height > proof_height and latest["proof"] != proofs[i][1]["proof"]
+            old_checkpoint = checkpoint
+            checkpoint = anchor_checkpoint("anchor-intercell-later", checkpoint_height)
+            checkpoint_header = args.output / "intercell-later-checkpoint-header.json"
+            write_json(checkpoint_header, hex_bytes(relay.header(checkpoint_height)))
+            history_path = args.output / "intercell-history-proof.json"
+            history_command = [args.binary, "checkpoint", "history", "--archive-db", relay.archive,
+                               "--index", args.output / "intercell-history-index", "--network", network,
+                               "--height", str(checkpoint_height), "--header", str(proof_height)]
+            history = json.loads(run(*history_command))
+            assert history["header"] == json.loads(exact_header.read_text())
+            write_json(history_path, history)
+            historical_anchor = {"checkpoint": checkpoint, "checkpoint_header": json.loads(checkpoint_header.read_text()),
+                                 "prior_checkpoint": old_checkpoint, "checkpoint_height": checkpoint_height,
+                                 "proof": history, "history_command": [str(arg) for arg in history_command]}
+            exact_raw = binary(old_witness["input_type"])
+            rejected["ckb_old_outbox_path_at_new_checkpoint"] = ckb_reject("stale outbox",
+                ckb_tx("stale-outbox", ckb_head, ckb_capacity - FEE,
+                       mailbox_state(0, binary(old_witness["successor_root"])),
+                       evidence=exact_raw, checkpoint=checkpoint), 84)
+            incorrect = subprocess.run([args.binary, "intercell", "delivery-witness",
+                "--request", args.output / "intercell-delivery-before-advancing-checkpoint.json",
+                "--header", exact_header, "--history", history_path], text=True, capture_output=True)
+            assert incorrect.returncode and "invalid Intercell checkpoint ancestry" in incorrect.stderr, incorrect
+            rejected["cli_history_for_wrong_checkpoint"] = incorrect.stderr
         result = delivery(i, f"before-delivery-{i}")
         raw = binary(result["input_type"])
         updated = binary(result["successor_root"])
@@ -217,17 +264,45 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
                 ckb_tx("missing-checkpoint", ckb_head, ckb_capacity - FEE,
                        mailbox_state(0, updated), evidence=raw), 84)
             bad = bytearray(raw)
-            bad[8 + len(binary(outgoing[i]["record"])) + 8] ^= 1
+            bad[history_prefix + len(binary(outgoing[i]["record"])) + 8] ^= 1
             rejected["ckb_forged_path"] = ckb_reject("path", ckb_tx("forged-path", ckb_head,
                 ckb_capacity - FEE, mailbox_state(0, updated), evidence=bad, checkpoint=checkpoint), 84)
             cross = bytearray(raw)
-            cross[8 + 32] ^= 1
+            cross[history_prefix + 32] ^= 1
             rejected["ckb_cross_network"] = ckb_reject("network", ckb_tx("foreign-destination", ckb_head,
                 ckb_capacity - FEE, mailbox_state(0, updated), evidence=cross, checkpoint=checkpoint), 81)
             rejected["ckb_owner_substitution"] = ckb_reject("lock", ckb_tx("foreign-owner", ckb_head,
                 ckb_capacity - FEE, mailbox_state(0, updated), evidence=raw, checkpoint=checkpoint,
                 lock=fixture.friend_lock), 81)
         if i == 1:
+            history_start, history_end = history_bounds(raw)
+            history = raw[history_start:history_end]
+            assert len(history) > 208 + 8
+            historical_anchor["witness_history_bytes"] = len(history)
+            request = args.output / "intercell-delivery-current-proof.json"
+            write_json(request, {**latest, "consumed": recoveries["before-delivery-1"]["consumed"],
+                                 "expected_root": hex_bytes(root)})
+            control = json.loads(run(args.binary, "intercell", "delivery-witness",
+                                     "--request", request, "--header", checkpoint_header))
+            assert control["successor_root"] == result["successor_root"]
+            signed_control = ckb_tx("deliver-current-proof-control", ckb_head, ckb_capacity - FEE,
+                                    mailbox_state(0, updated), evidence=binary(control["input_type"]),
+                                    checkpoint=checkpoint, extra_input=True)
+            historical_anchor["current_proof_control"] = {
+                "cycles": int(l1.call("estimate_cycles", signed_control["json"])["cycles"], 16),
+                "bytes": len(binary(signed_control["molecule"])),
+                "reference": latest,
+                "witness": control,
+            }
+            for label, offset in (("header", 112), ("frontier", 208 + 8), ("path", len(history) - 1)):
+                bad = bytearray(raw)
+                bad[history_start + offset] ^= 1
+                rejected[f"ckb_forged_history_{label}"] = ckb_reject(label, ckb_tx(f"forged-history-{label}",
+                    ckb_head, ckb_capacity - FEE, mailbox_state(0, updated), evidence=bad,
+                    checkpoint=checkpoint), 84)
+            replay_start, _ = history_bounds(replay_witness)
+            replay_witness = (replay_witness[:8] + le(len(history), 4) + replay_witness[12:replay_start]
+                              + history + replay_witness[replay_start:])
             forked = ckb_tx("deliver-on-replaced-fork", ckb_head, ckb_capacity - FEE - 1,
                             mailbox_state(0, updated), evidence=raw, checkpoint=checkpoint, extra_input=True)
             orphan_head = point(l1.send(forked), 1)
@@ -383,7 +458,7 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
 
     return {"mailbox": mailbox_type, "mailbox_id": mailbox_id, "creation": l1.prove_committed(ckb_start),
             "outgoing": outgoing, "stem_sends": stems, "outbox_proofs": proofs, "outbox_height": proof_height,
-            "ckb_deliveries": ckb_deliveries, "l1_sends": [sent, misdirected], "incoming": incoming,
+            "ckb_deliveries": ckb_deliveries, "historical_anchor": historical_anchor, "l1_sends": [sent, misdirected], "incoming": incoming,
             "stem_delivery": delivered, "stem_delivery_bytes": len(binary(delivered_tx)),
             "stem_execution": receipt, "application_output": received_cell,
             "foreign_mailbox_creation": l1.prove_committed(foreign), "counterfeit": counterfeit_proof,

@@ -8,7 +8,7 @@ use ckb_types::{
 };
 use clap::Args;
 use serde::Serialize;
-use stem_bridge_wire::intercell::{MailboxPolicy, MailboxState, Message, delivery};
+use stem_bridge_wire::intercell::{Delivery, MailboxPolicy, MailboxState, Message};
 use stem_stake::intercell::consume;
 
 use crate::{
@@ -184,17 +184,17 @@ impl Recover {
                     .to_opt()
                     .context("missing historical Intercell input_type")?
                     .raw_data();
-                let (record, _, path) =
-                    delivery(&evidence).context("invalid historical Intercell witness")?;
-                let message =
-                    Message::decode(record).context("invalid historical Intercell delivery")?;
+                let delivery =
+                    Delivery::decode(&evidence).context("invalid historical Intercell witness")?;
+                let message = Message::decode(delivery.record)
+                    .context("invalid historical Intercell delivery")?;
                 let id = message.id();
                 ensure!(
                     message.source == policy.stem_network
                         && message.destination == policy.ckb_genesis
                         && mailbox.as_slice() == message.receiver
                         && current.next_nonce == previous.next_nonce
-                        && consume(&message.receiver, &id, &previous.consumed, path)?
+                        && consume(&message.receiver, &id, &previous.consumed, delivery.replay)?
                             == current.consumed,
                     "historical Intercell delivery does not match the replay root"
                 );

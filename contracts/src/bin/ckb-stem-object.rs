@@ -14,7 +14,7 @@ use ckb_std::{
     },
 };
 use stem_bridge_wire::{
-    intercell::{Identity, MailboxPolicy, MailboxState, Message, delivery},
+    intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
     spore::{SporeTransfer, plain_spore},
 };
 
@@ -116,7 +116,7 @@ fn mailbox_lock(script: &Script, policy: &[[u8; 32]; 5]) -> Result<(), i8> {
     if next.outgoing.is_empty() {
         let witness = load_witness_args(0, Source::GroupInput).map_err(|_| 123)?;
         let input_type = witness.input_type().to_opt().ok_or(123)?.raw_data();
-        let (bytes, _, _) = delivery(&input_type).ok_or(123)?;
+        let bytes = Delivery::decode(&input_type).ok_or(123)?.record;
         let message = Message::decode(bytes).ok_or(123)?;
         let transfer = SporeTransfer::decode(message.payload).ok_or(123)?;
         let output = right.ok_or(123)?;

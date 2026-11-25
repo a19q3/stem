@@ -14,7 +14,7 @@ use ckb_std::{
     },
 };
 use stem_bridge_wire::{
-    intercell::{Identity, MailboxPolicy, MailboxState, Message, delivery},
+    intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
     spore::{CKB_SPORE_CODE, SporeTransfer},
 };
 
@@ -97,7 +97,7 @@ fn verify() -> Result<(), i8> {
         }
         let witness = load_witness_args(mailbox_input, Source::Input).map_err(|_| 110)?;
         let bytes = witness.input_type().to_opt().ok_or(113)?.raw_data();
-        let (record, _, _) = delivery(&bytes).ok_or(113)?;
+        let record = Delivery::decode(&bytes).ok_or(113)?.record;
         let message = Message::decode(record).ok_or(113)?;
         if message.sender != *endpoint {
             return Err(113);
