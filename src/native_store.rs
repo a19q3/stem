@@ -99,28 +99,31 @@ impl Limits {
     }
 }
 
-/// Shannons per deterministic unit of transaction work.
+/// Millionths of a shannon per deterministic unit of transaction work.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceFees {
-    pub encoded_byte: u64,
-    pub cycle: u64,
-    pub cell_read: u64,
-    pub cell_read_byte: u64,
-    pub cell_write_byte: u64,
-    pub cell_delete: u64,
+    pub encoded_byte_microshannons: u64,
+    pub cycle_microshannons: u64,
+    pub cell_read_microshannons: u64,
+    pub cell_read_byte_microshannons: u64,
+    pub cell_write_byte_microshannons: u64,
+    pub cell_delete_microshannons: u64,
 }
 
 impl ResourceFees {
-    fn encode(self) -> [u8; 48] {
-        let mut bytes = [0; 48];
+    pub const MICROSHANNONS_PER_SHANNON: u64 = 1_000_000;
+
+    fn encode(self) -> [u8; 56] {
+        let mut bytes = [0; 56];
         for (out, price) in bytes.chunks_exact_mut(8).zip([
-            self.encoded_byte,
-            self.cycle,
-            self.cell_read,
-            self.cell_read_byte,
-            self.cell_write_byte,
-            self.cell_delete,
+            Self::MICROSHANNONS_PER_SHANNON,
+            self.encoded_byte_microshannons,
+            self.cycle_microshannons,
+            self.cell_read_microshannons,
+            self.cell_read_byte_microshannons,
+            self.cell_write_byte_microshannons,
+            self.cell_delete_microshannons,
         ]) {
             out.copy_from_slice(&price.to_le_bytes());
         }
@@ -137,25 +140,29 @@ impl ResourceFees {
         reserved_fee: u64,
     ) -> Result<u64> {
         let fixed = [
-            (self.encoded_byte, encoded_bytes),
-            (self.cell_read, reads),
-            (self.cell_read_byte, read_bytes),
-            (self.cell_write_byte, write_bytes),
-            (self.cell_delete, resolved.inputs().len() as u64),
+            (self.encoded_byte_microshannons, encoded_bytes),
+            (self.cell_read_microshannons, reads),
+            (self.cell_read_byte_microshannons, read_bytes),
+            (self.cell_write_byte_microshannons, write_bytes),
+            (
+                self.cell_delete_microshannons,
+                resolved.inputs().len() as u64,
+            ),
         ]
         .into_iter()
-        .try_fold(0u64, |sum, (price, units)| {
-            price
-                .checked_mul(units)
-                .and_then(|cost| sum.checked_add(cost))
+        .try_fold(0u128, |sum, (price, units)| {
+            sum.checked_add(u128::from(price) * u128::from(units))
                 .context("resource fee overflow")
         })?;
-        let cycle_balance = resolved
+        let available = resolved
             .fee()
             .checked_sub(reserved_fee)
-            .and_then(|fee| fee.checked_sub(fixed))
             .context("insufficient fee for transaction resources")?;
-        Ok(cycle_balance.checked_div(self.cycle).unwrap_or(u64::MAX))
+        let cycle_balance = (u128::from(available) * u128::from(Self::MICROSHANNONS_PER_SHANNON))
+            .checked_sub(fixed)
+            .context("insufficient fee for transaction resources")?;
+        let cycles = cycle_balance.checked_div(u128::from(self.cycle_microshannons));
+        Ok(cycles.map_or(u64::MAX, |cycles| u64::try_from(cycles).unwrap_or(u64::MAX)))
     }
 }
 

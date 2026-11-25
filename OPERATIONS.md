@@ -346,6 +346,17 @@ An accepted claim creates a pending withdrawal in the native CKB lane. Use the n
 
 For a four-replica devnet run, use the same binary and contract options as the [Jolteon bridge exercise](#exercise-the-native-jolteon-path), replace both xUDT flags with `--fee-funds`, and choose a new output directory. The fixture pays a deliberately high 800 CKB transaction fee from a confirmed bridged Cell, allocates it at 65/15/10/10 and redeems all four accounts on CKB. The output directory contains the success and rejection evidence. The fixture's fee and allocation rates are experimental values.
 
+### Calibrate native resource prices
+
+For genesis pricing, specify `encoded_byte_microshannons`, `cycle_microshannons`, `cell_read_microshannons`, `cell_read_byte_microshannons`, `cell_write_byte_microshannons` and `cell_delete_microshannons` in `fees`. All six are integer rates with one million units per shannon. The precision enters the genesis commitment. Recreate disposable networks for this fee schedule.
+
+```sh
+python3 tools/jolteon_localnet.py --binary target/release/stem \
+  --lock "$programs_dir/stem-lock" --fee-calibration --output /tmp/stem-fee-calibration
+```
+
+The runner sends 32 signed one-input, two-output payments at 140 shannons, compares a 139-shannon payment using the same input against the admission limit, and records the committed fee proof. The rates in this fixture are for the measured standard Lock and transaction shape.
+
 ## Exercise the CKB Stake Registry
 
 ```sh

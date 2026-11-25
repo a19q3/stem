@@ -202,13 +202,14 @@ fn resource_fees_bound_cycles_in_parallel_and_cached_execution() -> Result<()> {
     use stem::native_store::ResourceFees;
 
     let mut fixture = Fixture::new()?;
+    let shannon = ResourceFees::MICROSHANNONS_PER_SHANNON;
     fixture.spec.fees = ResourceFees {
-        encoded_byte: 1,
-        cycle: 1,
-        cell_read: 1,
-        cell_read_byte: 1,
-        cell_write_byte: 1,
-        cell_delete: 1,
+        encoded_byte_microshannons: shannon,
+        cycle_microshannons: shannon,
+        cell_read_microshannons: shannon,
+        cell_read_byte_microshannons: shannon,
+        cell_write_byte_microshannons: shannon,
+        cell_delete_microshannons: shannon,
     };
     let temp = tempfile::tempdir()?;
     let mut store = Store::open(temp.path(), &fixture.spec, Retention::Archive)?;

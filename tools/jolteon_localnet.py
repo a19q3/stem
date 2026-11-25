@@ -19,6 +19,15 @@ from native_bridge_localnet import cell, start, wait_for
 
 SUBMIT, STATUS, FINALITY, HEADER, HANDOFF, QUERY = 20, 21, 22, 23, 24, 25
 
+PAYMENT_FEES = {
+    "encoded_byte_microshannons": 200_000,
+    "cycle_microshannons": 35,
+    "cell_read_microshannons": 500_000,
+    "cell_read_byte_microshannons": 100,
+    "cell_write_byte_microshannons": 16_000,
+    "cell_delete_microshannons": 1_000_000,
+}
+
 
 def varint(value):
     result = bytearray()
@@ -60,7 +69,7 @@ def write_configuration(output, keys, ports, cadence, timeout):
     return configuration
 
 
-def genesis_and_payments(args, keys, weights):
+def genesis_and_payments(args, keys, weights, *, fee_calibration=False):
     basic = args.output / "payments"
     basic.mkdir()
     payer = write_key(args.output, "payment-key", bytes([22]) * 32)
@@ -83,23 +92,29 @@ def genesis_and_payments(args, keys, weights):
         "development_cells": [{"out_point": code, "cell": code_cell}]
         + [{"out_point": out, "cell": pay} for out, pay in zip(inputs, spending)],
     }
+    if fee_calibration:
+        genesis["fees"] = PAYMENT_FEES
     spec = args.output / "genesis.json"
     write_json(spec, genesis)
     owner_lock = args.output / "payment-lock.json"
     write_json(owner_lock, lock)
 
-    def sign(index):
+    def sign(index, fee=None):
         out, previous = inputs[index], spending[index]
-        request, draft, context = [basic / f"{index}-{file}.json" for file in ("request", "draft", "context")]
-        write_json(request, {"inputs": [{"out_point": out}], "outputs": [cell(99 * CKB, lock)], "cell_deps": [dependency(code)]})
+        suffix = f"{index}-{fee}" if fee is not None else str(index)
+        request, draft, context = [basic / f"{suffix}-{file}.json" for file in ("request", "draft", "context")]
+        outputs = [cell(99 * CKB, lock)] if fee is None else [cell(50 * CKB, lock), cell(50 * CKB - fee, lock)]
+        write_json(request, {"inputs": [{"out_point": out}], "outputs": outputs, "cell_deps": [dependency(code)]})
         write_json(context, {"cells": [{"out_point": out, "cell": previous}, {"out_point": code, "cell": code_cell}]})
         write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", request)))
         return json.loads(run(args.binary, "wallet", "sign", "--genesis", spec, "--transaction", draft,
                               "--context", context, "--group-index", "0", "--lock", owner_lock, "--key-file", payer))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        payments = list(pool.map(sign, range(len(inputs))))
+        payments = list(pool.map(lambda i: sign(i, 140 if fee_calibration else None), range(len(inputs))))
     write_json(args.output / "signed-workload.json", payments)
+    if fee_calibration:
+        write_json(args.output / "underpriced-signed.json", sign(0, 139))
     return spec, payments
 
 
@@ -125,7 +140,7 @@ def offline_leaders(weights, count):
 def scenario(args):
     keys = evidence_keys(args)
     weights = [1 + i % 2 for i in range(args.validators)]
-    spec, payments = genesis_and_payments(args, keys, weights)
+    spec, payments = genesis_and_payments(args, keys, weights, fee_calibration=args.fee_calibration)
     peers = [args.port + i for i in range(args.validators)]
     configuration = write_configuration(
         args.output, [key for key, _ in keys], peers, args.cadence, args.timeout,
@@ -169,6 +184,12 @@ def scenario(args):
         write_json(args.output / "initial.json", initial)
         write_json(args.output / "public-genesis-header.json",
                    json.loads(run(args.binary, "genesis-hash", "--genesis", spec, "--header")))
+        fee_rejection = None
+        if args.fee_calibration:
+            underpriced = json.loads((args.output / "underpriced-signed.json").read_text())
+            fee_rejection = rpc(peers[0], SUBMIT, binary(underpriced))
+            assert "max cycles exceeded" in fee_rejection.get("error", ""), fee_rejection
+            write_json(args.output / "underpriced-payment.json", {"transaction": underpriced, "result": fee_rejection})
 
         phase = "fault and payment visibility"
         offline, schedule = offline_leaders(weights, args.offline)
@@ -241,6 +262,13 @@ def scenario(args):
             "processes": [process_resources(nodes[i].pid) for i in everybody],
             "processes_before": start_metrics,
         }
+        if args.fee_calibration:
+            query = json.dumps({"path": "/stem/extinguished-fees", "height": agreed_height, "prove": True}).encode()
+            fee = rpc(peers[-1], QUERY, query)
+            fee_record = json.loads(bytes.fromhex(fee["value"]))
+            assert int(fee_record["extinguished_shannons"], 16) == 140 * admitted, fee_record
+            report["fee_calibration"] = {"shannons_per_payment": 140, "encoded_bytes": len(binary(payments[0])),
+                                         "underpriced": fee_rejection, "at_height": agreed_height, "proof": fee_record}
         write_json(args.output / "jolteon-report.json", report)
         return report
     finally:
@@ -281,6 +309,7 @@ def main():
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)
     parser.add_argument("--offered", type=float, default=16)
+    parser.add_argument("--fee-calibration", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.validators <= 128 or min(args.transactions, args.offline_blocks, args.recovery_seconds) < 1:
         parser.error("invalid fixture size")
