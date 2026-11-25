@@ -3,7 +3,9 @@
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -67,13 +69,18 @@ def run_scenario(args):
         return [int(rpc.call("status")["sync_info"]["latest_block_height"]) for rpc in clients]
 
     def net_stats():
-        values = []
-        for rpc in clients:
-            peers = rpc.call("net_info")["peers"] or []
+        def sample(rpc):
+            try:
+                reply = wait_for(lambda: rpc.call("net_info"), "P2P counters", seconds=15)
+            except (OSError, RuntimeError, http.client.HTTPException) as exc:
+                return {"error": str(exc)}
+            peers = reply["peers"] or []
             sent = sum(int(p["connection_status"]["SendMonitor"]["Bytes"]) for p in peers)
             received = sum(int(p["connection_status"]["RecvMonitor"]["Bytes"]) for p in peers)
-            values.append({"peers": len(peers), "sent_bytes": sent, "received_bytes": received})
-        return values
+            return {"peers": len(peers), "sent_bytes": sent, "received_bytes": received}
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            return list(pool.map(sample, clients))
 
     try:
         apps = []
@@ -90,7 +97,7 @@ def run_scenario(args):
         def all_ready():
             values = status()
             return values if min(values) >= 3 else None
-        heights = wait_for(all_ready, "every baseline replica finalized", seconds=90)
+        heights = wait_for(all_ready, "every baseline replica finalized", seconds=args.startup_seconds)
         before_net = net_stats()
         before_proc = [process_resources(child.pid) for child in children]
         started = time.perf_counter()
@@ -109,7 +116,7 @@ def run_scenario(args):
             height = max(int(tx["height"]) for tx in results)
             return height if min(status()) >= max(height, min(heights) + 4) else None
 
-        final_height = wait_for(payments_committed, "all baseline replicas see the workload", seconds=90)
+        final_height = wait_for(payments_committed, "all baseline replicas see the workload", seconds=args.confirm_seconds)
         elapsed = time.perf_counter() - started
         views = [rpc.call("abci_query", path=json.dumps("/stem/header"), height=final_height)["response"] for rpc in clients]
         if any(view["code"] != 0 or view["value"] != views[0]["value"] for view in views):
@@ -157,6 +164,8 @@ def main():
     parser.add_argument("--cadence", type=int, default=300)
     parser.add_argument("--timeout", type=int, default=2500)
     parser.add_argument("--offered", type=float, default=16)
+    parser.add_argument("--startup-seconds", type=int, default=90)
+    parser.add_argument("--confirm-seconds", type=int, default=90)
     args = parser.parse_args()
     args.output.mkdir(mode=0o700, parents=True)
     result = run_scenario(args)

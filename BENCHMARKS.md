@@ -788,3 +788,73 @@ the observed heads and proof payloads, both canonical precommits, signed
 CKB transactions, observer evidence, test summaries and executable
 fingerprints. Two failures came from long Unix socket paths. Three came
 from the CKB-versus-Stem anchor fields in the reorganization fixture.
+
+## Native weighted Jolteon
+
+The fixed-epoch runtime was built from `30e1d71`. The frozen baseline uses
+Stem `abddb70` and CometBFT 0.38.26. Both nominal runs used the same
+genesis and 32 signed RISC-V payments at each replica count. The offered
+rate was 16 transactions/s for two seconds, with two application VM
+workers and 300 ms commit or proposal waits. Both set a 2.5 s base
+timeout. The operating-system writes came from the same disk-backed
+workspace on one 20-logical-core Intel i9-13900H. Each run was scheduled
+separately. CometBFT used two Go threads per replica and the baseline
+Stem process has its separate admission pool.
+
+| Replicas | Jolteon confirmed/s | CometBFT confirmed/s | Jolteon two-chain proof, bytes |
+| ---: | ---: | ---: | ---: |
+| 4 | 12.46 | 12.31 | 974 |
+| 16 | 12.40 | 12.75 | 2,128 |
+| 32 | 12.31 | 12.35 | 3,220 |
+| 64 | 12.08 | 5.64 | 6,044 |
+| 100 | 11.83 | 1.86 | 9,254 |
+| 128 | 12.88 | No completed run | 11,628 |
+
+Every successful run confirmed 32 payments and checked the execution
+Header at a common height. The duration includes draining and observing
+at least four new heights. It gives short-workload completion rates under
+offered load and does not estimate sustainable throughput or per-payment
+latency percentiles. The reported proof consists of the two native Headers
+and their bitmap Ed25519 QCs. Membership comes from the trusted genesis.
+
+| Replicas | Jolteon / CometBFT sent MB | Jolteon / CometBFT process write MB | Jolteon / CometBFT CPU seconds | Jolteon / CometBFT sampled RSS GB |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 0.11 / 0.24 | 6.84 / 13.54 | 0.27 / 0.69 | 0.12 / 0.26 |
+| 16 | 2.06 / 10.58 | 18.83 / 34.97 | 1.45 / 3.72 | 0.46 / 1.32 |
+| 32 | 13.33 / 65.37 | 35.48 / 109.63 | 3.80 / 10.57 | 0.91 / 3.29 |
+| 64 | 96.06 / 522.92 | 65.97 / 642.56 | 9.78 / 117.60 | 1.81 / 8.52 |
+| 100 | 315.30 / 1,830.79 | 114.36 / 2,045.30 | 19.81 / 436.62 | 2.88 / 16.41 |
+| 128 | 649.39 / — | 141.68 / — | 28.39 / — | 3.74 / — |
+
+Jolteon counts bytes at the application frame layer. CometBFT counts
+each persistent P2P connection's monitor bytes. CPU and write counters
+are process deltas, and RSS is a summed end sample. Jolteon's process
+sample also covers the extra height checks at the end. CometBFT includes
+both processes per replica. These numbers also reflect the size of each
+replica's local journals and the shared host. Nominal Jolteon framing grew
+steeply even at low transaction rates. Full fanout of certificates and
+retransmissions remains a scaling cost.
+
+The four-replica fault run killed one unit of voting weight out of six.
+The surviving replicas committed 32 payments and all agreed at height
+12 after the stopped replica recovered. The 16-replica rerun killed two
+Leaders with total weight four out of 24. It saw consecutive TCs at views
+17 and 18, committed 64 payments, and all replicas agreed at height 17
+after restart. Including the fault wait, the active-replica confirmation
+rates were 13.29 and 11.84 payments/s respectively. The offline verifier
+accepted the real proof and rejected a modified signature and a proof
+checked against a different genesis. Remaining tests include matched
+fault runs at every scale, malicious proposal behavior, long-gap sync,
+committee change and Jolteon proofs on CKB.
+
+The initial 16-replica fault assertion ran before the two stopped
+Leaders had reached their turns. A 32-replica startup failed when replica
+6 could not bind its port. The first CometBFT comparator on `/tmp` ran
+out of tmpfs quota at 64 replicas and could not start the next two
+sizes. The first disk-backed 128-replica run timed out before workload
+submission. At cleanup 71 replicas reported height 3 and 57 reported
+height 2. The longer retry reached readiness and stopped when the P2P
+monitor RPC disconnected. The final retry was interrupted to clean the
+workspace target directories. All rounds are retained. [Public run archive](benchmarks/2026-11-25-stem-jolteon-runtime.json.xz)
+
+See [commands and timing options](OPERATIONS.md#exercise-the-native-jolteon-path).
