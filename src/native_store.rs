@@ -318,6 +318,14 @@ struct Overlay {
     keeper: keeper::Stage,
 }
 
+struct ProposalSelection {
+    transactions: Vec<Transaction>,
+    context: HeaderContext,
+    overlay: Overlay,
+    receipts: Vec<Receipt>,
+    reusable: bool,
+}
+
 #[derive(Default)]
 struct LineageBatchJournal {
     live: OverlayUndo<OutPoint, LiveCell>,
@@ -1215,6 +1223,26 @@ impl Store {
                 }
             }
         }
+        self.finish_block(
+            context,
+            overlay,
+            execution,
+            receipts,
+            due.commands.len(),
+            fees,
+        )
+    }
+
+    fn finish_block(
+        &self,
+        context: HeaderContext,
+        overlay: Overlay,
+        execution: &[Transaction],
+        receipts: Vec<Receipt>,
+        keeper_receipts: usize,
+        fees: u64,
+    ) -> Result<Prepared> {
+        let height = context.height;
         let mut batch = Batch::default();
         let mut cells = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
             self.node(Namespace::Cells, id)
@@ -1336,7 +1364,7 @@ impl Store {
             next,
             history,
             receipts,
-            keeper_receipts: due.commands.len(),
+            keeper_receipts,
             validator_updates,
             committee_change,
             batch,
@@ -1351,6 +1379,50 @@ impl Store {
         timestamp_ms: u64,
         max_bytes: u64,
     ) -> Result<Vec<Transaction>> {
+        Ok(self
+            .stage_proposal(transactions, timestamp_ms, max_bytes)?
+            .transactions)
+    }
+
+    /// Construct the same execution and commitments a follower derives with
+    /// prepare. A proposal's transaction root is known only after selection.
+    pub fn build_proposal<T: Borrow<Transaction>>(
+        &self,
+        transactions: impl IntoIterator<Item = T>,
+        timestamp_ms: u64,
+        max_bytes: u64,
+    ) -> Result<(Vec<Transaction>, Prepared)> {
+        let ProposalSelection {
+            transactions,
+            mut context,
+            mut overlay,
+            receipts,
+            reusable,
+        } = self.stage_proposal(transactions, timestamp_ms, max_bytes)?;
+        let prepared = if reusable {
+            context.transaction_root =
+                Tree::transactions(self.network.clone(), &transactions)?.root();
+            let origin = Origin::new(&self.network, &context);
+            for record in overlay.live.values_mut().flatten() {
+                record.origin = origin.clone();
+            }
+            let fees = receipts
+                .iter()
+                .try_fold(0u64, |sum, receipt| sum.checked_add(receipt.fee))
+                .context("block fee overflow")?;
+            self.finish_block(context, overlay, &transactions, receipts, 0, fees)?
+        } else {
+            self.prepare(&transactions, timestamp_ms, true)?
+        };
+        Ok((transactions, prepared))
+    }
+
+    fn stage_proposal<T: Borrow<Transaction>>(
+        &self,
+        transactions: impl IntoIterator<Item = T>,
+        timestamp_ms: u64,
+        max_bytes: u64,
+    ) -> Result<ProposalSelection> {
         let mut budget = Budget::new(self.limits);
         let mut overlay = self.overlay()?;
         let mut wire_bytes = max_bytes;
@@ -1358,7 +1430,8 @@ impl Store {
             HeaderContext::after(&self.network, &self.tip, timestamp_ms, Byte32::default())?;
         let origin = Origin::new(&self.network, &context);
         let due = self.due(context.height, &mut budget)?;
-        self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
+        let mut receipts = self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
+        let mut reusable = due.commands.is_empty();
         let mut selected = Vec::new();
         for item in transactions {
             if selected.len() + due.commands.len() == self.limits.transaction_count as usize
@@ -1376,6 +1449,15 @@ impl Store {
             let Some(next_wire) = wire_bytes.checked_sub(entry_bytes) else {
                 continue;
             };
+            // Without Header Deps the VM has no origin-based Header to load.
+            // Ordinary calls and single Lineage commands see the same height
+            // and parent throughout. Keep the full replay for other inspected
+            // operations, including any of them that failed selection.
+            reusable &= tx.header_deps().len() == 0
+                && tx.operation().is_none()
+                && tx.keeper_action().is_none()
+                && tx.keeper_schedule().is_none()
+                && tx.lineage_batch().is_none();
             match self.stage(
                 tx,
                 &context,
@@ -1385,15 +1467,22 @@ impl Store {
                 None,
                 |resolved, limit| self.cache.verify(resolved, limit, true),
             ) {
-                Ok(_) => {
+                Ok(receipt) => {
                     wire_bytes = next_wire;
+                    receipts.push(receipt);
                     selected.push(tx.clone());
                 }
                 Err(error) if error.is::<StateReadFault>() => return Err(error),
                 Err(_) => {}
             }
         }
-        Ok(selected)
+        Ok(ProposalSelection {
+            transactions: selected,
+            context,
+            overlay,
+            receipts,
+            reusable,
+        })
     }
 
     pub fn check(&self, tx: &Transaction) -> Result<Receipt> {

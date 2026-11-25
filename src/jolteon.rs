@@ -36,6 +36,7 @@ use mempool::Mempool;
 use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
+pub use client::LatencyHistogram as AdmissionLatency;
 pub use client::{
     AdmissionMetrics, Certificate, Client, ExecutionMetrics, LatencyHistogram, QueryResult, Status,
     SubmissionProgress,
@@ -1163,10 +1164,7 @@ impl Replica {
             let started = Instant::now();
             let (transactions, execution) = self.workers.install(|| {
                 self.store.on_branch(&batches, |state| {
-                    let selected =
-                        state.select(self.mempool.transactions(), at, MAX_PROPOSAL_BYTES)?;
-                    let prepared = state.prepare(&selected, at, true)?;
-                    Ok((selected, prepared))
+                    state.build_proposal(self.mempool.transactions(), at, MAX_PROPOSAL_BYTES)
                 })
             })?;
             self.execution.proposal.observe(started.elapsed());

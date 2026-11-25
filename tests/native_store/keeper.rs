@@ -469,6 +469,16 @@ fn keeper_time_uses_parent_header_and_bounded_slots_after_restore() -> Result<()
         let height = 4 + offset as u64;
         let serial = store.prepare(&[], target + 1_000, false)?;
         let parallel = pool.install(|| restored.prepare(&[], target + 1_000, true))?;
+        let (submitted, proposed) = pool.install(|| {
+            restored.build_proposal(
+                std::iter::empty::<&Transaction>(),
+                target + 1_000,
+                1_000_000,
+            )
+        })?;
+        assert!(submitted.is_empty());
+        assert_eq!(serial.header(), proposed.header());
+        assert_eq!(serial.receipts(), proposed.receipts());
         assert_eq!(serial.header(), parallel.header());
         assert_eq!(serial.receipts(), parallel.receipts());
         let receipts = serial

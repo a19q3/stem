@@ -417,10 +417,21 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     assert!(recent.live_cell(&fixture.spend)?.is_some());
 
     let block = vec![first, last];
-    let pending = recent.prepare(&block, TIME + 3, true)?;
+    let candidates = [&block[0], &block[0], &block[1]];
+    let (selected, pending) = recent.build_proposal(candidates, TIME + 3, u64::MAX)?;
+    assert_eq!(selected.len(), block.len());
+    assert!(
+        selected
+            .iter()
+            .zip(&block)
+            .all(|(a, b)| a.as_slice() == b.as_slice())
+    );
+    let parallel = recent.prepare(&block, TIME + 3, true)?;
     let serial = archive.prepare(&block, TIME + 3, false)?;
     assert_eq!(pending.receipts(), serial.receipts());
     assert_eq!(pending.header(), serial.header());
+    assert_eq!(pending.receipts(), parallel.receipts());
+    assert_eq!(pending.header(), parallel.header());
     assert_eq!(*recent.tip(), genesis);
     let stale = recent.prepare(&[], TIME + 3, false)?;
     recent.commit(pending)?;
@@ -435,6 +446,10 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     assert_eq!(*recent.tip(), committed);
     let (record, proof) = recent.prove_cell(&output)?;
     let record = record.expect("output survives restart");
+    assert_eq!(
+        record.origin.context_id,
+        committed.context.id(recent.network())
+    );
     let tree = Patricia::new(fixture.spec.network.clone(), Namespace::Cells);
     let root = committed.state.cell_root.unpack();
     assert!(record::verify_cell(

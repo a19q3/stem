@@ -39,6 +39,8 @@ fn measure_exhausted_lineage_selection() -> Result<()> {
     );
     let reference = store.prepare(&pool[..FITS], TIME, false)?;
     let mut samples = Vec::new();
+    let mut replayed = Vec::new();
+    let mut reused = Vec::new();
     for _ in 0..SAMPLES {
         // Construct the input before starting the timer in both revisions.
         let candidates = pool.clone();
@@ -57,6 +59,35 @@ fn measure_exhausted_lineage_selection() -> Result<()> {
             reference.header()
         );
     }
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    for sample in 0..SAMPLES {
+        let order = if sample % 2 == 0 {
+            [false, true]
+        } else {
+            [true, false]
+        };
+        for reuse in order {
+            let started = Instant::now();
+            let (selected, prepared) = workers.install(|| {
+                if reuse {
+                    store.build_proposal(pool.iter(), TIME, u64::MAX)
+                } else {
+                    let selected = store.select(pool.iter(), TIME, u64::MAX)?;
+                    let prepared = store.prepare(&selected, TIME, true)?;
+                    Ok((selected, prepared))
+                }
+            })?;
+            let elapsed = started.elapsed().as_micros();
+            if reuse {
+                reused.push(elapsed);
+            } else {
+                replayed.push(elapsed);
+            }
+            assert_eq!(selected.len(), FITS);
+            assert_eq!(prepared.receipts(), reference.receipts());
+            assert_eq!(prepared.header(), reference.header());
+        }
+    }
     let workload = pool
         .iter()
         .flat_map(Transaction::as_slice)
@@ -66,6 +97,7 @@ fn measure_exhausted_lineage_selection() -> Result<()> {
         "queued": QUEUED, "selected": FITS, "reads": fixture.spec.limits.cell_reads,
         "signed_workload_id": hex::encode(ckb_hash::blake2b_256(workload)),
         "header": hex::encode(reference.header().encode()), "selection_us": samples,
+        "proposal_replayed_us": replayed, "proposal_reused_us": reused,
     });
     if let Some(path) = std::env::var_os("STEM_SELECTION_REPORT") {
         std::fs::write(PathBuf::from(path), serde_json::to_vec(&evidence)?)?;

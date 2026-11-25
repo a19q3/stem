@@ -931,6 +931,14 @@ a final overflow bucket.
 Use start and end deltas in load tests. The fixed-state comparison
 isolates verification of signed AMM commands over a single tip.
 
+The `execution` status field uses the same buckets for Leader
+proposal construction, uncached candidate verification and certified
+commit. Proposal timing covers selecting and constructing the
+execution batch. Candidate verification measures decoding and executing
+an uncached proposal. Commit measures the synchronous Store call for
+each finalized execution block. These are elapsed times on the local
+replica and can include time waiting for CPU.
+
 ```sh
 STEM_ADMISSION_REPORT=/tmp/stem-admission.json \
 cargo test --locked --release --test native_store \

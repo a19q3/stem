@@ -70,6 +70,16 @@ fee input and declared dependencies. It also applies to a fee-only
 outcome, and sums across members of an atomic batch. Candidate execution
 and proposal verification still charge the exact resources.
 
+The Jolteon proposer can retain the overlay and receipts from selection
+for ordinary transactions and single Lineage commands without Header
+Deps. It computes the final transaction root once selection ends and
+rebases the new Live Cell origins before writing the authenticated
+state batch. A script in that path sees the candidate height and the
+committed parent. It cannot load a Header through the origin of a Cell.
+An inspected Header Dep, a protocol operation, an atomic Lineage batch
+or Keeper work uses full proposal preparation with the final context.
+Other voters replay the selected transactions against the signed Header.
+
 ## CKB-VM host
 
 The [StemVM crate](vm) owns the native ABI, verification cache and Group execution. The RISC-V backend is the exact upstream CKB-VM v0.24.15 source at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Stem uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)
