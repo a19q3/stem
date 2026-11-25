@@ -680,6 +680,35 @@ impl Store {
         ))
     }
 
+    pub fn prove_reward_epoch(
+        &self,
+        epoch: u64,
+    ) -> Result<(Option<stem_stake::rewards::EpochRewards>, Proof)> {
+        use stem_stake::rewards::{EpochRewards, epoch_key};
+        let (record, proof) = self.prove_system(&epoch_key(epoch))?;
+        Ok((
+            record.as_deref().map(EpochRewards::decode).transpose()?,
+            proof,
+        ))
+    }
+
+    pub fn verify_reward_epoch(
+        network: &Byte32,
+        header: &Header,
+        record: &stem_stake::rewards::EpochRewards,
+        proof: &Proof,
+    ) -> bool {
+        record.end_height != 0
+            && record.end_height <= header.context.height
+            && Self::verify_system_record(
+                network,
+                header,
+                &stem_stake::rewards::epoch_key(record.epoch),
+                Some(&record.encode()),
+                proof,
+            )
+    }
+
     pub(crate) fn announced_committee(&self) -> Result<Option<CommitteeChange>> {
         Ok(self
             .system_record(COMMITTEE_RECORD)?
@@ -1067,7 +1096,7 @@ impl Store {
         let mut validator_updates = Vec::new();
         let mut committee_change = None;
         if let Some((staking, stake)) = self.staking.as_ref().zip(overlay.stake) {
-            let (records, updates) = staking.finish(stake, height)?;
+            let (records, updates) = staking.finish(self, stake, height, total_fees)?;
             validator_updates = updates;
             for (name, value) in records {
                 if name == COMMITTEE_RECORD {

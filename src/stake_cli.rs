@@ -16,11 +16,15 @@ use clap::{Args, Subcommand};
 use ed25519_dalek::Signer;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stem_ledger::protocol::ARRIVING_GUARDIAN;
+use stem::native_store::Store;
+use stem_ledger::{block::Header, patricia::Proof, protocol::ARRIVING_GUARDIAN};
 use stem_stake::{
     AcceptedSnapshot, Anchor, Attestation, Authority, MAX_RECORDS, Member, Registry,
     RegistryAnchor, StakeConfig, StakeDomain, StakeSnapshot,
+    delegation::{DelegationTree, PrincipalChange},
+    jolteon::CommitteeChange,
     l1::{DelegationId, GuardianProof, Policy, StakeCell, guardian_generation},
+    rewards::{EpochRewards, RewardSubject},
 };
 
 use crate::{
@@ -72,6 +76,63 @@ pub enum StakeCommand {
         #[arg(long)]
         output_index: u64,
     },
+    /// Rebuild a validator's delegation root and prove or update one position.
+    DelegationProof {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        network: H256,
+        #[arg(long)]
+        positions: PathBuf,
+        #[arg(long)]
+        request: PathBuf,
+    },
+    /// Verify reward terms against an authenticated Stem Header and compute the allocation.
+    RewardQuote {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        network: H256,
+        #[arg(long)]
+        header: PathBuf,
+        #[arg(long)]
+        request: PathBuf,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RewardQuoteRequest {
+    epoch_record: JsonBytes,
+    proof: JsonBytes,
+    registry: JsonBytes,
+    committee: JsonBytes,
+    subject: RewardQuoteSubject,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RewardQuoteSubject {
+    Validator {
+        validator: H256,
+        metadata: JsonBytes,
+    },
+    Delegation {
+        identity: JsonBytes,
+        principal: u64,
+        proof: JsonBytes,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DelegationPosition {
+    identity: JsonBytes,
+    principal: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DelegationProofRequest {
+    identity: JsonBytes,
+    after: Option<u64>,
+    expected_root: Option<H256>,
 }
 
 #[derive(Args)]
@@ -259,6 +320,51 @@ impl StakeCommand {
                                   "proof": JsonBytes::from_vec(proof)}))
             }
             Self::Snapshot { observations } => build_native_snapshot(&observations),
+            Self::RewardQuote {
+                network,
+                header,
+                request,
+            } => {
+                let request: RewardQuoteRequest = read_json_limited(&request, 256 * 1024)?;
+                let header: JsonBytes = read_json_limited(&header, 4096)?;
+                let header = Header::decode(header.as_bytes())?;
+                let record = EpochRewards::decode(request.epoch_record.as_bytes())?;
+                let proof = Proof::decode(request.proof.as_bytes())?;
+                ensure!(
+                    Store::verify_reward_epoch(&network.pack(), &header, &record, &proof),
+                    "reward epoch is not authenticated by the supplied Header"
+                );
+                let registry = Registry::decode(request.registry.as_bytes())?;
+                let committee = CommitteeChange::decode(request.committee.as_bytes())?;
+                let subject = match &request.subject {
+                    RewardQuoteSubject::Validator {
+                        validator,
+                        metadata,
+                    } => RewardSubject::Validator {
+                        validator: validator.as_bytes().try_into()?,
+                        metadata: metadata.as_bytes(),
+                    },
+                    RewardQuoteSubject::Delegation {
+                        identity,
+                        principal,
+                        proof,
+                    } => RewardSubject::Delegation {
+                        id: DelegationId::decode(identity.as_bytes())?,
+                        principal: *principal,
+                        proof: proof.as_bytes(),
+                    },
+                };
+                let quote = record.quote(
+                    &network.as_bytes().try_into()?,
+                    &registry,
+                    &committee,
+                    subject,
+                )?;
+                print_json(
+                    &json!({"epoch": record.epoch, "recipient_lock_hash": H256::from(quote.owner),
+                    "shannons": quote.amount, "commission_shannons": quote.commission}),
+                )
+            }
             Self::DelegationScript {
                 registry_type,
                 validator,
@@ -298,6 +404,54 @@ impl StakeCommand {
                     &json!({"type": JsonScript::from(kind), "lock": JsonScript::from(lock),
                     "identity": JsonBytes::from_vec(id.encode().to_vec())}),
                 )
+            }
+            Self::DelegationProof {
+                network,
+                positions,
+                request,
+            } => {
+                let network = network.as_bytes().try_into()?;
+                let request: DelegationProofRequest = read_json_limited(&request, 4096)?;
+                let id = DelegationId::decode(request.identity.as_bytes())?;
+                let positions: Vec<DelegationPosition> =
+                    read_json_limited(&positions, 32 * 1024 * 1024)?;
+                let mut tree = DelegationTree::new(network, id.registry, id.validator);
+                let mut before = 0;
+                for position in positions {
+                    let other = DelegationId::decode(position.identity.as_bytes())?;
+                    tree.insert(other, position.principal)?;
+                    if other == id {
+                        before = position.principal;
+                    }
+                }
+                let root = tree.root();
+                ensure!(
+                    request
+                        .expected_root
+                        .is_none_or(|expected| expected.as_bytes() == root),
+                    "rebuilt delegation root differs from the expected root"
+                );
+                let proof = tree.prove(&id.commitment());
+                let successor = request
+                    .after
+                    .map(|after| {
+                        let proof = if after == before {
+                            &[]
+                        } else {
+                            proof.as_slice()
+                        };
+                        PrincipalChange {
+                            id,
+                            before,
+                            after,
+                            proof,
+                        }
+                        .apply(&network, &root)
+                        .map(H256::from)
+                    })
+                    .transpose()?;
+                print_json(&json!({"root": H256::from(root), "principal": before,
+                    "proof": JsonBytes::from_vec(proof), "successor": successor}))
             }
         }
     }

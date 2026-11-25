@@ -6,8 +6,8 @@ use ed25519_dalek::Signature;
 
 use crate::{
     Attestation, Authority, DoubleVote, Error, Hash32, Liability, Member, Registry, Result,
-    StakeData, ValidatorKey, digest, finality::CheckpointId, patricia::decode_path, public_key,
-    retirement,
+    StakeData, ValidatorKey, delegation::PrincipalChange, digest, finality::CheckpointId,
+    patricia::decode_path, public_key, retirement,
 };
 
 const EMPTY: Hash32 = [0; 32];
@@ -473,6 +473,8 @@ impl ChangeContext<'_> {
                     || before.exit_epoch.is_some()
                     || old_cell != new_cell
                     || before.activation_epoch != after.activation_epoch
+                    || before.delegation_root != after.delegation_root
+                    || before.commission_bps != after.commission_bps
                     || before.fault_height != after.fault_height
                 {
                     return Err(Error::Sequence);
@@ -670,9 +672,14 @@ pub fn verify_delegation(
     new: &Registry,
     validator: &ValidatorKey,
     action: DelegationAction,
+    principal: PrincipalChange<'_>,
 ) -> Result<()> {
     verify_sequence(policy, old, new)?;
-    if old.guardian_generation != new.guardian_generation || old.retired_root != new.retired_root {
+    if old.guardian_generation != new.guardian_generation
+        || old.retired_root != new.retired_root
+        || principal.id.registry != policy.registry_id
+        || &principal.id.validator != validator
+    {
         return Err(Error::Sequence);
     }
     let (Some(before), Some(after)) = verify_subject(old, new, validator)? else {
@@ -807,10 +814,20 @@ pub fn verify_delegation(
             before.delegated_amount
         }
     };
+    let expected_delegated = before
+        .delegated_amount
+        .checked_sub(principal.before)
+        .and_then(|total| total.checked_add(principal.after))
+        .ok_or(Error::Sequence)?;
+    if expected_delegated != delegated_amount {
+        return Err(Error::Sequence);
+    }
+    let delegation_root = principal.apply(&policy.network_id, &before.delegation_root)?;
     if after
         != (StakeData {
             delegated_amount,
             unbonding_amount,
+            delegation_root,
             ..before
         })
     {

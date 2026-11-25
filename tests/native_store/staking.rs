@@ -47,6 +47,8 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         validator_pubkey,
         bonded_amount,
         delegated_amount: 0,
+        delegation_root: [0; 32],
+        commission_bps: 0,
         unbonding_amount: 0,
         activation_epoch,
         exit_epoch,

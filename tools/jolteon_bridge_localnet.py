@@ -79,8 +79,7 @@ class Client:
         return {"height": height, "hash": id_, "check_tx": {"code": 0}}
 
 
-def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay):
-    fee = 800 * CKB
+def fee_payment(args, fixture, spec_path, mint, client, fee):
     native_lock = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())),
                          fixture.key(fixture.owner)["blake160"], "data")
     request, draft, context, lock = (args.output / f"fee-payment-{name}.json"
@@ -94,6 +93,13 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
     payment = json.loads(run(args.binary, "wallet", "sign", "--genesis", spec_path,
                              "--transaction", draft, "--context", context, "--group-index", "0",
                              "--lock", lock, "--key-file", fixture.owner))
+
+    return payment
+
+
+def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay):
+    fee = 800 * CKB
+    payment = fee_payment(args, fixture, spec_path, mint, client, fee)
 
     def proved(path):
         reply = client.query(path, prove=True)

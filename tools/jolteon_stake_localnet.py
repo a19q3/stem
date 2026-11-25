@@ -11,12 +11,12 @@ import time
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, hex_bytes, le, script_hash, write_key
-from jolteon_bridge_localnet import Client
+from jolteon_bridge_localnet import Client, fee_payment
 from jolteon_checkpoint_localnet import Relay
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, STATUS, SUBMIT, rpc, write_configuration
 from jolteon_slash_localnet import evidence as slash_evidence
 from localnet import run, write_json
-from native_bridge_localnet import start, wait_for
+from native_bridge_localnet import bridge_configuration, deploy, deposit_and_mint, start, wait_for
 from stake_localnet import CHAIN, DELAY, EMPTY, Scenario, mk_record, proof, signable
 
 
@@ -55,6 +55,50 @@ def confirm_positions(args, scenario, relay, validator, genesis, next_registry):
         checkpoint=checkpoint, funded_by_owner=False)
         for label, application in (("holder", first), ("top-up", following), ("second", following))]
     return {"first": first, "next": following, "confirmations": confirmed, "wrong_interval_rejected": wrong}
+
+
+def reward_epoch(client, verify, epoch):
+    response = client.query("/stem/stake-reward-epoch", data=hex_bytes(le(epoch, 8)), prove=True)
+    height = response["height"]
+    finality = client.finality(height)
+    checked = verify(finality["proof"], f"reward-epoch-{epoch}-finality",
+                     range(finality["epoch"]), terminal=finality["handoff"])
+    assert checked == client.header(height) and checked["height"] == height
+    return json.loads(bytes.fromhex(response["value"])), checked
+
+
+def reward_quotes(args, scenario, client, verify, genesis, committee, key, metadata, delegator):
+    epoch, checked = reward_epoch(client, verify, 0)
+    assert int(epoch["budget"], 16) == 520 * CKB, epoch
+    header = args.output / "reward-authenticated-header.json"
+    write_json(header, hex_bytes(bytes.fromhex(checked["header"])))
+    roster = (le(0, 8) + le(1, 8) + b"".join(binary(member["ed25519"]) + le(member["power"], 8) for member in committee))
+    common = {"epoch_record": epoch["record"], "proof": epoch["proof"],
+              "registry": genesis["registry_data"], "committee": hex_bytes(roster)}
+
+    def quote(name, details):
+        request = args.output / f"reward-{name}.json"
+        write_json(request, dict(common, subject=details))
+        command = [args.binary, "stake", "reward-quote", "--network", hex_bytes(scenario.network),
+                   "--header", header, "--request", request]
+        return json.loads(run(*command))
+
+    operator = quote("operator", {"kind": "validator", "validator": hex_bytes(public(key)), "metadata": hex_bytes(metadata)})
+    subject = {"kind": "delegation", "identity": delegator["identity"],
+               "principal": delegator["proof"]["principal"], "proof": delegator["proof"]["proof"]}
+    delegate = quote("delegate", subject)
+    assert operator["shannons"] == 38_999_999_999 and operator["commission_shannons"] == 1_857_142_857
+    assert delegate["shannons"] == 13_000_000_001 and operator["shannons"] + delegate["shannons"] == 520 * CKB
+    assert operator["recipient_lock_hash"] == hex_bytes(script_hash(scenario.fixture.standard))
+    assert delegate["recipient_lock_hash"] == hex_bytes(script_hash(scenario.fixture.friend_lock))
+    forged = args.output / "reward-forged-position.json"
+    write_json(forged, dict(common, subject=dict(subject, principal=subject["principal"] - 1)))
+    bad = subprocess.run([args.binary, "stake", "reward-quote", "--network", hex_bytes(scenario.network),
+                          "--header", header, "--request", forged], text=True, capture_output=True)
+    assert bad.returncode != 0 and "Sequence" in bad.stderr, bad.stderr
+    return {"height": checked["height"], "epoch": epoch, "operator": operator, "delegate": delegate,
+            "authenticated_header": checked,
+            "inflated_or_altered_principal_rejected": bad.stderr}
 
 
 def exercise_reductions(args, l1, scenario, relay, key, incoming, registry, requested, joined):
@@ -287,7 +331,7 @@ def run_epochs(args, l1, scenario, fixture):
             return signable(domain, scenario.network, scenario.genesis, scenario.registry_id, previous, next_)
 
         registered = scenario.change(f"register-{epoch}", 0, pub,
-            mk_record(pub, amount, epoch, None, owner + bytes(48)),
+            mk_record(pub, amount, epoch, None, owner + bytes(48), commission=1250 if args.delegation else 0),
             lambda before, after: key.sign(message(b"Stem CKB Stake registration\0", before, after)))
         meta = owner + le(1 + epoch * 10, 8) + le(0, 8) + EMPTY
         activated = scenario.change(f"activate-{epoch}", 3, pub, mk_record(pub, amount, epoch, None, meta),
@@ -296,6 +340,7 @@ def run_epochs(args, l1, scenario, fixture):
 
     registered_old, activated_old, old_meta = activate(old, low, 0)
     delegation = None
+    genesis_position = None
     if args.delegation:
         key = public(old)
         wrong_owner = scenario.delegation("unauthorized-delegation", 9, key, 100 * CKB,
@@ -304,9 +349,14 @@ def run_epochs(args, l1, scenario, fixture):
             expected="error code 23", registry_delta=120 * CKB)
         wrong_identity = scenario.delegation("substituted-delegation-id", 9, key, 100 * CKB,
             expected="error code 23", wrong_identity=True)
+        wrong_proof = scenario.delegation("invalid-delegation-principal-proof", 9, key, 100 * CKB,
+            expected="error code 23", wrong_principal_proof=True)
         start_bond = scenario.delegation("first-delegation", 9, key, 100 * CKB)
         delegation = {"bond": start_bond, "rejections": {"unauthorized": wrong_owner, "inflated": fake_weight,
-                      "identity": wrong_identity}}
+                      "identity": wrong_identity, "principal_proof": wrong_proof}}
+        if args.reward_accounting:
+            identity = scenario.delegations["holder"][0]["identity"]
+            genesis_position = {"identity": identity, "proof": scenario.delegation_proof("epoch-zero-holder", identity)}
     genesis = scenario.observe("initial", 0, count=3)
     verified, _ = scenario.verify_genesis_snapshot(genesis)
     genesis_committee = verified["validators"]
@@ -320,7 +370,7 @@ def run_epochs(args, l1, scenario, fixture):
             public(old), since=0, expected="error code 23", funded_by_owner=False)
 
     spec = args.output / "stem-genesis.json"
-    write_json(spec, {
+    network_spec = {
         "chain_id": CHAIN.decode(), "network_id": hex_bytes(scenario.network), "genesis_time_ms": 1_735_689_600_000,
         "capacity": {"bond_per_byte": 1_000_000, "state_overhead": 80},
         "limits": {"transaction_count": 64, "transaction_bytes": 2 * 1024 * 1024, "transaction_cycles": 20_000_000,
@@ -328,13 +378,24 @@ def run_epochs(args, l1, scenario, fixture):
                    "cell_write_bytes": 4 * 1024 * 1024, "header_dep_age": 64},
         "stake": {"trust": "snapshot-trust.json", "observations": "genesis-observations.json", "signing_window": 5,
                   "limits": {"operations": 1, "bytes": 256 * 1024, "signatures": 8}},
-    })
+    }
+    vault = lane = None
+    if args.reward_accounting:
+        args.xudt = None
+        funding = dict(scenario.code["out_point"], index="0x2")
+        vault = deploy(args, l1, fixture, hex_bytes(scenario.network), funding)
+        bridge, lane = bridge_configuration(args, l1, fixture, vault, None, hex_bytes(scenario.network))
+        bridge["fee_funds"] = [{"basis_points": share, "recipient": dict(
+            fixture.standard, args=hex_bytes(ckb_hash(f"reward-fixture-{index}".encode())[:20]))}
+            for index, share in enumerate((6500, 1500, 1000, 1000))]
+        network_spec["bridge"] = bridge
+    write_json(spec, network_spec)
     write_json(args.output / "genesis-committee.json", genesis_committee)
     write_json(args.output / "public-genesis-header.json",
                json.loads(run(args.binary, "genesis-hash", "--genesis", spec, "--header")))
     keys = sorted([old, incoming, observer], key=public)
     ports = {public(key): args.port + i for i, key in enumerate(keys)}
-    cadence, timeout = (1700, 4000) if args.delegation else (1400, 3600) if args.active_slash else (750, 2800)
+    cadence, timeout = (2400, 5200) if args.reward_accounting else (1700, 4000) if args.delegation else (1400, 3600) if args.active_slash else (750, 2800)
     configuration = write_configuration(args.output, [public(key) for key in keys], ports.values(), cadence, timeout)
     key_files = {public(key): write_key(args.output, f"jolteon-{i}", key.private_bytes_raw())
                  for i, key in enumerate(keys)}
@@ -401,6 +462,14 @@ def run_epochs(args, l1, scenario, fixture):
         initial = [progress(key, 3, 0) for key in (old, incoming, observer)]
         assert initial[0]["member"] == 0 and all(status["member"] is None for status in initial[1:])
         assert [status["voting_power"] for status in initial] == [350 if delegation else 250, None, None]
+        rewards = None
+        if vault:
+            client = Client(args, ports[public(old)], hex_bytes(scenario.network))
+            mint = deposit_and_mint(args, l1, fixture, vault, network_spec, spec, lane, client)
+            payment = fee_payment(args, fixture, spec, mint, client, 800 * CKB)
+            charged = client.call("broadcast_tx_commit", tx=payment)
+            assert int(charged["height"]) <= 10
+            rewards = {"mint": mint, "payment": charged}
         if args.replace:
             retired = scenario.change("request-live-exit", 2, public(old), mk_record(public(old), low, 0, 1, old_meta))
         original = snapshot(1, old, genesis[0]["registry"])
@@ -414,6 +483,9 @@ def run_epochs(args, l1, scenario, fixture):
         relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint else None
         if delegation:
             delegation["activation"] = confirm_positions(args, scenario, relay, public(old), genesis[0]["registry"], original)
+        if rewards:
+            rewards["quotes"] = reward_quotes(args, scenario, stake_client, verify, genesis[0], genesis_committee,
+                old, old_meta, genesis_position)
         if args.partial_reduction:
             key = public(old)
             failed = scenario.delegation("unauthorized-reduction", 12, key, 65 * CKB,
@@ -475,6 +547,13 @@ def run_epochs(args, l1, scenario, fixture):
         current = [progress(key, 21, 2) for key in (old, incoming)]
         assert current[0]["member"] is None and current[1]["member"] == 0
         assert [status["voting_power"] for status in current] == [None, 450 if args.replace else 400]
+        if rewards:
+            raw = request(incoming, HANDOFF, le(1, 8))["proof"]
+            verify(raw, "handoff-1", (0,), terminal=True)
+            next_epoch, checked = reward_epoch(stake_client, verify, 1)
+            assert int(next_epoch["budget"], 16) == 0
+            rewards["next_epoch"] = next_epoch
+            rewards["next_epoch_authenticated_header"] = checked
         if args.retire and not args.replace:
             early, marker_at = retirement_marker(stake_client, public(old), 21)
             assert bytes.fromhex(header(incoming, marker_at)["header"])[112:144] == bytes.fromhex(header(incoming, 20)["header"])[112:144]
@@ -579,7 +658,7 @@ def run_epochs(args, l1, scenario, fixture):
             "handoffs": handoffs, "post_handoff_header": verified, "missing_handoff_rejected": wrong_epoch.stderr,
             "altered_handoff_rejected": bad_handoff.stderr,
             "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report, "snapshot_restore": restored,
-            "delegation": delegation,
+            "delegation": delegation, "rewards": rewards,
         }
     finally:
         for child in processes.values():
@@ -611,6 +690,9 @@ def main():
     parser.add_argument("--partial-reduction", action="store_true", help="exit full and partial positions while the validator stays active")
     parser.add_argument("--reduction-slash", action="store_true", help="slash a pending reduction with a historical vote proof")
     parser.add_argument("--reduction-reorg", action="store_true", help="replace the CKB snapshot anchor after handoff")
+    parser.add_argument("--reward-accounting", action="store_true", help="bridge CKB and quote closed epoch rewards")
+    for optional in ("vault", "deposit-lock", "native-lock", "wrapped"):
+        parser.add_argument(f"--{optional}", type=lambda path: Path(path).resolve())
     args = parser.parse_args()
     if args.observer_extra_lag < 0:
         parser.error("--observer-extra-lag must be nonnegative")
@@ -632,6 +714,9 @@ def main():
         parser.error("--reduction-reorg uses its own --partial-reduction run")
     if args.delegation_power_cap and not args.delegation:
         parser.error("--delegation-power-cap requires --delegation")
+    if args.reward_accounting and (not args.delegation or not args.retire or
+            not all((args.vault, args.deposit_lock, args.native_lock, args.wrapped))):
+        parser.error("--reward-accounting needs the delegation retirement fixture and bridge contract binaries")
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)
     try:

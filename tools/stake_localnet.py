@@ -47,11 +47,12 @@ def witness(payload):
     return hex_bytes(b"".join(le(value, 4) for value in (size, 16, 16, size, len(payload))) + payload)
 
 
-def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False, *, fault_height=0):
+def mk_record(key, amount, activation, exit_epoch, meta, withdrawn=False, frozen=False, *,
+              fault_height=0, commission=0):
     commitment = EMPTY if withdrawn else ckb_hash(b"Stem CKB Stake Cell\0" + meta)
     fields = le(amount, 8) + le(activation, 8) + le(exit_epoch or 0, 8)
     return (key + fields[:16] + bytes([exit_epoch is not None]) + fields[16:] + le(fault_height or int(frozen), 8)
-            + meta[32:48] + commitment + bytes(16),
+            + meta[32:48] + commitment + bytes(48) + le(commission, 2),
             fields + meta)
 
 
@@ -176,7 +177,7 @@ class Scenario:
                 raw = new_record[0]
                 if number != 6:
                     raw = raw[:57] + old_bytes[57:65] + raw[65:]
-                new_record = (raw[:-16] + old_bytes[-16:], new_record[1])
+                new_record = (raw[:113] + old_bytes[113:], new_record[1])
             records[key] = new_record
         state = self.encode(self.sequence + 1, records, next_authority, root)
         payload = bytes([number])
@@ -245,10 +246,23 @@ class Scenario:
             self.stake_points.pop(key)
         return self.registry_tx
 
+    def delegation_proof(self, name, identity, after=None):
+        positions = [{"identity": position["identity"], "principal": data[0]}
+                     for position, data, _, _ in self.delegations.values()
+                     if data[0] and binary(position["identity"])[32:64] == binary(identity)[32:64]]
+        path = self.args.output / f"{name}-positions.json"
+        request = self.args.output / f"{name}-principal-request.json"
+        validator = binary(identity)[32:64]
+        root = hex_bytes(self.records[validator][0][129:161])
+        write_json(path, positions)
+        write_json(request, {"identity": identity, "after": after, "expected_root": root})
+        return json.loads(run(self.args.binary, "stake", "delegation-proof", "--network", hex_bytes(self.network),
+                              "--positions", path, "--request", request))
+
     def delegation(self, name, operation, validator, amount=0, *, label="holder", expected=None,
                    separate_owner=False, funded_by_owner=True, wrong_recipient=False, registry_delta=None,
                    since=None, application=None, checkpoint=None, evidence=b"", omit_l1_anchor=False,
-                   wrong_identity=False):
+                   wrong_identity=False, wrong_principal_proof=False):
         prior = self.delegations.get(label)
         owner_lock = self.fixture.owner_lock if separate_owner else self.fixture.friend_lock
         if prior is None:
@@ -321,10 +335,20 @@ class Scenario:
                     since = int(header["number"], 16) + DELAY
             else:
                 fee += active
+        new_active = next_position[0] if next_position else 0
+        principal_path = b""
+        root = record[129:161]
+        if new_active != active:
+            proof = self.delegation_proof(name, position["identity"], new_active)
+            principal_path = binary(proof["proof"])
+            root = binary(proof["successor"])
+            if wrong_principal_proof:
+                principal_path = principal_path[:-1] + bytes([principal_path[-1] ^ 1])
         if registry_delta is not None:
             active_delta = registry_delta
-        totals = tuple(int.from_bytes(value, "little") for value in (record[-16:-8], record[-8:]))
-        records[validator] = (record[:-16] + le(totals[0] + active_delta, 8) + le(totals[1] + pending_delta, 8), own_data)
+        delegated = int.from_bytes(record[113:121], "little") + active_delta
+        pending_total = int.from_bytes(record[121:129], "little") + pending_delta
+        records[validator] = (record[:113] + le(delegated, 8) + le(pending_total, 8) + root + record[161:], own_data)
         next_state = self.encode(self.sequence + 1, records)
         outputs = [output(self.registry_capacity, self.lock, self.registry_type)]
         data = [hex_bytes(next_state)]
@@ -355,7 +379,7 @@ class Scenario:
         if since is not None:
             tx["inputs"][1]["since"] = hex(since)
         identity = args[:-1] + bytes([args[-1] ^ 1]) if wrong_identity else args
-        tx["witnesses"] = [witness(bytes([operation]) + identity + suffix)]
+        tx["witnesses"] = [witness(bytes([operation]) + identity + le(len(principal_path), 2) + principal_path + suffix)]
         signed = self.fixture.sign(name, tx, [wallet_group(len(inputs) - 1, [fee_key])])
         if expected:
             try:

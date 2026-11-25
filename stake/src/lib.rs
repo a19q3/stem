@@ -11,6 +11,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 
 pub mod checkpoint;
 pub mod compact;
+pub mod delegation;
 mod evidence;
 pub mod finality;
 pub mod history;
@@ -18,6 +19,8 @@ pub mod jolteon;
 pub mod l1;
 pub mod patricia;
 pub mod retirement;
+pub mod rewards;
+mod sparse;
 pub use evidence::{BlockId, DoubleVote, Liability, SignedVote, VoteKind};
 
 pub type Hash32 = [u8; 32];
@@ -25,7 +28,7 @@ pub type ValidatorKey = [u8; 32];
 
 pub const MAX_TOTAL_VOTING_POWER: u64 = (i64::MAX / 8) as u64;
 pub const MAX_RECORDS: usize = 256;
-const RECORD_BYTES: usize = 129;
+const RECORD_BYTES: usize = 163;
 const REGISTRY_HEADER: usize = 32 + 8 + 32 + 32 + 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +64,8 @@ pub struct StakeData {
     pub bonded_amount: u64,
     pub delegated_amount: u64,
     pub unbonding_amount: u64,
+    pub delegation_root: Hash32,
+    pub commission_bps: u16,
     pub activation_epoch: u64,
     pub exit_epoch: Option<u64>,
     pub fault_height: u64,
@@ -115,6 +120,8 @@ impl Registry {
                         || (entry.first_inactive_height != 0
                             && entry.fault_height >= entry.first_inactive_height as u64)))
                 || entry.stake_cell_hash == [0; 32]
+                || (entry.delegated_amount == 0) != (entry.delegation_root == [0; 32])
+                || entry.commission_bps > 10_000
                 || entry
                     .exit_epoch
                     .is_some_and(|exit| exit <= entry.activation_epoch)
@@ -160,6 +167,8 @@ impl Registry {
                 bonded_amount: u64::from_le_bytes(record[32..40].try_into().unwrap()),
                 delegated_amount: u64::from_le_bytes(record[113..121].try_into().unwrap()),
                 unbonding_amount: u64::from_le_bytes(record[121..129].try_into().unwrap()),
+                delegation_root: record[129..161].try_into().unwrap(),
+                commission_bps: u16::from_le_bytes(record[161..163].try_into().unwrap()),
                 activation_epoch: u64::from_le_bytes(record[40..48].try_into().unwrap()),
                 exit_epoch,
                 fault_height: u64::from_le_bytes(record[57..65].try_into().unwrap()),
@@ -196,6 +205,8 @@ impl Registry {
             data.extend_from_slice(&entry.stake_cell_hash);
             data.extend_from_slice(&entry.delegated_amount.to_le_bytes());
             data.extend_from_slice(&entry.unbonding_amount.to_le_bytes());
+            data.extend_from_slice(&entry.delegation_root);
+            data.extend_from_slice(&entry.commission_bps.to_le_bytes());
         }
         data
     }

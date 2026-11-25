@@ -101,6 +101,8 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
         .map(|(i, member)| StakeData {
             validator_pubkey: member.key,
             delegated_amount: 0,
+            delegation_root: [0; 32],
+            commission_bps: 0,
             unbonding_amount: 0,
             bonded_amount: [100, 200, 200][i],
             activation_epoch: 0,
@@ -121,6 +123,7 @@ fn authenticates_complete_registry_and_rejects_fork_or_replay() -> Result<()> {
     assert_eq!(registry, Registry::decode(&registry.encode())?);
     let mut over_cap = records.clone();
     over_cap[0].delegated_amount = 4_900;
+    over_cap[0].delegation_root = [18; 32];
     let over_cap = Registry::new(domain.stem_network_id, 0, [14; 32], [0; 32], over_cap)?;
     let weighted = config.select(&over_cap, 0)?;
     assert_eq!(
@@ -313,6 +316,8 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
         validator_pubkey,
         bonded_amount: 250,
         delegated_amount: bond.active,
+        delegation_root: [19; 32],
+        commission_bps: 0,
         unbonding_amount: bond.pending,
         activation_epoch: 0,
         exit_epoch: None,
@@ -332,7 +337,26 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
             ..stake
         },
     )?;
-    let verify = |action| verify_delegation(&policy, &prior, &next, &validator_pubkey, action);
+    let verify = |action| {
+        verify_delegation(
+            &policy,
+            &prior,
+            &next,
+            &validator_pubkey,
+            action,
+            stem_stake::delegation::PrincipalChange {
+                id: stem_stake::l1::DelegationId {
+                    registry: policy.registry_id,
+                    validator: validator_pubkey,
+                    owner: [20; 32],
+                    nonce: [21; 32],
+                },
+                before: bond.active,
+                after: bond.active,
+                proof: &[],
+            },
+        )
+    };
     let withdraw = |cutoff, delay| DelegationAction::WithdrawReduction {
         amount: bond.pending,
         start: bond.first_active_height,

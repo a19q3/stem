@@ -5,7 +5,7 @@ use ckb_types::{packed::Byte32, prelude::*};
 use stem_ledger::{
     Transaction,
     block::Receipt,
-    protocol::{BlockBudget, Limits, Operation, SnapshotContext, snapshot_body},
+    protocol::{BlockBudget, FeeFund, Limits, Operation, SnapshotContext, snapshot_body},
     replay::Key as ReplayKey,
 };
 use stem_stake::{
@@ -16,6 +16,7 @@ use stem_stake::{
         APPLIED_REGISTRY_SEQUENCE, RegistryApplication, guardian_generation,
         registry_application_key,
     },
+    rewards::{CURRENT_EPOCH, EpochRewards, epoch_key},
 };
 
 use super::Store;
@@ -245,8 +246,10 @@ impl Staking {
 
     pub(super) fn finish(
         &self,
+        store: &Store,
         staged: StagedStake,
         height: u64,
+        total_fees: Option<u64>,
     ) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, Vec<Member>)> {
         let StakeState {
             accepted,
@@ -266,6 +269,39 @@ impl Staking {
         if let Some(tx) = submitted {
             writes.push((SNAPSHOT.to_vec(), tx.as_slice().to_vec()));
             writes.push((ACCEPTED.to_vec(), encode_accepted(accepted, &eligible)));
+        }
+        if announced.epoch != 0 && announced.activation_height.checked_sub(1) == Some(height) {
+            let current = store
+                .system_record(CURRENT_EPOCH)?
+                .context("missing current reward epoch")?;
+            let current = EpochRewards::decode(&current)?;
+            ensure!(
+                current.epoch < announced.epoch
+                    && current.end_height == 0
+                    && accepted.epoch == announced.epoch,
+                "inconsistent reward epoch handoff"
+            );
+            let fees = match total_fees {
+                Some(fees) => fees,
+                None => store.fee_surplus()?,
+            };
+            let budget = if let Some(policy) = store.fee_fund_policy() {
+                let share = policy.funds[FeeFund::Validators as usize].basis_points;
+                FeeFund::allocation(fees, share)?
+                    .checked_sub(FeeFund::allocation(current.start_fees, share)?)
+                    .context("reward fee tally regressed")?
+            } else {
+                0
+            };
+            let closed = current.close(height, fees, budget)?;
+            let next = EpochRewards::start(
+                &announced,
+                self.domain.registry_id,
+                accepted.anchor.commitment,
+                fees,
+            );
+            writes.push((epoch_key(closed.epoch), closed.encode().to_vec()));
+            writes.push((CURRENT_EPOCH.to_vec(), next.encode().to_vec()));
         }
         if accepted.epoch == 0 || self.config.update_height(accepted.epoch)? != height {
             return Ok((writes, vec![]));
@@ -349,7 +385,7 @@ pub(super) struct StakeState {
 }
 
 impl StakeState {
-    pub(super) fn genesis_records(&self, registry: &[u8; 32]) -> [(Vec<u8>, Vec<u8>); 4] {
+    pub(super) fn genesis_records(&self, registry: &[u8; 32]) -> [(Vec<u8>, Vec<u8>); 5] {
         [
             (
                 ACCEPTED.to_vec(),
@@ -367,6 +403,17 @@ impl StakeState {
                     effective_height: 1,
                     l1_anchor: self.accepted.anchor.block,
                 }
+                .encode()
+                .to_vec(),
+            ),
+            (
+                CURRENT_EPOCH.to_vec(),
+                EpochRewards::start(
+                    &self.announced,
+                    *registry,
+                    self.accepted.anchor.commitment,
+                    0,
+                )
                 .encode()
                 .to_vec(),
             ),

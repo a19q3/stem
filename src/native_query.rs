@@ -102,6 +102,20 @@ pub(crate) fn query(
             }))?
             .into()
         }
+        "/stem/stake-reward-epoch" if prove && data.len() == 8 => {
+            ensure!(
+                requested == tip,
+                "reward epoch proof requires the current height"
+            );
+            let epoch = u64::from_le_bytes(data.try_into()?);
+            let (record, proof) = store.prove_reward_epoch(epoch)?;
+            serde_json::to_vec(&serde_json::json!({
+                "record": record.map(|item| format!("0x{}", hex::encode(item.encode()))),
+                "budget": record.map(|item| ckb_jsonrpc_types::Uint64::from(item.budget)),
+                "proof": format!("0x{}", hex::encode(proof.encode()?)),
+            }))?
+            .into()
+        }
         "/stem/stake-snapshot" if prove && data.is_empty() => {
             ensure!(
                 requested == tip,

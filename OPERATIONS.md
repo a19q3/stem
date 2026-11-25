@@ -431,7 +431,7 @@ python3 tools/jolteon_stake_localnet.py \
 
 `stem stake delegation-script` takes the Registry Type Script JSON, the validator key, the beneficiary CKB Lock hash, the JSON first `CellInput` and the output index. Put its returned `type` and `lock` Scripts on the funded output and keep the 128-byte `identity` for Registry witnesses. The identity can be recovered from a confirmed creation transaction's Registry input witness. The funded Cell's six little-endian `u64` values are active principal, pending principal, reduction request sequence, confirmed exclusion height, creation Registry sequence and confirmed activation height. Initialize values other than active principal and creation sequence to zero. The funded Capacity is active plus pending principal plus 154 CKB of occupied Capacity. Create a separate position for each increment. The beneficiary authorizes funding and reduction requests. A relayer can submit proof confirmation and settlement with a separate fee input.
 
-The Registry input witness contains one operation byte followed by the 128-byte identity preimage and any operation proof. Use `0x09` for creation, `0x10` for activation, `0x0a` for unbonded withdrawal on full validator retirement and `0x0b` for its penalty settlement. The validator's active and unbonding totals in Registry data must reflect the exact principal deltas. For an unbonded withdrawal on full validator retirement add the live retired validator Stake Cell and its creation block as Cell and Header Deps, and set the delegation input's absolute block `since` to the retirement block height plus the configured delay. The payout must go to the beneficiary Lock as a plain CKB Cell. A small partial payout may share the beneficiary's standard change output to meet CKB occupied Capacity. A penalty settlement pays at least the forfeited principal as CKB transaction fees and returns the occupied Capacity to that Lock if the position closes.
+The Registry input witness contains one operation byte, the 128-byte identity preimage, a little-endian u16 length and the active principal proof of that length, followed by any operation proof. Use `0x09` for creation, `0x10` for activation, `0x0a` for unbonded withdrawal on full validator retirement and `0x0b` for its penalty settlement. The validator's active and unbonding totals in Registry data must reflect the exact principal deltas. When active principal changes, build a path from the predecessor Registry root with `stem stake delegation-proof`. Supply the confirmed active positions for this validator and the target identity with its successor principal. The CLI checks the reconstructed root and returns the canonical proof and new root. Encode a zero proof length for operations that only change pending principal or status. For an unbonded withdrawal on full validator retirement add the live retired validator Stake Cell and its creation block as Cell and Header Deps, and set the delegation input's absolute block `since` to the retirement block height plus the configured delay. The payout must go to the beneficiary Lock as a plain CKB Cell. A small partial payout may share the beneficiary's standard change output to meet CKB occupied Capacity. A penalty settlement pays at least the forfeited principal as CKB transaction fees and returns the occupied Capacity to that Lock if the position closes.
 
 For an in-term exercise, run the following command with the same binary and contract paths, using a fresh output directory. Include `--reduction-slash` for the historical double-vote case. Use `--reduction-reorg` on a separate disposable devnet to replace the observed CKB block and verify rejection of both the orphaned and substituted anchors.
 
@@ -444,6 +444,26 @@ python3 tools/jolteon_stake_localnet.py \
 ```
 
 Use `0x0c` to move an owner-authorized amount from active delegation to unbonding. Put the resulting Registry sequence and zero cutoff in the successor. Use `0x0d` to confirm the cutoff with an authenticated checkpoint. Activation (`0x10`) and cutoff confirmation use the same proof layout. Append the applied sequence, prior applied sequence, effective Stem height and CKB observation block height as little-endian `u64` values, then the 32-byte CKB observation block hash and Patricia path. Query `/stem/stake-registry-application` with the Registry ID and little-endian applied sequence to obtain these fields. Supply CKB Header Deps for the creation or reduction Cell and its snapshot observation block. Use `0x0e` to settle after the successor's relative CKB `since` delay. Use `0x0f` to settle a pending penalty, appending a historical double-vote witness and the pinned checkpoint dependency if the Registry's existing fault is outside the position's liability interval.
+
+### Verify closed-epoch stake rewards
+
+Query `/stem/stake-reward-epoch` with `prove=true` and the eight-byte little-endian epoch number. Use the returned height to fetch the signed Header and verify its finality and the intervening committee handoffs. Save its encoded Header as a JSON hex string. Prepare a request with `epoch_record` and `proof` from the query, the historical `registry` bytes, the applied `committee` bytes and a `subject`. For a validator, the subject contains `kind: "validator"`, its `validator` public key and Stake Cell `metadata`. For delegation it contains `kind: "delegation"`, the 128-byte `identity`, integer `principal` and historical sparse `proof` collected from the positions at the epoch's Registry snapshot.
+
+```sh
+stem stake reward-quote --network "$STEM_NETWORK" --header header.json --request reward.json
+```
+
+The response gives the CKB recipient Lock hash, the share in shannons and any commission. The command accepts the authenticated Header supplied by the caller. Authenticate it before quoting. Individual quote proofs do not create a withdrawal. The [aggregate fund flow](#redeem-fee-revenue-on-ckb) is the current way to release fee revenue on CKB.
+
+To exercise the complete verification path on devnet, use the same command and contract paths as the delegation exercise, with a fresh output directory and these additional options.
+
+```sh
+  --reward-accounting --vault "$native_dir/vault-type" \
+  --deposit-lock "$native_dir/deposit-lock" \
+  --native-lock "$native_dir/stem-lock" --wrapped "$native_dir/bridge-udt"
+```
+
+The runner bridges actual CKB, pays the experimental 800 CKB fee, verifies the closed epoch and the two participant quotes, and rejects a forged historical principal. It also checks that a following epoch with no paid fees adds no new budget.
 
 ## Exercise CKB Checkpoint publication
 

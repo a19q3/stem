@@ -18,6 +18,7 @@ use ckb_std::{
 use stem_contracts::load_checkpoint;
 use stem_stake::{
     Attestation, Hash32, MAX_RECORDS, Member, Registry, StakeData,
+    delegation::PrincipalChange,
     l1::{
         Action, BOND_DELEGATION, CONFIRM_DELEGATION, CONFIRM_REDUCTION, ChangeContext,
         DelegationAction, DelegationBond, DelegationId, GuardianProof, Policy, REDUCE_DELEGATION,
@@ -253,6 +254,10 @@ fn verify_delegation_transition(
         .split_at_checked(DelegationId::SIZE)
         .ok_or(Error::Encoding)?;
     let id = DelegationId::decode(args)?;
+    let (length, witness) = witness.split_at_checked(2).ok_or(Error::Encoding)?;
+    let (proof, witness) = witness
+        .split_at_checked(u16::from_le_bytes(length.try_into().unwrap()) as usize)
+        .ok_or(Error::Encoding)?;
     if !matches!(
         operation,
         CONFIRM_DELEGATION | CONFIRM_REDUCTION | SLASH_REDUCTION | SLASH_DELEGATION
@@ -467,7 +472,20 @@ fn verify_delegation_transition(
         }
         _ => return Err(Error::Stake),
     };
-    Ok(verify_delegation(policy, old, new, &id.validator, action)?)
+    let principal = PrincipalChange {
+        id,
+        before: before.map_or(0, |(bond, _)| bond.active),
+        after: after.map_or(0, |(bond, _)| bond.active),
+        proof,
+    };
+    Ok(verify_delegation(
+        policy,
+        old,
+        new,
+        &id.validator,
+        action,
+        principal,
+    )?)
 }
 
 fn prove_application(

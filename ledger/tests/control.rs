@@ -469,6 +469,8 @@ fn stake_snapshot_checks_signing_window_commitment_and_quorum() -> Result<()> {
         validator_pubkey: members[0].key,
         bonded_amount: 200,
         delegated_amount: 50,
+        delegation_root: [19; 32],
+        commission_bps: 0,
         unbonding_amount: 0,
         activation_epoch: 0,
         exit_epoch: None,
