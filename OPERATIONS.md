@@ -74,6 +74,13 @@ target/release/stem jolteon-proof --genesis /tmp/stem-jolteon-16/genesis.json \
 
 The fixture checks consecutive failed Leaders, watches surviving weight finalize payments, restarts stopped replicas and checks the execution Header at a common height. It retains the public genesis, signed workload, execution proof and replica diagnostics. For the nominal scale sweep use `--offline 0 --transactions 32 --offered 16 --cadence 300 --timeout 2500` and separate output and port ranges for each size. The `tools/comet_matrix_localnet.py` comparator uses the same fixture against a pinned CometBFT application build. Its `--comet` argument takes the CometBFT executable.
 
+Use `--alternate-binary` with a second Stem executable to run the
+odd-numbered replicas on that build. The report records the binary
+assigned to each replica. Restarts use the same binary and database
+as the original replica. The compact Patricia layout requires a
+fresh database directory. Canonical state images can initialize that
+directory through the normal authenticated snapshot workflow.
+
 Add `--require-relay-retry` with `--offline 2` to submit the first
 payment while both initial relay targets are stopped. The fixture waits
 for a single local submission to become visible on every live replica

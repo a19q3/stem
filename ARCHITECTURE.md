@@ -18,6 +18,11 @@ Transactions assign group indices by role and the full packed CKB Script bytes. 
 
 The Cell and system roots use the same incremental Patricia implementation. Each state record appears once, with its hash in the leaf. An MMR commits preceding native Header IDs and stores its leaf count and peaks on the application commit path. Separate ordered Merkle trees authenticate transactions and receipts. A single synchronous RocksDB batch writes affected nodes, records, execution, the Header and the MMR frontier. State snapshots contain canonical records and the retained Header suffix. Installation requires an independently authenticated application hash and reconstructs both state roots.
 
+RocksDB stores each Patricia branch with its bit length, the prefix
+bytes through that bit length, and two child hashes. Loading a node
+restores the trailing zero bytes before checking its canonical hash.
+The local storage marker binds this layout to the genesis ID.
+
 ### Independently signed pairs and sponsorship
 
 The RISC-V Intent Lock uses the same recoverable signature syscall as the regular Lock. It signs one exact input, the exact delivered Cell, ordered resolved dependencies, expiry and a fee ceiling. The input's absolute position selects the delivery output at execution. Dependency resolution shares validation with complete signatures. Each paired signer commits to the same ordered Action manifest. The wallet and ledger identify a manifest entry by Lock or Type role and the full Script hash. Assembly maps stable identities to current group indices, and resolution hashes the actual messages the VM will deliver. A sponsor uses input and output 0 and signs the beneficiary pair at position 1. Paying at most the actual transaction fee is checked against resolved Capacity. The wallet derives group indices at assembly and attaches all partial proof data before complete transaction signers seal their groups.

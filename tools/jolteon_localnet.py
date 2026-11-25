@@ -147,10 +147,12 @@ def scenario(args):
     )
     nodes = {}
     phase = "startup"
+    alternate = getattr(args, "alternate_binary", None)
+    binaries = [alternate if alternate and index % 2 else args.binary for index in range(len(peers))]
 
     def launch(index, initialize):
         key = keys[index][1]
-        command = [args.binary, "run", "--home", args.output / f"node{index}",
+        command = [binaries[index], "run", "--home", args.output / f"node{index}",
                    "--configuration", configuration, "--genesis", spec, "--key-file", key]
         if index == len(peers) - 1:
             command.append("--archive")
@@ -282,6 +284,7 @@ def scenario(args):
             "minimum_offline_blocks": args.offline_blocks, "restart_to_visibility_seconds": recovery_seconds,
             "payments": admitted, "elapsed_until_active_replica_visibility": elapsed, "active_confirmed_tps": admitted / elapsed,
             "archival_replica": everybody[-1], "ordinary_history_window": args.history_window or 256, "pruning": pruning,
+            "replica_binaries": [str(path) for path in binaries],
             "before": initial, "with_fault": active, "resumed": resumed, "agreement": headers[0], "two_chain_proof": proof["proof"], "proof_verification": checked,
             "relay_retry": relay_retry,
             "processes": [process_resources(nodes[i].pid) for i in everybody],
@@ -336,6 +339,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ("binary", "lock", "output"):
         parser.add_argument("--" + flag, type=lambda text: Path(text).resolve(), required=True)
+    parser.add_argument("--alternate-binary", type=lambda text: Path(text).resolve(),
+                        help="use a second executable for odd-numbered replicas in a comparison")
     parser.add_argument("--validators", type=int, default=4)
     parser.add_argument("--transactions", type=int, default=32)
     parser.add_argument("--offline", type=int, default=0)

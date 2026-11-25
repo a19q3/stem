@@ -38,6 +38,7 @@ mod keeper;
 pub use keeper::{KeeperPolicy, KeeperTimePolicy};
 mod lineage;
 pub use lineage::LineageProof;
+mod node_storage;
 mod staking;
 mod state_snapshot;
 mod storage_metrics;
@@ -54,6 +55,7 @@ pub use stem_ledger::protocol::{FeeFundDestination, FeeFundPolicy};
 use stem_ledger::light::EXTINGUISHED_FEES_KEY as FEE_KEY;
 
 const MARKER: &[u8] = b"\0stem/native-spec";
+const STORAGE_LAYOUT: &[u8] = b"Stem Patricia prefix storage\0";
 const TIP: &[u8] = b"\0stem/tip";
 const HISTORY: &[u8] = b"\0stem/history";
 const EXECUTION: u8 = b'e';
@@ -470,6 +472,13 @@ impl Store {
             options.enable_statistics();
         }
         let db = DB::open(&options, path)?;
+        let marker = db.get(MARKER)?;
+        if let Some(marker) = &marker {
+            ensure!(
+                marker.starts_with(STORAGE_LAYOUT),
+                "unsupported Stem database layout; open a fresh database"
+            );
+        }
         let metrics = measured.then(|| Arc::new(StorageMetrics::new(options)));
         let network = spec.network.clone();
         let cells = Patricia::new(network.clone(), Namespace::Cells);
@@ -605,9 +614,9 @@ impl Store {
         let genesis_id = genesis.id(&network);
         let cell_nodes = cell_edit.into_writes();
         let system_nodes = system_edit.into_writes();
-        let tip = if let Some(marker) = db.get(MARKER)? {
+        let tip = if let Some(marker) = marker {
             ensure!(
-                marker.as_ref() == genesis_id.as_slice(),
+                &marker[STORAGE_LAYOUT.len()..] == genesis_id.as_slice(),
                 "database network or genesis differs"
             );
             let tip = Header::decode(&db.get(TIP)?.context("missing Stem tip")?)?;
@@ -629,7 +638,7 @@ impl Store {
             );
             put_nodes(&mut batch, Namespace::Cells, cell_nodes);
             put_nodes(&mut batch, Namespace::System, system_nodes);
-            batch.put(MARKER, genesis_id.as_slice());
+            batch.put(MARKER, [STORAGE_LAYOUT, genesis_id.as_slice()].concat());
             put_tip(&mut batch, &network, &genesis, &history);
             sync_with_consensus(
                 &db,
@@ -1099,9 +1108,10 @@ impl Store {
     }
 
     fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .read(state_key(STATE_NODE, namespace, id))?
-            .map(|value| value.to_vec()))
+        self.read(state_key(STATE_NODE, namespace, id))?
+            .as_deref()
+            .map(node_storage::canonical)
+            .transpose()
     }
 
     /// Resolve conflicts and protocol state in proposal order. Schedule immutable
@@ -2137,7 +2147,7 @@ fn put_nodes(batch: &mut Batch, namespace: Namespace, nodes: BTreeMap<Key, Optio
     for (id, value) in nodes {
         let key = state_key(STATE_NODE, namespace, &id);
         match value {
-            Some(value) => batch.put(key, value),
+            Some(value) => batch.put_owned(key, node_storage::compact(value)),
             None => batch.delete(key),
         }
     }
@@ -2224,8 +2234,11 @@ impl Batch {
     }
 
     fn put(&mut self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
-        self.writes
-            .push((key.as_ref().to_vec(), Some(value.as_ref().to_vec())));
+        self.put_owned(key, value.as_ref().to_vec());
+    }
+
+    fn put_owned(&mut self, key: impl AsRef<[u8]>, value: Vec<u8>) {
+        self.writes.push((key.as_ref().to_vec(), Some(value)));
     }
 
     fn delete(&mut self, key: impl AsRef<[u8]>) {
