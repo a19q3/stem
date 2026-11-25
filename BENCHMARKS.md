@@ -1450,3 +1450,39 @@ with 12 ignored. The Go proof suite and CometBFT build check passed.
 
 [Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
 [Raw accrual, recovery and regression evidence](benchmarks/2026-11-25-stem-stake-reward-accrual.json.xz).
+
+## Shared CKB checkpoint at genesis
+
+Revision `870d81f` enforces the deployment used in the `2351fe1`
+stake reward experiment. The node derives the identity of the Stake
+Registry from its complete CKB Script and verifies the guardian-signed
+domain. Vault Scripts use the same policy decoder in Stem and on CKB.
+The startup check compares both the checkpoint code hash and Type ID.
+
+The CKB devnet deployed a second vault with the same network and
+checkpoint executable but a different checkpoint Type ID. The vault
+creation transaction was included on CKB. Stem rejected the genesis
+that named this alternative vault. It also rejected a substituted
+Registry Script under the original guardian observations and a mismatched
+Stem chain ID. Workspace tests changed the code hash and Type ID
+independently on the second lane.
+
+| Valid configuration | Observed result |
+| --- | --- |
+| Shared checkpoint with stake rewards and retirement | Two committee handoffs. The outgoing validator's 250 CKB self-bond returned after retirement. The two reward payouts reconciled on all three replicas at Stem height 44. |
+| Four-replica CKB and xUDT bridge | Actual CKB and xUDT payouts, reserve transfer and vault rotation. All replicas agreed at height 46. |
+| Stake only with complete committee replacement | An observer restored the state at the CKB-anchored height 33 and verified agreement at height 35. |
+
+The release workspace passed 442 tests with 12 ignored. The test that
+opens genesis from real CKB guardian observations was run separately
+and passed. The Go proof suite, CometBFT comparison build and RISC-V
+contract checks passed.
+
+The first contract build omitted the CKB-VM target flags and reached
+an unsupported instruction during Registry creation. The successful
+runs rebuilt with `-C passes=lower-atomic -C target-feature=-c`. The
+archive preserves the failure, both sets of binary fingerprints, and
+the confirmed substituted vault transaction.
+
+[Genesis and deployment](OPERATIONS.md#start-a-native-replica) ·
+[Raw experiment evidence](benchmarks/2026-11-25-stem-checkpoint-policy.json.xz).
