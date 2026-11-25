@@ -81,12 +81,16 @@ class Scenario:
         checkpoint_code = self.args.direct_checkpoint.read_bytes()
         checkpoint_capacity = (len(checkpoint_code) + 200) * CKB
         relay_funding = 8_000 * CKB
-        change = int(funds["capacity"], 16) - capacity - funding - checkpoint_capacity - 2 * relay_funding - FEE
+        self.relay_fee_capacity = 200 * CKB
+        change = (int(funds["capacity"], 16) - capacity - funding - checkpoint_capacity
+                  - 2 * relay_funding - self.relay_fee_capacity - FEE)
         self.code_hash = hex_bytes(ckb_hash(binary_code))
         deployment = transaction(
             [point(faucet["hash"], index)],
-            [output(value, self.fixture.standard) for value in (capacity, funding, change, checkpoint_capacity, relay_funding, relay_funding)],
-            [hex_bytes(binary_code), "0x", "0x", hex_bytes(checkpoint_code), "0x", "0x"],
+            [output(value, self.fixture.standard) for value in
+             (capacity, funding, change, checkpoint_capacity, relay_funding, relay_funding)]
+            + [output(self.relay_fee_capacity, self.fixture.friend_lock)],
+            [hex_bytes(binary_code), "0x", "0x", hex_bytes(checkpoint_code), "0x", "0x", "0x"],
             [self.secp],
         )
         code_tx = self.l1.send(self.sign("deploy-stake", deployment, 0))
@@ -102,6 +106,7 @@ class Scenario:
 
         self.checkpoint = anchor(4)
         self.foreign_checkpoint = anchor(5)
+        self.relay_fee_point = point(code_tx, 6)
         type_id = ckb_hash(le(0, 8) + binary(code_tx) + le(1, 4) + le(0, 8))
         args = (type_id + self.network + self.genesis + le(100 * CKB, 8) + le(10, 8) + le(DELAY, 8)
                 + binary(self.checkpoint["hash"]) + self.checkpoint["id"] + CHAIN)
@@ -122,8 +127,9 @@ class Scenario:
         self.fee_point = point(self.registry_tx, 1)
         self.stake_points = {}
 
-    def sign(self, label, tx, index):
-        return self.fixture.sign(label, tx, [wallet_group(index, [self.fixture.faucet])])
+    def sign(self, label, tx, index, *, relayer=False):
+        key = self.fixture.friend if relayer else self.fixture.faucet
+        return self.fixture.sign(label, tx, [wallet_group(index, [key])])
 
     def encode(self, sequence, records=None, authority=None, root=None):
         if records is None:
@@ -136,7 +142,7 @@ class Scenario:
                 + b"".join(records[key][0] for key in sorted(records)))
 
     def change(self, name, number, key, new_record=None, certificate=None, fee=FEE,
-               since=0, expected=None, next_authority=None, capacity_adjustment=0, *, dependencies=(), measure=False):
+               since=0, expected=None, next_authority=None, capacity_adjustment=0, *, dependencies=(), measure=False, relayer=False):
         records = self.records.copy()
         root = self.retired_root
         path = b""
@@ -167,7 +173,7 @@ class Scenario:
         inputs = [point(self.registry_tx, 0)]
         outputs = [output(self.registry_capacity, self.lock, self.registry_type)]
         data = [hex_bytes(state)]
-        change = self.fee_capacity - fee
+        change = (self.relay_fee_capacity if relayer else self.fee_capacity) - fee
         if key in self.stake_points:
             stake_point, capacity = self.stake_points[key]
             inputs.append(stake_point)
@@ -183,15 +189,16 @@ class Scenario:
             outputs.append(output(capacity, self.lock, stake_type))
             data.append(hex_bytes(stake_data))
             change -= capacity
-        owner_index = len(inputs)
-        inputs.append(self.fee_point)
-        outputs.append(output(change, self.fixture.standard))
+        fee_index = len(inputs)
+        inputs.append(self.relay_fee_point if relayer else self.fee_point)
+        fee_lock = self.fixture.friend_lock if relayer else self.fixture.standard
+        outputs.append(output(change, fee_lock))
         data.append("0x")
         tx = transaction(inputs, outputs, data, [self.secp, self.code, *dependencies])
         if since:
             tx["inputs"][1]["since"] = hex(since)
         tx["witnesses"] = [witness(payload)]
-        signed = self.sign(name, tx, owner_index)
+        signed = self.sign(name, tx, fee_index, relayer=relayer)
         if expected:
             try:
                 self.l1.call("send_transaction", signed["json"], "passthrough")
@@ -212,8 +219,11 @@ class Scenario:
         if number == 5:
             self.retired.add(key)
         self.state = state
-        self.fee_point = point(self.registry_tx, len(outputs) - 1)
-        self.fee_capacity = change
+        fee_point = point(self.registry_tx, len(outputs) - 1)
+        if relayer:
+            self.relay_fee_point, self.relay_fee_capacity = fee_point, change
+        else:
+            self.fee_point, self.fee_capacity = fee_point, change
         if keep_stake:
             self.stake_points[key] = (point(self.registry_tx, 1), capacity)
         elif key is not None:

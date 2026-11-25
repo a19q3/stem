@@ -339,7 +339,7 @@ def stake_round(args, l1, scenario, fixture):
             "retire-by-guardians", 4, old_key, retired_record, legacy_certificate,
             dependencies=[checkpoint], expected="error code 23")
         retirement = scenario.change("retire-excluded", 4, old_key, retired_record, lambda *_: witness,
-                                     dependencies=[checkpoint], measure=True)
+                                     dependencies=[checkpoint], measure=True, relayer=True)
         rejected["replayed_marker"] = scenario.change(
             "retire-again", 4, old_key, retired_record, lambda *_: witness,
             dependencies=[checkpoint], expected="error code 23")
@@ -357,10 +357,14 @@ def stake_round(args, l1, scenario, fixture):
         rejected["unbond_delay"] = scenario.change(
             "early-unbonding", 5, old_key, final_record, since=(1 << 63) | DELAY, expected="Immature")
         l1.mine(DELAY)
+        rejected["unauthorized_unbonding"] = scenario.change(
+            "unbond-by-relayer", 5, old_key, final_record,
+            since=(1 << 63) | DELAY, expected="error code 23", relayer=True)
         released = scenario.change("unbond-excluded", 5, old_key, final_record,
                                    since=(1 << 63) | DELAY, measure=True)
         rejected["reregistration"] = register(old, low, 4, expected="error code 23")
-        if old_key in scenario.records or old_key not in scenario.retired:
+        if (old_key in scenario.records or old_key not in scenario.retired
+                or script_hash(fixture.friend_lock) == owner):
             raise AssertionError("withdrawal did not retire the key")
         direct_checkpoint = relay.report()
         stake_transition = {
@@ -369,8 +373,9 @@ def stake_round(args, l1, scenario, fixture):
             "frozen": frozen, "slash": slash, "slashed_shannons": low if slash else 0,
             "slash_inclusion": l1.prove_committed(slash) if slash else None,
             "measurements": scenario.measurements, "rejections": rejected,
+            "retirement_fee_payer": hex_bytes(script_hash(fixture.friend_lock)), "stake_owner": hex_bytes(owner),
         }
-        return {"initial_registration": registered, "incoming_registration": incoming, "stake_join": joined,
+        report = {"initial_registration": registered, "incoming_registration": incoming, "stake_join": joined,
                 "exit_requested": exit_requested, "stake_exit": excluded, "retirement": retirement,
                 "unbonded": released, "unbonded_shannons": 0 if slash else low, "l1_proof": l1.prove_committed(released),
                 "retirement_transition": stake_transition,
@@ -379,6 +384,23 @@ def stake_round(args, l1, scenario, fixture):
                 "increased_bond": increased, "increased_power_at_height_31": 450,
                 "guardian_conflicting_epoch_rejected": True,
                 "load": measured.result(timeout=90) if loader else None}
+        write_json(args.output / "native-stake-pre-reorg.json", report)
+        height = int(succeeding["height"])
+        l1.call("truncate", l1.call("get_block_hash", hex(height - 1)))
+        l1.mine(3)
+        replacement = l1.call("get_block_hash", hex(height))
+        if replacement == succeeding["block_hash"]:
+            raise AssertionError("failure to reorganize the observed CKB anchor")
+        observer = scenario.authority[0].public_key().public_bytes_raw().hex()
+        reason = reject_cli(
+            "previous L1 anchor was reorganized",
+            args.binary, "stake", "observe", "--request", args.output / "epoch-3-observe.json",
+            "--l1-rpc", l1.url, "--journal", args.output / "stake-journal-0",
+            "--key-file", args.output / f"stake-observer-{observer}.key",
+        )
+        report["reorganized_ckb_anchor"] = {"observed": succeeding["block_hash"], "replacement": replacement,
+                                            "height": height, "rejected": reason}
+        return report
     finally:
         for client in clients:
             client.close()
