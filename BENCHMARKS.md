@@ -2404,9 +2404,56 @@ Rust release tests passed 456 with 14 ignored, and the Go proof
 suite and CometBFT comparison build passed.
 
 This round used one CKB node to publish the full-size boundary.
-The earlier two-peer experiment covered ordinary 128-member
-proofs. The wide rotation here replaced one key and changed one
-continuing member's weight.
+A separate [two-peer replay](#128-member-epoch-boundary-relayed-over-ckb-p2p)
+used the same signed boundary and successor transactions. The
+wide rotation here replaced one key and changed one continuing
+member's weight.
 
 [Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
 [Raw runs, signed Stake Cell transactions, quorums and CKB proofs](benchmarks/2026-11-26-stem-funded-wide-handoff.json.xz).
+
+## 128-member epoch boundary relayed over CKB P2P
+
+Revision `917d62f` took the exact signed boundary and successor
+transactions from the funded 128-to-128 handoff. It opened a
+disconnected copy of the original CKB devnet, verified the saved
+transaction and witness proofs, and independently imported its
+canonical prefix through CKB height 991 into two fresh nodes.
+Only the old committee's checkpoint was present at that height.
+The original boundary and successor were both unknown to the two
+test nodes at the start of their respective trials. The final
+prefix import took 6.56 seconds on the same i9-13900H host.
+
+Both fresh CKB 0.210.0 nodes used the 3.5-billion-cycle block budget
+and default pool settings. The origin alone received each RPC
+submission. The other node observed each transaction as pending
+over their direct P2P link and then mined it. Both nodes returned
+the same inclusion proofs and exact packed transactions. The new
+CKB blocks had distinct hashes from the source chain's blocks.
+Each accepted transaction consumed its predecessor and left the
+expected checkpoint as a live output.
+
+| Final run | Stem height | Witness bytes | Committed CKB-VM cycles on each peer | RPC submission to remote pending | RPC submission to remote inclusion |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Incumbent-to-successor handoff | 40 | 22,492 | 410,671,305 | 672 ms | 983 ms |
+| Successor execution proof | 42 | 16,750 | 406,047,056 | 585 ms | 894 ms |
+
+Both peers' recorded execution cycles matched the pre-submission
+estimate. The other instrumented 128-member run measured 733 ms
+and 581 ms to remote pending. A four-member control consumed
+14,620,319 and 14,476,058 committed cycles. These are single-host,
+sequential samples. The fixture once again rejected the valid
+successor witness against the old checkpoint when the handoff
+was skipped.
+
+The first trial stopped after trying to reuse an HTTP connection
+whose startup request had failed. The second trial applied the
+full-size cycle assertion to the four-member control. The corrected
+runner resets the failed connection and applies the threshold only
+to the full-size test case. The archive retains both attempts,
+the successful runs, and the standalone ordinary and contention
+regressions. The Rust release workspace passed 456 tests with 14
+ignored. The Go proof suite and CometBFT comparison build passed.
+
+[Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
+[Raw runs, resource samples, signed transactions and inclusion proofs](benchmarks/2026-11-26-stem-wide-epoch-p2p.json.xz).

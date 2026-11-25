@@ -70,4 +70,6 @@ available. Published network evidence contains public genesis and proof data.
 
 | CKB-funded 128-member Jolteon handoff | [Report](../BENCHMARKS.md#ckb-funded-128-member-jolteon-handoff), [signed stakes, finality proofs, failure logs and regression](2026-11-26-stem-funded-wide-handoff.json.xz) |
 
+| Funded 128-member boundary and successor over CKB P2P | [Report](../BENCHMARKS.md#128-member-epoch-boundary-relayed-over-ckb-p2p), [peer traces, committed cycles, exact transactions and failed attempts](2026-11-26-stem-wide-epoch-p2p.json.xz) |
+
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
