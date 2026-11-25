@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fs::File, io::Read};
+use std::collections::BTreeSet;
 
 use ckb_crypto::secp::Signature;
 use ckb_types::{core::ScriptHashType, packed::Byte32};
@@ -309,18 +309,6 @@ pub(super) fn verify_owner(lock: &PackedScript, key: &Privkey, code: &Path) -> R
         "key does not own this Intent Lock"
     );
     Ok(())
-}
-
-fn read_code_hash(path: &Path) -> Result<Byte32> {
-    let mut code = Vec::new();
-    File::open(path)?
-        .take(stem_ledger::MAX_CELL_BYTES as u64 + 1)
-        .read_to_end(&mut code)?;
-    ensure!(
-        !code.is_empty() && code.len() <= stem_ledger::MAX_CELL_BYTES,
-        "invalid Intent Lock ELF size"
-    );
-    Ok(blake2b_256(code).pack())
 }
 
 fn intent_owner(lock: &PackedScript, expected: &Byte32) -> Result<[u8; 20]> {

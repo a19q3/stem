@@ -23,6 +23,7 @@ use crate::{
 };
 
 mod intent;
+mod lineage;
 
 #[derive(Subcommand)]
 pub enum Wallet {
@@ -72,11 +73,19 @@ pub enum Wallet {
         /// Check the deployed Intent Lock ELF before signing a cancellation.
         #[arg(long, conflicts_with = "sponsor_max_debit")]
         intent_code: Option<PathBuf>,
+        /// Check the Lineage Lock ELF before signing an exact Cell spend.
+        #[arg(long, conflicts_with_all = ["intent_code", "sponsor_max_debit"])]
+        lineage_code: Option<PathBuf>,
     },
     /// Sign and assemble independently authorized Cells.
     Intent {
         #[command(subcommand)]
         command: intent::Command,
+    },
+    /// Build or sign a bounded command for registered Lineage heads.
+    Lineage {
+        #[command(subcommand)]
+        command: lineage::Command,
     },
 }
 
@@ -274,6 +283,7 @@ impl Wallet {
                 key_file,
                 sponsor_max_debit,
                 intent_code,
+                lineage_code,
             } => {
                 let network = native_spec::load(&genesis)?.network;
                 let transaction: JsonBytes = read_json_limited(&transaction, 2 * 1024 * 1024)?;
@@ -292,6 +302,8 @@ impl Wallet {
                             .is_none_or(|witness| witness.proof_data.is_empty()),
                         "Intent cancellation requires empty proof data"
                     );
+                } else if let Some(code) = lineage_code {
+                    lineage::verify_owner(&lock, &key, &code)?;
                 } else {
                     ensure!(
                         lock.args().raw_data().as_ref()
@@ -326,6 +338,7 @@ impl Wallet {
                 tx.with_witnesses(witnesses.into_values().collect())?
             }
             Self::Intent { command } => return command.run(),
+            Self::Lineage { command } => return command.run(),
         };
         print_json(&JsonBytes::from_vec(tx.as_slice().to_vec()))
     }
@@ -419,6 +432,20 @@ fn check_sponsor(
         "sponsor debit exceeds authorized fee contribution"
     );
     Ok(())
+}
+
+fn read_code_hash(path: &Path) -> Result<packed::Byte32> {
+    use std::io::Read;
+
+    let mut code = Vec::new();
+    std::fs::File::open(path)?
+        .take(stem_ledger::MAX_CELL_BYTES as u64 + 1)
+        .read_to_end(&mut code)?;
+    ensure!(
+        !code.is_empty() && code.len() <= stem_ledger::MAX_CELL_BYTES,
+        "invalid Lock ELF size"
+    );
+    Ok(blake2b_256(code).pack())
 }
 
 fn key(path: &std::path::Path) -> Result<Privkey> {

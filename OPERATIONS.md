@@ -82,6 +82,25 @@ To enable Lineage lifecycle transitions in a fresh network, set `lineage_type` t
 
 For dynamic commands, publish the registered Executor and the example `stem-lineage-lock` as Cell Deps. Prepare a head with `stem_ledger::lineage::lock` in head mode. Fund a separate plain CKB Cell with the same helper in fee mode. Use `Transaction::new_lineage_command` with the fee OutPoint, ordered target IDs and version ranges, Executor Data hash and OutPoint, signed fee, execution budgets, application payload and exclusive expiry. Sign `Transaction::lineage_signing_digest` with the fee Cell owner's secp256k1 key and place its 65-byte seal at Group Witness index 0. Use the ordinary node broadcast interfaces. The client must authenticate the fee Cell and check the Executor and application payload before signing. Owners can still authorize exact Head transitions with a complete transaction signature.
 
+The CLI builds and signs the same native command. The build request has
+`fee_input`, `cell_deps`, `targets`, `executor`, `executor_dep`,
+`valid_before_height`, `executor_cycles`, `validation_cycles`, `fee`
+and hex `payload` fields. A target contains `id`, `min_version`,
+`max_version` and `min_capacity`. Order targets by raw ID bytes. The
+signing context includes the authenticated fee and Executor Cells. Supply
+a separate expected Executor hash and a local fee cap before signing.
+
+```sh
+stem wallet lineage build --request command.json > draft.json
+stem wallet lineage sign --genesis stem-genesis.json --transaction draft.json \
+  --context cells.json --code stem-lineage-lock --key-file fee-key \
+  --executor-hash "$EXPECTED_EXECUTOR" --max-fee "$FEE_CAP" > command.signed.json
+```
+
+For an ordinary exact spend of a Head or fee Cell, use
+`stem wallet sign --lineage-code stem-lineage-lock` with the usual
+transaction, Lock, context and key arguments.
+
 Use `lineage::Outcome::decode` on the authenticated receipt protocol result. Position 0 always refers to fee change. On success each ordered target's output follows it. On a fee-only failure no target outputs are created. The four-node runner exports `lineage-commands.json` containing the real command results and the state and certificate evidence.
 
 `stem wallet build --request request.json` encodes inputs, outputs, dependencies and optional ordered `messages` and `proofs`. `stem wallet sign` needs the native genesis, complete requested Lock Script, group index and `--context` file. Its `cells` array contains `{"out_point": ..., "cell": "0x..."}` records for all inputs, explicit dependencies and expanded Dep Group members. Its optional `headers` array contains canonical encoded Header Deps. Obtain and authenticate these records against the expected chain state before signing. `stem wallet id --network HASH` reads the JSON hex transaction from stdin. `stem ckb-wallet` uses the CKB-native encoding for L1 signing.

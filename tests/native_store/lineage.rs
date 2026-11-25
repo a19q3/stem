@@ -1037,3 +1037,182 @@ fn measure_lineage_hotspot_amm() -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     measure_dynamic_batches("hotspot-amm", &fixture, &amm, &batches)
 }
+
+#[test]
+fn wallet_builds_and_seals_the_native_lineage_command() -> Result<()> {
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+
+    use ckb_jsonrpc_types::{CellDep as JsonDep, JsonBytes, OutPoint as JsonPoint};
+    use serde_json::json;
+
+    let mut fixture = Fixture::new()?;
+    let dynamic = DynamicLineage::fund(&mut fixture, 1)?;
+    let expected = dynamic.signed(&fixture, 0, &[0, 1], (0, 2), 3)?;
+    let terms = expected.lineage_command().unwrap();
+    let temp = tempfile::tempdir()?;
+    let request = temp.path().join("request.json");
+    let genesis = temp.path().join("genesis.json");
+    let unsigned = temp.path().join("unsigned.json");
+    let context = temp.path().join("context.json");
+    let key = temp.path().join("fee-key");
+    let lock = temp.path().join("stem-lineage-lock");
+    let executor_hash = format!("0x{}", hex::encode(terms.executor.as_slice()));
+    let targets: Vec<_> = terms
+        .targets
+        .iter()
+        .map(|target| {
+            json!({
+                "id": format!("0x{}", hex::encode(target.id.as_slice())),
+                "min_version": target.min_version,
+                "max_version": target.max_version,
+                "min_capacity": target.min_capacity,
+            })
+        })
+        .collect();
+    fs::write(
+        &request,
+        serde_json::to_vec(&json!({
+            "fee_input": JsonPoint::from(dynamic.fee_points[0].clone()),
+            "cell_deps": expected.cell_deps().map(JsonDep::from).collect::<Vec<_>>(),
+            "valid_before_height": expected.valid_before_height(),
+            "executor": executor_hash,
+            "executor_dep": JsonPoint::from(terms.executor_dep.clone()),
+            "executor_cycles": terms.executor_cycles,
+            "validation_cycles": terms.validation_cycles,
+            "fee": terms.fee,
+            "payload": JsonBytes::from_bytes(terms.payload.clone()),
+            "targets": targets,
+        }))?,
+    )?;
+    super::comet::write_spec(&genesis, &fixture.spec)?;
+    let lock_point = OutPoint::new([232; 32].pack(), 0);
+    let cells: Vec<_> = fixture
+        .spec
+        .development_cells
+        .iter()
+        .filter(|(point, _)| {
+            point == &dynamic.fee_points[0] || point == &terms.executor_dep || point == &lock_point
+        })
+        .map(|(point, cell)| {
+            json!({
+                "out_point": JsonPoint::from(point.clone()),
+                "cell": JsonBytes::from_vec(cell.as_slice().to_vec()),
+            })
+        })
+        .collect();
+    fs::write(&context, serde_json::to_vec(&json!({"cells": cells}))?)?;
+    fs::write(&key, [76u8; 32])?;
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o600))?;
+    fs::write(
+        &lock,
+        super::contract::native_contract(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            "stem-lineage-lock",
+        )?,
+    )?;
+
+    let build = Command::new(env!("CARGO_BIN_EXE_stem"))
+        .args(["wallet", "lineage", "build", "--request"])
+        .arg(&request)
+        .output()?;
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    fs::write(&unsigned, build.stdout)?;
+    let sign = |pin: &str, max_fee: u64| {
+        Command::new(env!("CARGO_BIN_EXE_stem"))
+            .args(["wallet", "lineage", "sign"])
+            .arg("--genesis")
+            .arg(&genesis)
+            .arg("--transaction")
+            .arg(&unsigned)
+            .arg("--context")
+            .arg(&context)
+            .arg("--code")
+            .arg(&lock)
+            .arg("--key-file")
+            .arg(&key)
+            .arg("--executor-hash")
+            .arg(pin)
+            .arg("--max-fee")
+            .arg(max_fee.to_string())
+            .output()
+    };
+    let low_fee_cap = sign(&executor_hash, FEE - 1)?;
+    assert!(!low_fee_cap.status.success());
+    assert!(String::from_utf8_lossy(&low_fee_cap.stderr).contains("fee cap"));
+    let wrong_executor = sign(&format!("0x{}", hex::encode([17; 32])), FEE)?;
+    assert!(!wrong_executor.status.success());
+    assert!(
+        String::from_utf8_lossy(&wrong_executor.stderr).contains("unexpected Lineage Executor")
+    );
+    let signed = sign(&executor_hash, FEE)?;
+    assert!(
+        signed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&signed.stderr)
+    );
+    let submitted: JsonBytes = serde_json::from_slice(&signed.stdout)?;
+    assert_eq!(submitted.as_bytes(), expected.as_slice());
+    let mut store = Store::open(&temp.path().join("db"), &fixture.spec, Retention::Archive)?;
+    let registrations = [
+        dynamic.register(&fixture, 0)?,
+        dynamic.register(&fixture, 1)?,
+    ];
+    store.commit(store.prepare(&registrations, TIME, false)?)?;
+    let transaction = Transaction::from_slice(submitted.as_bytes())?;
+    assert_eq!(
+        store.check(&transaction)?.protocol_result,
+        lineage::Outcome::Applied.encode()
+    );
+    let wallet_exact = temp.path().join("exact.json");
+    let lock_script = temp.path().join("fee-lock.json");
+    let fee_lock = dynamic.fee_cell.lock();
+    let exact = Transaction::new(
+        vec![CellDep::new_builder().out_point(lock_point).build()],
+        vec![],
+        vec![CellInput::new(dynamic.fee_points[0].clone(), None)],
+        vec![Cell::new(
+            FUND - FEE,
+            fee_lock.clone(),
+            vec![],
+            Bytes::new(),
+        )?],
+        vec![],
+    )?;
+    fs::write(
+        &wallet_exact,
+        serde_json::to_vec(&JsonBytes::from_vec(exact.as_slice().to_vec()))?,
+    )?;
+    fs::write(
+        &lock_script,
+        serde_json::to_vec(&ckb_jsonrpc_types::Script::from(fee_lock))?,
+    )?;
+    let cancel = Command::new(env!("CARGO_BIN_EXE_stem"))
+        .args(["wallet", "sign", "--group-index", "0"])
+        .arg("--genesis")
+        .arg(&genesis)
+        .arg("--transaction")
+        .arg(&wallet_exact)
+        .arg("--context")
+        .arg(&context)
+        .arg("--lock")
+        .arg(&lock_script)
+        .arg("--lineage-code")
+        .arg(&lock)
+        .arg("--key-file")
+        .arg(&key)
+        .output()?;
+    assert!(
+        cancel.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cancel.stderr)
+    );
+    let bytes: JsonBytes = serde_json::from_slice(&cancel.stdout)?;
+    let cancel = Transaction::from_slice(bytes.as_bytes())?;
+    store.commit(store.prepare(&[cancel], TIME, false)?)?;
+    assert!(store.check(&transaction).is_err());
+    Ok(())
+}
