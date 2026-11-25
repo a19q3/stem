@@ -12,6 +12,7 @@ publish = false
 ckb-hash = { version = "=1.1.1", default-features = false, features = ["ckb-contract"] }
 stem-bridge-wire = { path = "../bridge-wire" }
 stem-stake = { path = "../stake" }
+stem-intent = { path = "../intent" }
 ckb-std = { version = "=1.1.0", default-features = false, features = ["allocator", "calc-hash", "type-id"] }
 
 [dev-dependencies]

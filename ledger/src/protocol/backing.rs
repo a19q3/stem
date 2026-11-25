@@ -3,7 +3,7 @@ use ckb_types::bytes::Bytes;
 
 use crate::{
     protocol::compact64,
-    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
 

@@ -2,7 +2,7 @@
 
 ## 1. 网络定位
 
-Stem 是一条以 CKB 计价、由 CometBFT 最终确认的 Cell 网络。Stem 定义唯一的原生 Cell 与交易格式，以 Many-to-Many Type Script 执行资产和应用规则。CKB L1 的真实质押决定验证者权重，独立桥金库负责 CKB 和 xUDT 的兑付。Stem 不发行独立原生代币。可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
+Stem 是一条以 CKB 计价、由 CometBFT 最终确认的 Cell 网络。Stem 使用唯一的原生 Polytype Cell 模型与交易格式。一个 Cell 可同时绑定多个 Type Scripts，内核按完整 Script 身份派生并执行所有验证组。CKB L1 的真实质押决定验证者权重，独立桥金库负责 CKB 和 xUDT 的兑付。Stem 不发行独立原生代币。可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
 
 每个网络用全新的 genesis、数据库、签名域和桥实例启动。网络身份由 canonical network spec 和一次性网络盐导出。该预部署 spec 包含 CKB genesis、初始权限与经济配置，排除依赖网络身份才能部署的 Registry Type ID、金库 Type ID、Checkpoint Type ID 及初始化签名。部署完成后，Stem genesis 再固定这些 L1 合约身份和第一份已认证的完整质押快照。CKB Checkpoint Cell 的身份与初始认证方也由 genesis 固定。CometBFT chain ID 由网络身份确定性导出，并符合 CometBFT 的长度约束。所有交易、证明和链间认证都明确绑定该网络。
 
@@ -33,7 +33,7 @@ struct Script {
 }
 ```
 
-Stem 采用 Telegraph 序列、密集向量和可选字段位。Type Script 集合按完整 Telegraph Script 字节序排序。Script 身份仍使用完整 CKB Script 的哈希。CKB L1 合约边界保留 Molecule。解码拒绝乱序、重复及超限编码，排序位置仅用于读取。代码标识、寻址方式、参数、所有 Type Script 和 Cell Data 都在输出原始字节中，资产身份因此独立于同一个 Cell 的抵押、监管或结算脚本。Cell 是消费和创建的原子单位。
+Stem 采用 Strand 序列、密集向量和可选字段位。Type Script 集合按完整 Strand Script 字节序排序。Script 身份仍使用完整 CKB Script 的哈希。CKB L1 合约边界保留 Molecule。解码拒绝乱序、重复及超限编码，排序位置仅用于读取。代码标识、寻址方式、参数、所有 Type Script 和 Cell Data 都在输出原始字节中，资产身份因此独立于同一个 Cell 的抵押、监管或结算脚本。Cell 是消费和创建的原子单位。
 
 交易使用一张 schema。原始部分含 Cell Inputs（OutPoint 与可选 Stem Since）、完整输出 Cells、Cell Deps、Header Deps、可选的截止高度、按 Script Group 寻址的应用消息，以及可选的协议操作。Witness 区域承载按组寻址的验证材料与签名，并为协议操作保留证书字段。普通交易至少消费一个可用 Cell。Bridge Mint、Stake Snapshot 和 Bridge Settlement 使用同一套编码、哈希和提案路径。原始交易中只允许一个操作，证书位于独立的 Witness 字段。Bridge Mint 的所有实际输入与输出仍由常规脚本规则验证。Stake Snapshot 和 Bridge Settlement 是控制交易，Cell 输入输出、Cell Deps、Header Deps 与普通 Witness 均为空。Bridge Settlement 的两种声明分别为已兑付提款核销和同一 L1 交易中的双金库储备调拨。
 
@@ -43,7 +43,7 @@ tx_commit  = H("Stem transaction commitment", network_id, canonical_full_tx)
 cell_leaf  = PatriciaLeaf(network_id, cell_key, live_cell_record)
 ```
 
-各域标识采用固定字节串并以零字节结尾。变长字段由 Telegraph 或显式长度前缀编码。普通 OutPoint 是 `(tx_id, output_index)`。Genesis 分配使用单独的创世承诺和确定性编号，主网资金来自认证存款，测试 genesis 可显式配置测试配额，测试配额只能存在于关闭真实 L1 兑付的独立网络。
+各域标识采用固定字节串并以零字节结尾。变长字段由 Strand 或显式长度前缀编码。普通 OutPoint 是 `(tx_id, output_index)`。Genesis 分配使用单独的创世承诺和确定性编号，主网资金来自认证存款，测试 genesis 可显式配置测试配额，测试配额只能存在于关闭真实 L1 兑付的独立网络。
 
 ### Witness、CoBuild 与 OTX
 
@@ -57,7 +57,17 @@ GroupWitness   = (group_index: u16, proof_data, seal)
 
 标准锁的签名摘要绑定网络、Lock 角色、完整 Script 哈希及原始交易 ID。它还承诺按顺序解析的输入 Cell 内容、每个 Cell Dep、Dep Group 容器及其实际展开成员、已声明 Header Dep 的完整编码，以及所有非空 `proof_data`。交易 ID 已覆盖输出、输入引用、依赖引用、排他有效高度及 Group Messages。独立签名人可分别填入各组的 seal，完整交易承诺覆盖全部 seal。其他 Lock 可以定义自己的验签逻辑。
 
-CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。OTX 留作独立 Lock 与 SDK 签名标准，双方最终构造同一种 Stem 交易。OTX 的签名范围必须锁定可用输入、受保护输出、Action、依赖、费用限额和有效高度。结算脚本必须为每个承诺分配唯一的交付权益，避免同一输出重复满足多个订单。首轮共识接入使用完整交易签名，OTX 激活取决于独立签名与结算规范。 [CKB Transaction Co-Build 参考实现](https://github.com/cryptape/ckb-transaction-cobuild-poc)
+CoBuild 保留 IDL、钱包展示、Action 构造与多方协调。每个合约独立核对 Action 与实际 Cell 差分。Stem 的配对 OTX 使用普通交易和专用 RISC-V Lock。签名绑定网络、完整 Lock 身份、输入 OutPoint 与 Cell、交付 Cell 的完整 Strand 哈希、实际解析的有序依赖、有效高度及费用上限。Solver 可以移动一对输入与输出，脚本总是用已解析输入的下标匹配同下标输出。一项部分授权只消费一个 Cell，同一输出不能满足两个独立配对。当前配对模式要求零 Since、相同有序依赖及空 Group Messages。持有人可以使用完整交易签名取消。 [CKB Open Transaction 场景](https://github.com/nervosnetwork/ckb/discussions/3670)
+
+可重组代付使用交易位置 0 的一个纯 Capacity 输入及同锁找零。授权额外绑定位置 1 的指定 OutPoint 和完整交付 Cell。代付扣款必须为正、低于各自授权上限且不超过整笔交易实际消耗的手续费。已认证的 Lock 和 Type Groups 仍独立执行。手续费和多资产交付在同一次普通交易提交内生效。
+
+### Lineage Cell
+
+已实现的注册表使用普通四字段 Cell 和网络固定的 Lineage Type Script。其 32 字节参数是稳定的 `LineageId`，由网络、注册交易首个消费的普通 OutPoint 和输出下标推导。注册和 Executor 更换用该 Type Group 的一个显式 Action 声明固定的 RISC-V 程序内容哈希。实际代码必须存在于解析后的依赖。Lineage 元数据在同一个 SystemRoot 下承诺，Live Head、版本和 Executor 与实际 UTXO 同步更新。Cell Data 和其他 Type Scripts 可由应用独立使用。
+
+注册版本为零。后继消费唯一当前 Head，版本加一，并运行旧 Lock 与输入输出派生的全部 Type Groups。更换 Executor 或控制 Lock 经过当前 Head 的授权。显式退休消费 Head 并移除活动记录，注册锚点已经消费，原身份无法重新生成。`/stem/lineage` 在同一可信 Header 下提供 SystemRoot 路径与 CellRoot 路径。普通网络可省略 `lineage_type` 配置。
+
+执行时解析、用户签署的动态命令、Executor Effects ABI 及失败后的费用结算仍待实现。这一路径需要在共识位置先解析声明的 LineageId 与约束，再运行固定 Executor 产生有界的候选输入输出，随后经过现有 Cell 解析、Lock、Type、容量与费用验证。所有业务 Effects 要作为一批提交，失败只允许签名已授权的独立、限额内费用结果。Keeper 的到期尝试应使用同一条执行路径。同一 Lineage 的写入按区块次序推进，不相交的写入可在保持相同结果的前提下并行。
 
 ## 3. 确定性执行与资源
 
@@ -150,7 +160,7 @@ stake assets ∩ bridge reserve = ∅
 
 在可兑付网络，认证的真实存款才能增加净 CKB 兑付能力，每一笔 L1 入账只可使用一次。储备盈余不得直接用于生成新的 Stem CKB。普通交易容量守恒，手续费和抵押都通过已存在的 Capacity 核算。质押、冻结罚没款、金库底仓以及不可及时支出的资产均排除在可兑付储备之外。首轮金库使用能按提款流程及时支出的 L1 Cells，储备不投入 Nervos DAO。Stem 不提供增发、固定质押收益或 DAO 补偿。
 
-研究网手续费扣减流通负债，相应的 L1 资金留在桥储备。桥接网络在 SystemRoot 下保存 Telegraph `BridgeBacking`，包括认证观察到的可兑付 CKB、流通 Capacity、待兑 Capacity。铸造增加前两项，提款申请把流通转为待兑，经认证的 L1 兑付同时减少储备与待兑。调拨与金库轮换保持总量。已确认储备扣除两类负债的差额必须等于已冲销手续费。`/stem/bridge-backing` 提供聚合记录与 Patricia 证明，`/stem/bridge-lane` 提供指定通道的金额、金库和 nonce 状态证明。认证 CKB 观察依赖配置的 guardian 法定人数。
+研究网手续费扣减流通负债，相应的 L1 资金留在桥储备。桥接网络在 SystemRoot 下保存 Strand `BridgeBacking`，包括认证观察到的可兑付 CKB、流通 Capacity、待兑 Capacity。铸造增加前两项，提款申请把流通转为待兑，经认证的 L1 兑付同时减少储备与待兑。调拨与金库轮换保持总量。已确认储备扣除两类负债的差额必须等于已冲销手续费。`/stem/bridge-backing` 提供聚合记录与 Patricia 证明，`/stem/bridge-lane` 提供指定通道的金额、金库和 nonce 状态证明。认证 CKB 观察依赖配置的 guardian 法定人数。
 
 收益分配待实现。实验参数可设为验证者与委托人 65%、DevFund 15%、Ecosystem Fund 10%、PoW Security Fund 10%。预期用 PoW Security Fund 支付检查点、质押更新和结算的实际 CKB L1 交易手续费。确认应付款需要已确认且未分配的收入、资金出处和受限支出权限。兑付同时减记 L1 储备与相应应付款，并计入实际 L1 交易费。质押本金、用户的流通与待兑负债、以及不可立即使用的金库底仓都排除在收益之外。
 
@@ -358,13 +368,13 @@ AppHash(H)     = H("Stem AppHash", network_id, H, HeaderID(H))
 
 压测分别运行 CKB 支付、单 Type Script、双 Type Script、多 Type Script、跨资产结算及委员会变更。按能力逐步提高投递速率至 1,000、2,000、3,000、5,000 TPS，记录 offered、admitted、finalized 和全副本可见速率、p50/p95/p99、客户端丢弃、CPU、RSS、物理写入、fsync、网络流量及积压。历史账本单独对照。
 
-Many-to-Many 的边际成本采用控制实验。固定输入数量和数据、输出数量、Lock 分组、签名算法与密钥、依赖读取、数据总尺寸和 VM 配置，改变独立 Type Groups 的数量。每个变体按真实交易内容重新签名。等长夹具能做到时使用等长编码，其他差异应记录。分别记录 Lock 与 Type 的 cycles、缓存冷暖、上下文载入、状态根更新及完整四节点吞吐，保留原始数据、命令和构建指纹。
+Polytype 的边际成本采用控制实验。固定输入数量和数据、输出数量、Lock 分组、签名算法与密钥、依赖读取、数据总尺寸和 VM 配置，改变独立 Type Groups 的数量。每个变体按真实交易内容重新签名。等长夹具能做到时使用等长编码，其他差异应记录。分别记录 Lock 与 Type 的 cycles、缓存冷暖、上下文载入、状态根更新及完整四节点吞吐，保留原始数据、命令和构建指纹。
 
 ## 9. 当前实现与实测证据
 
 | 项目 | 已验证 | 尚待集成 |
 | --- | --- | --- |
-| 原生执行 | 默认 `stem run` 使用 Telegraph 四字段 Cell、组级消息及 Witness、完整输入签名、已提交父时间和并行 RISC-V Script Groups。原生锁使用固定计费的 secp256k1 恢复。四节点拒绝移除输入侧 Transfer Policy 的交易，串行与并行回执及状态一致 | 执行与存储更高负载下的剖析 |
+| 原生执行 | 默认 `stem run` 使用 Strand 四字段 Cell、组级消息及 Witness、完整输入签名、已提交父时间和并行 RISC-V Script Groups。原生锁使用固定计费的 secp256k1 恢复。四节点拒绝移除输入侧 Transfer Policy 的交易，串行与并行回执及状态一致 | 执行与存储更高负载下的剖析 |
 | CKB L1 质押 | 实际部署登记 Type ID、锁定并增押；未激活、已退休的记录无法进委员会；双签冻结 250 CKB、阻止提前罚没、退休后罚没；另有正常解除质押路径；替换已观察的 CKB 分支后守护者实际停止认证 | 生产环境的参数标定和运行部署 |
 | 快照与委员会 | 实际 CKB 质押快照提供 genesis 和 H+2 更新；实测高度 11 加入新验证者，高度 21 移除，核验两次交接及后继签名，两层 guardian 轮换后由新集合签发快照和退休证书，CKB 退还 250 CKB。实际增押在高度 31 将在任验证者权重从 400 提高到 450 | 高变更率下的长周期轮换验证 |
 | 控制交易与桥 | 原生状态持久化存款防重放和通道储备；实际 CKB 与 1,200 xUDT 双向桥接，按独立通道核销兑付；CKB devnet 实际调拨 500,000 shannons 并轮换金库，分支替换后桥守护者停止签发 | 连续运行中的长期储备对账 |
@@ -373,7 +383,7 @@ Many-to-Many 的边际成本采用控制实验。固定输入数量和数据、�
 
 实际运行由 CometBFT v0.38.26 和本地 CKB devnet 完成。Stem 的 L1 状态认证依赖各自配置的 guardian 法定人数与受信 CKB 完整节点。详见 [操作与复现](OPERATIONS.md) 和 [测量](BENCHMARKS.md)。
 
-同一普通支付夹具使用内联 Telegraph 时为 312 B。三 Type Script 组合 Cell 的输出向量为 285 B，CKB 三个单独输出及 Data 向量为 590 B。标准锁的恢复调用计费 1,900,000 cycles，完整交易另计其余执行开销。早期 Molecule 编码、k256 锁与对应吞吐数据保存在[历史实验归档](FERN-BENCHMARKS.md)。[当前性能记录](BENCHMARKS.md)
+同一普通支付夹具使用内联 Strand 时为 312 B。三 Type Script 组合 Cell 的输出向量为 285 B，CKB 三个单独输出及 Data 向量为 590 B。标准锁的恢复调用计费 1,900,000 cycles，完整交易另计其余执行开销。早期 Molecule 编码、k256 锁与对应吞吐数据保存在[历史实验归档](FERN-BENCHMARKS.md)。[当前性能记录](BENCHMARKS.md)
 
 已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。加权两链实验覆盖签名日志重启和 4 至 128 委员的证书成本。网络共识使用 CometBFT。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
 

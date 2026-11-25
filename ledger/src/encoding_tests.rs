@@ -1,4 +1,4 @@
-mod telegraph;
+mod strand;
 use crate::{Cell, CellInput, GroupWitness, Transaction, baseline as wire};
 use anyhow::Result;
 use ckb_types::{
@@ -77,7 +77,7 @@ fn measure_canonical_payment_and_combined_output_bytes() -> Result<()> {
         vec![],
     )?;
     let serialized = crate::wire::Transaction::from_slice(with_combined_output.as_slice())?;
-    use crate::telegraph::prelude::Entity as TelegraphEntity;
+    use crate::strand::prelude::Entity as StrandEntity;
     let combined = serialized.raw().outputs().as_slice().len();
     let l1_len = l1.data().as_slice().len();
     let native_len = native.as_slice().len();
@@ -302,7 +302,7 @@ fn measure_transaction_script_dictionary() -> Result<()> {
         let original = make(&locks, asset)?;
         let original = molecule_fixture(&original);
         let dictionary = dictionary_transaction(&original)?;
-        telegraph::compare(
+        strand::compare(
             case,
             &original,
             std::env::var_os("STEM_ENCODING_TIMINGS").is_some(),

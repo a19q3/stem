@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, ensure};
 use ckb_crypto::secp::Privkey;
@@ -18,6 +21,8 @@ use crate::{
     bridge_cli::{print_json, read_json_limited},
     native_spec,
 };
+
+mod intent;
 
 #[derive(Subcommand)]
 pub enum Wallet {
@@ -64,6 +69,14 @@ pub enum Wallet {
         /// Authorize a fee-only contribution of at most this many shannons from this Lock Group.
         #[arg(long)]
         sponsor_max_debit: Option<u64>,
+        /// Check the deployed Intent Lock ELF before signing a cancellation.
+        #[arg(long, conflicts_with = "sponsor_max_debit")]
+        intent_code: Option<PathBuf>,
+    },
+    /// Sign and assemble independently authorized Cells.
+    Intent {
+        #[command(subcommand)]
+        command: intent::Command,
     },
 }
 
@@ -260,6 +273,7 @@ impl Wallet {
                 lock,
                 key_file,
                 sponsor_max_debit,
+                intent_code,
             } => {
                 let network = native_spec::load(&genesis)?.network;
                 let transaction: JsonBytes = read_json_limited(&transaction, 2 * 1024 * 1024)?;
@@ -271,48 +285,27 @@ impl Wallet {
                 let lock: Script = read_json_limited(&lock, 64 * 1024)?;
                 let lock: PackedScript = lock.into();
                 let key = key(&key_file)?;
-                ensure!(
-                    lock.args().raw_data().as_ref()
-                        == &blake2b_256(key.pubkey()?.serialize())[..20],
-                    "private key does not own the specified Lock Script"
-                );
-                let context: SigningContext = read_json_limited(
-                    &context,
-                    stem_ledger::MAX_RESOLVED_CELL_BYTES * 2 + 2 * 1024 * 1024,
-                )?;
-                let mut cells = BTreeMap::new();
-                for record in context.cells {
+                if let Some(code) = intent_code {
+                    intent::verify_owner(&lock, &key, &code)?;
                     ensure!(
-                        cells
-                            .insert(packed::OutPoint::from(record.out_point), record.cell)
-                            .is_none(),
-                        "duplicate Cell in signing context"
+                        tx.witness(group_index)
+                            .is_none_or(|witness| witness.proof_data.is_empty()),
+                        "Intent cancellation requires empty proof data"
+                    );
+                } else {
+                    ensure!(
+                        lock.args().raw_data().as_ref()
+                            == &blake2b_256(key.pubkey()?.serialize())[..20],
+                        "private key does not own the specified Lock Script"
                     );
                 }
-                let mut headers = BTreeMap::new();
-                for header in context.headers {
-                    let header = stem_ledger::block::Header::decode(header.as_bytes())?;
-                    ensure!(
-                        headers.insert(header.id(&network), header).is_none(),
-                        "duplicate Header in signing context"
-                    );
-                }
-                let get_cell = |point: &packed::OutPoint| {
-                    Cell::from_slice(
-                        cells
-                            .get(point)
-                            .context("signing context is missing a Cell")?
-                            .as_bytes(),
-                    )
-                };
+                let context = ResolvedSigningContext::load(&context, &network)?;
+                let get_cell = |point: &packed::OutPoint| context.cell(point);
                 if let Some(max_debit) = sponsor_max_debit {
                     check_sponsor(&tx, &lock, max_debit, get_cell)?;
                 }
                 let digest = tx.signing_digest(&network, group_index, &lock, get_cell, |id| {
-                    headers
-                        .get(id)
-                        .cloned()
-                        .context("signing context is missing a Header")
+                    context.header(id)
                 })?;
                 let signature = key.sign_recoverable(&digest.unpack())?;
                 let mut witnesses = tx
@@ -332,8 +325,55 @@ impl Wallet {
                 );
                 tx.with_witnesses(witnesses.into_values().collect())?
             }
+            Self::Intent { command } => return command.run(),
         };
         print_json(&JsonBytes::from_vec(tx.as_slice().to_vec()))
+    }
+}
+
+struct ResolvedSigningContext {
+    cells: BTreeMap<packed::OutPoint, JsonBytes>,
+    headers: BTreeMap<packed::Byte32, stem_ledger::block::Header>,
+}
+
+impl ResolvedSigningContext {
+    fn load(path: &Path, network: &packed::Byte32) -> Result<Self> {
+        let source: SigningContext = read_json_limited(
+            path,
+            stem_ledger::MAX_RESOLVED_CELL_BYTES * 2 + 2 * 1024 * 1024,
+        )?;
+        let mut cells = BTreeMap::new();
+        for record in source.cells {
+            ensure!(
+                cells.insert(record.out_point.into(), record.cell).is_none(),
+                "duplicate Cell in signing context"
+            );
+        }
+        let mut headers = BTreeMap::new();
+        for header in source.headers {
+            let header = stem_ledger::block::Header::decode(header.as_bytes())?;
+            ensure!(
+                headers.insert(header.id(network), header).is_none(),
+                "duplicate Header in signing context"
+            );
+        }
+        Ok(Self { cells, headers })
+    }
+
+    fn cell(&self, point: &packed::OutPoint) -> Result<Cell> {
+        Cell::from_slice(
+            self.cells
+                .get(point)
+                .context("signing context is missing a Cell")?
+                .as_bytes(),
+        )
+    }
+
+    fn header(&self, id: &packed::Byte32) -> Result<stem_ledger::block::Header> {
+        self.headers
+            .get(id)
+            .cloned()
+            .context("signing context is missing a Header")
     }
 }
 

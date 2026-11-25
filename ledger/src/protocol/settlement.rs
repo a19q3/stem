@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     Transaction,
-    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
 

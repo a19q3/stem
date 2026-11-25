@@ -512,7 +512,15 @@ dependencies = [
  "ckb-std",
  "sha2 0.9.9",
  "stem-bridge-wire",
+ "stem-intent",
  "stem-stake",
+]
+
+[[package]]
+name = "stem-intent"
+version = "0.1.0"
+dependencies = [
+ "ckb-hash",
 ]
 
 [[package]]

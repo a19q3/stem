@@ -8,20 +8,20 @@ fn main() {
             .run()
             .expect("generate Molecule types");
     }
-    println!("cargo:rerun-if-changed=telegraph/generate.py");
-    println!("cargo:rerun-if-changed=schemas/telegraph.json");
+    println!("cargo:rerun-if-changed=strand/generate.py");
+    println!("cargo:rerun-if-changed=schemas/strand.json");
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
     let status = std::process::Command::new("python3")
         .args([
-            "telegraph/generate.py",
+            "strand/generate.py",
             "--schema",
-            "schemas/telegraph.json",
+            "schemas/strand.json",
             "--rust-out",
         ])
-        .arg(out.join("telegraph_wire.rs"))
+        .arg(out.join("strand_wire.rs"))
         .arg("--c-out")
-        .arg(out.join("telegraph_wire.h"))
+        .arg(out.join("strand_wire.h"))
         .status()
-        .expect("run the Telegraph schema compiler with Python 3");
-    assert!(status.success(), "generate Telegraph types");
+        .expect("run the Strand schema compiler with Python 3");
+    assert!(status.success(), "generate Strand types");
 }

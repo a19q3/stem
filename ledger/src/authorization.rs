@@ -26,11 +26,13 @@ pub(crate) struct Cells<T> {
     pub inputs: Vec<T>,
     pub code: Vec<T>,
     pub commitment: Byte32,
+    pub dependencies: Option<Byte32>,
 }
 
 pub(crate) fn resolve_cells<T: AsRef<Cell>>(
     tx: &Transaction,
     budget: &mut ResolutionBudget,
+    commit_intent_dependencies: bool,
     mut load: impl FnMut(&OutPoint) -> Result<T>,
 ) -> Result<Cells<T>> {
     let mut h = new_blake2b();
@@ -42,12 +44,35 @@ pub(crate) fn resolve_cells<T: AsRef<Cell>>(
     for input in inputs {
         let point = input.previous_output;
         let record = budget.load(&point, &mut load)?;
-        commit_cell(&mut h, &point, record.as_ref());
+        h.update(point.as_slice());
+        h.update(record.as_ref().content_hash().as_slice());
         consumed.insert(point);
         resolved.push(record);
     }
+    let mut dep_hash = commit_intent_dependencies.then(dependency_hasher);
+    let code = resolve_dependencies(tx, budget, &consumed, load, |bytes| {
+        h.update(bytes);
+        if let Some(hash) = &mut dep_hash {
+            hash.update(bytes);
+        }
+    })?;
+    Ok(Cells {
+        inputs: resolved,
+        code,
+        commitment: finish(h),
+        dependencies: dep_hash.map(finish),
+    })
+}
+
+fn resolve_dependencies<T: AsRef<Cell>>(
+    tx: &Transaction,
+    budget: &mut ResolutionBudget,
+    consumed: &HashSet<OutPoint>,
+    mut load: impl FnMut(&OutPoint) -> Result<T>,
+    mut commit: impl FnMut(&[u8]),
+) -> Result<Vec<T>> {
     let deps = tx.cell_deps();
-    h.update(&(deps.len() as u64).to_le_bytes());
+    commit(&(deps.len() as u64).to_le_bytes());
     let mut unique = HashSet::new();
     let mut code = Vec::new();
     for dep in deps {
@@ -57,8 +82,9 @@ pub(crate) fn resolve_cells<T: AsRef<Cell>>(
             "Cell Dep is consumed by this transaction"
         );
         let record = budget.load(&point, &mut load)?;
-        h.update(dep.dep_type().as_slice());
-        commit_cell(&mut h, &point, record.as_ref());
+        commit(dep.dep_type().as_slice());
+        commit(point.as_slice());
+        commit(record.as_ref().content_hash().as_slice());
         match DepType::try_from(dep.dep_type())? {
             DepType::Code => {
                 ensure!(unique.insert(point), "duplicate resolved Cell Dep");
@@ -68,7 +94,7 @@ pub(crate) fn resolve_cells<T: AsRef<Cell>>(
                 let data = record.as_ref().data();
                 let members = OutPointVecReader::from_slice(&data)?;
                 ensure!(!members.is_empty(), "empty Dep Group");
-                h.update(&(members.len() as u64).to_le_bytes());
+                commit(&(members.len() as u64).to_le_bytes());
                 for member in members.iter() {
                     let point = member.to_entity();
                     ensure!(
@@ -77,28 +103,37 @@ pub(crate) fn resolve_cells<T: AsRef<Cell>>(
                     );
                     ensure!(unique.insert(point.clone()), "duplicate resolved Cell Dep");
                     let record = budget.load(&point, &mut load)?;
-                    commit_cell(&mut h, &point, record.as_ref());
+                    commit(point.as_slice());
+                    commit(record.as_ref().content_hash().as_slice());
                     code.push(record);
                 }
             }
         }
     }
-    Ok(Cells {
-        inputs: resolved,
-        code,
-        commitment: finish(h),
-    })
+    Ok(code)
 }
 
-fn commit_cell(h: &mut Blake2b, point: &OutPoint, cell: &Cell) {
-    h.update(point.as_slice());
-    h.update(cell.hashes().content.as_slice());
+fn dependency_hasher() -> Blake2b {
+    let mut hash = new_blake2b();
+    hash.update(b"Stem intent Cell Deps\0");
+    hash
+}
+
+fn header_commitment(headers: &[Header]) -> Byte32 {
+    let mut hash = new_blake2b();
+    hash.update(b"Stem authorized Header Deps\0");
+    hash.update(&(headers.len() as u64).to_le_bytes());
+    for item in headers {
+        hash.update(&item.encode());
+    }
+    finish(hash)
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct LockAuthorization {
     raw_id: Byte32,
     pub(crate) cells: Byte32,
+    dependencies: Option<Byte32>,
     headers: Byte32,
     proofs: Byte32,
 }
@@ -108,14 +143,9 @@ impl LockAuthorization {
         network: &Byte32,
         tx: &Transaction,
         cells: Byte32,
+        dependencies: Option<Byte32>,
         headers: &[Header],
     ) -> Self {
-        let mut header = new_blake2b();
-        header.update(b"Stem authorized Header Deps\0");
-        header.update(&(headers.len() as u64).to_le_bytes());
-        for item in headers {
-            header.update(&item.encode());
-        }
         let mut proof = new_blake2b();
         proof.update(b"Stem group proofs\0");
         for witness in tx
@@ -129,9 +159,16 @@ impl LockAuthorization {
         Self {
             raw_id: tx.id(network),
             cells,
-            headers: finish(header),
+            dependencies,
+            headers: header_commitment(headers),
             proofs: finish(proof),
         }
+    }
+
+    pub(crate) fn intent_dependencies(&self, network: &Byte32) -> Option<Byte32> {
+        self.dependencies
+            .as_ref()
+            .map(|deps| intent_commitment(network, deps, &self.headers))
     }
 
     pub(crate) fn digest(&self, network: &Byte32, lock: &Script) -> Byte32 {
@@ -151,6 +188,32 @@ impl LockAuthorization {
 }
 
 impl Transaction {
+    /// Commit to the exact declared and expanded dependencies of an intent.
+    /// The solver preserves these ordered dependencies when assembling inputs
+    /// and outputs. The signer obtains trusted contents before authorization.
+    pub fn intent_dependency_commitment(
+        &self,
+        network: &Byte32,
+        cells: impl FnMut(&OutPoint) -> Result<Cell>,
+        headers: impl FnMut(&Byte32) -> Result<Header>,
+    ) -> Result<Byte32> {
+        ensure!(
+            self.operation().is_none(),
+            "control transaction cannot carry intents"
+        );
+        let consumed = self.inputs().map(|input| input.previous_output).collect();
+        let mut digest = dependency_hasher();
+        resolve_dependencies(
+            self,
+            &mut ResolutionBudget::default(),
+            &consumed,
+            cells,
+            |bytes| digest.update(bytes),
+        )?;
+        let header = header_commitment(&self.resolve_signing_headers(network, headers)?);
+        Ok(intent_commitment(network, &finish(digest), &header))
+    }
+
     /// Resolve the exact signing material without a candidate block. The caller
     /// supplies independently trusted Cell and Header contents for each reference.
     /// Mempool admission separately checks parent time, liveness and Capacity.
@@ -160,13 +223,13 @@ impl Transaction {
         group_index: u16,
         lock: &Script,
         cells: impl FnMut(&OutPoint) -> Result<Cell>,
-        mut headers: impl FnMut(&Byte32) -> Result<Header>,
+        headers: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Byte32> {
         ensure!(
             self.operation().is_none(),
             "control transactions use certificate authorization"
         );
-        let resolved = resolve_cells(self, &mut ResolutionBudget::default(), cells)?;
+        let resolved = resolve_cells(self, &mut ResolutionBudget::default(), false, cells)?;
         let locks: BTreeSet<_> = resolved
             .inputs
             .iter()
@@ -179,19 +242,38 @@ impl Transaction {
                 .is_some_and(|item| item == &lock.as_bytes()),
             "Lock Script does not match the derived group index"
         );
-        let headers = self
-            .header_deps()
+        let headers = self.resolve_signing_headers(network, headers)?;
+        Ok(LockAuthorization::new(
+            network,
+            self,
+            resolved.commitment,
+            resolved.dependencies,
+            &headers,
+        )
+        .digest(network, lock))
+    }
+
+    fn resolve_signing_headers(
+        &self,
+        network: &Byte32,
+        mut headers: impl FnMut(&Byte32) -> Result<Header>,
+    ) -> Result<Vec<Header>> {
+        self.header_deps()
             .map(|id| {
                 let header = headers(&id)?;
                 ensure!(header.id(network) == id, "Header Dep does not match its ID");
                 Ok(header)
             })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(
-            LockAuthorization::new(network, self, resolved.commitment, &headers)
-                .digest(network, lock),
-        )
+            .collect()
     }
+}
+
+fn intent_commitment(network: &Byte32, cells: &Byte32, headers: &Byte32) -> Byte32 {
+    hash(
+        b"Stem intent dependencies\0",
+        network,
+        &[cells.as_slice(), headers.as_slice()],
+    )
 }
 
 fn finish(h: Blake2b) -> Byte32 {

@@ -65,6 +65,7 @@ impl Fixture {
                 development_validators: vec![],
                 stake: None,
                 bridge: None,
+                lineage_type: None,
                 network: [5; 32].pack(),
                 genesis_time_ms: TIME,
                 capacity,
@@ -539,3 +540,9 @@ mod staking;
 
 #[path = "native_store/bridge.rs"]
 mod bridge;
+
+#[path = "native_store/intent.rs"]
+mod intent;
+
+#[path = "native_store/lineage.rs"]
+mod lineage;

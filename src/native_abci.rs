@@ -261,6 +261,28 @@ impl App {
             request.height.try_into()?
         };
         let value = match request.path.as_str() {
+            "/stem/lineage" if request.prove => {
+                ensure!(
+                    requested == tip,
+                    "Lineage proof requires the current height"
+                );
+                let id = Byte32::from_slice(&request.data)?;
+                let lineage = store.prove_current_lineage(&id)?;
+                let (head, cell, cell_path) = if let Some((head, cell, path)) = lineage.head {
+                    let encoded = record::encode_cell(&head.out_point, &cell);
+                    (Some(head.encode()), Some(encoded), Some(path.encode()?))
+                } else {
+                    (None, None, None)
+                };
+                let hex = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
+                serde_json::to_vec(&serde_json::json!({
+                    "record": head.as_deref().map(hex),
+                    "proof": hex(&lineage.system_path.encode()?),
+                    "cell": cell.as_deref().map(hex),
+                    "cell_proof": cell_path.as_deref().map(hex),
+                }))?
+                .into()
+            }
             "/stem/header" if !request.prove => store
                 .header(requested)?
                 .context("Header outside local retention window")?

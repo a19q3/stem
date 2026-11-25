@@ -1,5 +1,5 @@
 {
-  "protocol": "Telegraph",
+  "protocol": "Strand",
   "integer_order": "little",
   "types": [
     {
@@ -751,6 +751,15 @@
         { "name": "reserved_capacity", "type": "CompactUint64" },
         { "name": "units", "type": "Uint128" },
         { "name": "reserved_units", "type": "Uint128" }
+      ]
+    },
+    {
+      "name": "LineageHead",
+      "kind": "sequence",
+      "fields": [
+        { "name": "out_point", "type": "OutPoint" },
+        { "name": "version", "type": "CompactUint64" },
+        { "name": "executor", "type": "Byte32" }
       ]
     }
   ]

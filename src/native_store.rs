@@ -30,6 +30,8 @@ mod cell_query;
 pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
 pub use history_index::HistoryIndex;
+mod lineage;
+pub use lineage::LineageProof;
 mod staking;
 mod state_snapshot;
 
@@ -109,14 +111,20 @@ impl ResourceFees {
         bytes
     }
 
-    fn cycle_budget(self, resolved: &ResolvedTransaction, write_bytes: u64) -> Result<u64> {
+    fn cycle_budget(
+        self,
+        resolved: &ResolvedTransaction,
+        reads: u64,
+        read_bytes: u64,
+        write_bytes: u64,
+    ) -> Result<u64> {
         let fixed = [
             (
                 self.encoded_byte,
                 resolved.transaction().as_slice().len() as u64,
             ),
-            (self.cell_read, resolved.cell_reads() as u64),
-            (self.cell_read_byte, resolved.resolved_cell_bytes() as u64),
+            (self.cell_read, reads),
+            (self.cell_read_byte, read_bytes),
             (self.cell_write_byte, write_bytes),
             (self.cell_delete, resolved.inputs().len() as u64),
         ]
@@ -140,6 +148,7 @@ pub struct Spec {
     pub development_validators: Vec<([u8; 32], i64)>,
     pub stake: Option<StakeGenesis>,
     pub bridge: Option<BridgeGenesis>,
+    pub lineage_type: Option<Byte32>,
     pub network: Byte32,
     pub genesis_time_ms: u64,
     pub capacity: CapacityPolicy,
@@ -162,6 +171,7 @@ pub struct Store {
     genesis_validators: Vec<([u8; 32], i64)>,
     staking: Option<Staking>,
     bridge: Option<Bridge>,
+    lineage: Option<Byte32>,
     genesis_id: Byte32,
     tip: Header,
     history: History,
@@ -209,6 +219,13 @@ pub struct Prepared {
     receipts: Vec<Receipt>,
     validator_updates: Vec<stem_stake::Member>,
     batch: Batch,
+}
+
+struct Overlay {
+    live: BTreeMap<OutPoint, Option<LiveCell>>,
+    stake: Option<StagedStake>,
+    bridge: Option<StagedBridge>,
+    lineages: lineage::Heads,
 }
 
 impl Prepared {
@@ -303,11 +320,23 @@ impl Store {
         let origin = Origin::new(&network, &context);
         let mut batch = Batch::default();
         let mut cell_edit = cells.edit(cells.empty_root(), |_| Ok(None));
+        if let Some(marker) = &spec.lineage_type {
+            ensure!(
+                *marker != Byte32::default(),
+                "zero Lineage Type Script code hash"
+            );
+        }
         let mut allocations = Vec::with_capacity(spec.development_cells.len());
         spec.development_cells
             .iter()
             .try_fold(0u64, |sum, (point, cell)| -> Result<u64> {
                 ensure!(!point.is_null(), "null genesis allocation OutPoint");
+                ensure!(
+                    spec.lineage_type.as_ref().is_none_or(|code| !cell
+                        .type_scripts()
+                        .any(|script| lineage::is_marker(code, &script))),
+                    "Lineages require post-genesis registration"
+                );
                 spec.capacity.verify(cell)?;
                 let cell = LiveCell {
                     cell: cell.clone(),
@@ -338,6 +367,14 @@ impl Store {
         let id = system.record_key(PARAMETER_KEY);
         system_edit.set(id, Some(system.value_hash(&params)))?;
         batch.put(state_key(STATE_RECORD, Namespace::System, &id), params);
+        if let Some(marker) = &spec.lineage_type {
+            let id = system.record_key(b"lineage/type");
+            system_edit.set(id, Some(system.value_hash(marker.as_slice())))?;
+            batch.put(
+                state_key(STATE_RECORD, Namespace::System, &id),
+                marker.as_slice(),
+            );
+        }
         let staking = if let Some((staking, state, config, snapshot)) = configured_staking {
             for (name, value) in state
                 .genesis_records()
@@ -425,6 +462,7 @@ impl Store {
             genesis_validators: validators,
             staking,
             bridge,
+            lineage: spec.lineage_type.clone(),
             genesis_id,
             tip,
             history,
@@ -710,9 +748,7 @@ impl Store {
             "block transaction count exceeded"
         );
         let mut budget = Budget::new(self.limits);
-        let mut stake = self.stage_stake()?;
-        let mut bridge = self.bridge.as_ref().map(Bridge::stage);
-        let mut live = BTreeMap::<OutPoint, Option<LiveCell>>::new();
+        let mut overlay = self.overlay()?;
         let mut receipts = Vec::with_capacity(transactions.len());
         let mut fees = 0u64;
         let total_bytes = transactions
@@ -747,9 +783,7 @@ impl Store {
                     &context,
                     &origin,
                     &mut budget,
-                    &mut live,
-                    &mut stake,
-                    &mut bridge,
+                    &mut overlay,
                     |resolved, limit| {
                         if width == 1 {
                             self.cache.verify(resolved, limit, false)
@@ -782,8 +816,8 @@ impl Store {
         let mut cells = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
             self.node(Namespace::Cells, id)
         });
-        let mut cell_changes = Vec::with_capacity(live.len());
-        for (point, record) in live {
+        let mut cell_changes = Vec::with_capacity(overlay.live.len());
+        for (point, record) in overlay.live {
             let id = record::cell_key(&self.cells, &point);
             let value = record.map(|record| {
                 let bytes = record::encode_cell(&point, &record);
@@ -819,7 +853,7 @@ impl Store {
             None
         };
         let mut validator_updates = Vec::new();
-        if let Some((staking, stake)) = self.staking.as_ref().zip(stake) {
+        if let Some((staking, stake)) = self.staking.as_ref().zip(overlay.stake) {
             let (records, updates) = staking.finish(stake, height)?;
             validator_updates = updates;
             for (name, value) in records {
@@ -828,7 +862,7 @@ impl Store {
                 batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
             }
         }
-        if let Some(bridge) = bridge {
+        if let Some(bridge) = overlay.bridge {
             for (name, value) in bridge.finish(self, fees, total_fees)? {
                 let id = self.system.record_key(&name);
                 let hash = value.map(|value| {
@@ -838,6 +872,16 @@ impl Store {
                 });
                 system_changes.push((id, hash));
             }
+        }
+        for (id, head) in overlay.lineages {
+            let id = self.system.record_key(&lineage::record_key(&id));
+            let hash = head.map(|head| {
+                let value = head.encode();
+                let hash = self.system.value_hash(&value);
+                batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
+                hash
+            });
+            system_changes.push((id, hash));
         }
         system_changes.sort_unstable_by_key(|(id, _)| *id);
         system.set_batch(&system_changes, |id, _, value| {
@@ -890,13 +934,11 @@ impl Store {
         max_bytes: u64,
     ) -> Result<Vec<Transaction>> {
         let mut budget = Budget::new(self.limits);
-        let mut stake = self.stage_stake()?;
-        let mut bridge = self.bridge.as_ref().map(Bridge::stage);
+        let mut overlay = self.overlay()?;
         let mut wire_bytes = max_bytes;
         let context =
             HeaderContext::after(&self.network, &self.tip, timestamp_ms, Byte32::default())?;
         let origin = Origin::new(&self.network, &context);
-        let mut live = BTreeMap::new();
         let mut selected = Vec::new();
         for tx in transactions {
             if selected.len() == self.limits.transaction_count as usize
@@ -916,9 +958,7 @@ impl Store {
                     &context,
                     &origin,
                     &mut budget,
-                    &mut live,
-                    &mut stake,
-                    &mut bridge,
+                    &mut overlay,
                     |resolved, limit| self.cache.verify(resolved, limit, true),
                 )
                 .is_ok()
@@ -942,11 +982,18 @@ impl Store {
             &context,
             &Origin::new(&self.network, &context),
             &mut Budget::new(self.limits),
-            &mut BTreeMap::new(),
-            &mut self.stage_stake()?,
-            &mut self.bridge.as_ref().map(Bridge::stage),
+            &mut self.overlay()?,
             |resolved, limit| self.cache.verify(resolved, limit, false),
         )
+    }
+
+    fn overlay(&self) -> Result<Overlay> {
+        Ok(Overlay {
+            live: BTreeMap::new(),
+            stake: self.stage_stake()?,
+            bridge: self.bridge.as_ref().map(Bridge::stage),
+            lineages: BTreeMap::new(),
+        })
     }
 
     fn stage(
@@ -955,11 +1002,15 @@ impl Store {
         context: &HeaderContext,
         origin: &Origin,
         budget: &mut Budget,
-        live: &mut BTreeMap<OutPoint, Option<LiveCell>>,
-        stake: &mut Option<StagedStake>,
-        bridge: &mut Option<StagedBridge>,
+        overlay: &mut Overlay,
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
     ) -> Result<Receipt> {
+        let Overlay {
+            live,
+            stake,
+            bridge,
+            lineages,
+        } = overlay;
         let mut next = *budget;
         charge(
             &mut next.bytes,
@@ -1037,17 +1088,22 @@ impl Store {
             };
             (resolved, changes)
         };
-        charge(
-            &mut next.reads,
-            resolved.cell_reads() as u64,
-            "block Cell reads",
-        )?;
-        charge(
-            &mut next.read_bytes,
-            resolved.resolved_cell_bytes() as u64,
-            "block Cell read bytes",
-        )?;
         let id = tx.id(&self.network);
+        let lineage_changes = self
+            .lineage
+            .as_ref()
+            .map(|code| {
+                lineage::changes(self, code, lineages, &resolved, &id, &changes.omit_outputs)
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let lineage_reads = lineage_changes.len() as u64;
+        let reads = resolved.cell_reads() as u64 + lineage_reads;
+        let read_bytes = resolved.resolved_cell_bytes() as u64
+            + lineage_reads
+                * (lineage::KEY_BYTES + stem_ledger::lineage::Head::MAX_ENCODED_BYTES as u64);
+        charge(&mut next.reads, reads, "block Cell reads")?;
+        charge(&mut next.read_bytes, read_bytes, "block Cell read bytes")?;
         let outputs = resolved
             .outputs()
             .iter()
@@ -1080,12 +1136,25 @@ impl Store {
             deletion_bytes,
             "block Cell deletion bytes",
         )?;
+        let lineage_bytes = lineage_changes
+            .values()
+            .map(|head| {
+                lineage::KEY_BYTES + head.as_ref().map_or(0, |head| head.encode().len() as u64)
+            })
+            .sum();
+        charge(
+            &mut next.write_bytes,
+            lineage_bytes,
+            "block Lineage write bytes",
+        )?;
         let cycle_limit = self.limits.transaction_cycles.min(next.cycles);
         let cycle_limit = if tx.operation().is_none() {
-            cycle_limit.min(
-                self.fees
-                    .cycle_budget(&resolved, budget.write_bytes - next.write_bytes)?,
-            )
+            cycle_limit.min(self.fees.cycle_budget(
+                &resolved,
+                reads,
+                read_bytes,
+                budget.write_bytes - next.write_bytes,
+            )?)
         } else {
             cycle_limit
         };
@@ -1094,6 +1163,7 @@ impl Store {
 
         live.extend(tx.inputs().map(|input| (input.previous_output, None)));
         live.extend(outputs);
+        lineages.extend(lineage_changes);
         let protocol_result = changes.protocol_result.clone();
         if let Some(bridge) = bridge.as_mut() {
             bridge.apply(changes);

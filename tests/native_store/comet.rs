@@ -155,7 +155,7 @@ fn compile_types(home: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_spec(path: &Path, spec: &Spec) -> Result<()> {
+pub(super) fn write_spec(path: &Path, spec: &Spec) -> Result<()> {
     let committee = spec
         .development_validators
         .iter()
@@ -177,6 +177,7 @@ fn write_spec(path: &Path, spec: &Spec) -> Result<()> {
         "limits": spec.limits,
         "development_validators": committee,
         "development_cells": cells,
+        "lineage_type": spec.lineage_type.as_ref().map(|hash| format!("0x{}", hex::encode(hash.as_slice()))),
     });
     fs::write(path, serde_json::to_vec(&spec)?)?;
     Ok(())
@@ -370,6 +371,14 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     compile_types(&home)?;
     let mut fixture = spec(&genesis, &home)?;
     let benchmark = bench::Benchmark::prepare(&mut fixture, &home, &output)?;
+    let scenarios = if benchmark.is_none() {
+        Some((
+            super::intent::Swap::fund(&mut fixture)?,
+            super::lineage::FixtureLineage::fund(&mut fixture)?,
+        ))
+    } else {
+        None
+    };
     let spec_path = home.join("stem-genesis.json");
     write_spec(&spec_path, &fixture.spec)?;
     let identity = Command::new(env!("CARGO_BIN_EXE_stem"))
@@ -637,6 +646,171 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     println!(
         "native payment H={height}, two Type Groups H={composed_height} cycles={total_cycles}, four replicas share H+1 AppHash, restarted replica agrees at H={target}, remote snapshot H={restored}"
     );
+    let (swap, lineage) = scenarios.context("missing network scenarios")?;
+    let intent = swap.sign(&fixture, &spec_path, 500)?;
+    let confirmed = nodes[2].rpc(
+        &client,
+        &format!(
+            "broadcast_tx_commit?tx=0x{}",
+            hex::encode(intent.as_slice())
+        ),
+    )?;
+    ensure!(
+        confirmed["check_tx"]["code"].as_u64() == Some(0)
+            && confirmed["tx_result"]["code"].as_u64() == Some(0),
+        "sponsored atomic asset exchange failed: {confirmed}"
+    );
+    let trade_at: u64 = confirmed["height"]
+        .as_str()
+        .context("trade height")?
+        .parse()?;
+    ensure!(trade_at > height_with_fees, "trade height did not advance");
+    poll(
+        "signed sponsor and trade on all replicas",
+        Duration::from_secs(15),
+        || {
+            let heights = nodes
+                .iter()
+                .chain([&observer])
+                .map(|node| node.signed_height(&client))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(heights
+                .into_iter()
+                .all(|height| height > trade_at)
+                .then_some(()))
+        },
+    )?;
+    let trade_header = nodes[0].header(&client, trade_at)?;
+    for node in nodes.iter().chain([&observer]) {
+        assert_eq!(node.header(&client, trade_at)?, trade_header);
+        let signed = node.rpc(&client, &format!("commit?height={}", trade_at + 1))?;
+        let app_hash = signed["signed_header"]["header"]["app_hash"]
+            .as_str()
+            .context("trade AppHash")?;
+        assert_eq!(
+            hex::decode(app_hash)?,
+            trade_header.app_hash(&fixture.spec.network).as_slice()
+        );
+    }
+    fs::write(
+        output.join("sponsored-trade.json"),
+        serde_json::to_vec_pretty(&confirmed)?,
+    )?;
+    println!(
+        "sponsored two-asset trade H={trade_at} cycles={}",
+        confirmed["tx_result"]["gas_used"]
+    );
+    let (lineage_id, register, update) = lineage.example(&fixture)?;
+    let mut lifecycle = Vec::new();
+    for tx in [&register, &update] {
+        let committed = nodes[0].rpc(
+            &client,
+            &format!("broadcast_tx_commit?tx=0x{}", hex::encode(tx.as_slice())),
+        )?;
+        ensure!(
+            committed["check_tx"]["code"].as_u64() == Some(0)
+                && committed["tx_result"]["code"].as_u64() == Some(0),
+            "Lineage transition failed: {committed}"
+        );
+        lifecycle.push(committed);
+    }
+    let successor_at: u64 = lifecycle[1]["height"]
+        .as_str()
+        .context("Lineage height")?
+        .parse()?;
+    poll(
+        "Lineage successor on all replicas",
+        Duration::from_secs(15),
+        || {
+            let heights = nodes
+                .iter()
+                .chain([&observer])
+                .map(|node| node.signed_height(&client))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(heights
+                .into_iter()
+                .all(|height| height > successor_at)
+                .then_some(()))
+        },
+    )?;
+    let mut proofs = Vec::new();
+    for node in nodes.iter().chain([&observer]) {
+        let payload = node.rpc(
+            &client,
+            &format!(
+                "abci_query?path=%22%2Fstem%2Flineage%22&prove=true&data=0x{}",
+                hex::encode(lineage_id.as_slice())
+            ),
+        )?;
+        let response = &payload["response"];
+        ensure!(
+            response["code"].as_u64() == Some(0),
+            "Lineage query failed: {payload}"
+        );
+        let height = response["height"]
+            .as_str()
+            .context("Lineage proof height")?
+            .parse()?;
+        let payload = STANDARD.decode(response["value"].as_str().context("Lineage proof")?)?;
+        let payload: Value = serde_json::from_slice(&payload)?;
+        let record: ckb_jsonrpc_types::JsonBytes =
+            serde_json::from_value(payload["record"].clone())?;
+        let proof: ckb_jsonrpc_types::JsonBytes = serde_json::from_value(payload["proof"].clone())?;
+        let head = stem_ledger::lineage::Head::decode(record.as_bytes())?;
+        let cell: ckb_jsonrpc_types::JsonBytes = serde_json::from_value(payload["cell"].clone())?;
+        let cell_proof: ckb_jsonrpc_types::JsonBytes =
+            serde_json::from_value(payload["cell_proof"].clone())?;
+        let (out_point, cell) = record::decode_cell(cell.as_bytes())?;
+        assert_eq!(head.version, 1);
+        assert_eq!(out_point, head.out_point);
+        assert_eq!(
+            head.out_point,
+            OutPoint::new(update.id(&fixture.spec.network), 0)
+        );
+        let header = node.header(&client, height)?;
+        let proof = stem::native_store::LineageProof {
+            head: Some((
+                head,
+                cell,
+                stem_ledger::patricia::Proof::decode(cell_proof.as_bytes())?,
+            )),
+            system_path: stem_ledger::patricia::Proof::decode(proof.as_bytes())?,
+        };
+        assert!(
+            proof.verify(
+                &fixture.spec.network,
+                &header,
+                &lineage_id,
+                fixture
+                    .spec
+                    .lineage_type
+                    .as_ref()
+                    .context("fixture Lineage code hash")?,
+            )
+        );
+        poll(
+            "signed successor for Lineage proof",
+            Duration::from_secs(10),
+            || Ok((node.signed_height(&client)? > height).then_some(())),
+        )?;
+        let signed = node.rpc(&client, &format!("commit?height={}", height + 1))?;
+        let app_hash = signed["signed_header"]["header"]["app_hash"]
+            .as_str()
+            .context("Lineage AppHash")?;
+        assert_eq!(
+            hex::decode(app_hash)?,
+            header.app_hash(&fixture.spec.network).as_slice()
+        );
+        proofs.push(json!({"height": height, "payload": payload, "signed_successor": signed}));
+    }
+    fs::write(
+        output.join("lineage-lifecycle.json"),
+        serde_json::to_vec_pretty(&json!({
+            "lineage_id": hex::encode(lineage_id.as_slice()),
+            "transitions": lifecycle,
+            "proofs": proofs,
+        }))?,
+    )?;
     Ok(())
 }
 

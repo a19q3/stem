@@ -7,7 +7,7 @@ use ckb_types::{bytes::Bytes, packed::Byte32, prelude::Entity};
 
 use crate::{
     hash,
-    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
 

@@ -4,11 +4,11 @@ The default `stem run` executable runs the native state machine. It commits curr
 
 Block preparation sorts changed record hashes per Patricia namespace, then passes each subtree a contiguous range of changed keys. Shared paths are loaded and rebuilt once for the block. The same edit removes superseded nodes. Snapshot restoration builds both trees from ordered records in batches and checks the roots before the atomic write.
 
-## Native ledger
+## Polytype Cell Model
 
-[Stem's Telegraph schema](ledger/schemas/telegraph.json) encodes the Cell with inline scripts, an optional dense Type Script vector and application Data. The raw transaction contains inputs, dependencies, Cells, Group Messages and optional protocol or expiry fields. The outer transaction contains proof data, seals and any certificate. Script identity keeps the complete CKB Script hash. CKB L1 wire types still use Molecule. The indexed and historical Molecule layouts are measured by the encoding suite.
+[Stem's Strand schema](ledger/schemas/strand.json) encodes the Cell with inline scripts, an optional dense Type Script vector and application Data. The raw transaction contains inputs, dependencies, Cells, Group Messages and optional protocol or expiry fields. The outer transaction contains proof data, seals and any certificate. Script identity keeps the complete CKB Script hash. CKB L1 wire types still use Molecule. The indexed and historical Molecule layouts are measured by the encoding suite.
 
-The Type Script set is sorted by the full Telegraph encoding of each Script, including code hash, hash type, and args. Constructors sort the set. Decoders require strict ascending order. The limits are 32 Type Scripts, 16 KiB per Script, and 64 KiB of Type Script bytes per Cell. Ordinary transactions are limited to 512 KiB. A standalone Cell has a 2 MiB limit, which permits larger genesis allocations. Resolution bounds both the number and total bytes of references, including members of a Dep Group.
+The Type Script set is sorted by the full Strand encoding of each Script, including code hash, hash type, and args. Constructors sort the set. Decoders require strict ascending order. The limits are 32 Type Scripts, 16 KiB per Script, and 64 KiB of Type Script bytes per Cell. Ordinary transactions are limited to 512 KiB. A standalone Cell has a 2 MiB limit, which permits larger genesis allocations. Resolution bounds both the number and total bytes of references, including members of a Dep Group.
 
 The network-configured Storage Bond is the sum of canonical Cell bytes and fixed state overhead, multiplied by shannons per byte. The Cell encodes one presence byte, eight Capacity bytes, the complete Lock Script, and four Data length bytes plus the payload. A nonempty Type Script vector contributes four count bytes and the full encodings of its Scripts. Each Script uses 37 bytes plus its arguments. Ordinary transactions consume the checked difference between input and output Capacity as fees. The native store commits cumulative extinguished Capacity under the SystemRoot.
 
@@ -17,6 +17,16 @@ Every transaction derives its Lock Groups from the consumed Cells and its Type G
 Transactions assign group indices by role and the full packed CKB Script bytes. Sparse Witness entries carry a 16-bit group index, proof data and a seal. The standard secp256k1 Lock Script checks a digest binding the network, raw transaction ID, Lock role and full Script hash, resolved input Cells, explicit Cell Deps and expanded Dep Group members, full declared Header Deps, and all nonempty proof data. The raw ID includes Group Messages. Each group can add its seal independently, and the transaction root commits the full Witness. The VM cache also binds Cell origins, the candidate height and committed parent Header ID. Cache hits charge the measured cycles.
 
 The Cell and system roots use the same incremental Patricia implementation. Each state record appears once, with its hash in the leaf. An MMR commits preceding native Header IDs and stores its leaf count and peaks on the application commit path. Separate ordered Merkle trees authenticate transactions and receipts. A single synchronous RocksDB batch writes affected nodes, records, execution, the Header and the MMR frontier. State snapshots contain canonical records and the retained Header suffix. Installation requires an independently authenticated application hash and reconstructs both state roots.
+
+### Independently signed pairs and sponsorship
+
+The RISC-V Intent Lock uses the same recoverable signature syscall as the regular Lock. It signs one exact input, the exact delivered Cell, ordered resolved dependencies, expiry and a fee ceiling. The input's absolute position selects the delivery output at execution. Dependency resolution shares the same validation as the complete signature path, with an additional digest for transactions carrying paired terms. A sponsor uses input and output 0 and signs the beneficiary pair at position 1. Paying at most the actual transaction fee is checked against resolved Capacity. The wallet derives group indices at assembly and attaches all partial proof data before complete transaction signers seal their groups.
+
+### Lineage registry
+
+An opt-in network pins the Data hash of the Lineage Type Script in genesis. The marker uses a stable LineageId and leaves Cell Data untouched, so another Type Script can keep its existing Data layout. Each verified lifecycle transaction updates the actual UTXO and a compact SystemRoot record in the same batch. The record names the current head OutPoint, version and Executor content hash. Registration reads an explicitly consumed anchor and verifies the Executor against resolved Cell Deps. Replacement and retirement require the current head's Lock and every applicable Type Group. The authenticated lookup returns the registry path and the current Live Cell path under one Header. Retirement returns an absence proof. The registration anchor prevents reuse without a permanent tombstone.
+
+The current Store consumes explicit OutPoints. A future bounded command must resolve declared Lineage IDs against the candidate overlay at its canonical block position. The Executor should see only authorized resources and produce a bounded candidate, with the same validation and atomic delta path as explicit transactions. Fees and Keeper attempts should use the same bounded authorization. Conflict scheduling must include both stable Lineage writes and ordinary UTXO accesses. The Executor ABI, dynamically resolved validation and fee-only failure handling are open. [Fuel access lists](https://docs.fuel.network/docs/specs/protocol/tx-validity/) [Sui shared-object inputs](https://www.docs.sui.io/develop/transactions/ptbs/inputs-and-results)
 
 ## CKB-VM host
 
@@ -31,7 +41,7 @@ Calls retain the CKB buffer convention. `a0` is the buffer pointer, `a1` points 
 | 2051 and 2061 | Full native Transaction and its network-bound ID |
 | 2052 and 2062 | Current group's complete Script and Script hash |
 | 2071 | Full native Cell, including Type Scripts and Cell Data |
-| 2081 | Capacity 0, Data hash 1, Lock Script 2, Lock hash 3, occupied Capacity 6 |
+| 2081 | Capacity 0, Data hash 1, Lock Script 2, Lock hash 3, occupied Capacity 6, canonical Cell content hash 7 |
 | 2110 | Canonically encoded full Type Script vector |
 | 2111 | Type Script at the index in `a5` |
 | 2112 | Type Script hash at the index in `a5` |
@@ -44,6 +54,7 @@ Calls retain the CKB buffer convention. `a0` is the buffer pointer, `a1` points 
 | 2121 | Recover a 33-byte compressed secp256k1 key from a 65-byte compact seal at `a0` and a 32-byte digest at `a1`. Writes the key at `a2`. Returns 4 for an invalid or high-S seal. Each call charges 1,900,000 cycles, including invalid seals. |
 | 2122 | Candidate height and committed parent time as two little-endian u64 values, followed by the 32-byte parent Header ID. Source and index must be zero. |
 | 2123 | The encoded Group Message. Source 0 and index 0 select the current group. Source 1 selects the absolute group index. |
+| 2124 | For paired Lock authorization, the 32-byte network-bound ordered dependency digest, little-endian u64 transaction fee and one Group Message presence byte. Source and index must be zero. |
 | 2072, 2082 | Native Header, or fields height 0, time 1, parent ID 2, transaction root 3, Cell root 4, system root 5, history root 6, receipt root 7 |
 
 The native host uses the existing Cell Data, input, Header and process call numbers. Call 2083 field 1 returns the nine-byte native Since. Spawn and Exec can read group proof bytes using the absolute group index as the witness data index. A creation header is visible when named by a header dep. Header source 5 and index 0 read the committed parent directly. The parent ID and candidate height are included in the VM cache key. Stem headers carry no extension data. Fields 4 and 5 under 2081 have no native value. Contracts discover the Type Script set via 2110–2113.
@@ -70,7 +81,7 @@ Each native lane pins a separate L1 vault Type ID. A mint certificate binds the 
 
 Stem fees extinguish Capacity. On bridged networks the same atomic write updates the `bridge/backing` SystemRoot record. A certified mint adds recognized reserve and circulating Capacity. A burn moves Capacity from circulation to pending withdrawals. A certified payout subtracts that amount from both pending withdrawals and recognized reserve. Moving the reserve between lanes or rotating a vault preserves the aggregate. Its unallocated balance must equal the cumulative extinguished fees. The accounting excludes L1 vault base Capacity and external L1 fee inputs. Wrapped units remain in their respective lanes.
 
-`/stem/bridge-backing` returns the Telegraph record and its Patricia path. `/stem/bridge-lane` authenticates one lane's reserved balances, vault OutPoint and both withdrawal nonce frontiers. Confirmed CKB observations depend on the configured guardian quorum and the L1 confirmation policy. Unallocated Capacity is an accounting balance. Fee attribution by lane, payable balances, disbursement authority, CKB checkpoint automation and the production bridge reorganization policy remain open. Stake Cells are separate L1 resources. The cumulative fee tally at `/stem/extinguished-fees` also covers development fees.
+`/stem/bridge-backing` returns the Strand record and its Patricia path. `/stem/bridge-lane` authenticates one lane's reserved balances, vault OutPoint and both withdrawal nonce frontiers. Confirmed CKB observations depend on the configured guardian quorum and the L1 confirmation policy. Unallocated Capacity is an accounting balance. Fee attribution by lane, payable balances, disbursement authority, CKB checkpoint automation and the production bridge reorganization policy remain open. Stake Cells are separate L1 resources. The cumulative fee tally at `/stem/extinguished-fees` also covers development fees.
 
 ## Weighted consensus experiments
 

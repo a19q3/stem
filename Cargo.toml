@@ -38,7 +38,7 @@ blst = { version = "=0.3.17", features = ["no-threads"] }
 ckb-vm = { workspace = true, features = ["asm"] }
 
 [workspace]
-members = ["bridge-wire", "ledger", "stake", "vm", "vendor/ckb-script"]
+members = ["bridge-wire", "intent", "ledger", "stake", "vm", "vendor/ckb-script"]
 default-members = ["."]
 exclude = ["contracts", "vendor/ckb-script/fuzz", "vendor/ckb-vm", "vendor/ckb-vm/definitions", "vendor/ckb-vm/fuzz"]
 resolver = "3"

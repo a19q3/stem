@@ -36,6 +36,10 @@ fn build(workspace: &Path, target: &Path) -> Result<()> {
             "stem-lock",
             "--bin",
             "bridge-udt",
+            "--bin",
+            "stem-intent-lock",
+            "--bin",
+            "stem-lineage",
         ])
         .arg("--manifest-path")
         .arg(manifest)

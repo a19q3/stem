@@ -1,4 +1,4 @@
-//! CKB-VM host for Stem's native Telegraph ledger.
+//! CKB-VM host for Stem's native Strand ledger.
 
 mod crypto;
 
@@ -50,6 +50,7 @@ pub const LOAD_GROUP_SIGNING_DIGEST: u64 = 2119;
 pub const LOAD_GROUP_MINTED_UNITS: u64 = 2120;
 pub const LOAD_BLOCK_CONTEXT: u64 = 2122;
 pub const LOAD_GROUP_MESSAGE: u64 = 2123;
+pub const LOAD_INTENT_CONTEXT: u64 = 2124;
 
 #[derive(Clone)]
 struct GroupContext {
@@ -440,6 +441,19 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 };
                 store_data(machine, message)
             }
+            LOAD_INTENT_CONTEXT => {
+                if source != 0 || index != 0 || group.kind != ScriptGroupKind::Lock {
+                    return Ok(status(machine, ITEM_MISSING));
+                }
+                let Some(deps) = context.tx.intent_dependency_commitment() else {
+                    return Ok(status(machine, ITEM_MISSING));
+                };
+                let mut value = [0; 41];
+                value[..32].copy_from_slice(deps.as_slice());
+                value[32..40].copy_from_slice(&context.tx.fee().to_le_bytes());
+                value[40] = u8::from(tx.messages().len() != 0);
+                store_data(machine, &value)
+            }
             LOAD_GROUP_SIGNING_DIGEST => {
                 if source != 0 || index != 0 || group.kind != ScriptGroupKind::Lock {
                     return Ok(status(machine, ITEM_MISSING));
@@ -530,6 +544,11 @@ fn load_cell<M: SupportMachine>(
                 .bond(cell.as_slice().len())
                 .map_err(|error| Error::External(error.to_string()))?;
             store_data(machine, &capacity.to_le_bytes())
+        }
+        (LOAD_CELL_BY_FIELD_SYSCALL_NUMBER, 7) => {
+            machine
+                .add_cycles_no_checking(transferred_byte_cycles(cell.as_slice().len() as u64))?;
+            store_data(machine, cell.content_hash().as_slice())
         }
         (LOAD_CELL_TYPE_SCRIPTS, _) => store_data(machine, &cell.type_scripts_bytes()),
         (LOAD_CELL_TYPE_SCRIPT | LOAD_CELL_TYPE_SCRIPT_HASH, _) => {

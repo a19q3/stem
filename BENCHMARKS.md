@@ -7,11 +7,11 @@ Stem measurements record the executable, workload, configured limits, offered an
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two
-Molecule layouts and the indexed Telegraph layout run only as test fixtures.
-The native network uses inline Telegraph. CKB L1 keeps its original Molecule
+Molecule layouts and the indexed Strand layout run only as test fixtures.
+The native network uses inline Strand. CKB L1 keeps its original Molecule
 schemas and Script hash semantics.
 
-| Workload | Molecule inline | Molecule indexed | Telegraph inline | Telegraph indexed |
+| Workload | Molecule inline | Molecule indexed | Strand inline | Strand indexed |
 | --- | ---: | ---: | ---: | ---: |
 | Payment with distinct locks | 467 B | 487 B | 312 B | 318 B |
 | Payment with one repeated lock | 467 B | 410 B | 312 B | 261 B |
@@ -24,10 +24,10 @@ occupies 285 B for the Stem output vector, compared with 590 B for three
 separate CKB outputs and their Data vector. A Script Table enables further
 compression in batches that share complete Scripts. It also adds reference
 checks, table ordering rules and a second step to recover each output's
-logical contents. Inline Telegraph avoids these costs and simplifies
+logical contents. Inline Strand avoids these costs and simplifies
 standalone Cells and commitment construction.
 
-| Structural validation and hash | Molecule inline | Molecule indexed | Telegraph inline | Telegraph indexed |
+| Structural validation and hash | Molecule inline | Molecule indexed | Strand inline | Strand indexed |
 | --- | ---: | ---: | ---: | ---: |
 | Distinct-lock payment parse | 489.7 ns | 393.2 ns | 36.2 ns | 49.1 ns |
 | Distinct-lock payment hash | 577.5 ns | 576.6 ns | 439.4 ns | 439.5 ns |
@@ -36,9 +36,9 @@ standalone Cells and commitment construction.
 
 The median uses five release samples of 2,000 operations per layout.
 Structural validation alone does not resolve referenced Cells or execute
-scripts. The full indexed Telegraph table check took 96.7 ns for the payment
+scripts. The full indexed Strand table check took 96.7 ns for the payment
 and 573.5 ns for ten asset outputs. It allocated once, requesting 2 B and
-11 B respectively. The borrowed Telegraph structural reads allocated zero
+11 B respectively. The borrowed Strand structural reads allocated zero
 times in both cases. The inline Molecule structural reads requested 712 B
 in 18 allocations for the payment and 3,368 B in 90 allocations for the
 asset fixture.
@@ -56,7 +56,7 @@ Each run offered 1,200 independently funded test payments at 120/s.
 Both runs used the same 300,000,000 block cycles limit and 100,000,000
 transaction cycles limit. The reference commit `f3d3c53` includes the
 Stem rename and preserves the original Molecule ledger and k256 lock.
-The current run includes Telegraph, host secp256k1, complete signing and
+The current run includes Strand, host secp256k1, complete signing and
 the Live Cell cache. The comparison captures their combined effect.
 
 | Window metric | Renamed reference | Current Stem |
@@ -385,3 +385,37 @@ The offline wallet verifier authenticated the original payout output
 and the old vault output from the same CKB transaction. The live-cell
 RPC reported the old vault as `unknown` after its consumption. The
 verifier rejected mismatched Merkle positions and altered witness bytes.
+
+## Paired authorization and Lineage lifecycle
+
+The four-validator CometBFT runner exercised the RISC-V Intent Lock with
+two independently signed UDT offers and a separately signed fee sponsor.
+The solver attached all three authorizations with the output indices
+derived from the assembled transaction. The committed transaction
+charged 5,876,118 VM cycles and confirmed on all four validators and
+the restored observer. The same runner registered a Lineage and advanced
+its head with the original UDT script still present.
+
+The local release workload below uses eight signed head updates per
+block over 25 blocks, a real RISC-V marker and UDT script, and fresh
+RocksDB copies for serial and four-worker execution. Each value includes
+block preparation and synchronous commit. The test compares post-commit
+Headers and charged cycles. Signature creation is outside the timer.
+
+| Explicit OutPoint workload | Serial p50 | Four-worker p50 | Mean cycles per block |
+| --- | ---: | ---: | ---: |
+| Eight independent Lineages | 3.407 ms | 2.919 ms | 15,573,424 |
+| Eight pre-built successors of one head | 3.444 ms | 1.694 ms | 15,573,424 |
+| One atomic transaction updating eight Lineages | 1.437 ms | 0.996 ms | 2,040,725 |
+
+The one-head workload pre-signs every exact successor. Its results
+include repeated working-set reuse and parallel verification of fixed
+contexts. It does not measure execution-time lookup, a contended AMM or
+concurrent command admission. The atomic transaction shares one Lock
+signature across eight inputs under the same Lock, which explains much
+of its lower cycle total.
+
+```sh
+cargo test --locked --release --test native_store \
+  lineage::measure_explicit_lineage_updates -- --exact --ignored --nocapture
+```

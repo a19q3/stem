@@ -3679,6 +3679,13 @@ name = "stem-bridge-wire"
 version = "0.1.0"
 
 [[package]]
+name = "stem-intent"
+version = "0.1.0"
+dependencies = [
+ "ckb-hash 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "stem-ledger"
 version = "0.1.0"
 dependencies = [
@@ -3688,6 +3695,7 @@ dependencies = [
  "ed25519-dalek",
  "molecule",
  "molecule-codegen",
+ "stem-intent",
  "stem-stake",
  "tempfile",
 ]

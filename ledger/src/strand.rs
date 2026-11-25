@@ -1,5 +1,4 @@
-//! Telegraph: Tondi's strict, allocation-free borrowed validation primitives.
-//! Wire rules and generated types are defined by the local Telegraph schema.
+//! Borrowed validation primitives for the native Strand schema.
 extern crate alloc;
 use alloc::vec::Vec;
 pub use ckb_types::bytes;
@@ -8,7 +7,7 @@ pub type Bytes = bytes::Bytes;
 pub struct VerificationError;
 impl core::fmt::Display for VerificationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("invalid canonical Telegraph object")
+        f.write_str("invalid canonical Strand object")
     }
 }
 #[cfg(not(target_os = "none"))]
@@ -16,7 +15,7 @@ impl std::error::Error for VerificationError {}
 pub type Verify = Result<(), VerificationError>;
 pub const EMPTY_VECTOR: [u8; 4] = [0, 0, 0, 0];
 pub fn unpack_number(b: &[u8]) -> u32 {
-    u32::from_le_bytes(b[..4].try_into().expect("verified Telegraph number"))
+    u32::from_le_bytes(b[..4].try_into().expect("verified Strand number"))
 }
 pub fn number(b: &[u8]) -> Result<usize, VerificationError> {
     Ok(u32::from_le_bytes(

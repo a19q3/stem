@@ -1,4 +1,4 @@
-use crate::telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity};
+use crate::strand::prelude::{Builder as WireBuilder, Entity as WireEntity};
 use anyhow::{Context, Result, ensure};
 use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
 use stem_stake::Authority;

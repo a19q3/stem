@@ -7,7 +7,7 @@ use crate::{
     Transaction,
     block::{ExecutionCommitment, Receipt},
     hash,
-    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
 

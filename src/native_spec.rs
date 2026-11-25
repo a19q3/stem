@@ -29,6 +29,7 @@ struct Network {
     development_validators: Vec<Voter>,
     stake: Option<Stake>,
     bridge: Option<Bridge>,
+    lineage_type: Option<H256>,
 }
 
 #[derive(Deserialize)]
@@ -162,6 +163,7 @@ pub fn load(path: &Path) -> Result<Spec> {
         development_validators,
         stake,
         bridge,
+        lineage_type: config.lineage_type.map(|hash| hash.pack()),
     })
 }
 

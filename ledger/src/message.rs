@@ -3,7 +3,7 @@ use ckb_types::{bytes::Bytes, prelude::*};
 
 use crate::{
     MAX_SCRIPT_GROUPS, MAX_TRANSACTION_BYTES,
-    telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
 
@@ -22,6 +22,12 @@ pub struct GroupMessage {
 }
 
 impl GroupMessage {
+    pub fn from_slice(bytes: &[u8]) -> Result<Self> {
+        let message = Self::decode(wire::GroupMessage::from_slice(bytes)?);
+        Self::validate_all(std::slice::from_ref(&message))?;
+        Ok(message)
+    }
+
     pub(crate) fn encode(&self) -> wire::GroupMessage {
         let actions = self
             .actions

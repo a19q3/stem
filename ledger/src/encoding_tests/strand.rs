@@ -10,7 +10,7 @@ use ckb_types::prelude::*;
 
 use crate::{
     baseline as wire,
-    telegraph::{self, prelude as tg},
+    strand::{self, prelude as tg},
     wire as codec,
 };
 use tg::{Builder as TgBuilder, Entity as TgEntity, Reader as TgReader};
@@ -60,7 +60,7 @@ fn allocated(run: impl FnOnce()) -> (usize, usize) {
 }
 
 fn fixed<T: TgEntity>(bytes: &[u8]) -> T {
-    T::new_unchecked(telegraph::Bytes::copy_from_slice(bytes))
+    T::new_unchecked(strand::Bytes::copy_from_slice(bytes))
 }
 
 fn script(value: wire::Script) -> codec::Script {
@@ -245,7 +245,7 @@ fn c_and_rust_readers_accept_the_same_canonical_frames() -> Result<()> {
         &source,
         br#"
 #include <stdio.h>
-#include "telegraph_wire.h"
+#include "strand_wire.h"
 int main(int argc, char **argv) {
     unsigned char bytes[1024];
     size_t len = fread(bytes, 1, sizeof(bytes), stdin);
@@ -285,7 +285,7 @@ int main(int argc, char **argv) {
     let receipt = crate::block::Receipt {
         fee: u64::MAX,
         cycles: 1,
-        protocol_result: telegraph::Bytes::new(),
+        protocol_result: strand::Bytes::new(),
     }
     .encode();
     for (kind, canonical) in [("tx", transaction.as_slice()), ("receipt", &receipt)] {
@@ -393,10 +393,10 @@ pub(super) fn compare(name: &str, original: &wire::Transaction, timing: bool) ->
         let index_check = measure(check_index);
         let index_allocations = allocated(check_index);
         println!(
-            "{name}: median structural parse ns={parse:.1?}, hash ns={hash:.1?}, full Telegraph table parse ns={index_check:.1}"
+            "{name}: median structural parse ns={parse:.1?}, hash ns={hash:.1?}, full Strand table parse ns={index_check:.1}"
         );
         println!(
-            "{name}: parse allocations (calls, bytes)={allocations:?}, full Telegraph table={index_allocations:?}"
+            "{name}: parse allocations (calls, bytes)={allocations:?}, full Strand table={index_allocations:?}"
         );
     }
     for tx in [compact.as_slice(), compact_indexed.as_slice()] {

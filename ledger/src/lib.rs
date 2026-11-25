@@ -17,12 +17,13 @@ use ckb_types::{
 #[cfg(test)]
 mod encoding_tests;
 #[allow(dead_code)]
-mod telegraph;
-use telegraph::prelude::{Builder as WireBuilder, Entity as WireEntity};
+mod strand;
+use strand::prelude::{Builder as WireBuilder, Entity as WireEntity};
 
 mod authorization;
 pub mod block;
 pub mod history;
+pub mod lineage;
 mod message;
 pub mod patricia;
 pub mod proof;
@@ -33,6 +34,7 @@ pub mod time;
 mod witness;
 
 pub use message::{GroupAction, GroupMessage};
+pub use stem_intent as intent;
 pub use witness::GroupWitness;
 
 use block::Header;
@@ -40,7 +42,7 @@ pub use time::{BlockContext, CellInput, Origin, Since};
 
 mod wire {
     #![allow(dead_code, unused_parens)]
-    include!(concat!(env!("OUT_DIR"), "/telegraph_wire.rs"));
+    include!(concat!(env!("OUT_DIR"), "/strand_wire.rs"));
 }
 
 #[cfg(test)]
@@ -107,6 +109,10 @@ struct CellHashes {
 }
 
 impl Cell {
+    pub fn content_hash(&self) -> &Byte32 {
+        &self.hashes().content
+    }
+
     pub fn new(
         capacity: u64,
         lock: Script,
@@ -894,12 +900,29 @@ impl ResolvedTransaction {
             inputs,
             code: cell_deps,
             commitment,
-        } = authorization::resolve_cells(&transaction, &mut budget, live_cell)?;
+            dependencies,
+        } = authorization::resolve_cells(
+            &transaction,
+            &mut budget,
+            transaction.encoded.witnesses().into_iter().any(|entry| {
+                // Only the partial-authorization path needs this additional digest.
+                matches!(
+                    entry.proof_data().raw_data().len(),
+                    intent::TRADE_BYTES | intent::SPONSOR_BYTES
+                )
+            }),
+            live_cell,
+        )?;
         for (input, record) in transaction.inputs().zip(&inputs) {
             block.verify_since(input.since, &record.origin)?;
         }
-        let authorization =
-            authorization::LockAuthorization::new(&network_id, &transaction, commitment, &headers);
+        let authorization = authorization::LockAuthorization::new(
+            &network_id,
+            &transaction,
+            commitment,
+            dependencies,
+            &headers,
+        );
         let outputs: Vec<_> = transaction.outputs().collect();
         for cell in &outputs {
             block.capacity.verify(cell)?;
@@ -1028,6 +1051,10 @@ impl ResolvedTransaction {
 
     pub fn lock_digest(&self, group: &ScriptGroup) -> Byte32 {
         self.authorization.digest(&self.network_id, &group.script)
+    }
+
+    pub fn intent_dependency_commitment(&self) -> Option<Byte32> {
+        self.authorization.intent_dependencies(&self.network_id)
     }
 
     pub fn parent_id(&self) -> &Byte32 {
