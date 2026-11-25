@@ -340,6 +340,17 @@ CKB → Stem 的发送方由 Mailbox 的原有 CKB Lock 授权。合约令发送
 
 [运行说明](OPERATIONS.md#exercise-stem-native-udt-settlement)
 
+### CKB Spore V2 往返结算
+
+基础 Spore 的跨链身份包含 CKB genesis、原 Spore 的完整 Type Script 哈希，以及固定路由的 Stem 映射 Type Script。CKB 托管路径固定发布版 Spore V2 字节码和已有的 Jolteon 检查点。同一路由重复导入使用同一完整 Stem Type Script。其反向操作释放原 Spore Cell，保持原来的 32 字节 Spore ID、Type Script、内容和 CKB Capacity。
+
+- **导入。** CKB 转移交易在同一笔交易内将真实原件转给专用 Mailbox Lock，并发布指定 Stem 收件人的通知。CKB 原 Spore Type Script 继续执行 CoBuild 转移动作。Stem 校验真实 Mailbox 输出的 guardian 认证，在一个普通交易中消费通知并向指定 Lock 创建唯一映射。载荷依次为原 Type Script 哈希、收件人 Lock 哈希和完整 Molecule `SporeData`。
+- **流通。** 映射 Type Script 保护单一对象和原始字节。实际持有人通过 Stem Lock 授权转移。映射和原件之间的排他性由原件托管、消息去重和真实历史认证共同维持。
+- **返回。** 普通 Stem 交易消费映射和端点押金 Cell。用户的 Lock 验证同笔交易，端点脚本要求恰好销毁一个匹配映射并发布绑定原件和 CKB 收件人的返回消息。返回的 nonce 从实际消费的端点 OutPoint 派生。CKB 的 Mailbox 验证 Jolteon 最终性、消息路径和消费状态，托管 Lock 仅释放原件给消息指定的收件人。原 Spore Type Script 再次核验 CoBuild 转移。
+- **边界。** 基础路径接受至多 4,032 字节的规范 Molecule 数据，内容类型固定为 `text/plain` 或 `application/octet-stream`，Cluster 字段为空，结算对象单独携带映射 Type Script。Stem 端点和 CKB Mailbox 的容量押金保留原额。CKB → Stem 依赖 CKB 确认和 guardian 法定人数，深度重组不会自动撤销此前形成的 Stem 映射。
+
+[运行说明](OPERATIONS.md#exercise-ckb-spore-settlement)
+
 ## 7. 状态承诺、执行回执与锚定快照
 
 五项逻辑承诺由三种认证数据结构产生，所有共识数据经同一个 RocksDB 提交路径持久化。

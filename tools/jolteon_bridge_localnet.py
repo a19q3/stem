@@ -13,6 +13,7 @@ from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency
 from jolteon_checkpoint_localnet import Relay
 from intercell_localnet import intercell_round
 from asset_export_localnet import asset_round
+from spore_settlement_localnet import spore_round
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, QUERY, STATUS, SUBMIT, evidence_keys, rpc, write_configuration
 from localnet import run, write_json
 from native_bridge_localnet import (bridge_configuration, cell, deploy, deploy_token, deposit_and_mint, lane_proof,
@@ -401,7 +402,9 @@ def bridge_round(args, l1, fixture, children):
     mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client)
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
-    if args.export_udt:
+    if args.stem_spore:
+        report["spore_settlement"] = spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
+    elif args.export_udt:
         report["asset_export"] = asset_round(args, l1, fixture, vault, spec, spec_path,
                                               mint, clients, relay)
     elif args.intercell_mailbox:
@@ -446,6 +449,8 @@ def main():
     parser.add_argument("--fee-funds", action="store_true")
     for name in ("export-udt", "asset-escrow", "ckb-stem-udt"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
+    for name in ("stem-spore", "ckb-spore-escrow", "spore-v2"):
+        parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
     parser.add_argument("--reference-script", type=lambda path: Path(path).resolve())
@@ -455,6 +460,10 @@ def main():
     if any((args.export_udt, args.asset_escrow, args.ckb_stem_udt)) and not all(
             (args.export_udt, args.asset_escrow, args.ckb_stem_udt, args.intercell_mailbox)):
         parser.error("UDT settlement requires --export-udt, --asset-escrow, --ckb-stem-udt and --intercell-mailbox")
+    if any((args.stem_spore, args.ckb_spore_escrow, args.spore_v2)) and (
+            not all((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
+            or args.export_udt):
+        parser.error("Spore settlement requires its three binaries and the Intercell mailbox")
     if args.full_udt_return and not args.export_udt:
         parser.error("--full-udt-return requires the UDT settlement fixture")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
@@ -471,7 +480,9 @@ def main():
     try:
         report = bridge_round(args, l1, Fixtures(args), children)
         write_json(args.output / "jolteon-bridge-report.json", report)
-        if args.export_udt:
+        if args.stem_spore:
+            print(f"Verified Spore settlement and original ID at agreed height {report['agreed']['height']}")
+        elif args.export_udt:
             print(f"Verified Stem native UDT export and return at agreed height {report['agreed']['height']}")
         elif args.intercell_mailbox:
             print(f"Verified bidirectional Intercell messages at agreed height {report['agreed']['height']}")

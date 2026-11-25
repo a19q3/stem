@@ -1,6 +1,7 @@
 #![no_std]
 pub mod asset;
 pub mod intercell;
+pub mod spore;
 
 pub const HASH_SIZE: usize = 32;
 pub const MAX_RECIPIENT_SIZE: usize = 4096;

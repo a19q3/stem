@@ -25,7 +25,7 @@
 | 17 | CKB 直接验证 Stem 最终性 | Jolteon 原生检查点使用 CKB Type ID，验证交接和稀疏历史连续性。创世强制每座金库与 Registry 共用检查点，已用真实 L1 替代金库验证拒绝。真实开发网已验证 CKB 与 xUDT 无许可兑付、退休和双签罚没。128 委员普通检查点通过 CKB 默认交易池的双节点 P2P 中继及打包，估算 359,104,558 cycles。大型委员会的竞争负载与自动锚定待继续验证。 |
 | 18 | Intercell Messaging | 已接入通用双向消息、Lock 授权、永久 nonce 记录与 CLI。Stem → CKB 由原生 Jolteon 最终性和 Patricia 证明认证。CKB → Stem 通过匹配已接受锚点的 guardian 历史引用认证。真实 CKB devnet 与四副本验证重放、伪造、重组和重启。其他网络适配待实现。 |
 | 19 | L1 Cell Reference | Rust 与 CLI 使用可信 CKB Header、交易及见证 Merkle 路径核验历史输出。原生交易可附 guardian 法定人数认证的历史或锚点存活记录，StemVM 通过独立 syscall 读取。引用有确认深度、共识锚点、新鲜度和资源计费约束。独立锚点更新有单独签名域和区块预算，允许在桥接空闲时更新引用。实时 CKB 存活仍由观察者核验。 |
-| 20 | UDT / Spore 结算 | CKB 与 xUDT 双向路径已用实际 devnet 复验。Stem 原生单 Type UDT 已实测托管导出、CKB 映射铸造与转移、销毁和部分及全部返回。Spore 与带附加 Type 规则的对象仍需验证跨链身份及生命周期。 |
+| 20 | UDT / Spore 结算 | CKB 与 xUDT 双向路径已用实际 devnet 复验。Stem 原生单 Type UDT 已实测托管导出、CKB 映射铸造与转移、销毁和部分及全部返回。CKB Spore V2 基础对象已实测托管、Stem 转移、原件返回和再次导入。额外 Type 规则、Cluster、扩展生命周期及 Stem 原生创建对象的 CKB 发行仍待验证。 |
 | 21 | CKB PoW Entropy | 独立工具从固定锚点与确认后继推导域隔离种子。CKB devnet 重复值一致，拒绝错误锚点和确认不足。未进入领导者或委员会选择。 |
 
 ## 关键依赖

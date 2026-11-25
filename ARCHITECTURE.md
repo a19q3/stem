@@ -161,6 +161,12 @@ The Stem application UDT uses a complete issuer Lock hash and series identifier.
 
 The app sends no money through the generic message handler. Native UDT stays in the escrow and moves under its Type Group. The CKB wrapped UDT can be transferred independently. A CKB burn updates the mailbox atomically, and Stem consumes the certified return once when moving the underlying UDT. Both escrow bonds stay fixed. The settlement path currently accepts only single-Type instances of the asset.
 
+### Spore V2 settlement over Intercell
+
+The CKB endpoint pins the exact deployed Spore V2 code and one complete original Type Script hash. It allows an import message only with an actual CoBuild-authorized transfer of that Cell into custody. A release spends the same original Type at the same capacity and with byte-identical data, under a proof that Stem burned the representation. The original CKB Type Script validates both transfers. The CKB inbox root protects the original against consuming an earlier return after a later deposit.
+
+Stem derives the canonical representation Type Script from the fixed endpoint Lock. Its Type Group permits ordinary ownership transfers with immutable Spore bytes. Creation and removal require the consuming endpoint Lock, which checks one actual mint or burn under the appropriate Intercell message. The fixed bond Cell enables later cycles without reassigning the mapping identity. The current route supports the basic immutable Molecule profile without a Cluster or MIME extensions.
+
 ## Historical proofs and CKB checkpoints
 
 Archive replicas preserve committed Headers. The proof index follows those records in a separate RocksDB database and checks the predecessor ID and MMR root before advancing. It persists only derived history nodes and progress. Each index update is independent of the application's commit. An archive reader can generate inclusion and append-only proofs at earlier retained heights.

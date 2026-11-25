@@ -403,6 +403,27 @@ On CKB, use the `ckb-stem-udt` code as the Mailbox's Lock with Data2 addressing.
 
 Register and publish the actual route identities before sending funds. The fixture publishes all executable code Cells, creates the mailbox and custody bond, and saves both chains' signed transactions and proof records.
 
+### Exercise CKB Spore settlement
+
+Use the published Spore V2 code Cell from the deployment transaction
+`96b198fb5ddbd1eed57ed667068f1f1e55d07907b4c0dbd38675a69ea1b69824` at output zero.
+Its raw ELF must have CKB data hash `4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5`.
+The fixture publishes these same bytes on the disposable CKB chain under Data1 addressing.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+  cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --bin stem-spore --bin ckb-spore-escrow
+```
+
+Use the usual [Intercell bridge command](#exercise-intercell-messaging) with `--stem-spore`, `--ckb-spore-escrow` and `--spore-v2` set to the three binaries. Choose a fresh output directory for each run. The runner exercises issuance with the original Type Script, CKB escrow, Stem import and ownership transfer, CKB release and redeposit.
+
+For manual construction, first obtain the original complete Spore Type Script hash and fix the Mailbox creation input and output index. The Stem endpoint Lock uses `stem-spore` with Data addressing. Its args are the original Type Script hash, CKB genesis, Mailbox code hash, Mailbox Type ID, CKB escrow code hash, Checkpoint code hash and Checkpoint Type ID. Its plain bond Cell must keep the same capacity on each transition. The Stem mapping uses the same program as a Type Script with the full endpoint Lock hash as its only argument.
+
+The CKB escrow Lock uses `ckb-spore-escrow` with Data2 addressing. Its args are the Mailbox Type ID, Stem endpoint Lock hash, original Type Script hash and Mailbox code hash. Set the Mailbox owner to this full Lock hash. Both the CKB deposit and release must transfer the original Spore with a valid CoBuild action in the extra witness. Use the existing Intercell proof commands and keep the original Cell capacity unchanged across custody.
+
+The first 64 bytes of the message payload hold the original Type Script hash and destination Lock hash. Append the canonical plain Molecule data. For the Stem return, hash `Stem Spore return nonce\0` followed by the canonical 36-byte bond OutPoint with CKB Blake2b. Interpret the first eight digest bytes as a little-endian integer. Retain the consumed-message IDs needed to reconstruct the mailbox replay path. Direct transfers to the escrow Lock require the matching Mailbox update to be recognized as deposits.
+
 ### Redeem fee revenue on CKB
 
 An optional `bridge.fee_funds` genesis array contains four objects with `basis_points` and a CKB JSON `recipient` Lock. The fixed order is validators and delegators, DevFund, Ecosystem Fund and PoW Security Fund. Use distinct recipients matching the allowlisted Lock templates. Shares are positive and total 10,000. Reserve capacity must be available in the native CKB lane. Each payout must meet the recipient's CKB occupied Capacity.
