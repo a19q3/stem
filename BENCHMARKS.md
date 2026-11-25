@@ -2550,3 +2550,46 @@ suite and frozen CometBFT comparison feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
 [Raw proofs, rejections, commands and binary fingerprints](benchmarks/2026-11-26-stem-intercell-history.json.xz).
+
+## Portable CKB security-domain accounting
+
+Revision `708434d` exports CKB transaction and witness proofs from the
+domain's Type ID creation through a selected Cell or closure. The
+offline verifier uses independently supplied CKB block hashes. The
+functional fixture runs the deployed RISC-V security-domain program
+on CKB 0.210.0. One mode also consumes the service receipt from four
+live Jolteon replicas. Both modes were repeated after tightening
+evidence file publication.
+
+The final standalone round verified seven endpoints. The original
+800 CKB of principal reconciled to 280 CKB slashed and 520 CKB returned.
+Two service requests paid a separate total of 1,200 CKB to their
+signers. The audits matched the actual per-member CKB outputs and
+excluded a refunded request. Retiring the domain reduced eligible
+capital to zero while 620 CKB was still locked. A second penalty
+during the challenge window reduced locked capital to 520 CKB.
+
+| Final standalone endpoint | Proven CKB transactions | Proof JSON bytes | Online collection | Offline verification |
+| --- | ---: | ---: | ---: | ---: |
+| Creation | 1 | 2,955 | 17.83 ms | 5.61 ms |
+| First service | 2 | 7,797 | 18.39 ms | 6.23 ms |
+| Live after second service | 4 | 16,351 | 14.10 ms | 3.74 ms |
+| Closure | 7 | 25,657 | 22.18 ms | 4.42 ms |
+
+The two timings include process startup. Collection uses localhost
+RPC. These are single samples on an i9-13900H, with no inference about
+long-running domains. The final four-replica round confirmed receipt
+use at Stem height 41 and verified its seven audit endpoints.
+
+The standalone round rejected ten invalid audit attempts. These include
+omitted history, a false target endpoint, modified witness bytes, the
+wrong code or genesis, a consumed Cell requested as live, insufficient
+confirmations, exhausted collection budget and existing proof files.
+After a real CKB reorganization the historical closure proof failed
+against the replacement chain's hashes. The separate Intercell and
+CKB-backed stake regressions passed. The final Rust workspace passed
+457 tests with 14 ignored. The Go proof suite and frozen CometBFT
+comparison check passed.
+
+[Reproduction and trust assumptions](OPERATIONS.md#verify-security-domain-capital-and-income) ·
+[All runs, public evidence, commands and fingerprints](benchmarks/2026-11-26-stem-security-domain-audit.json.xz).
