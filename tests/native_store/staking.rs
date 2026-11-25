@@ -232,7 +232,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     let body = snapshot_body(&forged, &revived, &[])?;
     let statement = protocol::StakeSnapshot {
         commitment: snapshot_commitment(store.network(), &body),
-        ..statement
+        ..statement.clone()
     };
     let digest = snapshot_digest(store.network(), &statement);
     let invalid = Transaction::control(
@@ -249,6 +249,18 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
         format!("{:#}", store.check(&invalid).unwrap_err())
             .contains("reactivate a retired validator")
     );
+    let local = tempfile::tempdir()?;
+    let mut restored = Store::open(local.path(), &fixture.spec, Retention::Recent(4))?;
+    let snapshot = store.export_state()?;
+    let app_hash = store.tip().app_hash(store.network());
+    restored.install_state(snapshot, &app_hash)?;
+    assert_eq!(restored.tip(), store.tip());
+    assert_eq!(
+        restored.prove_stake_retirement(first)?.0,
+        Some(config.effective_height(1)?)
+    );
+    assert!(restored.check(&build(&successor)?).is_ok());
+    assert!(restored.check(&invalid).is_err());
     assert_eq!(store.fee_surplus()?, 0);
     Ok(())
 }

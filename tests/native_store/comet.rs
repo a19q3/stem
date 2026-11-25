@@ -21,6 +21,10 @@ fn vm_workers() -> String {
     std::env::var("FERN_TEST_VM_WORKERS").unwrap_or_else(|_| "2".into())
 }
 
+fn history_window() -> String {
+    std::env::var("FERN_TEST_HISTORY_WINDOW").unwrap_or_else(|_| "256".into())
+}
+
 const GENESIS_TIME: &str = "2025-01-01T00:00:00Z";
 const GENESIS_MS: u64 = 1_735_689_600_000;
 
@@ -237,6 +241,8 @@ impl Node {
                     "16",
                     "--snapshot-interval",
                     "3",
+                    "--history-window",
+                    &history_window(),
                 ]),
             &self.dir.join("fern.log"),
         )?);
@@ -327,6 +333,15 @@ fn poll<T>(
 #[test]
 #[ignore = "runs four real CometBFT binaries; set FERN_TEST_COMET"]
 fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
+    let validators = std::env::var("FERN_TEST_VALIDATORS")
+        .unwrap_or_else(|_| "4".into())
+        .parse::<usize>()?;
+    ensure!(
+        (4..=32).contains(&validators)
+            && (validators == 4 || std::env::var_os("FERN_TEST_LOADGEN").is_some()),
+        "a replica count outside the four-node correctness fixture requires benchmark mode (maximum 32)"
+    );
+    let directories = validators + 1;
     let comet =
         PathBuf::from(std::env::var_os("FERN_TEST_COMET").context("path to CometBFT binary")?)
             .canonicalize()?;
@@ -343,7 +358,7 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     let home = output.join("net");
     ensure!(
         Command::new(&comet)
-            .args(["testnet", "--v", "4", "--n", "1", "--o"])
+            .args(["testnet", "--v", &validators.to_string(), "--n", "1", "--o"])
             .arg(&home)
             .status()?
             .success(),
@@ -369,11 +384,11 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
     let id: String = serde_json::from_slice(&identity.stdout)?;
     genesis["app_state"] = json!({ "fern_genesis": id.trim_start_matches("0x") });
 
-    let ports = (0..10)
+    let ports = (0..2 * directories)
         .map(|_| TcpListener::bind("127.0.0.1:0"))
         .collect::<std::io::Result<Vec<_>>>()?;
     let mut nodes = Vec::new();
-    for index in 0..5 {
+    for index in 0..directories {
         let dir = home.join(format!("node{index}"));
         fs::write(
             dir.join("config/genesis.json"),
@@ -388,7 +403,7 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
             dir,
             id: String::from_utf8(id.stdout)?.trim().to_owned(),
             rpc: ports[index].local_addr()?.port(),
-            p2p: ports[index + 5].local_addr()?.port(),
+            p2p: ports[index + directories].local_addr()?.port(),
             app: None,
             comet: None,
         });
@@ -415,8 +430,8 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         .timeout(Duration::from_secs(4))
         .build()?;
     poll(
-        "first height on four validators",
-        Duration::from_secs(25),
+        "first height on all validators",
+        Duration::from_secs(55),
         || {
             let heights = nodes
                 .iter()
@@ -560,6 +575,22 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
         observer.header(&client, restored)?,
         nodes[0].header(&client, restored)?
     );
+    let window: u64 = history_window().parse()?;
+    if checkpoint + 3 > window {
+        poll(
+            "CometBFT pruning the first block body",
+            Duration::from_secs(8),
+            || {
+                let status = nodes[0].rpc(&client, "status")?;
+                let earliest = status["sync_info"]["earliest_block_height"]
+                    .as_str()
+                    .context("missing earliest CometBFT block height")?
+                    .parse::<u64>()?;
+                Ok((earliest > 1).then_some(()))
+            },
+        )?;
+        assert!(nodes[0].rpc(&client, "block?height=1").is_err());
+    }
     println!(
         "native payment H={height}, two Type Groups H={composed_height} cycles={total_cycles}, four replicas share H+1 AppHash, restarted replica agrees at H={target}, remote snapshot H={restored}"
     );

@@ -189,7 +189,10 @@ impl Benchmark {
                 cursor += 1;
                 let block = nodes[0].rpc(rpc, &format!("block?height={cursor}"))?;
                 let observed = ((unix()?.as_nanos() as i128 - start as i128) as f64) / 1e9;
-                if let Some(txs) = block["block"]["data"]["txs"].as_array() {
+                if let Some(txs) = block["block"]["data"]["txs"]
+                    .as_array()
+                    .filter(|txs| !txs.is_empty())
+                {
                     let receipts = nodes[0].rpc(rpc, &format!("block_results?height={cursor}"))?;
                     let results = receipts["txs_results"]
                         .as_array()
@@ -210,7 +213,7 @@ impl Benchmark {
             memory = memory.max(sample_processes(nodes, cpus, pages)?.memory);
             if client.as_ref().is_some_and(|rows| {
                 rows.iter()
-                    .filter(|row| row.code == Some(0))
+                    .filter(|row| row.offered_s.is_some() && row.code.is_none_or(|code| code == 0))
                     .all(|row| visibility.contains_key(&row.id.to_lowercase()))
             }) || Instant::now() >= deadline
             {
@@ -247,7 +250,7 @@ impl Benchmark {
         };
         let report = json!({
             "workload": self.workload, "requested_tps": self.rate, "transactions": self.count,
-            "vm_workers_per_replica": vm_workers().parse::<u32>()?,
+            "replicas": nodes.len(), "vm_workers_per_replica": vm_workers().parse::<u32>()?,
             "offered": offered, "admitted": admitted, "finalized_all_replicas": confirmed.len(), "client_drops": drops,
             "offered_tps": offered as f64 / offered_duration, "admitted_tps": admitted as f64 / offered_duration,
             "finalized_tps": confirmed.len() as f64 / finalized_at.max(offered_duration),

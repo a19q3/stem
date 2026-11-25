@@ -391,3 +391,31 @@ fn native_witness_proofs_and_seals_are_bound_to_the_resolved_groups() -> Result<
     assert!(verify(network.resolve(&network.id, tampered)?, CYCLE_LIMIT, false).is_err());
     Ok(())
 }
+
+#[test]
+fn measure_type_groups_with_matched_payment_fixture() -> Result<()> {
+    let mut network = Network::new()?;
+    let programs = build_contracts(&mut network)?;
+    let asset = script(&programs[0], b"asset");
+    let collateral = script(&programs[1], b"asset");
+    let policy = script(&programs[2], b"asset");
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    for types in [
+        vec![],
+        vec![asset.clone()],
+        vec![asset.clone(), collateral.clone()],
+        vec![asset, collateral, policy],
+    ] {
+        let count = types.len();
+        let input_cell = network.asset(types.clone(), 25, 1)?;
+        let input = network.add_input(input_cell);
+        let tx = network.signed(vec![input], vec![network.asset(types, 25, 1)?])?;
+        let bytes = tx.as_slice().len();
+        let tx = network.resolve(&network.id, tx)?;
+        let serial = verify(tx.clone(), CYCLE_LIMIT, false)?;
+        let parallel = pool.install(|| verify(tx, CYCLE_LIMIT, true))?;
+        assert_eq!(serial, parallel);
+        println!("matched fixture: {count} Type Groups, {bytes} bytes, {serial} cycles");
+    }
+    Ok(())
+}

@@ -245,7 +245,9 @@ impl App {
             .context("Commit without FinalizeBlock")?;
         store.commit(block)?;
         self.snapshots.committed(store.tip().context.height);
-        Ok(abci::ResponseCommit::default())
+        Ok(abci::ResponseCommit {
+            retain_height: store.consensus_retain_height().try_into()?,
+        })
     }
 
     fn query(&self, request: abci::RequestQuery) -> Result<abci::ResponseQuery> {

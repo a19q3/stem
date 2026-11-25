@@ -22,6 +22,8 @@ use fern_vm::VerificationCache;
 use rayon::prelude::*;
 
 mod bridge;
+mod cell_query;
+pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
 pub use history_index::HistoryIndex;
 mod staking;
@@ -348,6 +350,18 @@ impl Store {
 
     pub fn tip(&self) -> &Header {
         &self.tip
+    }
+
+    pub fn consensus_retain_height(&self) -> u64 {
+        match self.retention {
+            Retention::Archive => 0,
+            Retention::Recent(window) => self
+                .tip
+                .context
+                .height
+                .checked_sub(window)
+                .map_or(0, |height| height + 1),
+        }
     }
 
     pub fn network(&self) -> &Byte32 {

@@ -21,6 +21,21 @@ pub enum Wallet {
         #[arg(long)]
         request: PathBuf,
     },
+    /// Discover Live Cells by complete Lock or Type Script hash.
+    Find {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash, required_unless_present = "type_hash", conflicts_with = "type_hash")]
+        lock_hash: Option<H256>,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        type_hash: Option<H256>,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        after: Option<H256>,
+        #[arg(long)]
+        height: Option<u64>,
+        #[arg(long, default_value_t = 64)]
+        limit: usize,
+    },
     /// Sign one native Lock Script Group and add its compact seal.
     Sign {
         #[arg(long)]
@@ -87,6 +102,44 @@ struct Proof {
 impl Wallet {
     pub fn run(self) -> Result<()> {
         let tx = match self {
+            Self::Find {
+                database,
+                lock_hash,
+                type_hash,
+                after,
+                height,
+                limit,
+            } => {
+                use fern::native_store::{ScriptQuery, find_cells};
+                let query = match (lock_hash, type_hash) {
+                    (Some(hash), None) => ScriptQuery::Lock(hash.pack()),
+                    (None, Some(hash)) => ScriptQuery::Type(hash.pack()),
+                    _ => anyhow::bail!("choose exactly one complete Script hash"),
+                };
+                let after = after
+                    .as_ref()
+                    .map(|hash| hash.as_bytes().try_into())
+                    .transpose()?;
+                let page = find_cells(&database, &query, after, limit, height)?;
+                let cells = page
+                    .cells
+                    .iter()
+                    .map(|(point, record)| {
+                        serde_json::json!({
+                            "out_point": OutPoint::from(point.clone()),
+                            "cell": JsonBytes::from_vec(record.cell.as_slice().to_vec()),
+                            "created_height": record.origin.height,
+                            "created_time_ms": record.origin.timestamp_ms,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                return print_json(&serde_json::json!({
+                    "height": page.header.context.height,
+                    "cell_root": format!("0x{}", hex::encode(page.header.state.cell_root.as_slice())),
+                    "cells": cells,
+                    "next": page.next.map(H256::from),
+                }));
+            }
             Self::Build { request } => {
                 let request: Draft = read_json_limited(&request, 2 * 1024 * 1024)?;
                 let mut tx = Transaction::new(

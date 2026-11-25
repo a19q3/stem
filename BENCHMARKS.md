@@ -544,7 +544,7 @@ Each payment sweep scheduled 1,024 transactions at the requested target. HTTP su
 | 3,000 | 160.82 | 1024 (160.82) | 728 | 33.67 | 10.57/17.56/18.61 | 0 | 83.41 | 387.6 | 69.38 | 5.96/5.96 |
 | 5,000 | 159.56 | 1024 (159.56) | 728 | 33.68 | 10.39/17.43/18.40 | 0 | 83.90 | 390.9 | 73.92 | 6.07/6.07 |
 
-The native lock's cycle cost and the configured block cycle limit constrain how many transactions each block can confirm. Similar throughput across the five workloads describes these fixtures under this budget. Measuring marginal Type Group cost requires matched fixtures and independent cycle attribution. Sustained high-rate submission, remote hosts, and throughput during committee changes remain unmeasured.
+The native lock's cycle cost and the configured block cycle limit constrain how many transactions each block can confirm. Similar throughput across the five workloads describes these fixtures under this budget. Measuring marginal Type Group cost requires matched fixtures and independent cycle attribution. Sustained high-rate submission and remote hosts under the native model remain unmeasured.
 
 The compressed run bundle records all nine runs, per-transaction admission and visibility samples, and executable SHA-256 fingerprints. [Raw native measurements](benchmarks/2026-11-25-native-comet.json.xz)
 
@@ -576,3 +576,43 @@ Both runs recorded zero client drops. The four-worker run used more CPU time and
 The [worker measurements and CKB checkpoint evidence](benchmarks/2026-11-25-fern-vm-and-checkpoint.json.xz) include per-transaction data, the binary fingerprints, both CKB checkpoint inclusion proofs, signed CometBFT successors, a historical Header proof, and a CKB devnet reorganization that stopped Stake Snapshot signing.
 
 The final [stake lifecycle bundle](benchmarks/2026-11-25-stake-lifecycle.json.xz) includes the confirmed guardian rotation and later snapshot from the new authority, two signed validator handoffs, the authenticated retirement marker and the CKB withdrawal proof. The final release withdrew 250 CKB after the configured delay. The separate CKB run froze and forfeited 250 CKB, closed two Registry entries, rejected re-registration and stopped issuing attestations after a real devnet reorganization.
+
+## Matched native Type Group fixtures
+
+Each case uses one input, one output, the same 25-unit Cell Data, full Cell Dep list and secp256k1 Lock. The case adds the Asset, Collateral and Transfer Policy groups in order. The transaction is re-signed after each change. These checks retain real RISC-V execution and compare serial with four-worker billing.
+
+| Type Groups | Transaction bytes | Cycles |
+| ---: | ---: | ---: |
+| 0 | 733 | 5,757,994 |
+| 1 | 795 | 5,772,283 |
+| 2 | 857 | 5,786,722 |
+| 3 | 919 | 5,796,264 |
+
+The three groups change the total charge by 38,270 cycles or 0.66% in this fixture. The transactions have different signatures and wire sizes. The absolute charge includes the native Lock. Run `cargo test --locked --release -p fern-vm --test native measure_type_groups_with_matched_payment_fixture -- --nocapture`.
+
+## CKB-funded payments during validator updates
+
+A two-replica stake-backed CometBFT run used a three-second commit wait. A confirmed CKB deposit funded the native payment inputs. The generator offered and admitted 384 real signed payments at 8.00 TPS. Both replicas confirmed all 384 at 7.48 TPS. Full-replica p50/p95/p99 visibility was 1.98/3.56/3.83 s, with zero client drops. Fern and CometBFT used 13.74 aggregate CPU seconds, 187.8 MB peak sampled RSS, 29.63 MB of process writes, and 0.338 MB received and sent on P2P connections.
+
+ABCI returned validator updates at heights 9 and 19 during the measured window. Their voting effects started at heights 11 and 21. The same run subsequently increased an active validator's verified power from 400 to 450 at height 31, and authenticated another 250 CKB withdrawal. This measures progress under modest load during committee changes. The four-replica capacity runs use separate settings.
+
+The [funded stake and bridge evidence](benchmarks/2026-11-25-funded-stake-and-bridge.json.xz) contains the actual confirmation and resource samples and the CKB proofs. The bridge test paid 1,200 xUDT units, moved 500,000 shannons between the vaults and rotated custody. Its observer stopped signing after the confirmed CKB anchor was replaced on the isolated devnet.
+
+## Same-host validator scale
+
+Each run scheduled 192 signed CKB payments at 16 TPS with two VM workers per replica, synchronous RocksDB commits and a full-mesh CometBFT testnet on the same host. The rates and resources below aggregate across the indicated replicas. Latency is the first observation after every replica reached the successful execution height.
+
+| Replicas | Admission acknowledgments | Confirmed | Confirmed TPS | p50/p95/p99 (s) | CPU (s) | RSS (MB) | Writes (MB) | P2P rx/tx (MB) |
+| ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| 4 | 192 | 192 | 14.92 | 1.15/1.80/1.81 | 11.38 | 319.6 | 36.50 | 1.50/1.51 |
+| 8 | 192 | 192 | 14.49 | 1.31/1.85/1.89 | 27.66 | 703.0 | 61.78 | 8.83/8.84 |
+| 16 | 192 | 192 | 14.72 | 1.32/1.87/2.00 | 72.11 | 1543.9 | 145.65 | 45.83/46.09 |
+| 32 | 176 | 192 | 11.23 | 4.53/7.40/9.39 | 279.68 | 3796.8 | 358.08 | 220.88/222.94 |
+
+The 32-replica run timed out awaiting two HTTP responses covering 16 payments. All 16 later appeared in the confirmed blocks. Client admission counts successful responses and finality counts independently observed receipts. Full-mesh traffic and scheduling overhead increased on the shared host.
+
+## Three-minute native payment run
+
+Four same-host release replicas admitted all 4,320 signed payments at 24.00 TPS and confirmed all 4,320 at 23.88 TPS over the full observation window. Full-replica p50/p95/p99 was 1.23/1.81/1.91 s, with zero client drops. The processes used 245.41 aggregate CPU seconds, 548.5 MB peak sampled RSS, 786.19 MB of process writes, and approximately 31.19 MB in both directions of aggregate CometBFT P2P traffic. The replicas drained the offered workload during the run. The higher-rate sweep identifies backlog on this host.
+
+The [scale and steady-load evidence](benchmarks/2026-11-25-native-scale-and-steady.json.xz) preserves all five reports and per-payment RPC and replica observations. The three-minute run uses `FERN_TEST_LOAD_COUNT=4320 FERN_TEST_LOAD_RATE=24` with the four-replica test. Production hardware and WAN traffic remain separate measurements.

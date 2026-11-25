@@ -11,7 +11,7 @@ import time
 
 from bridge_localnet import (
     CKB, FAUCET_ARG, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes,
-    le, output, packed_script, point, script, script_hash, transaction,
+    le, output, packed_script, point, reject_cli, script, script_hash, transaction,
     vault_state, wallet_group, write_key,
 )
 from localnet import Rpc, run, write_json
@@ -58,7 +58,7 @@ def wait_for(func, label, seconds=20):
     raise RuntimeError(f"timed out waiting for {label}")
 
 
-def deploy(args, l1, fixture):
+def deploy(args, l1, fixture, funding_point=None):
     genesis = l1.call("get_block_by_number", "0x0")
     faucet, groups = genesis["transactions"][:2]
     index, funds = next((i, out) for i, out in enumerate(faucet["outputs"]) if out["lock"]["args"] == FAUCET_ARG)
@@ -66,12 +66,17 @@ def deploy(args, l1, fixture):
     multisig = dependency(point(groups["hash"], 1), "dep_group")
     multisig_code = hex_bytes(script_hash(faucet["outputs"][4]["type"]))
     lock = script(multisig_code, hex_bytes(ckb_hash(fixture.multisig_prefix)[:20]))
+    if funding_point is None:
+        funding_point = point(faucet["hash"], index)
+    else:
+        previous = l1.call("get_transaction", funding_point["tx_hash"])["transaction"]
+        funds = previous["outputs"][int(funding_point["index"], 16)]
     codes = [args.vault.read_bytes(), args.deposit_lock.read_bytes()]
     amounts = [(len(code) + 200) * CKB for code in codes]
     programs = len(args.native_lock.read_bytes()) + (len(args.wrapped.read_bytes()) if args.xudt else 0)
     funding = (programs + 20_000) * CKB
     change = int(funds["capacity"], 16) - sum(amounts) - funding - FEE
-    deployment = transaction([point(faucet["hash"], index)],
+    deployment = transaction([funding_point],
                              [output(c, fixture.standard) for c in amounts + [funding, change]],
                              [hex_bytes(code) for code in codes] + ["0x", "0x"], [secp])
     deployed = l1.send(fixture.sign("deploy", deployment, [wallet_group(0, [fixture.faucet])]))
@@ -102,13 +107,7 @@ def native_spec(args, l1, fixture, vault, token):
     config["chain_id"] = "fern-native-ckb-local"
     config["genesis_time"] = "2025-01-01T00:00:00Z"
     network = hex_bytes(ckb_hash(b"Fern CKB bridge fixture\0" + secrets.token_bytes(32)))
-    lane = hex_bytes(ckb_hash(b"Fern bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"]) + b"\0"))
-    pinned = int(l1.call("get_tip_block_number"), 16)
-    block = l1.call("get_block_hash", hex(pinned))
-    members = sorted(fixture.guardians, key=lambda member: member["ed25519"])
-    burn = hex_bytes(ckb_hash(b"Fern native test Burn Lock\0"))
-    wrapped = hex_bytes(ckb_hash(args.wrapped.read_bytes()))
-    maximum = {"operations": 8, "bytes": 2 * 1024 * 1024, "signatures": 32}
+    bridge, lane = bridge_configuration(args, l1, fixture, vault, token, network)
     spec = {
         "chain_id": config["chain_id"], "network_id": network, "genesis_time_ms": 1_735_689_600_000,
         "capacity": {"bond_per_byte": 1_000_000, "state_overhead": 80},
@@ -120,27 +119,39 @@ def native_spec(args, l1, fixture, vault, token):
             {"ed25519": hex_bytes(base64.b64decode(member["pub_key"]["value"])), "power": int(member["power"])}
             for member in config["validators"]
         ],
-        "bridge": {
-            "l1_genesis": vault["genesis"], "confirmations": 2, "anchor_height": pinned,
-            "anchor_hash": block, "guardian_generation": hex_bytes(ckb_hash(b"Fern CKB bridge fixtures" + binary(network))),
-            "guardians": members, "wrapped_code_hash": wrapped, "burn_code_hash": burn,
-            "lanes": [{"vault_type_hash": vault["vault_hash"], "vault": point(vault["vault"], 0)}],
-            "recipient_locks": [{"example": fixture.friend_lock}],
-            "reserved_recipient_locks": [vault["lock"]],
-            "mint_limits": maximum, "settlement_limits": maximum, "deposits_per_block": 32,
-        },
+        "bridge": bridge,
     }
-    if token:
-        spec["bridge"]["lanes"].append({
-            "vault_type_hash": token["vault_hash"], "vault": point(token["vault"], 0), "l1_type": token["l1_type"],
-        })
-        spec["bridge"]["reserved_recipient_locks"].append(token["escrow_lock"])
     spec_path = args.output / "fern.json"
     write_json(spec_path, spec)
     latest = json.loads(run(args.binary, "genesis-hash", "--genesis", spec_path))
     config["app_state"] = {"fern_genesis": latest.removeprefix("0x")}
     write_json(comet_config, config)
     return comet, spec, spec_path, lane
+
+
+def bridge_configuration(args, l1, fixture, vault, token, network):
+    lane = hex_bytes(ckb_hash(b"Fern bridge lane\0" + binary(vault["genesis"]) + binary(vault["vault_hash"]) + b"\0"))
+    pinned = int(l1.call("get_tip_block_number"), 16)
+    block = l1.call("get_block_hash", hex(pinned))
+    members = sorted(fixture.guardians, key=lambda member: member["ed25519"])
+    burn = hex_bytes(ckb_hash(b"Fern native test Burn Lock\0"))
+    wrapped = hex_bytes(ckb_hash(args.wrapped.read_bytes()))
+    maximum = {"operations": 8, "bytes": 2 * 1024 * 1024, "signatures": 32}
+    bridge = {
+        "l1_genesis": vault["genesis"], "confirmations": 2, "anchor_height": pinned,
+        "anchor_hash": block, "guardian_generation": hex_bytes(ckb_hash(b"Fern CKB bridge fixtures" + binary(network))),
+        "guardians": members, "wrapped_code_hash": wrapped, "burn_code_hash": burn,
+        "lanes": [{"vault_type_hash": vault["vault_hash"], "vault": point(vault["vault"], 0)}],
+        "recipient_locks": [{"example": fixture.friend_lock}],
+        "reserved_recipient_locks": [vault["lock"]],
+        "mint_limits": maximum, "settlement_limits": maximum, "deposits_per_block": 32,
+    }
+    if token:
+        bridge["lanes"].append({
+            "vault_type_hash": token["vault_hash"], "vault": point(token["vault"], 0), "l1_type": token["l1_type"],
+        })
+        bridge["reserved_recipient_locks"].append(token["escrow_lock"])
+    return bridge, lane
 
 
 def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc):
@@ -448,7 +459,21 @@ def vault_operations(args, l1, fixture, native, token, ckb_lane, ckb, typed, spe
     rotated = observe(rotation, {"lane": ckb_lane, "vault": point(moved, 0)}, transfer)
     if cell(point(rotation, 0))["lock"] != lock:
         raise AssertionError("CKB rotated vault does not use the incoming custody lock")
-    return {"reserve_transfer": transfer, "vault_rotation": rotated}
+    height = rotated["confirmed_height"]
+    l1.call("truncate", l1.call("get_block_hash", hex(height - 1)))
+    l1.mine(3)
+    replacement = l1.call("get_block_hash", hex(height))
+    if replacement == rotated["confirmed_hash"]:
+        raise AssertionError("CKB test node reproduced the vault observation anchor")
+    error = reject_cli(
+        "previous L1 anchor was reorganized",
+        args.binary, "bridge", "attest-vault", "--genesis", spec_path, "--l1-rpc", l1.url,
+        "--request", args.output / "vault-observation.json", "--key-file", fixture.guardian_keys[0],
+        "--journal", args.output / "journal-0",
+    )
+    return {"reserve_transfer": transfer, "vault_rotation": rotated,
+            "reorganized_anchor_rejected": error, "replacement_l1_hash": replacement}
+
 
 
 def main():

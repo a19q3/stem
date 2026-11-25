@@ -27,7 +27,19 @@ target/fern-tools/cometbft start --home /path/to/comet-home \
   --proxy_app unix:///path/to/fern-home/abci.sock
 ```
 
-Ordinary replicas prune execution bodies and recent Header indices after `--history-window`. The window must cover Header Deps and the stake signing window. `--archive` preserves application bodies and Headers as they arrive. Snapshots export canonical state records and a recent Header suffix. State-sync consumers authenticate the AppHash through CometBFT's light client and rebuild the two state roots before installing. Configure `[statesync]` on a fresh observer with two reachable RPC servers, a trusted signed block height and hash, and reachable P2P peers. `--snapshot-interval` controls asynchronous exports and `--snapshot-bytes` caps the received artifact size.
+Ordinary replicas prune application execution bodies and Header indices and request CometBFT block pruning after `--history-window`. The window must cover Header Deps and the stake signing window. CometBFT retains metadata required for its own evidence deadlines. Serve older executions, handoff bundles and CKB anchor proofs from an archive replica. `--archive` preserves application bodies and Headers as they arrive. Snapshots export canonical state records and a recent Header suffix. State-sync consumers authenticate the AppHash through CometBFT's light client and rebuild the two state roots before installing. Configure `[statesync]` on a fresh observer with two reachable RPC servers, a trusted signed block height and hash, and reachable P2P peers. `--snapshot-interval` controls asynchronous exports and `--snapshot-bytes` caps the received artifact size.
+
+## Operate a replica under systemd
+
+The `ops/systemd` units run the native ABCI app and CometBFT under one target. Put both binaries on the host, initialize a distinct CometBFT home per replica, and give each instance a private Fern home and a `node.env` derived from the example. Set `ROLE_ARGS=--archive` on archive replicas. Install the supplied unit files for the service user and start the target for the absolute directory containing `node.env`.
+
+```sh
+instance=$(systemd-escape --path /srv/fern)
+systemctl --user start "fern@${instance}.target"
+journalctl --user -u "fern-app@${instance}.service" -u "fern-comet@${instance}.service"
+```
+
+Keep CometBFT's private validator key and signing state together during recovery. Each key must have a single signing process. Back up the Fern specification, CKB guardian trust and CometBFT signing state independently of disposable state-sync snapshots. Enable CometBFT's Prometheus instrumentation on an operator interface when collecting consensus metrics.
 
 ## Exercise the native CometBFT path
 
@@ -48,11 +60,13 @@ FERN_NATIVE_EVIDENCE=/path/to/printed/evidence \
   go -C tools/proof test -mod=readonly -run TestNativeCommitSignatures -v .
 ```
 
-The benchmark uses the same four-node harness. Set `FERN_TEST_LOADGEN`, `FERN_TEST_LOAD_RATE`, `FERN_TEST_LOAD_COUNT` and `FERN_TEST_LOAD_KIND`. Workloads are `payment`, `single`, `double`, `multi` and `settlement`. Set `FERN_TEST_EVIDENCE_ROOT=target/fern-runs` to keep evidence on the workspace filesystem. Use `--release` for throughput characterization.
+The benchmark uses the same four-node harness. Set `FERN_TEST_LOADGEN`, `FERN_TEST_LOAD_RATE`, `FERN_TEST_LOAD_COUNT` and `FERN_TEST_LOAD_KIND`. Workloads are `payment`, `single`, `double`, `multi` and `settlement`. Set `FERN_TEST_EVIDENCE_ROOT=target/fern-runs` to keep evidence on the workspace filesystem. Set `FERN_TEST_VALIDATORS` to vary the same-host benchmark from 4 to 32 replicas. Use `--release` for throughput characterization.
 
 ## Wallet and proofs
 
 `fern wallet build --request request.json` builds a transaction from canonical Cell bytes, inputs, dependencies and any proof data. `fern wallet sign` stores a 65-byte secp256k1 seal at the indicated Lock Group number. The user supplies the intended complete Lock Script and the native genesis. `fern ckb-wallet` signs CKB L1 transactions for test deployment and custody workflows.
+
+`fern wallet find` discovers by complete Lock or Type Script hash in a local, read-only application database. Repeat the returned height and cursor for a consistent page sequence. Query selected OutPoints through ABCI for corresponding authenticated proofs.
 
 CometBFT serves ABCI queries at `/fern/header`, `/fern/cell` and `/fern/execution`. A Live Cell query uses the packed OutPoint. An execution query uses a little-endian `u32` transaction index and a block height. Use `prove=true` for the Patricia path or the matching transaction and receipt Merkle paths. To authenticate header height H, verify the CometBFT commit at H+1 against the native AppHash. Supply signed handoff certificates when validator sets have changed.
 
@@ -86,6 +100,14 @@ The first runner checks the L1 contract's registration, increase, freeze, retire
 Use `fern stake retirement-proof` with the retired public keys from confirmed CKB Registry history. Compare its returned root with the current Registry Cell. A registration supplies the absence proof after the 64-byte registration signature. A delayed withdrawal supplies the proof as its operation payload and installs the returned next root. The L1 Stake Cell and Registry are consumed atomically. The old public key stays retired after the active slot is released.
 
 `fern stake authorize-retirement` signs the next Registry state after checking an authenticated `/fern/stake-retirement` proof, the signed successor's committee, and the actual CKB Stake Cell. The L1 Stake Registry accepts the certificate only from the current guardian quorum. For a change of guardians, `fern stake observe` accepts the previous confirmed Registry OutPoint and outgoing committee in the rotation request. Collect observations from both sets before submitting the native snapshot.
+
+To benchmark during committee changes, add the following flags to the native stake runner. The runner makes a real CKB deposit, mints native Capacity, splits it into independent payment inputs and signs each payment before the timed window. The optional workload uses two same-host replicas with a three-second commit wait. The window includes both validator updates.
+
+```sh
+--loadgen target/fern-tools/fern-loadgen \
+  --vault "$contracts_dir/vault-type" --deposit-lock "$contracts_dir/deposit-lock" \
+  --native-lock "$contracts_dir/fern-lock" --wrapped "$contracts_dir/bridge-udt"
+```
 
 ## Exercise CKB Checkpoint publication
 

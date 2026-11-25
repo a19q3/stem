@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import concurrent.futures
 import json
 from pathlib import Path
 import secrets
@@ -12,9 +13,10 @@ import time
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import CKB, Fixtures, L1, binary, ckb_hash, hex_bytes, le, point, reject_cli, script_hash, write_key
-from localnet import Rpc, run, write_json
+from localnet import Rpc, config_value, run, write_json
 import checkpoint_localnet
-from native_bridge_localnet import start, wait_for
+from native_bridge_localnet import bridge_configuration, deploy as deploy_bridge, start, wait_for
+import stake_load_localnet
 from stake_localnet import CHAIN, DELAY, EMPTY, Scenario, committee as guardian_bytes, guardian_group, mk_record, proof, signable
 
 
@@ -56,7 +58,7 @@ def stake_round(args, l1, scenario, fixture):
     if verified["validators"] != [{"ed25519": hex_bytes(old_key), "power": 250}]:
         raise AssertionError(verified)
     incoming = register(new, high, 1)
-    activate(new_key, high, 1)
+    incoming_active = activate(new_key, high, 1)
     spec = {
         "chain_id": CHAIN.decode(), "network_id": hex_bytes(scenario.network), "genesis_time_ms": 1_735_689_600_000,
         "capacity": {"bond_per_byte": 1_000_000, "state_overhead": 80},
@@ -66,6 +68,15 @@ def stake_round(args, l1, scenario, fixture):
         "stake": {"trust": "snapshot-trust.json", "observations": "genesis-observations.json",
                   "signing_window": 5, "limits": {"operations": 1, "bytes": 256 * 1024, "signatures": 8}},
     }
+    vault = None
+    if args.loadgen:
+        args.xudt = None
+        source = point(scenario.code["out_point"]["tx_hash"], 2)
+        vault = deploy_bridge(args, l1, fixture, source)
+        spec["bridge"], lane = bridge_configuration(args, l1, fixture, vault, None, spec["network_id"])
+        for home in homes:
+            config_value(home / "config/config.toml", "timeout_commit", '"3s"')
+            config_value(home / "config/config.toml", "skip_timeout_commit", "false")
     spec_path = args.output / "fern-genesis.json"
     write_json(spec_path, spec)
     id_ = json.loads(run(args.binary, "genesis-hash", "--genesis", spec_path))
@@ -76,6 +87,7 @@ def stake_round(args, l1, scenario, fixture):
     for home in homes:
         write_json(home / "config/genesis.json", comet)
     nodes = []
+    loader = None
     clients = [Rpc(args.comet_port + n) for n in range(2)]
     peers = [run(args.comet, "show-node-id", "--home", home) for home in homes]
     try:
@@ -91,7 +103,7 @@ def stake_round(args, l1, scenario, fixture):
 
         def progress(height):
             wait_for(lambda: all(int(rpc.call("status")["sync_info"]["latest_block_height"]) >= height for rpc in clients),
-                     f"both replicas at H{height}")
+                     f"both replicas at H{height}", seconds=45 if vault else 20)
 
         def header(rpc, height):
             reply = rpc.call("abci_query", path=json.dumps("/fern/header"), height=height)["response"]
@@ -135,7 +147,14 @@ def stake_round(args, l1, scenario, fixture):
             return {base64.b64decode(member["pub_key"]["value"]): int(member["voting_power"])
                     for member in result["validators"]}
 
+        workload = None
+        if vault:
+            progress(1)
+            workload = stake_load_localnet.prepare(args, l1, fixture, vault, spec, spec_path, lane, clients[0])
         first, joined = snapshot(1, genesis[0]["registry"])
+        if workload:
+            loader = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            measured = loader.submit(stake_load_localnet.measure, args, workload, nodes)
         progress(11)
         first_checkpoint = checkpoint_localnet.capture(args, clients[0], progress, 11) if args.checkpoint else None
         if committee(10) != {old_key: 250} or committee(11) != {old_key: 250, new_key: 400}:
@@ -188,11 +207,18 @@ def stake_round(args, l1, scenario, fixture):
         write_json(marker_commit, clients[0].call("commit", height=marker_height + 1))
         checkpoint_report = None
         second_checkpoint = checkpoint_localnet.capture(args, clients[0], progress, 23) if args.checkpoint else None
+        increased_power = 450 * CKB
+        increased = scenario.change("increase-active-validator", 1, new_key,
+                                    mk_record(new_key, increased_power, 1, None, incoming_active))
         _, succeeding = snapshot(3, parent)
+        progress(31)
+        if committee(30) != {new_key: 400} or committee(31) != {new_key: 450}:
+            raise AssertionError("CKB bond increase did not change power at the expected height")
         if args.checkpoint:
             checkpoint_report = checkpoint_localnet.publish(
                 args, scenario, spec_path, homes[0] / "config/genesis.json",
-                transitions, first_checkpoint, second_checkpoint)
+                transitions, first_checkpoint, second_checkpoint,
+                funding=vault["change_point"] if vault else None)
         retired = owner + le(1, 8) + le(21, 8) + EMPTY
         request = args.output / "retirement-request.json"
         write_json(request, {
@@ -234,7 +260,9 @@ def stake_round(args, l1, scenario, fixture):
                 "unbonded": released, "unbonded_shannons": low, "l1_proof": l1.prove_committed(released),
                 "committee_proof": validated, "checkpoint": checkpoint_report,
                 "guardian_rotation": rotation_tx, "next_guardian_snapshot": succeeding,
-                "guardian_conflicting_epoch_rejected": True}
+                "increased_bond": increased, "increased_power_at_height_31": 450,
+                "guardian_conflicting_epoch_rejected": True,
+                "load": measured.result(timeout=90) if loader else None}
     finally:
         for client in clients:
             client.close()
@@ -246,16 +274,22 @@ def stake_round(args, l1, scenario, fixture):
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
+        if loader:
+            loader.shutdown(wait=True, cancel_futures=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("binary", "l1", "comet", "stake-registry", "proof-verifier", "output"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve(), required=True)
+    for name in ("loadgen", "vault", "deposit-lock", "native-lock", "wrapped"):
+        parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--checkpoint", type=lambda path: Path(path).resolve())
     parser.add_argument("--l1-port", type=int, default=43300)
     parser.add_argument("--comet-port", type=int, default=43310)
     args = parser.parse_args()
+    if args.loadgen and not all((args.vault, args.deposit_lock, args.native_lock, args.wrapped)):
+        parser.error("funded stake load requires --vault, --deposit-lock, --native-lock and --wrapped")
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)
     try:
@@ -265,6 +299,8 @@ def main():
         print(result["committee_proof"], f"unbonded {result['unbonded_shannons']} shannons")
         if result["checkpoint"]:
             print(f"published CKB checkpoints at Fern heights {[item['height'] for item in result['checkpoint']['publications']]}")
+        if result["load"]:
+            print(json.dumps(result["load"], indent=2))
     finally:
         l1.stop()
 

@@ -24,14 +24,14 @@ def capture(args, rpc, progress, minimum):
     return height, stake_proof, successor
 
 
-def publish(args, scenario, spec, comet_genesis, handoffs, first, second):
+def publish(args, scenario, spec, comet_genesis, handoffs, first, second, funding=None):
     l1 = scenario.l1
     fixture = scenario.fixture
     program = args.checkpoint.read_bytes()
     code_hash = hex_bytes(ckb_hash(program))
-    faucet_change = point(scenario.code["out_point"]["tx_hash"], 2)
+    faucet_change = funding or point(scenario.code["out_point"]["tx_hash"], 2)
     funding_tx = l1.call("get_transaction", faucet_change["tx_hash"])["transaction"]
-    funds = int(funding_tx["outputs"][2]["capacity"], 16)
+    funds = int(funding_tx["outputs"][int(faucet_change["index"], 16)]["capacity"], 16)
     code_capacity = (len(program) + 200) * CKB
     funding_capacity = 8_000 * CKB
     deploy = transaction(

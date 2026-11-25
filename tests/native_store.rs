@@ -124,6 +124,49 @@ impl Fixture {
 }
 
 #[test]
+fn wallet_finds_cells_by_complete_script_identity() -> Result<()> {
+    use fern::native_store::{ScriptQuery, find_cells};
+
+    let mut fixture = Fixture::new()?;
+    let script = fixture
+        .lock
+        .clone()
+        .as_builder()
+        .args(Bytes::from_static(b"asset"))
+        .build();
+    let typed = OutPoint::new([24; 32].pack(), 0);
+    fixture.spec.development_cells.push((
+        typed.clone(),
+        Cell::new(
+            FUND,
+            fixture.lock.clone(),
+            vec![script.clone()],
+            Bytes::new(),
+        )?,
+    ));
+    let directory = tempfile::tempdir()?;
+    let mut store = Store::open(directory.path(), &fixture.spec, Retention::Archive)?;
+    let by_type = ScriptQuery::Type(script.calc_script_hash());
+    let results = find_cells(directory.path(), &by_type, None, 10, Some(0))?;
+    assert_eq!(
+        results
+            .cells
+            .iter()
+            .map(|(point, _)| point)
+            .collect::<Vec<_>>(),
+        [&typed]
+    );
+    let by_lock = ScriptQuery::Lock(fixture.lock.calc_script_hash());
+    let first = find_cells(directory.path(), &by_lock, None, 1, Some(0))?;
+    let second = find_cells(directory.path(), &by_lock, first.next, 1, Some(0))?;
+    assert_ne!(first.cells[0].0, second.cells[0].0);
+    let empty = store.prepare(&[], TIME + 1, false)?;
+    store.commit(empty)?;
+    assert!(find_cells(directory.path(), &by_lock, first.next, 1, Some(0)).is_err());
+    Ok(())
+}
+
+#[test]
 fn parallel_waves_preserve_receipts_conflicts_and_block_cycles() -> Result<()> {
     let mut fixture = Fixture::new()?;
     let points = [10u8, 11, 12].map(|id| OutPoint::new([id; 32].pack(), 0));
@@ -282,6 +325,8 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
         let block = store.prepare(std::slice::from_ref(&mature), TIME + 100, true)?;
         store.commit(block)?;
     }
+    assert_eq!(recent.consensus_retain_height(), 2);
+    assert_eq!(archive.consensus_retain_height(), 0);
     let snapshot = archive.export_state()?;
     let hash = archive.tip().app_hash(archive.network());
     let restore_path = tempfile::tempdir()?;
