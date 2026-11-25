@@ -20,6 +20,7 @@ pub const REDUCE_DELEGATION: u8 = 12;
 pub const CONFIRM_REDUCTION: u8 = 13;
 pub const WITHDRAW_REDUCTION: u8 = 14;
 pub const SLASH_REDUCTION: u8 = 15;
+pub const CONFIRM_DELEGATION: u8 = 16;
 
 /// A delegation uses a native Type ID bound to its own CKB creation input and output index.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,8 +32,7 @@ pub struct DelegationId {
 }
 
 impl DelegationId {
-    pub const NONCE_OFFSET: usize = 96;
-    pub const SIZE: usize = Self::NONCE_OFFSET + 32;
+    pub const SIZE: usize = 4 * 32;
 
     pub fn decode(args: &[u8]) -> Result<Self> {
         if args.len() != Self::SIZE {
@@ -61,6 +61,10 @@ impl DelegationId {
         }
         bytes
     }
+
+    pub fn commitment(self) -> Hash32 {
+        digest(b"Stem CKB delegation identity\0", &[&self.encode()])
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -69,10 +73,12 @@ pub struct DelegationBond {
     pub pending: u64,
     pub requested_sequence: u64,
     pub cutoff_height: u64,
+    pub creation_sequence: u64,
+    pub first_active_height: u64,
 }
 
 impl DelegationBond {
-    pub const SIZE: usize = 32;
+    pub const SIZE: usize = 48;
 
     pub fn decode(data: &[u8]) -> Result<Self> {
         let bytes: &[u8; Self::SIZE] = data.try_into().map_err(|_| Error::Encoding)?;
@@ -81,10 +87,15 @@ impl DelegationBond {
             pending: u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
             requested_sequence: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
             cutoff_height: u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+            creation_sequence: u64::from_le_bytes(bytes[32..40].try_into().unwrap()),
+            first_active_height: u64::from_le_bytes(bytes[40..48].try_into().unwrap()),
         };
         if bond.total()? == 0
             || (bond.pending != 0) != (bond.requested_sequence != 0)
             || (bond.pending == 0 && bond.cutoff_height != 0)
+            || (bond.creation_sequence == 0) == (bond.first_active_height == 0)
+            || (bond.pending != 0 && bond.first_active_height == 0)
+            || (bond.cutoff_height != 0 && bond.cutoff_height < bond.first_active_height)
         {
             return Err(Error::Encoding);
         }
@@ -98,6 +109,8 @@ impl DelegationBond {
             self.pending,
             self.requested_sequence,
             self.cutoff_height,
+            self.creation_sequence,
+            self.first_active_height,
         ]) {
             field.copy_from_slice(&value.to_le_bytes());
         }
@@ -616,31 +629,35 @@ impl ChangeContext<'_> {
 
 pub enum DelegationAction {
     Bond {
-        before: u64,
-        after: u64,
+        amount: u64,
         owner_authorized: bool,
     },
     Withdraw {
         amount: u64,
+        start: u64,
         retired_block: u64,
         since: u64,
     },
     Slash {
         amount: u64,
+        start: u64,
         fee: u64,
+        historical_evidence: bool,
     },
     Reduce {
         amount: u64,
         owner_authorized: bool,
     },
-    ConfirmReduction,
+    Confirm,
     WithdrawReduction {
         amount: u64,
+        start: u64,
         cutoff: u64,
         since: u64,
     },
     SlashReduction {
         amount: u64,
+        start: u64,
         cutoff: u64,
         fee: u64,
         historical_evidence: bool,
@@ -664,8 +681,7 @@ pub fn verify_delegation(
     let mut unbonding_amount = before.unbonding_amount;
     let delegated_amount = match action {
         DelegationAction::Bond {
-            before: previous,
-            after,
+            amount,
             owner_authorized,
         } => {
             if !owner_authorized
@@ -674,20 +690,18 @@ pub fn verify_delegation(
                 || before.exit_epoch.is_some()
                 || before.frozen()
                 || before.bonded_amount < policy.minimum_bond
+                || amount == 0
             {
                 return Err(Error::Sequence);
             }
-            let delta = after
-                .checked_sub(previous)
-                .filter(|delta| *delta > 0)
-                .ok_or(Error::Sequence)?;
             before
                 .delegated_amount
-                .checked_add(delta)
+                .checked_add(amount)
                 .ok_or(Error::Overflow)?
         }
         DelegationAction::Withdraw {
             amount,
+            start,
             retired_block,
             since,
         } => {
@@ -695,7 +709,8 @@ pub fn verify_delegation(
                 .checked_add(policy.unbonding_blocks)
                 .ok_or(Error::Overflow)?;
             if before.first_inactive_height == 0
-                || before.frozen()
+                || start == 0
+                || before.fault_height >= start
                 || retired_block == 0
                 || since & !MAX_DELAY != 0
                 || since < minimum
@@ -708,8 +723,17 @@ pub fn verify_delegation(
                 .checked_sub(amount)
                 .ok_or(Error::Sequence)?
         }
-        DelegationAction::Slash { amount, fee } => {
-            if !before.frozen() || before.first_inactive_height == 0 || amount == 0 || fee < amount
+        DelegationAction::Slash {
+            amount,
+            start,
+            fee,
+            historical_evidence,
+        } => {
+            if before.first_inactive_height == 0
+                || amount == 0
+                || fee < amount
+                || start == 0
+                || !(historical_evidence || before.fault_height >= start)
             {
                 return Err(Error::Evidence);
             }
@@ -738,15 +762,18 @@ pub fn verify_delegation(
                 .checked_sub(amount)
                 .ok_or(Error::Sequence)?
         }
-        DelegationAction::ConfirmReduction => before.delegated_amount,
+        DelegationAction::Confirm => before.delegated_amount,
         DelegationAction::WithdrawReduction {
             amount,
+            start,
             cutoff,
             since,
         } => {
             if amount == 0
                 || cutoff == 0
-                || (before.frozen() && before.fault_height < cutoff)
+                || start == 0
+                || cutoff < start
+                || (before.fault_height >= start && before.fault_height < cutoff)
                 || since & !MAX_DELAY != RELATIVE_BLOCKS
                 || since & MAX_DELAY < policy.unbonding_blocks
             {
@@ -759,6 +786,7 @@ pub fn verify_delegation(
         }
         DelegationAction::SlashReduction {
             amount,
+            start,
             cutoff,
             fee,
             historical_evidence,
@@ -766,7 +794,10 @@ pub fn verify_delegation(
             if amount == 0
                 || cutoff == 0
                 || fee < amount
-                || !(historical_evidence || (before.frozen() && before.fault_height < cutoff))
+                || start == 0
+                || cutoff < start
+                || !(historical_evidence
+                    || (before.fault_height >= start && before.fault_height < cutoff))
             {
                 return Err(Error::Evidence);
             }

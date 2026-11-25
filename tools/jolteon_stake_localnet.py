@@ -31,13 +31,37 @@ def retirement_marker(client, validator, effective):
     return marker, response["height"]
 
 
-def exercise_reductions(args, l1, scenario, relay, key, registry, requested, joined):
+def registry_application(client, registry_id, sequence):
+    data = hex_bytes(registry_id + le(sequence, 8))
+    response = client.query("/stem/stake-registry-application", data=data, prove=True)
+    return json.loads(bytes.fromhex(response["value"])), response["height"]
+
+
+def publish_handoff(args, scenario, relay, epoch):
+    path = args.output / f"handoff-{epoch}.json"
+    write_json(path, rpc(relay.client.port, HANDOFF, le(epoch, 8))["proof"])
+    return relay.advance((epoch + 1) * 10, scenario.secp, proof_file=path, terminal=True)
+
+
+def confirm_positions(args, scenario, relay, validator, genesis, next_registry):
+    publish_handoff(args, scenario, relay, 0)
+    first, _ = registry_application(relay.client, scenario.registry_id, genesis["sequence"])
+    following, height = registry_application(relay.client, scenario.registry_id, next_registry["sequence"])
+    assert first["effective_height"] == 1 and following["effective_height"] == 11
+    checkpoint = relay.advance(height, scenario.secp)
+    wrong = scenario.delegation("claim-preexisting-activation", 16, validator, label="top-up",
+        application=first, checkpoint=checkpoint, funded_by_owner=False, expected="error code 23")
+    confirmed = [scenario.delegation(f"activate-{label}", 16, validator, label=label, application=application,
+        checkpoint=checkpoint, funded_by_owner=False)
+        for label, application in (("holder", first), ("top-up", following), ("second", following))]
+    return {"first": first, "next": following, "confirmations": confirmed, "wrong_interval_rejected": wrong}
+
+
+def exercise_reductions(args, l1, scenario, relay, key, incoming, registry, requested, joined):
     validator = public(key)
     sequence = registry["sequence"]
-    request = hex_bytes(scenario.registry_id + le(sequence, 8))
-    response = relay.client.query("/stem/stake-registry-application", data=request, prove=True)
-    application = json.loads(bytes.fromhex(response["value"]))
-    assert application["effective_height"] == 11 and application["l1_hash"] == registry["block_hash"]
+    application, height = registry_application(relay.client, scenario.registry_id, sequence)
+    assert application["effective_height"] == 21 and application["l1_hash"] == registry["block_hash"]
     assert application["previous_sequence"] < requested["sequence"] <= sequence
     checkpoints = {}
     replacement = None
@@ -49,11 +73,8 @@ def exercise_reductions(args, l1, scenario, relay, key, registry, requested, joi
         assert replacement != application["l1_hash"], application
         for _, _, point, _ in scenario.delegations.values():
             assert l1.call("get_live_cell", point, True)["status"] == "live", point
-    boundary = args.output / "handoff-0.json"
-    write_json(boundary, rpc(relay.client.port, HANDOFF, le(0, 8))["proof"])
-    early = relay.advance(10, scenario.secp, proof_file=boundary, terminal=True)
-    assert relay.header(10)[112:144] == relay.header(response["height"])[112:144]
-    height = response["height"]
+    early = publish_handoff(args, scenario, relay, 1)
+    assert relay.header(20)[112:144] == relay.header(height)[112:144]
     if replacement is None:
         checkpoints["not_effective"] = scenario.delegation("confirm-before-effective", 13, validator,
             application=application, checkpoint=early, funded_by_owner=False, expected="error code 23")
@@ -72,7 +93,7 @@ def exercise_reductions(args, l1, scenario, relay, key, registry, requested, joi
         application=application, checkpoint=checkpoint, omit_l1_anchor=True, funded_by_owner=False,
         expected="error code 23")
     checkpoints["tampered_cutoff"] = scenario.delegation("confirm-invalid-height", 13, validator,
-        application=dict(application, effective_height=10), checkpoint=checkpoint, funded_by_owner=False,
+        application=dict(application, effective_height=20), checkpoint=checkpoint, funded_by_owner=False,
         expected="error code 23")
     confirmations = [scenario.delegation(f"confirm-{label}", 13, validator, label=label,
         application=application, checkpoint=checkpoint, funded_by_owner=False)
@@ -87,37 +108,44 @@ def exercise_reductions(args, l1, scenario, relay, key, registry, requested, joi
     settlement = []
     historical = None
     if args.reduction_slash:
-        wait_for(lambda: relay.client.status()["height"] >= 15, "post-cutoff double-vote fixture")
+        wait_for(lambda: relay.client.status()["height"] >= 24, "post-cutoff double-vote fixture")
         target = relay.client.status()["height"]
         checkpoint = relay.advance(target, scenario.secp)
-        # The checkpoint proof for the new committee observes the actual capped liability boundary.
-        late, _, _, penalty = slash_evidence(args, relay, key, 1, 12, target)
+        late, _, _, _ = slash_evidence(args, relay, key, 2, 22, target)
         write_json(args.output / "reduction-late-evidence.json", hex_bytes(late))
         checkpoints["post_cutoff_vote"] = scenario.delegation("pending-slash-after-cutoff", 15, validator,
             evidence=late, checkpoint=checkpoint, funded_by_owner=False, expected="error code 23")
-        stake = scenario.records[validator][1]
-        frozen = mk_record(validator, int.from_bytes(stake[:8], "little"), 0, None,
-            stake[24:72] + penalty, frozen=True, fault_height=12)
-        late_freeze = scenario.change("freeze-after-reduction-cutoff", 6, validator, frozen,
-            lambda *_: late, dependencies=[checkpoint], measure=True)
-        old, forged, _, _ = slash_evidence(args, relay, key, 0, 3, target)
+        old, forged, _, penalty = slash_evidence(args, relay, key, 0, 3, target)
         historical = hex_bytes(old)
+        checkpoints["before_new_position"] = scenario.delegation("pending-slash-before-activation", 15,
+            validator, label="second", evidence=old, checkpoint=checkpoint, funded_by_owner=False, expected="error code 23")
         checkpoints["invalid_historical_signature"] = scenario.delegation("pending-slash-forged", 15,
             validator, evidence=forged, checkpoint=checkpoint, funded_by_owner=False, expected="error code 25")
+        stake = scenario.records[validator][1]
+        frozen = mk_record(validator, int.from_bytes(stake[:8], "little"), 0, None,
+            stake[24:72] + penalty, frozen=True, fault_height=3)
+        tx = scenario.change("freeze-older-than-second-position", 6, validator, frozen,
+            lambda *_: old, dependencies=[checkpoint], measure=True)
+        checkpoints["withdraw_liable_position"] = scenario.delegation("withdraw-liable-old-position", 14,
+            validator, funded_by_owner=False, expected="error code 23")
         settlement.append(scenario.delegation("slash-reduced-holder", 15, validator, evidence=old,
             checkpoint=checkpoint, funded_by_owner=False))
-        late_freeze = {"transaction": late_freeze, "proof": l1.prove_committed(late_freeze)}
+        late_freeze = {"transaction": tx, "proof": l1.prove_committed(tx)}
     else:
         late_freeze = None
         settlement.append(scenario.delegation("withdraw-reduced-holder", 14, validator, funded_by_owner=False))
     settlement.append(scenario.delegation("withdraw-full-second", 14, validator, label="second", funded_by_owner=False))
-    assert scenario.delegations["holder"][1] == (75 * CKB, 0, 0, 0)
+    assert scenario.delegations["holder"][1] == (35 * CKB, 0, 0, 0, 0, 1)
+    scenario.delegate_fee_point = settlement[-1]["recipient_output"]
+    scenario.delegate_fee_capacity = settlement[-1]["recipient_paid"]
+    switched = scenario.delegation("redelegate-withdrawn-capital", 9, public(incoming), 8 * CKB,
+        label="redelegated", separate_owner=True)
     active = relay.client.status()
-    assert active["epoch"] == 1 and joined[0]["voting_power"] == 325
+    assert active["epoch"] == 2 and joined[0]["voting_power"] == 360
     return {"joined": joined, "application": application, "initial_request": requested,
             "proof_height": height, "confirmations": confirmations, "settlement": settlement,
             "rejections": checkpoints, "historical_evidence": historical, "checkpoint": relay.report(),
-            "late_global_freeze": late_freeze, "active_status_after_settlement": active,
+            "global_freeze": late_freeze, "redelegated": switched, "active_status_after_settlement": active,
             "measurements": scenario.measurements}
 
 
@@ -274,29 +302,22 @@ def run_epochs(args, l1, scenario, fixture):
             expected="error code 23", funded_by_owner=False)
         fake_weight = scenario.delegation("inflated-delegation-weight", 9, key, 100 * CKB,
             expected="error code 23", registry_delta=120 * CKB)
+        wrong_identity = scenario.delegation("substituted-delegation-id", 9, key, 100 * CKB,
+            expected="error code 23", wrong_identity=True)
         start_bond = scenario.delegation("first-delegation", 9, key, 100 * CKB)
-        delegation = {"bond": start_bond, "rejections": {"unauthorized": wrong_owner, "inflated": fake_weight}}
+        delegation = {"bond": start_bond, "rejections": {"unauthorized": wrong_owner, "inflated": fake_weight,
+                      "identity": wrong_identity}}
     genesis = scenario.observe("initial", 0, count=3)
     verified, _ = scenario.verify_genesis_snapshot(genesis)
     genesis_committee = verified["validators"]
     assert genesis_committee == [{"ed25519": hex_bytes(public(old)), "power": 350 if delegation else 250}]
     registered_new, activated_new, new_meta = activate(incoming, high, 1)
     if delegation:
-        delegation["top_up"] = scenario.delegation("top-up-delegation", 9, public(old), 175 * CKB)
+        delegation["top_up"] = scenario.delegation("top-up-delegation", 9, public(old), 75 * CKB, label="top-up")
         delegation["separate_position"] = scenario.delegation("second-delegation", 9, public(old), 70 * CKB,
             label="second", separate_owner=True)
         delegation["rejections"]["before_retirement"] = scenario.delegation("active-delegation-withdraw", 10,
             public(old), since=0, expected="error code 23", funded_by_owner=False)
-    reductions = None
-    if args.partial_reduction:
-        failed = scenario.delegation("unauthorized-reduction", 12, public(old), 100 * CKB,
-            expected="error code 23", funded_by_owner=False)
-        holder = scenario.delegation("request-partial-reduction", 12, public(old), 100 * CKB)
-        second = scenario.delegation("request-full-reduction", 12, public(old), 70 * CKB, label="second")
-        missing = scenario.delegation("withdraw-before-confirmation", 14, public(old), since=0,
-            expected="error code 23", funded_by_owner=False)
-        reductions = {"sequence": scenario.sequence, "holder": holder, "second": second,
-                      "unauthorized_rejected": failed, "unconfirmed_rejected": missing}
 
     spec = args.output / "stem-genesis.json"
     write_json(spec, {
@@ -313,7 +334,7 @@ def run_epochs(args, l1, scenario, fixture):
                json.loads(run(args.binary, "genesis-hash", "--genesis", spec, "--header")))
     keys = sorted([old, incoming, observer], key=public)
     ports = {public(key): args.port + i for i, key in enumerate(keys)}
-    cadence, timeout = (1400, 3600) if args.active_slash else (750, 2800)
+    cadence, timeout = (1700, 4000) if args.delegation else (1400, 3600) if args.active_slash else (750, 2800)
     configuration = write_configuration(args.output, [public(key) for key in keys], ports.values(), cadence, timeout)
     key_files = {public(key): write_key(args.output, f"jolteon-{i}", key.private_bytes_raw())
                  for i, key in enumerate(keys)}
@@ -382,8 +403,6 @@ def run_epochs(args, l1, scenario, fixture):
         assert [status["voting_power"] for status in initial] == [350 if delegation else 250, None, None]
         if args.replace:
             retired = scenario.change("request-live-exit", 2, public(old), mk_record(public(old), low, 0, 1, old_meta))
-        if args.reduction_reorg:
-            l1.mine(2)
         original = snapshot(1, old, genesis[0]["registry"])
         lag_start = progress(observer, 6, 0)
         processes[public(observer)].kill()
@@ -393,12 +412,41 @@ def run_epochs(args, l1, scenario, fixture):
         stake_client = Client(args, ports[public(incoming)], hex_bytes(scenario.network))
         archive = args.output / f"node-{ports[public(incoming)]}" / "db"
         relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint else None
-        if reductions:
-            result = exercise_reductions(args, l1, scenario, relay, old, original, reductions, joined)
+        if delegation:
+            delegation["activation"] = confirm_positions(args, scenario, relay, public(old), genesis[0]["registry"], original)
+        if args.partial_reduction:
+            key = public(old)
+            failed = scenario.delegation("unauthorized-reduction", 12, key, 65 * CKB,
+                expected="error code 23", funded_by_owner=False)
+            holder = scenario.delegation("request-partial-reduction", 12, key, 65 * CKB)
+            second = scenario.delegation("request-full-reduction", 12, key, 70 * CKB, label="second")
+            missing = scenario.delegation("withdraw-before-confirmation", 14, key, since=0,
+                expected="error code 23", funded_by_owner=False)
+            reductions = {"sequence": scenario.sequence, "holder": holder, "second": second,
+                          "unauthorized_rejected": failed, "unconfirmed_rejected": missing}
+            if args.reduction_reorg:
+                l1.mine(2)
+            second_applied = snapshot(2, incoming, original)
+            active = [progress(key, 21, 2) for key in (old, incoming)]
+            result = exercise_reductions(args, l1, scenario, relay, old, incoming, second_applied, reductions, active)
+            if not args.reduction_slash and not args.reduction_reorg:
+                third_applied = snapshot(3, incoming, second_applied)
+                after_switch = [progress(key, 31, 3) for key in (old, incoming)]
+                assert [status["voting_power"] for status in after_switch] == [360, 408]
+                publish_handoff(args, scenario, relay, 2)
+                application, proof_height = registry_application(stake_client, scenario.registry_id,
+                    third_applied["sequence"])
+                assert application["effective_height"] == 31
+                checkpoint = relay.advance(proof_height, scenario.secp)
+                activation = scenario.delegation("activate-switched-validator", 16, public(incoming),
+                    label="redelegated", application=application, checkpoint=checkpoint, funded_by_owner=False)
+                result["redelegated_activation"] = {"position": activation, "application": application,
+                    "committee": after_switch}
+                result["checkpoint"] = relay.report()
             common = min(request(key, STATUS)["height"] for key in (old, incoming))
             agreed = header(incoming, common)
             assert header(old, common) == agreed
-            return {"initial": initial, "joined": joined, "agreed": agreed, "reductions": result}
+            return {"initial": initial, "joined": joined, "agreed": agreed, "reductions": result, "delegation": delegation}
         active_freeze = None
         early = None
         if args.retire and args.replace:
@@ -411,16 +459,15 @@ def run_epochs(args, l1, scenario, fixture):
                 mk_record(public(incoming), 450 * CKB, 1, None, new_meta))
         else:
             assert sorted(status["member"] for status in joined) == [0, 1]
-            old_power = 325 if reductions else 495 if delegation else 250
+            old_power = 495 if delegation else 250
             expected = [442, 357] if args.delegation_power_cap else [old_power, 400]
             assert [status["voting_power"] for status in joined] == expected
             if args.active_slash:
-                handoff_proof = request(incoming, HANDOFF, le(0, 8))["proof"]
-                verify(handoff_proof, "handoff-0", terminal=True)
-                relay.advance(10, scenario.secp, proof_file=args.output / "handoff-0.json", terminal=True, probe=True)
-                progress(incoming, 12, 1)
-                active_dep = relay.advance(12, scenario.secp)
-                active_freeze = freeze_fixture(args, scenario, relay, old, 1, 12, 12, old_meta, low, None, active_dep)
+                if not relay.publications:
+                    publish_handoff(args, scenario, relay, 0)
+                target = progress(incoming, 13, 1)["height"]
+                active_dep = relay.advance(target, scenario.secp)
+                active_freeze = freeze_fixture(args, scenario, relay, old, 1, 12, target, old_meta, low, None, active_dep)
                 retired = None
             else:
                 retired = scenario.change("request-live-exit", 2, public(old), mk_record(public(old), low, 0, 2, old_meta))

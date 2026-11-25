@@ -349,13 +349,26 @@ pub(super) struct StakeState {
 }
 
 impl StakeState {
-    pub(super) fn genesis_records(&self) -> [(&'static [u8], Vec<u8>); 3] {
+    pub(super) fn genesis_records(&self, registry: &[u8; 32]) -> [(Vec<u8>, Vec<u8>); 4] {
         [
-            (ACCEPTED, encode_accepted(self.accepted, &self.eligible)),
-            (COMMITTEE_RECORD, self.announced.encode()),
             (
-                APPLIED_REGISTRY_SEQUENCE,
+                ACCEPTED.to_vec(),
+                encode_accepted(self.accepted, &self.eligible),
+            ),
+            (COMMITTEE_RECORD.to_vec(), self.announced.encode()),
+            (
+                APPLIED_REGISTRY_SEQUENCE.to_vec(),
                 self.applied_sequence.to_le_bytes().to_vec(),
+            ),
+            (
+                registry_application_key(registry, self.applied_sequence),
+                RegistryApplication {
+                    previous_sequence: 0,
+                    effective_height: 1,
+                    l1_anchor: self.accepted.anchor.block,
+                }
+                .encode()
+                .to_vec(),
             ),
         ]
     }

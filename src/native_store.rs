@@ -426,12 +426,16 @@ impl Store {
             batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
         }
         let staking = if let Some((staking, state, config, snapshot)) = configured_staking {
+            let genesis = spec.stake.as_ref().context("missing stake genesis")?;
             for (name, value) in state
-                .genesis_records()
+                .genesis_records(&genesis.statement.domain.registry_id)
                 .into_iter()
-                .chain([(staking::CONFIG, config), (staking::SNAPSHOT, snapshot)])
+                .chain([
+                    (staking::CONFIG.to_vec(), config),
+                    (staking::SNAPSHOT.to_vec(), snapshot),
+                ])
             {
-                let id = system.record_key(name);
+                let id = system.record_key(&name);
                 system_edit.set(id, Some(system.value_hash(&value)))?;
                 batch.put(state_key(STATE_RECORD, Namespace::System, &id), value);
             }

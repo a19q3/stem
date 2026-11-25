@@ -19,8 +19,8 @@ use stem_contracts::load_checkpoint;
 use stem_stake::{
     Attestation, Hash32, MAX_RECORDS, Member, Registry, StakeData,
     l1::{
-        Action, BOND_DELEGATION, CONFIRM_REDUCTION, ChangeContext, DelegationAction,
-        DelegationBond, DelegationId, GuardianProof, Policy, REDUCE_DELEGATION,
+        Action, BOND_DELEGATION, CONFIRM_DELEGATION, CONFIRM_REDUCTION, ChangeContext,
+        DelegationAction, DelegationBond, DelegationId, GuardianProof, Policy, REDUCE_DELEGATION,
         RegistryApplication, SLASH_DELEGATION, SLASH_REDUCTION, StakeCell, WITHDRAW_DELEGATION,
         WITHDRAW_REDUCTION, verify_delegation, verify_rotation,
     },
@@ -75,13 +75,14 @@ fn verify() -> Result<(), Error> {
     }
     let args = script.args().raw_data();
     match args.len() {
+        0 => verify_delegation_lock(&script),
         33 if args[32] == 0 => verify_lock(&script, args[..32].try_into().unwrap()),
         64 => verify_stake_type(
             &script,
             args[..32].try_into().unwrap(),
             args[32..].try_into().unwrap(),
         ),
-        DelegationId::SIZE => verify_delegation_type(&script, &args),
+        32 => verify_delegation_type(&script, &args),
         Policy::MIN_ARGS..=Policy::MAX_ARGS => verify_registry(&script, &args),
         _ => Err(Error::Encoding),
     }
@@ -252,14 +253,22 @@ fn verify_delegation_transition(
         .split_at_checked(DelegationId::SIZE)
         .ok_or(Error::Encoding)?;
     let id = DelegationId::decode(args)?;
-    if !matches!(operation, CONFIRM_REDUCTION | SLASH_REDUCTION) && !witness.is_empty() {
+    if !matches!(
+        operation,
+        CONFIRM_DELEGATION | CONFIRM_REDUCTION | SLASH_REDUCTION | SLASH_DELEGATION
+    ) && !witness.is_empty()
+    {
         return Err(Error::Encoding);
     }
-    let lock = registry_lock(script, &policy.registry_id);
-    if id.registry != policy.registry_id || id.owner == lock.calc_script_hash().as_slice() {
+    let lock = with_args(script, &[]);
+    let stake_lock = registry_lock(script, &policy.registry_id);
+    if id.registry != policy.registry_id
+        || id.owner == lock.calc_script_hash().as_slice()
+        || id.owner == stake_lock.calc_script_hash().as_slice()
+    {
         return Err(Error::Stake);
     }
-    let hash = with_args(script, args).calc_script_hash();
+    let hash = with_args(script, &id.commitment()).calc_script_hash();
     let hash = hash.as_slice().try_into().unwrap();
     let input = find_type(hash, Source::Input)?;
     let output = find_type(hash, Source::Output)?;
@@ -270,24 +279,44 @@ fn verify_delegation_transition(
         .map(|index| read_delegation(&lock, index, Source::Output))
         .transpose()?;
     let action = match (operation, before, after) {
-        (BOND_DELEGATION, before, Some((after, _))) => {
-            let previous = before.map_or(DelegationBond::default(), |(before, _)| before);
-            if previous.pending != 0
-                || after
-                    != (DelegationBond {
-                        active: after.active,
-                        ..previous
-                    })
+        (BOND_DELEGATION, None, Some((after, _))) => {
+            if after
+                != (DelegationBond {
+                    active: after.active,
+                    creation_sequence: new.sequence(),
+                    ..DelegationBond::default()
+                })
             {
                 return Err(Error::Stake);
             }
             DelegationAction::Bond {
-                before: previous.active,
-                after: after.active,
+                amount: after.active,
                 owner_authorized: inputs_authorize(&id.owner)?,
             }
         }
-        (WITHDRAW_DELEGATION, Some((bond, occupied)), None) if bond.pending == 0 => {
+        (CONFIRM_DELEGATION, Some((before, _)), Some((after, _)))
+            if before.creation_sequence != 0 =>
+        {
+            let height = prove_application(
+                policy,
+                input.ok_or(Error::Stake)?,
+                before.creation_sequence,
+                witness,
+            )?;
+            if after
+                != (DelegationBond {
+                    creation_sequence: 0,
+                    first_active_height: height,
+                    ..before
+                })
+            {
+                return Err(Error::Stake);
+            }
+            DelegationAction::Confirm
+        }
+        (WITHDRAW_DELEGATION, Some((bond, occupied)), None)
+            if bond.pending == 0 && bond.first_active_height != 0 =>
+        {
             pay_delegator(
                 &id.owner,
                 bond.active.checked_add(occupied).ok_or(Error::Capacity)?,
@@ -296,24 +325,55 @@ fn verify_delegation_transition(
             let stake_hash = with_args(script, &stake_args).calc_script_hash();
             let stake = find_type(stake_hash.as_slice().try_into().unwrap(), Source::CellDep)?
                 .ok_or(Error::Stake)?;
-            read_stake(old, &id.validator, &lock, Some(stake), Source::CellDep)?;
+            read_stake(
+                old,
+                &id.validator,
+                &stake_lock,
+                Some(stake),
+                Source::CellDep,
+            )?;
             // CKB associates this Header with the actual Stake Cell dependency.
             let header = load_header(stake, Source::CellDep)?;
             DelegationAction::Withdraw {
                 amount: bond.active,
+                start: bond.first_active_height,
                 retired_block: header.raw().number().unpack(),
                 since: load_input_since(input.ok_or(Error::Stake)?, Source::Input)?,
             }
         }
-        (SLASH_DELEGATION, Some((bond, occupied)), None) if bond.pending == 0 => {
+        (SLASH_DELEGATION, Some((bond, occupied)), None)
+            if bond.pending == 0 && bond.first_active_height != 0 =>
+        {
             pay_delegator(&id.owner, occupied)?;
+            let historical_evidence = if witness.is_empty() {
+                false
+            } else {
+                let retired = old
+                    .record(&id.validator)
+                    .ok_or(Error::Stake)?
+                    .first_inactive_height;
+                let retired = u64::try_from(retired).map_err(|_| Error::Stake)?;
+                verify_position_evidence(
+                    policy,
+                    old,
+                    &id.validator,
+                    bond.first_active_height,
+                    retired,
+                    witness,
+                )?;
+                true
+            };
             DelegationAction::Slash {
                 amount: bond.active,
+                start: bond.first_active_height,
                 fee: fee()?,
+                historical_evidence,
             }
         }
         (REDUCE_DELEGATION, Some((before, _)), Some((after, _))) => {
             if before.pending != 0
+                || before.first_active_height == 0
+                || after.first_active_height != before.first_active_height
                 || after.pending == 0
                 || before.total()? != after.total()?
                 || after.requested_sequence != new.sequence()
@@ -327,42 +387,24 @@ fn verify_delegation_transition(
             }
         }
         (CONFIRM_REDUCTION, Some((before, _)), Some((after, _))) => {
-            let (sequence, witness) = witness.split_at_checked(8).ok_or(Error::Encoding)?;
-            let (record, path) = witness
-                .split_at_checked(RegistryApplication::SIZE)
-                .ok_or(Error::Encoding)?;
-            let sequence = u64::from_le_bytes(sequence.try_into().unwrap());
-            let record = RegistryApplication::decode(record)?;
-            if before.pending == 0
-                || before.cutoff_height != 0
-                || after
-                    != (DelegationBond {
-                        cutoff_height: record.effective_height,
-                        ..before
-                    })
+            if before.pending == 0 || before.cutoff_height != 0 {
+                return Err(Error::Stake);
+            }
+            let height = prove_application(
+                policy,
+                input.ok_or(Error::Stake)?,
+                before.requested_sequence,
+                witness,
+            )?;
+            if after
+                != (DelegationBond {
+                    cutoff_height: height,
+                    ..before
+                })
             {
                 return Err(Error::Stake);
             }
-            let checkpoint = load_checkpoint(
-                &policy.checkpoint,
-                &policy.ckb_genesis,
-                &policy.network_id,
-                Some(policy.chain_id),
-            )?
-            .ok_or(Error::Stake)?;
-            record.verify(
-                policy,
-                checkpoint.state,
-                sequence,
-                before.requested_sequence,
-                path,
-            )?;
-            let request = load_header(input.ok_or(Error::Stake)?, Source::Input)?;
-            let request_height: u64 = request.raw().number().unpack();
-            if request_height > record.l1_anchor.height || !has_l1_anchor(record.l1_anchor)? {
-                return Err(Error::Stake);
-            }
-            DelegationAction::ConfirmReduction
+            DelegationAction::Confirm
         }
         (WITHDRAW_REDUCTION | SLASH_REDUCTION, Some((before, occupied)), after) => {
             if before.pending == 0 || before.cutoff_height == 0 {
@@ -374,6 +416,7 @@ fn verify_delegation_transition(
                 && after.is_some_and(|(bond, _)| {
                     bond == (DelegationBond {
                         active: before.active,
+                        first_active_height: before.first_active_height,
                         ..DelegationBond::default()
                     })
                 })
@@ -392,6 +435,7 @@ fn verify_delegation_transition(
                 )?;
                 DelegationAction::WithdrawReduction {
                     amount: before.pending,
+                    start: before.first_active_height,
                     cutoff: before.cutoff_height,
                     since: load_input_since(input.ok_or(Error::Stake)?, Source::Input)?,
                 }
@@ -402,10 +446,11 @@ fn verify_delegation_transition(
                 let historical_evidence = if witness.is_empty() {
                     false
                 } else {
-                    verify_reduction_evidence(
+                    verify_position_evidence(
                         policy,
                         old,
                         &id.validator,
+                        before.first_active_height,
                         before.cutoff_height,
                         witness,
                     )?;
@@ -413,6 +458,7 @@ fn verify_delegation_transition(
                 };
                 DelegationAction::SlashReduction {
                     amount: before.pending,
+                    start: before.first_active_height,
                     cutoff: before.cutoff_height,
                     fee: fee()?,
                     historical_evidence,
@@ -422,6 +468,34 @@ fn verify_delegation_transition(
         _ => return Err(Error::Stake),
     };
     Ok(verify_delegation(policy, old, new, &id.validator, action)?)
+}
+
+fn prove_application(
+    policy: &Policy<'_>,
+    input: usize,
+    requested: u64,
+    proof: &[u8],
+) -> Result<u64, Error> {
+    let (sequence, proof) = proof.split_at_checked(8).ok_or(Error::Encoding)?;
+    let (record, path) = proof
+        .split_at_checked(RegistryApplication::SIZE)
+        .ok_or(Error::Encoding)?;
+    let sequence = u64::from_le_bytes(sequence.try_into().unwrap());
+    let record = RegistryApplication::decode(record)?;
+    let checkpoint = load_checkpoint(
+        &policy.checkpoint,
+        &policy.ckb_genesis,
+        &policy.network_id,
+        Some(policy.chain_id),
+    )?
+    .ok_or(Error::Stake)?;
+    record.verify(policy, checkpoint.state, sequence, requested, path)?;
+    let request = load_header(input, Source::Input)?;
+    let request_height: u64 = request.raw().number().unpack();
+    if request_height > record.l1_anchor.height || !has_l1_anchor(record.l1_anchor)? {
+        return Err(Error::Stake);
+    }
+    Ok(record.effective_height)
 }
 
 fn has_l1_anchor(anchor: stem_stake::Anchor) -> Result<bool, Error> {
@@ -439,10 +513,11 @@ fn has_l1_anchor(anchor: stem_stake::Anchor) -> Result<bool, Error> {
     unreachable!()
 }
 
-fn verify_reduction_evidence(
+fn verify_position_evidence(
     policy: &Policy<'_>,
     registry: &Registry,
     validator: &Hash32,
+    start: u64,
     cutoff: u64,
     proof: &[u8],
 ) -> Result<(), Error> {
@@ -455,7 +530,9 @@ fn verify_reduction_evidence(
     };
     let liability = stem_stake::Liability {
         validator: *validator,
-        first_active_height: record.first_active_height,
+        first_active_height: record
+            .first_active_height
+            .max(i64::try_from(start).map_err(|_| Error::Stake)?),
         first_inactive_height: Some(end),
     };
     #[cfg(feature = "jolteon")]
@@ -489,7 +566,7 @@ fn verify_reduction_evidence(
 }
 
 fn is_delegation_operation(operation: u8) -> bool {
-    (BOND_DELEGATION..=SLASH_REDUCTION).contains(&operation)
+    (BOND_DELEGATION..=CONFIRM_DELEGATION).contains(&operation)
 }
 
 fn read_delegation(
@@ -614,15 +691,49 @@ fn verify_stake_type(script: &Script, registry: Hash32, key: Hash32) -> Result<(
     Ok(())
 }
 
-fn verify_delegation_type(script: &Script, args: &[u8]) -> Result<(), Error> {
-    let id = DelegationId::decode(args)?;
-    type_id::check_type_id(DelegationId::NONCE_OFFSET, 32)?;
-    let witness = registry_witness(script, id.registry)?;
-    let (code, subject) = witness.split_first().ok_or(Error::Encoding)?;
-    if !is_delegation_operation(*code) || subject.get(..DelegationId::SIZE) != Some(args) {
-        return Err(Error::Stake);
+fn verify_delegation_type(script: &Script, commitment: &[u8]) -> Result<(), Error> {
+    for index in 0.. {
+        match load_cell_type(index, Source::Input) {
+            Ok(Some(registry))
+                if same_code(script, &registry)
+                    && (Policy::MIN_ARGS..=Policy::MAX_ARGS)
+                        .contains(&registry.args().raw_data().len()) =>
+            {
+                let frame = witness(index)?;
+                let Some((&operation, payload)) = frame.split_first() else {
+                    continue;
+                };
+                if !is_delegation_operation(operation) {
+                    continue;
+                }
+                let Some(args) = payload.get(..DelegationId::SIZE) else {
+                    continue;
+                };
+                let id = DelegationId::decode(args)?;
+                if id.registry == registry.calc_script_hash().as_slice()
+                    && id.commitment() == commitment
+                {
+                    return Ok(type_id::validate_type_id(&id.nonce)?);
+                }
+            }
+            Ok(_) => {}
+            Err(SysError::IndexOutOfBound) => return Err(Error::Stake),
+            Err(error) => return Err(error.into()),
+        }
     }
-    Ok(())
+    unreachable!()
+}
+
+fn verify_delegation_lock(script: &Script) -> Result<(), Error> {
+    for index in 0.. {
+        match load_cell_type(index, Source::GroupInput) {
+            Ok(Some(kind)) if same_code(script, &kind) && kind.args().raw_data().len() == 32 => {}
+            Ok(_) => return Err(Error::Stake),
+            Err(SysError::IndexOutOfBound) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!()
 }
 
 fn verify_lock(script: &Script, registry: Hash32) -> Result<(), Error> {
@@ -632,8 +743,7 @@ fn verify_lock(script: &Script, registry: Hash32) -> Result<(), Error> {
                 let args = kind.args().raw_data();
                 if !same_code(script, &kind)
                     || (kind.calc_script_hash().as_slice() != registry
-                        && (!matches!(args.len(), 64 | DelegationId::SIZE)
-                            || args[..32] != registry))
+                        && (args.len() != 64 || args[..32] != registry))
                     || load_cell_lock(index, Source::GroupInput)? != *script
                 {
                     return Err(Error::Stake);

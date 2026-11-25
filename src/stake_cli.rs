@@ -7,6 +7,7 @@ use ckb_jsonrpc_types::{
 };
 use ckb_types::{
     H256,
+    bytes::Bytes,
     core::{Capacity, ScriptHashType},
     packed::{CellInput, CellOutput, Script, Transaction},
     prelude::*,
@@ -280,16 +281,23 @@ impl StakeCommand {
                 blake.update(input.as_slice());
                 blake.update(&output_index.to_le_bytes());
                 blake.finalize(&mut nonce);
-                let args = DelegationId {
+                let id = DelegationId {
                     registry: registry_id,
                     validator: validator.as_bytes().try_into()?,
                     owner: owner.as_bytes().try_into()?,
                     nonce,
-                }
-                .encode();
-                DelegationId::decode(&args)?;
-                let script = registry.as_builder().args(args.as_slice().pack()).build();
-                print_json(&JsonScript::from(script))
+                };
+                DelegationId::decode(&id.encode())?;
+                let kind = registry
+                    .clone()
+                    .as_builder()
+                    .args(id.commitment().as_slice().pack())
+                    .build();
+                let lock = registry.as_builder().args(Bytes::new().pack()).build();
+                print_json(
+                    &json!({"type": JsonScript::from(kind), "lock": JsonScript::from(lock),
+                    "identity": JsonBytes::from_vec(id.encode().to_vec())}),
+                )
             }
         }
     }

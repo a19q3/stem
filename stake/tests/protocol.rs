@@ -304,6 +304,8 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
         pending: 100,
         requested_sequence: 12,
         cutoff_height: 11,
+        creation_sequence: 0,
+        first_active_height: 1,
     };
     assert_eq!(DelegationBond::decode(&bond.encode())?, bond);
     assert!(DelegationBond::decode(&DelegationBond { pending: 0, ..bond }.encode()).is_err());
@@ -333,6 +335,7 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
     let verify = |action| verify_delegation(&policy, &prior, &next, &validator_pubkey, action);
     let withdraw = |cutoff, delay| DelegationAction::WithdrawReduction {
         amount: bond.pending,
+        start: bond.first_active_height,
         cutoff,
         since: RELATIVE_BLOCKS | delay,
     };
@@ -341,11 +344,28 @@ fn pending_delegation_enforces_the_first_excluded_height() -> Result<()> {
     verify(withdraw(10, 20))?;
     let slash = |cutoff, fee| DelegationAction::SlashReduction {
         amount: bond.pending,
+        start: bond.first_active_height,
         cutoff,
         fee,
         historical_evidence: false,
     };
     assert_eq!(verify(slash(10, 100)), Err(Error::Evidence));
     assert_eq!(verify(slash(11, 99)), Err(Error::Evidence));
+    verify(DelegationAction::WithdrawReduction {
+        amount: bond.pending,
+        start: 11,
+        cutoff: 21,
+        since: RELATIVE_BLOCKS | 20,
+    })?;
+    assert_eq!(
+        verify(DelegationAction::SlashReduction {
+            amount: bond.pending,
+            start: 11,
+            cutoff: 21,
+            fee: bond.pending,
+            historical_evidence: false,
+        }),
+        Err(Error::Evidence)
+    );
     verify(slash(11, 100))
 }
