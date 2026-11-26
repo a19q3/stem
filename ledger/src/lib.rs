@@ -444,11 +444,25 @@ impl Transaction {
     }
 
     pub fn from_slice(bytes: &[u8]) -> Result<Self> {
+        Self::verify_encoding(bytes)?;
+        Self::from_entity(wire::Transaction::new_unchecked(Bytes::copy_from_slice(
+            bytes,
+        )))
+    }
+
+    /// Validate and retain an owned buffer containing one complete transaction.
+    pub fn from_bytes(bytes: Bytes) -> Result<Self> {
+        Self::verify_encoding(&bytes)?;
+        Self::from_entity(wire::Transaction::new_unchecked(bytes))
+    }
+
+    fn verify_encoding(bytes: &[u8]) -> Result<()> {
         ensure!(
             bytes.len() <= MAX_TRANSACTION_BYTES,
             "Transaction exceeds byte limit"
         );
-        Self::from_entity(wire::Transaction::from_slice(bytes)?)
+        wire::TransactionReader::verify(bytes)?;
+        Ok(())
     }
 
     fn from_entity(encoded: wire::Transaction) -> Result<Self> {
@@ -677,6 +691,10 @@ impl Transaction {
 
     pub fn as_slice(&self) -> &[u8] {
         self.encoded.as_slice()
+    }
+
+    pub fn as_bytes(&self) -> Bytes {
+        self.encoded.as_bytes()
     }
 
     pub fn id(&self, network_id: &Byte32) -> Byte32 {

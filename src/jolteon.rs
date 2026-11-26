@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
+use bytes::Bytes;
 use ckb_types::prelude::*;
 use ed25519_dalek::{Signer, SigningKey};
 use prost::Message;
@@ -602,7 +603,7 @@ impl Replica {
                     .consensus_record(&proposal_key(self.committee.epoch(), point))
                     .context(StorageFault)?
                 {
-                    let proposal = wire::canonical(&raw)?;
+                    let proposal = wire::canonical_bytes(raw.into())?;
                     let (actual, checked, _) = self.check_proposal(proposal)?;
                     ensure!(actual == point, "wrong persisted candidate");
                     self.candidates.insert(
@@ -669,7 +670,7 @@ impl Replica {
                     .wire
                     .transactions
                     .iter()
-                    .map(|bytes| Transaction::from_slice(bytes))
+                    .map(|bytes| Transaction::from_bytes(bytes.clone()))
                     .collect::<Result<Vec<_>>>()?;
                 let prepared = self.workers.install(|| {
                     self.store.on_branch(&batches, |state| {
@@ -1192,10 +1193,7 @@ impl Replica {
             header: header.encode().to_vec(),
             parent: parent.encode(),
             timeout: tc,
-            transactions: transactions
-                .iter()
-                .map(|tx| tx.as_slice().to_vec())
-                .collect(),
+            transactions: transactions.iter().map(Transaction::as_bytes).collect(),
             signature: self
                 .key
                 .sign(&self.committee.proposal_digest(point))
@@ -1287,7 +1285,7 @@ impl Replica {
             } else {
                 [alternate, None, None]
             };
-            self.net.relay(&routes, tx.as_slice());
+            self.net.relay(&routes, tx.as_bytes());
             self.admission.relay_retry_attempts =
                 self.admission.relay_retry_attempts.saturating_add(1);
         }
@@ -1359,12 +1357,12 @@ impl Replica {
                 if self.handoff_tip.is_none() {
                     let (_, _, seal) = self.committee.verify_handoff(&frame.body)?;
                     self.store
-                        .persist_consensus(&[(known_handoff_key(epoch), frame.body)])
+                        .persist_consensus(&[(known_handoff_key(epoch), frame.body.to_vec())])
                         .context(StorageFault)?;
                     self.handoff_tip = Some(seal);
                 }
             }
-            wire::PROPOSAL => self.admit_proposal(wire::canonical(&frame.body)?, peer)?,
+            wire::PROPOSAL => self.admit_proposal(wire::canonical_bytes(frame.body)?, peer)?,
             wire::REPLAY => self.accept_replay(peer, &frame.body)?,
             wire::VOTE => {
                 let (point, share) = frame
@@ -1401,7 +1399,7 @@ impl Replica {
         Ok(())
     }
 
-    fn insert_tx(&mut self, raw: &[u8], client: bool) -> Result<Hash32> {
+    fn insert_tx(&mut self, raw: &Bytes, client: bool) -> Result<Hash32> {
         let requests = if client {
             &mut self.admission.client_requests
         } else {
@@ -1417,7 +1415,7 @@ impl Replica {
                 && self.mempool.bytes().saturating_add(raw.len()) <= MAX_MEMPOOL_BYTES,
             "mempool capacity exceeded"
         );
-        let tx = Transaction::from_slice(raw)?;
+        let tx = Transaction::from_bytes(raw.clone())?;
         self.admission.checks = self.admission.checks.saturating_add(1);
         let started = Instant::now();
         // Admission is serial. The VM pool is used for parallel block work.
@@ -1431,7 +1429,7 @@ impl Replica {
         Ok(id)
     }
 
-    fn client(&mut self, kind: u32, body: Vec<u8>) -> Result<serde_json::Value> {
+    fn client(&mut self, kind: u32, body: Bytes) -> Result<serde_json::Value> {
         let tip = self.store.tip();
         match kind {
             wire::STATUS => Ok(json!({
@@ -1462,12 +1460,12 @@ impl Replica {
                     .mempool
                     .track_local(id, Instant::now(), self.committee.epoch())
                 {
-                    self.net.relay(&self.relay_leaders(), &body);
+                    self.net.relay(&self.relay_leaders(), body);
                 }
                 Ok(json!({"admitted": hex::encode(id)}))
             }
             wire::HEADER => {
-                let height = u64::from_le_bytes(body.as_slice().try_into()?);
+                let height = u64::from_le_bytes(body.as_ref().try_into()?);
                 let header = self
                     .store
                     .header(height)?
@@ -1479,7 +1477,7 @@ impl Replica {
                 }))
             }
             wire::FINALITY => {
-                let height = u64::from_le_bytes(body.as_slice().try_into()?);
+                let height = u64::from_le_bytes(body.as_ref().try_into()?);
                 let proof = self
                     .store
                     .consensus_record(&finality_key(height))?
@@ -1490,7 +1488,7 @@ impl Replica {
                 )
             }
             wire::HANDOFF_PROOF => {
-                let epoch = u64::from_le_bytes(body.as_slice().try_into()?);
+                let epoch = u64::from_le_bytes(body.as_ref().try_into()?);
                 let proof = self
                     .store
                     .consensus_record(&handoff_key(epoch))?

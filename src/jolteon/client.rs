@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
+use bytes::Bytes;
 use prost::Message;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
@@ -186,7 +187,7 @@ impl Client {
         progress: Option<&mut SubmissionProgress>,
     ) -> Result<Hash32> {
         let Admission { admitted } =
-            self.request_with_progress(wire::SUBMIT, transaction.as_slice().to_vec(), progress)?;
+            self.request_with_progress(wire::SUBMIT, transaction.as_bytes(), progress)?;
         let id = ckb_hash::blake2b_256(transaction.as_slice());
         ensure!(
             hex::decode(admitted)? == id,
@@ -221,13 +222,13 @@ impl Client {
     }
 
     fn request<T: DeserializeOwned>(&self, kind: u32, body: Vec<u8>) -> Result<T> {
-        self.request_with_progress(kind, body, None)
+        self.request_with_progress(kind, body.into(), None)
     }
 
     fn request_with_progress<T: DeserializeOwned>(
         &self,
         kind: u32,
-        body: Vec<u8>,
+        body: Bytes,
         mut progress: Option<&mut SubmissionProgress>,
     ) -> Result<T> {
         let frame = wire::Frame {

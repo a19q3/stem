@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Result, ensure};
+use bytes::Bytes;
 use prost::Message;
 
 pub const PROPOSAL: u32 = 1;
@@ -31,8 +32,8 @@ pub struct Frame {
     pub sender: u32,
     #[prost(uint32, tag = "2")]
     pub kind: u32,
-    #[prost(bytes, tag = "3")]
-    pub body: Vec<u8>,
+    #[prost(bytes = "bytes", tag = "3")]
+    pub body: Bytes,
     #[prost(uint64, tag = "4")]
     pub epoch: u64,
 }
@@ -47,8 +48,8 @@ pub struct Proposal {
     pub parent: Vec<u8>,
     #[prost(bytes, tag = "4")]
     pub timeout: Vec<u8>,
-    #[prost(bytes, repeated, tag = "5")]
-    pub transactions: Vec<Vec<u8>>,
+    #[prost(bytes = "bytes", repeated, tag = "5")]
+    pub transactions: Vec<Bytes>,
     #[prost(bytes, tag = "6")]
     pub signature: Vec<u8>,
     #[prost(bool, tag = "7")]
@@ -108,10 +109,66 @@ pub struct Finalized {
 }
 
 pub fn canonical<T: Message + Default>(raw: &[u8]) -> Result<T> {
-    let decoded = T::decode(raw)?;
+    check_encoding(raw, T::decode(raw)?)
+}
+
+/// Decoded byte fields can share storage with an immutable input buffer.
+pub fn canonical_bytes<T: Message + Default>(raw: Bytes) -> Result<T> {
+    let decoded = T::decode(raw.clone())?;
+    check_encoding(&raw, decoded)
+}
+
+fn check_encoding<T: Message>(raw: &[u8], decoded: T) -> Result<T> {
     ensure!(
         decoded.encode_to_vec() == raw,
         "noncanonical consensus frame"
     );
     Ok(decoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ckb_types::packed::OutPoint;
+    use stem_ledger::{CellInput, Transaction};
+
+    #[test]
+    fn canonical_frame_and_proposal_share_the_validated_transaction_bytes() -> Result<()> {
+        let tx = Transaction::new(
+            vec![],
+            vec![],
+            vec![CellInput::new(OutPoint::default(), None)],
+            vec![],
+            vec![],
+        )?;
+        let proposal = Proposal {
+            view: 1,
+            transactions: vec![tx.as_bytes()],
+            ..Default::default()
+        };
+        let frame = Frame {
+            kind: PROPOSAL,
+            body: proposal.encode_to_vec().into(),
+            ..Default::default()
+        };
+        let raw = Bytes::from(frame.encode_to_vec());
+        let received: Frame = canonical_bytes(raw.clone())?;
+        let proposal_offset = raw.len() - received.body.len();
+        assert_eq!(received.body.as_ptr(), raw[proposal_offset..].as_ptr());
+        let body = received.body;
+        let proposal: Proposal = canonical_bytes(body.clone())?;
+        let transaction = &proposal.transactions[0];
+        let tx_offset = body.len() - transaction.len();
+        assert_eq!(transaction.as_ptr(), body[tx_offset..].as_ptr());
+        let decoded = Transaction::from_bytes(transaction.clone())?;
+        assert_eq!(decoded.as_slice().as_ptr(), transaction.as_ptr());
+        assert_eq!(decoded.as_slice(), tx.as_slice());
+
+        let mut trailing = raw.to_vec();
+        trailing.extend_from_slice(&[0x28, 0]); // Unknown protobuf field.
+        assert!(canonical::<Frame>(&trailing).is_err());
+        assert!(canonical_bytes::<Frame>(trailing.into()).is_err());
+        assert!(Transaction::from_bytes(transaction.slice(..tx.as_slice().len() - 1)).is_err());
+        Ok(())
+    }
 }

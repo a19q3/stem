@@ -143,12 +143,12 @@ impl Network {
         ))
     }
 
-    fn frame(&self, epoch: u64, kind: u32, body: Vec<u8>) -> Arc<Vec<u8>> {
+    fn frame(&self, epoch: u64, kind: u32, body: impl Into<bytes::Bytes>) -> Arc<Vec<u8>> {
         Arc::new(
             Frame {
                 sender: u32::from(self.own),
                 kind,
-                body,
+                body: body.into(),
                 epoch,
             }
             .encode_to_vec(),
@@ -176,7 +176,7 @@ impl Network {
         }
     }
 
-    pub(super) fn relay(&self, routes: &[Option<u16>], body: &[u8]) {
+    pub(super) fn relay(&self, routes: &[Option<u16>], body: bytes::Bytes) {
         let mut frame = None;
         for (index, route) in routes.iter().enumerate() {
             if let Some(id) = route
@@ -184,7 +184,7 @@ impl Network {
                 && let Some(peer) = &self.peers[usize::from(*id)]
             {
                 let message = frame
-                    .get_or_insert_with(|| self.frame(self.epoch, wire::RELAY_TX, body.to_vec()));
+                    .get_or_insert_with(|| self.frame(self.epoch, wire::RELAY_TX, body.clone()));
                 self.enqueue(peer, wire::RELAY_TX, message.clone());
             }
         }
@@ -218,7 +218,7 @@ async fn receive(
         traffic
             .received
             .fetch_add(4 + raw.len() as u64, Ordering::Relaxed);
-        let frame: Frame = wire::canonical(&raw)?;
+        let frame: Frame = wire::canonical_bytes(raw.into())?;
         if submissions != 0 {
             ensure!(
                 frame.sender == wire::CLIENT && frame.kind == wire::SUBMIT,
@@ -393,7 +393,7 @@ mod tests {
         let replies = tokio::spawn(async move {
             for index in 0..wire::SUBMIT_SESSION_REQUESTS {
                 let request = requests.recv().await.context("missing submission")?;
-                assert_eq!(request.frame.body, index.to_le_bytes());
+                assert_eq!(request.frame.body.as_ref(), index.to_le_bytes());
                 request
                     .reply
                     .context("missing submission reply")?
@@ -407,7 +407,7 @@ mod tests {
                 let frame = Frame {
                     sender: wire::CLIENT,
                     kind: wire::SUBMIT,
-                    body: index.to_le_bytes().to_vec(),
+                    body: bytes::Bytes::copy_from_slice(&index.to_le_bytes()),
                     epoch: 0,
                 };
                 write(&mut client, &frame.encode_to_vec()).await?;
@@ -440,7 +440,7 @@ mod tests {
         let frame: Frame = wire::canonical(&raw)?;
         assert_eq!(
             (frame.sender, frame.epoch, frame.kind, frame.body),
-            (0, 3, wire::QUORUM, vec![2, 3])
+            (0, 3, wire::QUORUM, bytes::Bytes::from_static(&[2, 3]))
         );
         Ok(())
     }

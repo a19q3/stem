@@ -208,6 +208,12 @@ Every frame uses a four-byte big-endian length. Replica writes send
 the prefix and body together with vectored I/O. The Rust client
 encodes each request directly into a prefixed packet.
 
+The protobuf frame, proposal and validated Strand transactions
+share immutable receive storage. Canonical protobuf comparison
+and Strand validation run before a transaction uses that storage.
+Leaders and the Rust client supply existing transaction buffers
+to the encoder. The encodings and frame length limit are identical.
+
 Admission checks individual transactions against the finalized tip
 on the replica thread. Parallel block execution uses the VM pool.
 Admission stages Registry state only when verifying a Stake Snapshot.
