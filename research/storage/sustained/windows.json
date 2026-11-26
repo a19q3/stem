@@ -1,5 +1,46 @@
 [
   {
+    "file": "prefund-3m.json.xz",
+    "offer_windows": [
+      {
+        "offer_end_s": 60,
+        "written": 110869,
+        "visible": 97752,
+        "common_tps": 1629.2,
+        "confirmed_write_to_common_p99_us": 3044637,
+        "sample_us": 59551481,
+        "device_bytes": 2884595712,
+        "largest_replica_mempool_at_sample": 12311
+      },
+      {
+        "offer_end_s": 120,
+        "written": 111091,
+        "visible": 100352,
+        "common_tps": 1672.5333333333333,
+        "confirmed_write_to_common_p99_us": 2682174,
+        "sample_us": 119972180,
+        "device_bytes": 3747946496,
+        "largest_replica_mempool_at_sample": 23242
+      },
+      {
+        "offer_end_s": 180,
+        "written": 105346,
+        "visible": 95232,
+        "common_tps": 1587.2,
+        "confirmed_write_to_common_p99_us": 22103079,
+        "sample_us": 179932018,
+        "device_bytes": 2770206720,
+        "largest_replica_mempool_at_sample": 33111
+      }
+    ],
+    "observation_errors": 0,
+    "longest_sample_gap_us": 1820646,
+    "delivery_errors": {
+      "dispatch queue full": 211847,
+      "queue deadline": 847
+    }
+  },
+  {
     "file": "prefund-10m.json.xz",
     "offer_windows": [
       {
@@ -7,6 +48,7 @@
         "written": 74507,
         "visible": 72864,
         "common_tps": 1214.4,
+        "confirmed_write_to_common_p99_us": 2992496,
         "sample_us": 59869614,
         "device_bytes": 3938095104,
         "largest_replica_mempool_at_sample": 1246
@@ -16,6 +58,7 @@
         "written": 74959,
         "visible": 75041,
         "common_tps": 1250.6833333333334,
+        "confirmed_write_to_common_p99_us": 3145880,
         "sample_us": 119947163,
         "device_bytes": 2955452416,
         "largest_replica_mempool_at_sample": 1271
@@ -25,6 +68,7 @@
         "written": 71350,
         "visible": 71071,
         "common_tps": 1184.5166666666667,
+        "confirmed_write_to_common_p99_us": 4799735,
         "sample_us": 179832147,
         "device_bytes": 2919387136,
         "largest_replica_mempool_at_sample": 1249
@@ -34,6 +78,7 @@
         "written": 75980,
         "visible": 76334,
         "common_tps": 1272.2333333333333,
+        "confirmed_write_to_common_p99_us": 1886794,
         "sample_us": 239952965,
         "device_bytes": 3694686208,
         "largest_replica_mempool_at_sample": 1106
@@ -43,6 +88,7 @@
         "written": 70691,
         "visible": 70619,
         "common_tps": 1176.9833333333333,
+        "confirmed_write_to_common_p99_us": 2996161,
         "sample_us": 299963631,
         "device_bytes": 4215889920,
         "largest_replica_mempool_at_sample": 1258
@@ -52,6 +98,7 @@
         "written": 70512,
         "visible": 70398,
         "common_tps": 1173.3,
+        "confirmed_write_to_common_p99_us": 4113154,
         "sample_us": 359929630,
         "device_bytes": 3723849728,
         "largest_replica_mempool_at_sample": 1191
@@ -61,6 +108,7 @@
         "written": 69151,
         "visible": 69255,
         "common_tps": 1154.25,
+        "confirmed_write_to_common_p99_us": 4041331,
         "sample_us": 419958602,
         "device_bytes": 3472621568,
         "largest_replica_mempool_at_sample": 1167
@@ -70,6 +118,7 @@
         "written": 75053,
         "visible": 74533,
         "common_tps": 1242.2166666666667,
+        "confirmed_write_to_common_p99_us": 2335916,
         "sample_us": 479704006,
         "device_bytes": 2822283264,
         "largest_replica_mempool_at_sample": 1359
@@ -79,6 +128,7 @@
         "written": 72015,
         "visible": 73021,
         "common_tps": 1217.0166666666667,
+        "confirmed_write_to_common_p99_us": 3241257,
         "sample_us": 539933500,
         "device_bytes": 3836080128,
         "largest_replica_mempool_at_sample": 623
@@ -88,6 +138,7 @@
         "written": 72224,
         "visible": 71765,
         "common_tps": 1196.0833333333333,
+        "confirmed_write_to_common_p99_us": 4268034,
         "sample_us": 599957058,
         "device_bytes": 3876347904,
         "largest_replica_mempool_at_sample": 1212
@@ -238,41 +289,145 @@
     }
   },
   {
-    "file": "prefund-3m.json.xz",
+    "file": "one-hour.json.xz",
     "offer_windows": [
       {
-        "offer_end_s": 60,
-        "written": 110869,
-        "visible": 97752,
-        "common_tps": 1629.2,
-        "sample_us": 59551481,
-        "device_bytes": 2884595712,
-        "largest_replica_mempool_at_sample": 12311
+        "offer_end_s": 600,
+        "written": 59238,
+        "visible": 58652,
+        "common_tps": 97.75333333333333,
+        "confirmed_write_to_common_p99_us": 1969888,
+        "sample_us": 599957392,
+        "device_bytes": 5840494592,
+        "largest_replica_mempool_at_sample": 33
       },
       {
-        "offer_end_s": 120,
-        "written": 111091,
-        "visible": 100352,
-        "common_tps": 1672.5333333333333,
-        "sample_us": 119972180,
-        "device_bytes": 3747946496,
-        "largest_replica_mempool_at_sample": 23242
+        "offer_end_s": 1200,
+        "written": 59361,
+        "visible": 53065,
+        "common_tps": 88.44166666666666,
+        "confirmed_write_to_common_p99_us": 2659743,
+        "sample_us": 1199956522,
+        "device_bytes": 5793726464,
+        "largest_replica_mempool_at_sample": 37
       },
       {
-        "offer_end_s": 180,
-        "written": 105346,
-        "visible": 95232,
-        "common_tps": 1587.2,
-        "sample_us": 179932018,
-        "device_bytes": 2770206720,
-        "largest_replica_mempool_at_sample": 33111
+        "offer_end_s": 1800,
+        "written": 59814,
+        "visible": 50802,
+        "common_tps": 84.67,
+        "confirmed_write_to_common_p99_us": 2073361,
+        "sample_us": 1799994642,
+        "device_bytes": 5676478464,
+        "largest_replica_mempool_at_sample": 48
+      },
+      {
+        "offer_end_s": 2400,
+        "written": 59908,
+        "visible": 49954,
+        "common_tps": 83.25666666666666,
+        "confirmed_write_to_common_p99_us": 1247966,
+        "sample_us": 2399958191,
+        "device_bytes": 5736345600,
+        "largest_replica_mempool_at_sample": 45
+      },
+      {
+        "offer_end_s": 3000,
+        "written": 59833,
+        "visible": 48805,
+        "common_tps": 81.34166666666667,
+        "confirmed_write_to_common_p99_us": 1630771,
+        "sample_us": 2999958902,
+        "device_bytes": 5779292160,
+        "largest_replica_mempool_at_sample": 37
+      },
+      {
+        "offer_end_s": 3600,
+        "written": 59810,
+        "visible": 47681,
+        "common_tps": 79.46833333333333,
+        "confirmed_write_to_common_p99_us": 1534147,
+        "sample_us": 3599950686,
+        "device_bytes": 5877194752,
+        "largest_replica_mempool_at_sample": 45
       }
     ],
     "observation_errors": 0,
-    "longest_sample_gap_us": 1820646,
+    "longest_sample_gap_us": 2220167,
     "delivery_errors": {
-      "dispatch queue full": 211847,
-      "queue deadline": 847
+      "queue deadline": 917,
+      "dispatch queue full": 1119,
+      "input or dependency is not a Live Cell": 48953,
+      "Resource temporarily unavailable (os error 11)": 4
+    },
+    "before_file_mtime_ns": 1795718021601375704,
+    "compaction_by_approximate_offer_time": {
+      "0 to 600 s": {
+        "started": 12,
+        "finished": 12,
+        "input_bytes": 431940535,
+        "output_bytes": 136428994,
+        "compaction_us": 1486506,
+        "cpu_us": 1386970,
+        "output_levels": {
+          "6": 12
+        }
+      },
+      "600 to 1200 s": {
+        "started": 16,
+        "finished": 16,
+        "input_bytes": 754270584,
+        "output_bytes": 331055430,
+        "compaction_us": 3580416,
+        "cpu_us": 2470051,
+        "output_levels": {
+          "6": 16
+        }
+      },
+      "1200 to 1800 s": {
+        "started": 12,
+        "finished": 12,
+        "input_bytes": 671192553,
+        "output_bytes": 359664405,
+        "compaction_us": 3246244,
+        "cpu_us": 2415962,
+        "output_levels": {
+          "6": 12
+        }
+      },
+      "1800 to 2400 s": {
+        "started": 13,
+        "finished": 13,
+        "input_bytes": 892632174,
+        "output_bytes": 578932251,
+        "compaction_us": 3277108,
+        "cpu_us": 2842498,
+        "output_levels": {
+          "6": 13
+        }
+      },
+      "2400 to 3000 s": {
+        "started": 13,
+        "finished": 13,
+        "input_bytes": 1019199371,
+        "output_bytes": 707792604,
+        "compaction_us": 4907019,
+        "cpu_us": 3254356,
+        "output_levels": {
+          "6": 13
+        }
+      },
+      "3000 to 3600 s": {
+        "started": 13,
+        "finished": 13,
+        "input_bytes": 1148993867,
+        "output_bytes": 837570624,
+        "compaction_us": 4631987,
+        "cpu_us": 3594312,
+        "output_levels": {
+          "6": 13
+        }
+      }
     }
   }
 ]

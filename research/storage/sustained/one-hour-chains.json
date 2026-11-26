@@ -1,0 +1,17 @@
+{
+  "archive": "one-hour.json.xz",
+  "payment_chains": 8192,
+  "chains_completed": 6421,
+  "chains_with_gap": 1771,
+  "first_missing_by_delivery_error": {
+    "queue deadline": 775,
+    "dispatch queue full": 996
+  },
+  "descendants_of_missing_by_delivery_error": {
+    "input or dependency is not a Live Cell": 48953,
+    "queue deadline": 142,
+    "dispatch queue full": 123
+  },
+  "first_gap_planned_us": 39010000,
+  "last_first_gap_planned_us": 3598300000
+}

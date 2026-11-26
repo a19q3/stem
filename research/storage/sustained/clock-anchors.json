@@ -1,4 +1,8 @@
 {
+  "one-hour": {
+    "fixture": "stem-storage-mmt5Bl",
+    "before_file_mtime_ns": 1795718021601375704
+  },
   "prefund-10m": {
     "fixture": "stem-storage-XubZjB",
     "before_file_mtime_ns": 1795718749896004477

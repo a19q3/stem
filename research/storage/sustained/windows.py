@@ -48,8 +48,13 @@ def windows(path, anchors):
         run = json.load(f)
     assert run["exit"] == 0
     report = run["report.json"]
-    visible = sorted(block["seen_us"] for block in report["blocks"] for _ in block["ids"])
-    offers = sorted(d["offered_us"] for d in report["deliveries"] if d["offered_us"] is not None)
+    offered = {d["id"]: d["offered_us"] for d in report["deliveries"] if d["offered_us"] is not None}
+    offers = sorted(offered.values())
+    confirmations = sorted(
+        (block["seen_us"], max(0, block["seen_us"] - offered[txid]))
+        for block in report["blocks"] for txid in block["ids"]
+    )
+    visible = [at for at, _ in confirmations]
     errors = Counter(d["error"] for d in report["deliveries"] if d["error"])
     samples = report["samples"]
     times = [s["at_us"] for s in samples]
@@ -67,8 +72,11 @@ def windows(path, anchors):
         sample = samples[index]
         old, new = devices(previous), devices(sample)
         assert all(new[k] >= v for k, v in old.items())
+        latencies = sorted(delay for _, delay in confirmations[previous_visible:count])
+        p99 = latencies[(99 * len(latencies) + 99) // 100 - 1] if latencies else None
         rows.append(dict(offer_end_s=end, written=written-previous_written,
                          visible=count-previous_visible, common_tps=(count-previous_visible)/(end-previous_boundary),
+                         confirmed_write_to_common_p99_us=p99,
                          sample_us=times[index], device_bytes=sum(new.values())-sum(old.values()),
                          largest_replica_mempool_at_sample=max(n["mempool_transactions"] for n in sample["statuses"])))
         previous, previous_boundary = sample, end

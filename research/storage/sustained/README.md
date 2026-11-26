@@ -1,4 +1,4 @@
-# Sustained payments with independently funded inputs
+# Four-replica payment pressure and storage aging
 
 Four native Jolteon replicas at `fefb8cc` ran on six physical cores with SMT. The 64-thread load generator used two other physical cores on the same workstation. A separate four-replica 4 KiB aging trial occupied the other eight cores. The trials shared disks, memory and the host. Each measured payment spent a different output of an actual signed funding transaction. Before starting the timer, the harness located every funding transaction in the common chain and compared the same Header on every node. The larger fixture finalized 3,750 splits with 960,000 outputs, the smaller 2,110 splits with 540,000 outputs. Three replicas retained a fixed history window and the fourth archived history.
 
@@ -14,3 +14,24 @@ Linux attributed 11,153,162,240 and 35,704,524,800 device write bytes to the fou
 The per-job join reconciles the sum of input SST file sizes to every RocksDB `input_data_size`, and the sum of output sizes to every `total_output_size`. For the ten-minute fixture, compaction read 9.837 GB from level 0, 9.542 GB from level 5 and 8.320 GB from level 6. It wrote 9.998 GB at level 5 and 9.779 GB at level 6. Counting both flush and compaction output per encoded flush byte gives 2.69 for Cell-trie blocks and 5.81 for Live Cell blocks. This covers the lifetime of the fresh fixture, including pre-funding. [Three-minute job lineage](prefund-3m-jobs.json) · [Ten-minute job lineage](prefund-10m-jobs.json) · [Reconciliation tool](compactions.py)
 
 To replay, use [the device setup](../device/README.md#reproduce) with `--prefund-payments --senders 64 --data-bytes 0 --drain 45 --client-cpus 8-9,24-25 --node-cpus 10-15,26-31` and the rate and duration in the table. The binary and harness hashes are in each archive. To keep the exact signed stream for independent ordering analysis, pass `--workload-output FILE`. Recompute the tables with [summarize.py](../summarize.py), [backlog.py](../device/backlog.py) and `python3 windows.py --clock-anchors clock-anchors.json ARCHIVE...`. The timestamp of the before-snapshot file approximates offer start for alignment with RocksDB wall-clock logs. All client and common-visibility intervals use the harness monotonic clock.
+
+## One hour with 4 KiB payment chains
+
+This four-replica fixture circulated 8,192 payment chains at 100 transactions/s for 3,600 seconds. Each carried 4,096 bytes. The load generator used 32 senders on cores 0–1,16–17, with replicas on cores 2–7,18–23. Separate pressure experiments shared the host and disks during parts of the hour. The six disjoint intervals below group transactions by the time they first became visible to every replica. The p99 measures from socket write to common visibility for transactions observed in that interval.
+
+The client wrote 357,964 of 360,000 scheduled transactions and received 309,007 successful acknowledgements. Four replicas agreed on 309,011 transactions through height 12,073. The common chain contained 4 transactions without a successful acknowledgement. 0 acknowledged transactions were absent from that chain. Within the offer window, 308,959 were visible on every replica. The whole-run write-to-common p99 was 1.924 s, and the largest acknowledged backlog was 340. [Full run and history proof](one-hour.json.xz) · [Finality and I/O](summary.json) · [Acknowledgement backlog](backlog.json)
+
+| Elapsed minutes | Common confirmations | Window TPS | Write-to-common p99 |
+| --- | ---: | ---: | ---: |
+| 0–10 | 58,652 | 97.75 | 1.970 s |
+| 10–20 | 53,065 | 88.44 | 2.660 s |
+| 20–30 | 50,802 | 84.67 | 2.073 s |
+| 30–40 | 49,954 | 83.26 | 1.248 s |
+| 40–50 | 48,805 | 81.34 | 1.631 s |
+| 50–60 | 47,681 | 79.47 | 1.534 s |
+
+The first and last ten-minute windows delivered 97.75 and 79.47 common TPS. The signed payment dependency graph explains the falling confirmation rate. In 1,771 chains the first gap was a client drop before the socket write (996 queue-full, 775 deadline). All 48,953 Live Cell rejections were descendants of such a gap. Another 265 descendants were dropped by the client. Every payment in the other 6,421 chains finalized. The client received four socket errors for payments that also finalized. The experiment consequently measures storage under a declining successful workload. [First-gap counts](one-hour-chains.json) · [Replay the dependency check](chains.py)
+
+Linux attributed 34,809,257,984 block-device write bytes to the four replica scopes, 1.84 device bytes per serialized WriteBatch byte. The collector decoded all 414 SST files, including 2,229,801,384 flush bytes and 2,951,444,308 compaction-output bytes. All 79 recorded compaction jobs reconcile by file, namespace and LSM level. They read 2,192,695,163 bytes at level 0 and 2,725,533,921 at level 6. All compaction output went to level 6. The repeated 4 KiB content in this fixture compresses readily. [Every SST](one-hour-sst.json) · [Compaction inputs and outputs](one-hour-jobs.json) · [Timed device and compaction windows](windows.json)
+
+Use the same device-accounting and SST collector setup with `--rate 100 --seconds 3600 --replicas 4 --payment-chains 8192 --data-bytes 4096 --senders 32 --drain 45 --client-cpus 0-1,16-17 --node-cpus 2-7,18-23`. The workload tests database aging with recirculating inputs. The independent-input saturation runs above use a separate workload.

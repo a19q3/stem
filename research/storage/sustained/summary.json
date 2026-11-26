@@ -200,5 +200,103 @@
       "outputs": 960000,
       "common_height": 169
     }
+  },
+  {
+    "file": "one-hour.json.xz",
+    "replicas": 4,
+    "seconds": 3600,
+    "planned": 360000,
+    "written": 357964,
+    "admitted": 309007,
+    "visible": 309011,
+    "drops": 2036,
+    "visible_tps": 85.82194444444444,
+    "p99_common_us": 1924125,
+    "p99_client_queue_us": 26,
+    "p99_client_response_us": 240976,
+    "cpu_seconds": 756.15,
+    "peak_sampled_node_rss_kib": 178832,
+    "process_write_B_per_confirmed_replica": 27965.76670733404,
+    "wal_bytes": 18898768922,
+    "compaction_jobs_creating_files": 79,
+    "sst": {
+      "flush": {
+        "files": 308,
+        "bytes": 2229801384
+      },
+      "compaction": {
+        "files": 106,
+        "bytes": 2951444308
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 13464717066,
+      "finality_sync_microseconds": 435769234,
+      "finality_writes": 48280,
+      "journal_serialized": 5434051856,
+      "journal_sync_microseconds": 864473624,
+      "journal_writes": 96280
+    },
+    "agreed_height": 12073,
+    "workload_sha256": "4a57031a59342d9fdbb9b32215b41215b6810ead13dd24edc317a7acf43d5dc9",
+    "genesis_sha256": "ca0367a6e47b728e52a2c39de0b3963bf74ad076e4edbbe4f6ee5dec2cb134d4",
+    "observer_errors": 0,
+    "device": {
+      "mount": {
+        "target": "/home",
+        "source": "/dev/nvme0n1p2[/@home]",
+        "fstype": "btrfs",
+        "options": "rw,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@home"
+      },
+      "bytes_by_node_and_device": [
+        {
+          "253:0": 8474624,
+          "259:0": 2364362752,
+          "259:1": 5658267648
+        },
+        {
+          "253:0": 5439488,
+          "259:0": 2699214848,
+          "259:1": 5341741056
+        },
+        {
+          "253:0": 5197824,
+          "259:0": 2777493504,
+          "259:1": 5321760768
+        },
+        {
+          "253:0": 9781248,
+          "259:0": 3977355264,
+          "259:1": 6640168960
+        }
+      ],
+      "total_bytes": 34809257984,
+      "per_confirmed_replica": 28161.827559536716,
+      "logical_bytes_by_namespace": {
+        "cell_trie": 2619248744,
+        "consensus_records": 106252125,
+        "execution": 5380519006,
+        "framing": 1734720,
+        "headers_and_history": 25887424,
+        "live_cells": 5344654256,
+        "other": 10669880,
+        "proposal_journal": 5395767719,
+        "serialized": 18898768922,
+        "system_records": 1961460,
+        "system_trie": 12073588
+      },
+      "device_over_serialized_batch_bytes": 1.8418796551069867
+    },
+    "candidate_verify_mean_us": 4956.822866611434,
+    "proposal_mean_us": 2400.037862468931,
+    "commit_mean_us": 9165.504121789561
   }
 ]
