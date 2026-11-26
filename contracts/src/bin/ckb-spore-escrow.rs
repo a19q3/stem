@@ -132,12 +132,13 @@ fn verify() -> Result<(), i8> {
     };
     let first_export = spore_input.is_none() && counterpart.is_some();
     let input_index = spore_input.unwrap_or(0);
-    let previous = if mutant_origin && !first_export {
+    let registered_custody = mutant_origin || counterpart.is_none();
+    let previous = if registered_custody && !first_export {
         custody_holder(&script, input_index, Source::Input, &owner, original)?
     } else {
         None
     };
-    let following = if mutant_origin {
+    let following = if registered_custody {
         custody_holder(&script, spore_output, Source::Output, &owner, original)?
     } else {
         None
@@ -191,6 +192,9 @@ fn verify() -> Result<(), i8> {
         stem_contracts::metatype::bounded_data(spore_output, Source::Output, MAX_CELL_SPORE_DATA)
             .map_err(|_| 110)?;
     let code = object_type.code_hash();
+    if (previous.is_some() || following.is_some()) && code.as_slice() != TESTNET_SPORE_BETA2 {
+        return Err(112);
+    }
     let supported = (!mutant_origin
         && code.as_slice() == CKB_SPORE_CODE
         && SporeData::from_cell(&output)

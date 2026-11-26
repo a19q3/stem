@@ -11,7 +11,8 @@ const bytes = (s) => Buffer.from(s.replace(/^0x/, ""), "hex");
 const trust = JSON.parse(await readFile(new URL("committee-trust.json", import.meta.url)));
 const evidence = {};
 for (const filename of ["histories.json.xz", "two-registrations.json.xz", "cluster-settlement.json.xz",
-    "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz"]) {
+    "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
+    "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz"]) {
     const archive = new URL(filename, import.meta.url);
     Object.assign(evidence, JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 32*1024*1024})));
 }
@@ -24,12 +25,29 @@ for (const [name, root] of Object.entries(trust)) {
             retire: record.standard_melt.retired };
     const grants = new Map((record.handoffs ?? []).map((grant, i) => [`handoff-${i+1}`, grant]));
     for (const [label, grant] of grants) transactions[label] = grant.native;
+    const titles = new Map();
+    function readTitle(cell) {
+        assert.equal(cell.typeScriptCount, 1);
+        return { capacity: cell.capacity, type: Buffer.from(cell.typeScript(0)),
+            data: Buffer.from(cell.data()), lock: Buffer.from(cell.lock()) };
+    }
+    function holder(custody) {
+        const args = bytes(custody.args);
+        return Buffer.from(sdk.packScript(args.subarray(65, 97), false, args.subarray(97)));
+    }
     for (const [operation, tx] of Object.entries(transactions)) {
         const sample = record.execution[operation];
         const header = verifier.verifyFinality(bytes(sample.finality), false);
         assert.equal(header.height, BigInt(tx.height));
         const execution = header.verifyExecution(bytes(sample.transaction), bytes(sample.receipt), bytes(sample.proof));
         assert.equal(Buffer.from(execution.transactionId()).toString("hex"), tx.hash);
+        if (grants.size && (operation === "restore" || operation === "imported")) {
+            const decoded = sdk.decodeTransaction(bytes(sample.transaction));
+            const issued = decoded.output(1);
+            titles.set(tx.hash, readTitle(issued));
+            issued.free();
+            decoded.free();
+        }
         if (grants.has(operation)) {
             const grant = grants.get(operation);
             const decoded = sdk.decodeTransaction(bytes(sample.transaction));
@@ -38,10 +56,17 @@ for (const [name, root] of Object.entries(trust)) {
                 .filter(point => point.equals(source)).length, 1);
             const successor = decoded.output(1);
             assert.deepEqual(Buffer.from(successor.encode()), bytes(grant.successor));
+            const previous = titles.get(source.subarray(0, 32).toString("hex"));
+            const current = readTitle(successor);
+            assert.equal(source.readUInt32LE(32), 1);
+            assert.deepEqual(previous.lock, holder(grant.previous_custody));
+            assert.deepEqual(current.lock, holder(grant.next_custody));
+            assert.deepEqual(current, {...previous, lock: current.lock});
+            titles.set(tx.hash, current);
             successor.free();
             decoded.free();
         }
-        if (operation === "relock" && record.stale_handoff) {
+        if ((operation === "relock" || operation === "burned") && record.stale_handoff) {
             const current = record.stale_handoff.unspent_native_source;
             const index = Buffer.alloc(4);
             index.writeUInt32LE(Number(current.index));

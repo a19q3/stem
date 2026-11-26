@@ -10,6 +10,31 @@ use stem_stake::Hash32;
 
 use crate::metatype::bounded_data;
 
+/// Compare a registered Spore handoff with the actual native input and complete output Cell.
+pub fn matches_handoff(
+    grant: &stem_bridge_wire::spore::Handoff<'_>,
+    input: usize,
+    output: usize,
+) -> bool {
+    use ckb_std::{
+        ckb_constants::SYS_LOAD_CELL_BY_FIELD, ckb_types::prelude::Entity,
+        high_level::load_input_out_point,
+    };
+    let Ok(source) = load_input_out_point(input, Source::Input) else {
+        return false;
+    };
+    let mut digest = [0u8; 32];
+    let mut size = 32u64;
+    let mut status = digest.as_mut_ptr() as u64;
+    // Native CellContentHash includes capacity, Lock, Type set and data.
+    unsafe {
+        asm!("ecall", inout("a0") status, in("a1") &mut size, in("a2") 0u64,
+             in("a3") output as u64, in("a4") Source::Output as u64,
+             in("a5") 7u64, in("a7") SYS_LOAD_CELL_BY_FIELD);
+    }
+    source.as_slice() == grant.source && (status, size) == (0, 32) && &digest == grant.output_hash
+}
+
 pub fn amount(source: Source, index: usize, asset: &Hash32) -> Result<u128, SysError> {
     let data = bounded_data(index, source, MAX_DATA)?;
     if let Some(amount) = positive_amount(&data) {

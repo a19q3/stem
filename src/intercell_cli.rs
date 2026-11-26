@@ -95,6 +95,8 @@ struct PermitRequest {
 #[serde(deny_unknown_fields)]
 struct HandoffRequest {
     object: H256,
+    #[serde(default)]
+    original_type: Option<H256>,
     previous_owner: H256,
     source: ckb_jsonrpc_types::OutPoint,
     output: JsonBytes,
@@ -181,7 +183,7 @@ impl Intercell {
                 );
                 let source = ckb_types::packed::OutPoint::from(request.source);
                 let bytes = Handoff::encode(
-                    &request.object.into(),
+                    &request.original_type.unwrap_or(request.object).into(),
                     &owner.calc_script_hash().unpack(),
                     &request.previous_owner.into(),
                     source.as_slice().try_into()?,

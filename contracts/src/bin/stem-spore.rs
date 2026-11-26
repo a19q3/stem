@@ -17,7 +17,7 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
-    spore::{CellTransfer, MAX_CELL_SPORE_DATA, SporeData, return_nonce},
+    spore::{CellTransfer, Handoff, MAX_CELL_SPORE_DATA, SporeData, return_nonce},
 };
 
 entry!(main);
@@ -76,32 +76,32 @@ fn object_type(script: &Script, endpoint: &Identity) -> Result<(), i8> {
         }
     };
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
-        (Some(input), Some(output))
-            if SporeData::from_cell(&input).is_some()
-                && stem_contracts::spore::same_content(&input, &output) =>
-        {
-            Ok(())
-        }
-        (Some(_), None) | (None, Some(_)) => {
-            // Only an actual consuming Lock group running this same program can
-            // authenticate a mint or return for this representation.
-            for index in 0.. {
-                match load_cell_lock(index, Source::Input) {
-                    Ok(lock) if lock.calc_script_hash().as_slice() == endpoint => {
-                        return (lock.code_hash() == script.code_hash()
-                            && lock.hash_type() == script.hash_type()
-                            && lock.args().raw_data().len() == 7 * 32)
-                            .then_some(())
-                            .ok_or(107);
-                    }
-                    Ok(_) => {}
-                    Err(_) => return Err(107),
-                }
+        (Some(input), Some(output)) => {
+            if !stem_contracts::spore::same_content(&input, &output) {
+                return Err(107);
             }
-            unreachable!()
+            if SporeData::from_cell(&input).is_some() {
+                return Ok(());
+            }
         }
-        _ => Err(107),
+        (None, None) => return Err(107),
+        _ => {}
     }
+    // Registered transfers, imports and redemptions all execute the pinned endpoint.
+    for index in 0.. {
+        match load_cell_lock(index, Source::Input) {
+            Ok(lock) if lock.calc_script_hash().as_slice() == endpoint => {
+                return (lock.code_hash() == script.code_hash()
+                    && lock.hash_type() == script.hash_type()
+                    && lock.args().raw_data().len() == 7 * 32)
+                    .then_some(())
+                    .ok_or(107);
+            }
+            Ok(_) => {}
+            Err(_) => return Err(107),
+        }
+    }
+    unreachable!()
 }
 
 fn endpoint_lock(script: &Script, fields: &[[u8; 32]; 7]) -> Result<(), i8> {
@@ -160,7 +160,12 @@ fn endpoint_lock(script: &Script, fields: &[[u8; 32]; 7]) -> Result<(), i8> {
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..size]).ok_or(108)?;
-    let transfer = CellTransfer::decode_custody(message.payload).ok_or(108)?;
+    let handoff = Handoff::decode(message.payload);
+    let transfer = handoff
+        .as_ref()
+        .map(|h| h.transfer)
+        .or_else(|| CellTransfer::decode_custody(message.payload))
+        .ok_or(108)?;
     if transfer.original_type != *original {
         return Err(108);
     }
@@ -193,20 +198,30 @@ fn endpoint_lock(script: &Script, fields: &[[u8; 32]; 7]) -> Result<(), i8> {
     }
     let left = inspect(Source::Input, &endpoint, &representation, &transfer)?;
     let right = inspect(Source::Output, &endpoint, &representation, &transfer)?;
-    if left.bond.is_none()
-        || left.bond != right.bond
-        || left.object == right.object
-        || right.object != importing
-    {
+    if left.bond.is_none() || left.bond != right.bond {
         return Err(109);
     }
-    Ok(())
+    if let Some(grant) = handoff {
+        let (Some(input), Some(output)) = (left.object, right.object) else {
+            return Err(109);
+        };
+        return (importing
+            && load_cell_lock_hash(input, Source::Input).map_err(|_| 109)? == *grant.previous
+            && load_cell_capacity(input, Source::Input).map_err(|_| 109)?
+                == load_cell_capacity(output, Source::Output).map_err(|_| 109)?
+            && stem_contracts::native_type::matches_handoff(&grant, input, output))
+        .then_some(())
+        .ok_or(109);
+    }
+    (left.object.is_some() != right.object.is_some() && right.object.is_some() == importing)
+        .then_some(())
+        .ok_or(109)
 }
 
 #[derive(Default)]
 struct State {
     bond: Option<u64>,
-    object: bool,
+    object: Option<usize>,
 }
 
 fn inspect(
@@ -246,7 +261,7 @@ fn inspect(
             0 => {}
             _ => return Err(109),
         }
-        if state.object
+        if state.object.replace(index).is_some()
             || load(LOAD_TYPE_HASH, source_id, index, 1, &mut []).0 != INDEX_OUT_OF_BOUND
             || (source == Source::Output && lock != transfer.recipient)
         {
@@ -257,7 +272,6 @@ fn inspect(
         {
             return Err(109);
         }
-        state.object = true;
     }
     unreachable!()
 }

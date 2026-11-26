@@ -892,7 +892,7 @@ Add `--spore-cluster-v2` with the published Cluster ELF to exercise the same pat
 
 Add `--spore-immortal` to mint a Spore with the exact MIME parameter `immortal=true`. The runner attempts a signed CoBuild melt on CKB and checks code 65 from the published Spore contract. The holder can still deposit, transfer ownership on Stem, release the same CKB Spore, and redeposit. The archived run also transferred the Cluster on CKB. [Four-replica report](evidence/2026-11-27-immortal-spore.json.xz)
 
-Use `--spore-handoff` on the native-origin beta.2 Mutant route to authorize two direct native spends with the original CKB Spore. Add `--spore-handoff-stale-source` to exercise redemption after a CKB receipt names a previously consumed native input. [Wallet input format, proof replay and measured costs](research/spore-permit/upstream/beta2/handoff.md)
+Use `--spore-handoff` on either beta.2 Mutant settlement route to authorize two direct native spends with the original CKB Spore. Add `--spore-handoff-stale-source` to exercise redemption after a CKB receipt names a previously consumed native input. [Wallet input format, proof replay and measured costs](research/spore-permit/upstream/beta2/handoff.md)
 
 For a beta.2 member carrying registered Lua programs, combine `--spore-cluster-v2` with the matching beta.2 Spore, interpreter and library. Use `--spore-type-history` to obtain both the member and collection histories at the final member anchor. The CKB-origin fixture transfers the collection during native custody. The Stem-origin fixture supports re-export and synchronized melt. [Release hashes, commands and certified histories](research/spore-permit/upstream/beta2/README.md#cross-chain-settlement-of-registered-cluster-members)
 

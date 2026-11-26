@@ -84,7 +84,8 @@ def check_member_history(stem, root, record):
         change = steps[1]
         assert len(steps) == 2 and change["transaction"] == collection["transferred"]["hash"]
         assert change["output"]["lock_hash"] != steps[0]["output"]["lock_hash"]
-        assert member["transitions"][1]["height"] < change["height"] < member["transitions"][2]["height"]
+        release = next(step for step in member["transitions"] if step["transaction"] == settlement["released"]["hash"])
+        assert member["transitions"][1]["height"] < change["height"] < release["height"]
     else:
         assert len(steps) == 1 and settlement["native_content"] == hex_bytes(data)
     for tx in record["proof"]["steps"]:
@@ -97,13 +98,14 @@ def check_member_history(stem, root, record):
 def check_handoffs(record):
     settlement = record["settlement"]
     terms = settlement["handoffs"]
-    native_type = script_hash(settlement["native_type"])
-    spore = script_hash(settlement["spore_type"])
-    original_data = binary(settlement["native_content"])
+    issued = settlement.get("origin") == "stem"
+    original_id = script_hash(settlement["native_type"] if issued else settlement["original_type"])
+    spore = script_hash(settlement["spore_type"]) if issued else original_id
+    original_data = binary(settlement["native_content"] if issued else settlement["final_ckb"]["data"]["content"])
     mailbox = settlement["mailbox"]
     policy = binary(mailbox["args"])
     endpoint = script_hash(settlement["endpoint"])
-    previous_native = settlement["restored"]
+    previous_native = settlement["restored"] if issued else settlement["imported"]
     verified = record["verified"]["transitions"]
     changes = terms + ([settlement["stale_handoff"]] if "stale_handoff" in settlement else [])
     for handoff in changes:
@@ -116,7 +118,7 @@ def check_handoffs(record):
         assert message[:128] == policy[32:96] + script_hash(mailbox) + endpoint
         assert int.from_bytes(message[128:136], "little") + 1 == int.from_bytes(mailbox_data[4:12], "little")
         payload = message[136:]
-        assert len(payload) == 204 and payload[:32] == native_type and payload[64:68] == b"SPT1"
+        assert len(payload) == 204 and payload[:32] == original_id and payload[64:68] == b"SPT1"
         for lock, owner, state in [(handoff["previous_custody"], payload[68:100], verified[pos-1]),
                                    (handoff["next_custody"], payload[32:64], verified[pos])]:
             args = binary(lock["args"])
@@ -169,7 +171,8 @@ def main():
     args = parser.parse_args()
     records = {}
     for filename in ("histories.json.xz", "two-registrations.json.xz", "cluster-controls.json.xz", "cluster-settlement.json.xz",
-                     "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz"):
+                     "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
+                     "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz"):
         with lzma.open(HERE / filename, "rt") as source:
             records.update(json.load(source))
     with tempfile.TemporaryDirectory() as scratch:

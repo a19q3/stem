@@ -674,8 +674,8 @@ def main():
         parser.error("the native media fixtures require --native-spore-origin")
     if args.native_spore_sync_melt and (not args.native_spore_origin or args.native_spore_approval or args.spore_immortal):
         parser.error("synchronized melt requires a meltable, unrestricted native-origin Spore")
-    if args.spore_handoff and not (args.native_spore_origin and args.spore_mutant_lua):
-        parser.error("the handoff fixture requires a native-origin beta.2 registered Spore")
+    if args.spore_handoff and not ((args.native_spore_origin or args.stem_spore) and args.spore_mutant_lua):
+        parser.error("the handoff fixture requires a beta.2 registered Spore settlement endpoint")
     if args.spore_handoff_stale_source and not args.spore_handoff:
         parser.error("the stale source control needs --spore-handoff")
     if args.separate_return_permit and not args.ckb_spore_permit:

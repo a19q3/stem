@@ -438,23 +438,12 @@ fn escrow(
         return Err(119);
     }
     if let Some(grant) = handoff {
-        let source = load_input_out_point(input_index, Source::Input).map_err(|_| 119)?;
-        let mut digest = [0; 32];
-        let field = load(
-            ckb_std::ckb_constants::SYS_LOAD_CELL_BY_FIELD,
-            Source::Output as u64,
-            output_index,
-            7,
-            &mut digest,
-        );
         return (input_lock != lock
             && &input_lock == grant.previous
             && output_lock == transfer.recipient
-            && source.as_slice() == grant.source
-            && field == (0, 32)
-            && &digest == grant.output_hash)
-            .then_some(())
-            .ok_or(119);
+            && stem_contracts::native_type::matches_handoff(&grant, input_index, output_index))
+        .then_some(())
+        .ok_or(119);
     }
     if (exporting && (input_lock == lock || output_lock != lock))
         || (!exporting && (input_lock != lock || output_lock != transfer.recipient))
