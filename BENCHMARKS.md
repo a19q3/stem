@@ -5751,3 +5751,75 @@ The release workspace suite passed 494 tests with 22 ignored. The Go
 proof suite and frozen `comet-benchmark` build check passed.
 
 [Signed workloads, phase metrics, history proofs and build fingerprints](benchmarks/2026-11-26-stem-block-context.json.xz).
+
+## Canonical execution records and Merkle allocations
+
+Baseline `8e619ec` and candidate `4177d53` used the same
+Rust release profile and i9-13900H host. The candidate builds the
+receipt commitment from the same byte sequence sent to the write
+batch. Transaction and receipt Merkle trees keep their internal
+hashes as 32-byte values. The execution record moves into the batch
+without a separate buffer copy.
+
+The fixed-input probe used signed payments and real signed Metatype
+transactions and receipts from earlier devnets. It formed blocks of
+0, 1, 3, 31, 64, 256 and 1,024 entries with ordinary and mixed
+records. The two builds produced byte-identical roots, stored
+execution records and ordered execution proofs. The probe ran the
+commitment and serialization path without VM execution or RocksDB
+sync. The network experiments below include both.
+
+| Probe | Median before / after | Allocation or reallocation calls before / after | Requested bytes before / after |
+| --- | ---: | ---: | ---: |
+| 64 payments | 177.70 / 146.22 µs | 1,164 / 397 | 103,826 / 72,078 |
+| 256 payments | 605.01 / 566.68 µs | 4,622 / 1,551 | 416,018 / 288,846 |
+| 1,024 payments | 3,045.95 / 2,369.56 µs | 18,448 / 6,161 | 1,664,786 / 1,155,918 |
+| 1,024 entries, mixed | 4,780.84 / 3,996.79 µs | 18,718 / 6,295 | 4,103,700 / 2,927,520 |
+
+The medians use four alternating processes per build pinned to CPU 2.
+Allocation counting ran in separate binaries. The first allocation run
+linked the candidate Merkle library into its baseline. The archived
+initial counts measure only part of the change. The table uses the
+clean builds linked from the pinned baseline and candidate source.
+The archive includes failed rebuild attempts and both source and
+library fingerprints.
+
+The four-replica runs fixed a 250 ms cadence, a two-billion-cycle
+block limit, two VM workers per replica and 64 persistent submitters.
+Each pair used identical genesis and signed workloads. Visible TPS
+counts transactions seen on all replicas during the offer window.
+Every fully written payment in these runs finalized.
+
+| Planned load and order | Build | Offered / admitted TPS | Visible / with drain TPS | Finalized / client drops | p50 / p95 / p99 | Four-replica CPU | Process writes |
+| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |
+| 1,000 TPS, 30 s, first pair | Baseline | 1,000.00 / 1,000.00 | 980.10 / 984.30 | 30,000 / 0 | 0.639 / 0.807 / 0.861 s | 43.14 s | 500.94 MB |
+| 1,000 TPS, 30 s, first pair | Candidate | 1,000.00 / 1,000.00 | 980.73 / 984.07 | 30,000 / 0 | 0.639 / 0.810 / 0.856 s | 45.08 s | 491.18 MB |
+| 1,000 TPS, 30 s, reversed | Candidate | 1,000.00 / 1,000.00 | 977.03 / 985.98 | 30,000 / 0 | 0.640 / 0.801 / 0.839 s | 45.06 s | 505.78 MB |
+| 1,000 TPS, 30 s, reversed | Baseline | 853.87 / 851.73 | 808.03 / 827.31 | 25,616 / 4,384 | 1.281 / 2.131 / 2.444 s | 80.99 s | 419.81 MB |
+| 2,000 TPS, 20 s | Baseline | 930.00 / 926.80 | 861.60 / 882.98 | 18,600 / 21,400 | 1.734 / 2.320 / 2.613 s | 68.80 s | 332.25 MB |
+| 2,000 TPS, 20 s | Candidate | 943.05 / 939.85 | 861.45 / 902.35 | 18,861 / 21,139 | 1.695 / 2.518 / 2.824 s | 61.43 s | 333.13 MB |
+| 750 TPS, 20 s, 2 KiB Data | Candidate | 693.00 / 689.80 | 642.35 / 668.21 | 13,860 / 1,140 | 1.496 / 2.087 / 2.246 s | 55.15 s | 567.28 MB |
+| 750 TPS, 20 s, 2 KiB Data | Baseline | 740.45 / 739.50 | 699.90 / 708.77 | 14,809 / 191 | 1.260 / 1.607 / 1.776 s | 54.98 s | 645.41 MB |
+
+In the matched 30-second pair, peak summed replica RSS was
+626.13 MiB before and 625.57 MiB after. Aggregate network bytes
+sent and received were 81.74 MB and 83.28 MB, respectively. The
+overload runs had similar visible rates and different p99 times.
+The reverse sustained pair and the 2 KiB pair reached different
+offered rates. These samples show no repeatable improvement in
+replicated payment throughput or tail latency. Allocation savings
+in the isolated path remain distinct from disk write savings.
+
+A mixed-version four-replica network finalized 96 signed payments
+with a replica offline, then recovered the same Header after restart.
+The Lineage regression serially replayed all 2,130 finalized commands
+and 4,260 Head updates. The client dropped 750 scheduled commands
+before writing them. The Keeper, Intercell, xUDT, fee payout, funded
+committee handoff, clustered Spore and shared Metatype quorum
+regressions passed. A freshly built WASM verifier checked archived
+and new CKB devnet rounds for inclusion of the signed transaction
+and its execution receipt. It rejected a changed transaction and a
+changed receipt in each checked proof.
+
+The release workspace passed 494 tests, the Go proof suite passed,
+and the frozen CometBFT feature built. [Raw experiments, signed workloads, executable fingerprints, and reproduction scripts](benchmarks/2026-11-26-stem-execution-merkle.json.xz).
