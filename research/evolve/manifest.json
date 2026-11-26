@@ -1,0 +1,12 @@
+{
+  "reference": "fefb8cc01771d59e228c72755ddd1242291f7f22",
+  "targets": {
+    "sort": {"reference_path": "src/native_store.rs", "oracle": "cell_changes.sort_unstable_by_key(|(id, _)| *id)", "allowed": "Research-only ordering of at most eight fully materialized state changes", "invariants": ["Full 32-byte key order", "Every optional value travels with its key", "Equivalent tie output on captured corpus"], "train_seed": 3181, "heldout_seed": 4219},
+    "cache": {"reference_path": "vm/src/lib.rs", "oracle": "return charge(0, cycles, max_cycles)", "allowed": "Resident entry eviction only", "invariants": ["Check required parent on hits", "Cache successes only", "Charge original cycles", "Check every caller's cycle limit"], "train": "node1-initial and synthetic-3181", "heldout": "node3-initial and synthetic-4219"}
+  },
+  "rust": "1.95.0",
+  "sort_flags": ["--edition=2024", "-C", "opt-level=3"],
+  "rounds": "Nine timed batches after one warm-up, then repeat in reverse candidate order",
+  "resource_bounds": {"cpu_seconds_per_process": 60, "address_space_mib": 3072},
+  "review": "Report speed and memory costs separately. Preserve the oracle for rollback. A live candidate also requires matched-load, mixed-version, restart and proof checks, followed by human review."
+}

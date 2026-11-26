@@ -1,0 +1,44 @@
+diff --git a/src/native_store.rs b/src/native_store.rs
+index 5f96652..2271cd2 100644
+--- a/src/native_store.rs
++++ b/src/native_store.rs
+@@ -1301,6 +1301,7 @@ impl Store {
+                 .map(|record| record::cell_value(&self.cells, point, record));
+             cell_changes.push((id, value));
+         }
++        eprintln!("STEM_SORT_SAMPLE cell_changes {}", cell_changes.len());
+         cell_changes.sort_unstable_by_key(|(id, _)| *id);
+         cells.set_batch(&cell_changes, |id, _, value| {
+             if value.is_none() {
+@@ -1370,6 +1371,7 @@ impl Store {
+             });
+             system_changes.push((id, hash));
+         }
++        eprintln!("STEM_SORT_SAMPLE system_changes {}", system_changes.len());
+         system_changes.sort_unstable_by_key(|(id, _)| *id);
+         // Carry the parent decode across writes to unrelated system records.
+         let stake_inputs = if self
+diff --git a/vm/src/lib.rs b/vm/src/lib.rs
+index 7f5acb0..ee3f7d2 100644
+--- a/vm/src/lib.rs
++++ b/vm/src/lib.rs
+@@ -274,8 +274,9 @@ impl VerificationCache {
+                     .as_ref()
+                     .is_none_or(|required| required == &parent)
+             })
+-            .map(|entry| entry.cycles);
+-        if let Some(cycles) = found {
++            .map(|entry| (entry.cycles, entry.parent.is_some()));
++        if let Some((cycles, sensitive)) = found {
++            eprintln!("STEM_VM_SAMPLE {key} {parent} {cycles} {sensitive} {max_cycles} hit");
+             return charge(0, cycles, max_cycles);
+         }
+ 
+@@ -311,6 +312,7 @@ impl VerificationCache {
+             }
+             cycles
+         };
++        eprintln!("STEM_VM_SAMPLE {key} {parent} {cycles} {} {max_cycles} miss", parent_read.load(Ordering::Relaxed));
+         self.verified.lock().expect("VM cache lock").put(
+             key,
+             CachedVerification {
