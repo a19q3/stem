@@ -990,6 +990,19 @@ For the baseline comparison, add only the probe from
 `754b1ef`. The archived commands preserve the probe order and
 fingerprints.
 
+Use the same three fixture paths for the block preparation probe.
+It compares empty blocks, single-payment blocks and children of a
+candidate with a fee update.
+
+```sh
+STEM_FUNDED_PREPARATION_REPORT=/tmp/stem-admission/preparations.json \
+cargo test --locked --release --bin stem measure_funded_stake_preparation \
+  -- --ignored --nocapture
+```
+
+For its baseline, use the probe source in `src/native_spec.rs`
+at `183c7dd` against the runtime from `88fac89`.
+
 ### Measure sustained Lineage commands
 
 Run the native load fixture with real Lineage registration, signed fee

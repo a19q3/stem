@@ -4583,3 +4583,51 @@ retains the initial probe-launch and signing-context failures.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw timings, both funded snapshots and CKB proofs](benchmarks/2026-11-26-stem-staked-admission.json.xz).
+
+## Reusing decoded stake inputs across blocks
+
+Revision `183c7dd` reuses the decoded accepted Stake Snapshot,
+committee, applied Registry sequence and guardian authority.
+A write to any of those four authenticated keys starts a new
+cache for the resulting state view. Revision `88fac89` loads
+and decodes the records for each block preparation. Both revisions
+stage a fresh budget and mutable changes per preparation.
+
+The probe reopens the same CKB-funded four-member and 128-member
+archive states at heights 55 and 57. Each trial prepares 128 empty
+blocks or 128 separate one-payment blocks from the same tip. A third
+run prepares empty children of a candidate payment block that has
+advanced the fee tally and SystemRoot. The signed payment variants
+share a funded input, and each runs in its own preparation. The probe
+compares the complete result Header and receipt digest for every
+profile across both binaries. The medians use 24 trials for each
+version and profile after discarding the first trial of each process.
+
+| Committee and profile | Baseline | Cached stake inputs | Time reduction |
+| --- | ---: | ---: | ---: |
+| 4, empty | 1.182 ms | 0.795 ms | 32.7% |
+| 4, one payment | 5.944 ms | 5.534 ms | 6.9% |
+| 4, candidate child | 1.225 ms | 0.852 ms | 30.5% |
+| 128, empty | 1.329 ms | 0.819 ms | 38.4% |
+| 128, one payment | 5.918 ms | 5.445 ms | 8.0% |
+| 128, candidate child | 1.489 ms | 0.945 ms | 36.6% |
+
+The timings cover in-process preparation at a fixed state. The
+sibling branch test verifies that a candidate accepting the snapshot
+rejects replay, while the committed parent and an unchanged sibling
+still accept it. It also primes an observer's genesis stake cache
+before restoring a later snapshot and checks the rotated authority
+and retirement state.
+
+The locked release workspace passed 480 tests with 22 ignored.
+Go proof tests and the frozen CometBFT feature check passed. A
+mixed four-replica network finalized 96 signed payments and
+recovered the replica that was offline. Real CKB devnets accepted
+the four-member and 128-member committee handoffs at Stem height
+40 and both historical Intercell deliveries. The wide run used
+129 Stem processes and agreed at height 44 after restarting an
+offline voter. Separate runs verified historical and live-at-anchor
+Cell references and the revisable Metatype custody round trip.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw preparations, signed workloads, state images and CKB proofs](benchmarks/2026-11-26-stem-stake-view-cache.json.xz).
