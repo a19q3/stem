@@ -137,4 +137,4 @@ Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验
 
 第 20 项已验证一份由公开测试网 Spore 实际引用的 Lua 程序。17 个注册 ID 有 33 个历史输出，限定的发行窗口内有 11 个 Spore 引用它。钱包在同一 CKB 锚点验证其中一次发行及注册所有权转移，两条本地四副本路线使用相同程序原文和 1,000 shannons 最低付款，分别完成 7 次与 6 次 CKB 状态转换。把该 ID 放入集合自身扩展字段的独立候选仍被发布版 Cluster 程序拒绝。[公开链证明、付款对账及双向结算](research/spore-permit/upstream/beta2/registered-policy/README.md)
 
-第 20 项用独立收款方复验了同一程序的铸造付款。单注册向受益人净付 1,000 shannons，双注册净付 2,000，资产由另一把锁持有。两种首发方向共重放 26 个 CKB 资产状态、8 次托管换手授权和 22 份原生执行记录。[独立收款与逐笔对账](research/spore-permit/upstream/beta2/registered-policy/README.md#paying-a-separate-beneficiary)
+第 20 项用独立收款方复验了同一程序的铸造付款。单注册向受益人净付 1,000 shannons，双注册净付 2,000，资产由另一把锁持有。随后四组用发行或中继已有的输入支付，铸造主体均减少 153 字节，净收款与实付矿工费逐笔对平。两轮累计重放 52 个 CKB 资产状态、16 次托管换手授权和 44 份原生执行记录。[独立收款与逐笔对账](research/spore-permit/upstream/beta2/registered-policy/README.md#paying-a-separate-beneficiary)

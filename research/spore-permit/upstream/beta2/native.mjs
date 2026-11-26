@@ -13,7 +13,8 @@ const evidence = {};
 for (const filename of ["histories.json.xz", "two-registrations.json.xz", "cluster-settlement.json.xz",
     "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
     "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz",
-    "registered-policy/settlement.json.xz", "registered-policy/separate-payees.json.xz"]) {
+    "registered-policy/settlement.json.xz", "registered-policy/separate-payees.json.xz",
+    "registered-policy/compact-payees.json.xz"]) {
     const archive = new URL(filename, import.meta.url);
     Object.assign(evidence, JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 32*1024*1024})));
 }

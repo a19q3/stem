@@ -173,7 +173,8 @@ def main():
     for filename in ("histories.json.xz", "two-registrations.json.xz", "cluster-controls.json.xz", "cluster-settlement.json.xz",
                      "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
                      "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz",
-                     "registered-policy/settlement.json.xz", "registered-policy/separate-payees.json.xz"):
+                     "registered-policy/settlement.json.xz", "registered-policy/separate-payees.json.xz",
+                     "registered-policy/compact-payees.json.xz"):
         with lzma.open(HERE / filename, "rt") as source:
             records.update(json.load(source))
     with tempfile.TemporaryDirectory() as scratch:

@@ -66,15 +66,19 @@ def mint_payment(record, checked, *, separate_payee=False):
     program, = programs
     assert len(matching) == len(type_hashes) == len(mutant_ids)
     inputs, outputs = field(tx, 3), field(tx, 4)
-    count = int.from_bytes(inputs[:4], "little")
-    assert len(inputs) == 4 + count * 44
-    incoming = 0
+    input_count = int.from_bytes(inputs[:4], "little")
+    assert len(inputs) == 4 + input_count * 44
+    incoming = total_in = 0
     for offset in range(4, len(inputs), 44):
         previous = parents[inputs[offset+8:offset+40]]
         index = int.from_bytes(inputs[offset+40:offset+44], "little")
-        incoming += capacity(field(field(previous, 4), index), owner)
+        spent = field(field(previous, 4), index)
+        incoming += capacity(spent, owner)
+        total_in += int.from_bytes(field(spent, 0), "little")
     count = int.from_bytes(outputs[4:8], "little") // 4 - 1
     outgoing = sum(capacity(field(outputs, i), owner) for i in range(count))
+    fee = total_in - sum(int.from_bytes(field(field(outputs, i), 0), "little") for i in range(count))
+    assert fee >= 0
     spore_index = int(checked["origin"]["index"], 16)
     asset_cell = field(outputs, spore_index)
     spore = field(asset_cell, 2)
@@ -90,7 +94,7 @@ def mint_payment(record, checked, *, separate_payee=False):
         standalone = [field(outputs, i) for i in range(count) if field(field(outputs, i), 1) == owner]
         cell, = standalone
         assert field(cell, 2) == b"" and capacity(cell, owner) == outgoing
-    return type_hashes, program, outgoing-incoming
+    return type_hashes, program, outgoing-incoming, (input_count, count, fee, len(tx), len(binary(mint["transaction"])))
 
 
 def main():
@@ -106,7 +110,7 @@ def main():
         reg = authenticated(stem, root, public["registration"])
         member = authenticated(stem, root, public["member"])
         assert reg["anchor"] == member["anchor"] == ANCHOR
-        reg_type, program, delta = mint_payment(public["member"], member)
+        reg_type, program, delta, _ = mint_payment(public["member"], member)
         assert reg_type == {reg["type_hash"]}
         assert all(step["output"]["data_hash"] == PROGRAM for step in reg["transitions"])
         assert reg["transitions"][0]["output"]["lock_hash"] != reg["transitions"][-1]["output"]["lock_hash"]
@@ -115,20 +119,32 @@ def main():
         assert hex_bytes(script_hash(sample["type"])) == member["type_hash"]
         assert reg["transitions"][-1]["output"]["out_point"] in sample["registrations"]
         print("Testnet mint, net shannons to registration lock:", delta)
-        for archive, separate in [("settlement.json.xz", False), ("separate-payees.json.xz", True)]:
+        baseline = {}
+        for archive, prefix in [("settlement.json.xz", "registered-policy"), ("separate-payees.json.xz", "separate-payee"),
+                                ("compact-payees.json.xz", "compact-payee")]:
             records = read(archive)
-            profiles = {"separate-payee-independent": 1, "separate-payee-twice": 2} if separate else {"registered-policy": 1}
-            expected = {f"{prefix}-{origin}": count for prefix, count in profiles.items()
+            separate = prefix != "registered-policy"
+            profiles = {f"{prefix}-independent": 1, f"{prefix}-twice": 2} if separate else {prefix: 1}
+            expected = {f"{profile}-{origin}": count for profile, count in profiles.items()
                         for origin in ("import", "native")}
             assert records.keys() == expected.keys()
             for name, record in records.items():
                 checked = authenticated(stem, root, record)
-                types, local_program, delta = mint_payment(record, checked, separate_payee=separate)
+                types, local_program, delta, shape = mint_payment(record, checked, separate_payee=separate)
                 registrations = record["settlement"]["mutant_registration"]
                 entries = registrations.get("entries", [registrations])
                 assert len(types) == expected[name]
                 assert types == {hex_bytes(script_hash(entry["type"])) for entry in entries}
                 assert local_program == program and not checked["ended_in_burn"]
+                inputs, outputs, fee, body_bytes, signed_bytes = shape
+                assert signed_bytes == record["settlement"]["minted"]["bytes"]
+                route = name.removeprefix(prefix)
+                if prefix == "separate-payee":
+                    baseline[route] = shape
+                if prefix == "compact-payee":
+                    old_inputs, old_outputs, old_fee, old_body_bytes, old_size = baseline[route]
+                    assert (inputs + 1, outputs + 1, fee) == (old_inputs, old_outputs, old_fee)
+                    assert old_body_bytes - body_bytes == 153 and signed_bytes < old_size
                 print(name, len(checked["transitions"]), "CKB transitions, net shannons to registration lock:", delta)
     if args.extract_program:
         with args.extract_program.open("xb") as output:

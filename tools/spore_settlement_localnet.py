@@ -200,8 +200,12 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         registration_owner = {**fixture.standard, "args": fixture.key(payee_key)["blake160"]}
         payment_total = args.spore_mutant_payment * len(programs)
         payment_index = len(codes) + len(funds)
-        # The beneficiary already owns an ordinary Cell so a sub-Cell payment is possible.
-        funds.extend([(100 * CKB + payment_total, fixture.standard), (100 * CKB, registration_owner)])
+        # Preload the price onto the faucet input the mint already spends.
+        # A native export uses the relay fee Cell. A CKB mint uses its issuance input.
+        payer_index = 2 if native_origin else 0
+        amount, lock = funds[payer_index]
+        funds[payer_index] = (amount + payment_total, lock)
+        funds.append((100 * CKB, registration_owner))
     change = available - sum(capacities) - sum(amount for amount, _ in funds) - FEE
     if args.spore_mutant_separate_payee and change < 61 * CKB:
         raise ValueError("insufficient fixture capacity for the payments and standard change Cell")
@@ -216,18 +220,12 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     def sign_mint(label, tx, group):
         groups = [group]
         if args.spore_mutant_separate_payee:
-            index = len(tx["inputs"])
-            tx["inputs"].extend({"previous_output": point(funded, i), "since": "0x0"}
-                                for i in (payment_index, payment_index + 1))
-            tx["outputs"].extend([output(100 * CKB, fixture.standard),
-                                  output(100 * CKB + payment_total, registration_owner)])
-            tx["outputs_data"].extend(["0x", "0x"])
-            tx["witnesses"][index:index] = ["0x", "0x"]
-            if group["keys"] == [str(fixture.faucet)]:
-                group["inputs"].append(index)
-            else:
-                groups.append(wallet_group(index, [fixture.faucet]))
-            groups.append(wallet_group(index + 1, [payee_key]))
+            payee_input = len(tx["inputs"])
+            tx["inputs"].append({"previous_output": point(funded, payment_index), "since": "0x0"})
+            tx["outputs"].append(output(100 * CKB + payment_total, registration_owner))
+            tx["outputs_data"].append("0x")
+            tx["witnesses"].insert(payee_input, "0x")
+            groups.append(wallet_group(payee_input, [payee_key]))
         return fixture.sign(label, tx, groups)
 
     def estimate(signed):

@@ -47,9 +47,22 @@ Four further devnets used a registration owner with an independent secp256k1 Loc
 
 The CKB wallet replayed 26 asset states, including two native-title handoff authorizations per asset. The WASM verifier checked 22 certified native executions against the four recorded committees. The payment verifier reads the registration IDs and prices from the referenced outputs, checks the IDs against the Spore MIME field, and reconciles every input and output at the beneficiary’s Lock. These four cases measure the amounts actually paid. They cover one program, an individual Spore, and one beneficiary per mint. [Payment verifier](verify.py) · [Committee trust roots](../committee-trust.json)
 
+### Reusing the mint funding input
+
+The first four separate-beneficiary mints used an additional faucet input and a separate change output to fund the credit. In a second set of four devnets, the faucet prefunded the issuance input on the CKB-origin route or the relay fee input on the Stem-origin route with the price. The beneficiary still co-signed its own balance Cell. Each comparison saved one input, one output and **153 bytes of transaction body**. The offline wallet checked that each pair paid the same beneficiary amount for its profile and the same miner fee of 1,000,000 shannons. The upstream programs and native consensus rules were the same in both sets. [Compact mints and settlement histories](compact-payees.json.xz) · [Original funding implementation](https://github.com/a19q3/stem/blob/0bc443d/tools/spore_settlement_localnet.py)
+
+| Origin and registrations | Inputs / outputs before → after | Signed bytes before → after | CKB mint cycles before → after |
+| --- | --- | ---: | ---: |
+| CKB, one | 3 / 3 → 2 / 2 | 1,491 → 1,330 | 4,609,224 → 4,555,031 |
+| CKB, two | 3 / 3 → 2 / 2 | 1,593 → 1,432 | 4,626,136 → 4,605,917 |
+| Stem, one | 5 / 5 → 4 / 4 | 3,128 → 2,865 | 7,365,933 → 7,348,617 |
+| Stem, two | 5 / 5 → 4 / 4 | 3,397 → 3,032 | 7,451,726 → 7,366,658 |
+
+The full signed sizes include witnesses from independently run devnets. On Stem origin, the witness sections shrank by 110 and 212 bytes in the two pairs. The 153-byte body saving was identical in all four pairs. Each compact route also completed its wallet transfer, two direct native handoffs and cross-chain settlement. Offline replay checked another 26 CKB states and 22 certified executions. [Native receipt replay](../native.mjs)
+
 ## Reproduce
 
-Run the commands below from the repository root. The first command verifies both public proofs and the six local histories. It also extracts the authenticated program to a new file. The two subsequent offline checks verify the CKB authorizations of the native spends and the native receipts. The final command refreshes the historical index against the pinned block bound. [WASM build instructions](../README.md#reproduce)
+Run the commands below from the repository root. The first command verifies both public proofs and the ten local histories. It also extracts the authenticated program to a new file. The two subsequent offline checks verify the CKB authorizations of the native spends and the native receipts. The final command refreshes the historical index against the pinned block bound. [WASM build instructions](../README.md#reproduce)
 
 ```sh
 d=research/spore-permit/upstream/beta2/registered-policy
