@@ -1602,3 +1602,13 @@ redemption uses an independently authenticated CKB anchor. Omit
 `--metatype-shared-manifest` for inline script definitions. The report
 contains canonical CKB inclusions, Stem finality and execution proofs,
 and membership or absence proofs for escrowed and released Cells.
+
+Replace `--finish-udt-return` with `--metatype-multiasset` to settle
+two independent capped assets. The fixture exports, mints, swaps
+ownership, burns and returns both assets in one transaction per stage.
+Each CKB mailbox takes its own delivery witness. A single Stem guardian
+certificate covers both historical burn outputs. Use fresh ports and
+output directories for inline and shared runs. The report preserves
+both message IDs, the finalized execution receipts and the proof of
+each released Cell. The fixture also submits a separate four-action
+transaction and checks rejection of a fifth action.

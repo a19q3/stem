@@ -537,6 +537,17 @@ Every individual output on either chain also satisfies the cap.
 The two chains use their existing finality, anchor and replay
 verification paths.
 
+Two independent fungible deployments can settle atomically at
+each stage. A Stem export or return carries one Intercell action
+for each consumed escrow Lock group. CKB resolves each physical
+Type and mailbox separately. Its import can verify distinct outbox
+paths against one checkpoint, and its burn can produce two mailbox
+outputs in one transaction. One reference-set certificate can
+authenticate both outputs at their common CKB anchor. Any failed
+message or Type Group aborts the whole transaction on its chain.
+The lanes retain independent Manifest, asset, amount and nonce
+checks. Confirmation and relay still occur between the two chains.
+
 These profiles establish correspondence for the specified source
 rules. Other asset classes, state transition rules and external dependencies
 need their own adapter profiles and differential verification.

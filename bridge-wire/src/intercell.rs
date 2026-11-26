@@ -6,6 +6,7 @@ pub type Identity = [u8; HASH_SIZE];
 
 pub const SEND_ACTION: u16 = 0xff00;
 pub const RECEIVE_ACTION: u16 = 0xff01;
+pub const MAX_ACTIONS_PER_TRANSACTION: usize = 4;
 pub const MAX_PAYLOAD: usize = 4096;
 pub const MESSAGE_HEADER: usize = 4 * HASH_SIZE + 8;
 pub const MAX_MESSAGE: usize = MESSAGE_HEADER + MAX_PAYLOAD;

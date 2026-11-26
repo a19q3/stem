@@ -382,13 +382,13 @@ StemVM syscall 2130 按索引读取认证引用。选择器 0 返回完整记录
 
 一条消息由四个 32 字节标识、一个小端 `u64` nonce 及最多 4,096 字节载荷组成。标识依次为来源网络、目的网络、发送端点、接收端点。CKB 网络标识为 genesis 哈希，Stem 使用原生 network ID。CKB 端点为 Mailbox 的完整 Type Script 哈希，Stem 端点为完整 Lock Script 哈希。消息 ID 是前 136 字节的域隔离哈希。载荷由完整消息记录认证。同一网络和端点组合的同一 nonce 只能发布并消费一份载荷。目的端可乱序消费，未送达的 nonce 不阻塞后续消息。
 
-Genesis 的 `bridge.intercell_mailbox_code` 固定受支持的 CKB 程序。Stem 普通交易可向实际消费的 Lock Group 声明一个保留 Group Action，`0xff00` 为发送，`0xff01` 为接收。完整 Lock 授权覆盖消息。两种保留 Intercell Action 均要求使用完整授权路径。消息记录与交易的应用输出和防重放状态原子提交。Outbox 和 Inbox 分别使用永久的 SystemRoot 记录，键绑定方向和消息 ID，值为完整消息。回执承诺该 ID。消息占用交易编码、读取、写入及签名资源，费用按普通交易计算。
+Genesis 的 `bridge.intercell_mailbox_code` 固定受支持的 CKB 程序。Stem 普通交易可在最多四个实际消费的 Lock Group 中各声明一个 Intercell Action，`0xff00` 为发送，`0xff01` 为接收。完整 Lock 授权覆盖消息。消息记录与交易的应用输出和防重放状态原子提交。Outbox 和 Inbox 分别使用永久的 SystemRoot 记录，键绑定方向和消息 ID，值为完整消息。回执按规范 Lock Group 顺序串联每条消息的 32 字节 ID。每条消息独立计入交易编码、读取、写入及验证资源。
 
 Stem → CKB 的接收方消费其唯一 Mailbox。Mailbox 的 Type ID、所有者 Lock、双方网络身份和 Jolteon 检查点代码哈希及 Type ID 在创建时固定。创建交易引用 CKB genesis Header。合约读取固定检查点实例。Outbox 证明可以直接使用检查点的 SystemRoot，也可以使用该检查点历史 MMR 已承诺的较早 Header。历史路径验证 Stem 网络、Header 高度和 ID、检查点 MMR 的叶数与峰值，以及该 Header 的包含路径。历史路径可以跨 epoch，CKB 上的检查点必须先按顺序验证委员会交接和历史连续性。合约在对应 SystemRoot 下验证完整 Outbox 记录的 Patricia 路径，再以稀疏默克尔树不存在证明插入已消费 ID。后继 Mailbox 保留同一类型和所有者。任何中继者都可发布检查点和准备投递证明。Mailbox 的消费由接收者的 CKB Lock 授权。
 
 投递见证首先用三个小端 `u32` 给出消息、Outbox 路径和历史证明的长度，接着依次编码这三段，最后为防重放路径。历史段为空时使用检查点本身。历史段非空时依次放入较早的 208 字节执行 Header、检查点的 MMR 叶数和峰值，以及目标叶到所属峰值的最短兄弟路径。检查点高度必须等于 MMR 叶数，待验证 Header 高度必须严格更早。检查点更新后可继续使用原 Outbox 证明，只需为仍存活的检查点 Cell 更新历史路径。防重放路径包含 32 字节位图及位图指定的非零同级节点。路径只在对应 Mailbox 的当前防重放根下有效。递增锚点或重新签发 CKB 历史引用不会清除 Stem 一侧已消费的消息 ID。
 
-CKB → Stem 的发送方由 Mailbox 的原有 CKB Lock 授权。合约令发送序号逐笔递增，并把完整消息写在这一笔的后继 Cell。后续状态可覆盖正文，原 CKB 交易仍可证明历史包含。Stem 接收交易须包含恰好一条与消息完整匹配的历史引用。内核核对父状态接受的锚点、CKB genesis、实际 Type Script、Mailbox 的检查点与所有者、消息正文及实际接收 Lock Group。应用可在同一笔交易内附上其他 L1 Cell References，所有引用仍遵守原有数量上限、锚点、认证和计费规则。超过三分之二 guardian 权重认证 CKB 观测，签名前按网络确认深度核验创建交易和见证的包含证明。若确认锚重组，持久化观测日志的 guardians 停签。Stem 的已最终确定历史保持原记录。此前签发的证书在其锚点仍是父状态锚点时保持有效，因此确认深度与 guardian 观测属于实际安全假设。
+CKB → Stem 的发送方由 Mailbox 的原有 CKB Lock 授权。合约令发送序号逐笔递增，并把完整消息写在这一笔的后继 Cell。后续状态可覆盖正文，原 CKB 交易仍可证明历史包含。每条接收消息须有恰好一条与它完整匹配的历史引用。内核核对父状态接受的锚点、CKB genesis、实际 Type Script、Mailbox 的检查点与所有者、消息正文及实际接收 Lock Group。应用可在同一笔交易内附上其他 L1 Cell References，所有引用仍遵守原有数量上限、锚点、认证和计费规则。超过三分之二 guardian 权重认证 CKB 观测，签名前按网络确认深度核验创建交易和见证的包含证明。若确认锚重组，持久化观测日志的 guardians 停签。Stem 的已最终确定历史保持原记录。此前签发的证书在其锚点仍是父状态锚点时保持有效，因此确认深度与 guardian 观测属于实际安全假设。
 
 CKB Mailbox 的防重放根是 CKB 规范链上的状态。中继者可从指定的 Live Head 回溯同一 Type Script 的唯一历史，从交易见证恢复已消费 ID，并逐步校验根变化。CKB 重组若移除一次投递，防重放根回到替代链对应的状态。同一消息能否再次投递取决于替代链是否已消费其 ID。Stem 已最终确定的消息和历史保持原记录。
 
