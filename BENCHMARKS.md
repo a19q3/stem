@@ -3813,3 +3813,75 @@ The corrected run and the first failure are both included.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Exact ELF bytes, signed workloads, raw profiles and regression logs](benchmarks/2026-11-26-stem-vm-decoder.json.xz).
+
+## Shared Metatype manifest definitions
+
+The same RISC-V dispatcher and adapter ELFs ran both layouts on
+CKB 0.210.0. Each row uses two UDT inputs and three outputs with
+the same logical amounts and Script sets. The long set occupies
+two output Cells. The short set occupies the third. The two-group
+row uses one definition for all three outputs. Comparison Capacity
+includes one live definition per distinct set used by those outputs.
+The fixture's unrelated Cells and definitions published only for
+rejection cases are outside those totals.
+
+| Groups in long set | Inline outputs, CKB | Shared outputs plus definitions, CKB | Inline / shared bytes | Inline / shared cycles |
+| --- | ---: | ---: | ---: | ---: |
+| 2 | 1,539 | 729 + 368 = 1,097 | 2,326 / 1,553 | 2,387,056 / 2,448,788 |
+| 4 | 2,279 | 737 + 1,106 = 1,843 | 3,066 / 1,598 | 3,237,639 / 3,407,592 |
+| 8 | 3,759 | 753 + 1,846 = 2,599 | 4,546 / 1,614 | 5,136,747 / 5,840,190 |
+| 16 | 6,719 | 785 + 3,326 = 4,111 | 7,506 / 1,646 | 9,946,058 / 12,372,414 |
+
+The 16-group case saves 38.8% of the occupied Capacity after
+counting definitions and 78.1% of the transaction bytes. Cycles
+increase 24.4%. Each split carries 85 witness bytes in both layouts.
+Local submission through mining took 416–426 ms across those eight
+measurements. The archive records issuance, definition publication,
+turnover and all individual inclusion proofs and timings.
+
+The mixed-layout transaction combines two different assets in the
+same output and keeps one asset output inline. Two short and long
+manifests contribute to shared virtual groups. CKB accepted the
+mixed-layout transaction at 4,325,580 cycles and 2,769 bytes. The
+all-inline control used 3,989,029 cycles and 3,596 bytes. The fixture
+spent an original definition and used its byte-identical reissue
+at a new OutPoint. CKB rejected 19 cases in the shared run. These
+include an unavailable definition, malformed and nested definitions,
+state count mismatches, changed policy obligations and excessive
+expanded size. The latter used 19 outputs with 79,059 compact bytes
+and 132,867 expanded bytes.
+
+Four Stem replicas and CKB completed matched immutable object
+custody round trips. Both paths used the same object content,
+source Type Scripts and independent approval. The shared import
+rejects an omitted definition. The dedicated definition requires
+368 CKB, so total occupied Capacity for this one represented
+object is 661 CKB with a shared definition and 563 CKB inline.
+The represented Cell itself occupies 293 CKB in shared form.
+
+| CKB custody step | Inline / shared bytes | Inline / shared cycles |
+| --- | ---: | ---: |
+| Import | 2,702 / 2,367 | 5,014,174 / 5,027,964 |
+| Transfer | 1,373 / 1,140 | 4,077,584 / 4,113,274 |
+| Burn and return | 1,735 / 1,772 | 4,163,814 / 4,213,254 |
+
+The shared burn carries a definition Cell Dep and consumes the
+representation. The CKB import
+sizes include each run's actual checkpoint witness. Both paths
+preserve the same logical identity and enforce the original
+approval. An independent WASM verifier checked three execution
+receipts and the escrow, non-membership and restored Cell proofs
+on both paths.
+
+The locked release workspace passed 476 tests with 19 ignored. The
+standalone object fixture, Spore and native UDT settlement, and a
+funded Jolteon handoff with historical Intercell delivery all passed
+on the devnets. The rebuilt Stem node repeated the shared round
+trip with an independent WASM proof check. Go proof tests and the
+frozen CometBFT feature check passed. The first RISC-V build
+reported a moved reference in the new resolver. The archive includes
+that failure, the corrected build and both standalone shared runs.
+
+[Standalone reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
+[Custody reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
+[Signed runs, raw proofs and build logs](benchmarks/2026-11-26-stem-metatype-shared.json.xz).

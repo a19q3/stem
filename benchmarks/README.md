@@ -95,5 +95,6 @@ available. Published network evidence contains public genesis and proof data.
 | Immutable Metatype custody round trip | [Report](../BENCHMARKS.md#immutable-metatype-custody-round-trip), [signed cases, state proofs and failed attempts](2026-11-26-stem-metatype-custody.json.xz) |
 | Sparse assembly trace invalidation | [Report](../BENCHMARKS.md#sparse-assembly-trace-invalidation), [paired payments, trace probe, CPU samples and regression logs](2026-11-26-stem-vm-trace-reset.json.xz) |
 | RISC-V instruction-width dispatch | [Report](../BENCHMARKS.md#risc-v-instruction-width-dispatch), [ELF corpus, paired results, CPU samples and regression logs](2026-11-26-stem-vm-decoder.json.xz) |
+| Shared Metatype manifest definitions | [Report](../BENCHMARKS.md#shared-metatype-manifest-definitions), [matched CKB layouts, custody proofs and failed build](2026-11-26-stem-metatype-shared.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
