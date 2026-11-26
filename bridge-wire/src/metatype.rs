@@ -119,6 +119,8 @@ pub struct MetatypeManifest<'a> {
     entries: Vec<Constraint<'a>>,
 }
 
+pub type ManifestCell<'a> = (u16, MetatypeManifest<'a>);
+
 impl<'a> MetatypeManifest<'a> {
     pub fn decode(mut raw: &'a [u8]) -> Option<Self> {
         if raw.len() > MAX_MANIFEST_BYTES {
@@ -162,6 +164,33 @@ impl<'a> MetatypeManifest<'a> {
     }
 }
 
+/// Canonical Script ranges in a validated, owned definition Cell.
+pub struct ManifestDefinition {
+    raw: Vec<u8>,
+    ranges: Vec<core::ops::Range<usize>>,
+}
+
+impl ManifestDefinition {
+    pub fn decode(raw: Vec<u8>) -> Option<Self> {
+        if raw.len() > MAX_MANIFEST_DEFINITION_BYTES {
+            return None;
+        }
+        let manifest = MetatypeManifest::decode(&raw)?;
+        let mut ranges = Vec::with_capacity(manifest.entries.len());
+        let mut offset = 1;
+        for entry in manifest.entries {
+            if !entry.state.is_empty() {
+                return None;
+            }
+            let start = offset + 2;
+            let end = start + entry.script.as_slice().len();
+            ranges.push(start..end);
+            offset = end + 2;
+        }
+        Some(Self { raw, ranges })
+    }
+}
+
 /// A Cell's state vector and a commitment to its shared Script set.
 /// Zero is reserved for references in the Cell Data discriminant.
 pub struct ManifestReference<'a> {
@@ -180,34 +209,37 @@ impl<'a> ManifestReference<'a> {
             })
     }
 
-    /// Rebuild the canonical logical manifest from a dependency whose data
-    /// hash the host has checked against `definition_hash`.
-    pub fn expand(&self, definition: &[u8], limit: usize) -> Option<Vec<u8>> {
-        if definition.len() > MAX_MANIFEST_DEFINITION_BYTES {
-            return None;
-        }
-        let definition_view = MetatypeManifest::decode(definition)?;
-        let entries = definition_view.entries();
+    pub fn expanded_len(&self, definition: &ManifestDefinition, limit: usize) -> Option<usize> {
         let length = definition
+            .raw
             .len()
-            .checked_add(self.states.len().checked_sub(2 * entries.len())?)?;
-        if length > MAX_MANIFEST_BYTES.min(limit) {
-            return None;
-        }
-        let mut raw = Vec::with_capacity(length);
-        raw.push(entries.len() as u8);
+            .checked_add(self.states.len().checked_sub(2 * definition.ranges.len())?)?;
+        (length <= MAX_MANIFEST_BYTES.min(limit)).then_some(length)
+    }
+
+    /// Borrow the logical view from a definition whose CKB data hash the
+    /// host authenticated against `definition_hash`.
+    pub fn view(
+        &self,
+        definition: &'a ManifestDefinition,
+        limit: usize,
+    ) -> Option<MetatypeManifest<'a>> {
+        self.expanded_len(definition, limit)?;
+        let mut entries = Vec::with_capacity(definition.ranges.len());
         let mut states = self.states;
-        for entry in entries {
+        for range in &definition.ranges {
             let state = take_bytes(&mut states)?;
-            if !entry.state.is_empty() || state.len() > MAX_STATE_BYTES {
+            if state.len() > MAX_STATE_BYTES {
                 return None;
             }
-            for bytes in [entry.script.as_slice(), state] {
-                raw.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-                raw.extend_from_slice(bytes);
-            }
+            entries.push(Constraint {
+                script: LogicalScript {
+                    encoded: &definition.raw[range.clone()],
+                },
+                state,
+            });
         }
-        states.is_empty().then_some(raw)
+        states.is_empty().then_some(MetatypeManifest { entries })
     }
 }
 
@@ -263,19 +295,20 @@ pub struct VirtualTypeGroup<'a> {
 /// Project absolute CKB positions to virtual groups after the host checks
 /// the full physical Type Script of every participating Cell.
 pub fn project<'a>(
-    inputs: &[(u16, &'a [u8])],
-    outputs: &[(u16, &'a [u8])],
+    inputs: &[ManifestCell<'a>],
+    outputs: &[ManifestCell<'a>],
 ) -> Option<Vec<VirtualTypeGroup<'a>>> {
     let mut groups = BTreeMap::new();
     for (is_output, cells) in [(false, inputs), (true, outputs)] {
         if cells.len() > MAX_CELLS_PER_SIDE || !cells.windows(2).all(|pair| pair[0].0 < pair[1].0) {
             return None;
         }
-        for &(index, data) in cells {
+        for (index, manifest) in cells {
+            let index = *index;
             if usize::from(index) >= MAX_TRANSACTION_CELLS_PER_SIDE {
                 return None;
             }
-            for constraint in MetatypeManifest::decode(data)?.entries {
+            for constraint in &manifest.entries {
                 let group =
                     groups
                         .entry(constraint.script.encoded)
@@ -406,13 +439,21 @@ mod tests {
         encoded
     }
 
+    fn indexed(index: u16, raw: &[u8]) -> ManifestCell<'_> {
+        (index, MetatypeManifest::decode(raw).unwrap())
+    }
+
     #[test]
     fn heterogeneous_manifests_share_complete_virtual_groups() {
         let [a, b, c] = [script(1, 0), script(1, 1), script(2, 0)];
         let ab = manifest(&[&a, &b]);
         let ac = manifest(&[&a, &c]);
         let bc = manifest(&[&b, &c]);
-        let groups = project(&[(1, &ab), (3, &ac), (5, &bc)], &[(2, &bc)]).unwrap();
+        let groups = project(
+            &[indexed(1, &ab), indexed(3, &ac), indexed(5, &bc)],
+            &[indexed(2, &bc)],
+        )
+        .unwrap();
         assert_eq!(groups.len(), 3);
         let indices = [
             (&a, &[1, 3][..], &[][..]),
@@ -450,7 +491,7 @@ mod tests {
         assert!(MetatypeManifest::decode(&manifest(&[&a, &a])).is_none());
         assert!(MetatypeManifest::decode(&manifest(&[a.as_slice(); 17])).is_none());
         let mut ab = manifest(&[&a, &b]);
-        assert!(project(&[(1, &ab), (1, &ab)], &[]).is_none());
+        assert!(project(&[indexed(1, &ab), indexed(1, &ab)], &[]).is_none());
         ab.push(0);
         assert!(MetatypeManifest::decode(&ab).is_none());
     }
@@ -465,44 +506,41 @@ mod tests {
         reference.extend_from_slice(b"\x03\x00one\x03\x00two");
         let parsed = ManifestReference::decode(&reference).unwrap();
         assert_eq!(parsed.definition_hash, hash);
-        let expanded = parsed.expand(&definition, MAX_MANIFEST_BYTES).unwrap();
-        let view = MetatypeManifest::decode(&expanded).unwrap();
+        let mut expanded = alloc::vec![2];
+        for (script, state) in [(&a, b"one"), (&b, b"two")] {
+            for field in [script.as_slice(), state.as_slice()] {
+                expanded.extend_from_slice(&(field.len() as u16).to_le_bytes());
+                expanded.extend_from_slice(field);
+            }
+        }
+        let definition = ManifestDefinition::decode(definition).unwrap();
+        let view = parsed.view(&definition, MAX_MANIFEST_BYTES).unwrap();
+        assert_eq!(view, MetatypeManifest::decode(&expanded).unwrap());
         assert_eq!(
-            view.id(),
-            MetatypeManifest::decode(&definition).unwrap().id()
+            parsed.expanded_len(&definition, MAX_MANIFEST_BYTES),
+            Some(expanded.len())
         );
-        assert_eq!(view.entries()[0].state, b"one");
-        assert_eq!(view.entries()[1].state, b"two");
-        let groups = project(&[(1, &expanded), (7, &definition)], &[(4, &expanded)]).unwrap();
+        assert!(parsed.view(&definition, expanded.len() - 1).is_none());
+
+        let groups = project(
+            &[(1, view), indexed(7, &definition.raw)],
+            &[indexed(4, &expanded)],
+        )
+        .unwrap();
         assert_eq!(groups.len(), 2);
         assert!(
             groups
                 .iter()
-                .all(|group| { group.input_indices == [1, 7] && group.output_indices == [4] })
+                .all(|group| group.input_indices == [1, 7] && group.output_indices == [4])
         );
-        assert!(
-            ManifestReference::decode(&reference)
-                .unwrap()
-                .expand(&definition, expanded.len() - 1)
-                .is_none()
-        );
-        assert!(
-            ManifestReference::decode(&reference)
-                .unwrap()
-                .expand(&expanded, MAX_MANIFEST_BYTES)
-                .is_none()
-        );
-        assert!(
-            ManifestReference::decode(&reference)
-                .unwrap()
-                .expand(&reference, MAX_MANIFEST_BYTES)
-                .is_none()
-        );
+
+        assert!(ManifestDefinition::decode(expanded).is_none());
+        assert!(ManifestDefinition::decode(reference.clone()).is_none());
         for invalid in [&reference[..reference.len() - 1], &reference[..33]] {
             assert!(
                 ManifestReference::decode(invalid)
                     .unwrap()
-                    .expand(&definition, MAX_MANIFEST_BYTES)
+                    .view(&definition, MAX_MANIFEST_BYTES)
                     .is_none()
             );
         }
@@ -510,7 +548,7 @@ mod tests {
         assert!(
             ManifestReference::decode(&reference)
                 .unwrap()
-                .expand(&definition, MAX_MANIFEST_BYTES)
+                .view(&definition, MAX_MANIFEST_BYTES)
                 .is_none()
         );
     }

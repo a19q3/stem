@@ -8,11 +8,7 @@ use ckb_std::{
     ckb_constants::Source, ckb_types::prelude::*, default_alloc, entry,
     high_level::load_input_out_point,
 };
-use stem_bridge_wire::{
-    metatype::{LogicalScript, MetatypeManifest},
-    object::creation_id,
-    spore::plain_spore,
-};
+use stem_bridge_wire::{metatype::LogicalScript, object::creation_id, spore::plain_spore};
 use stem_contracts::metatype::{ManifestResolver, with_invocation};
 
 entry!(main);
@@ -26,7 +22,7 @@ fn read(
     approval: LogicalScript<'_>,
 ) -> Option<Vec<u8>> {
     let bytes = manifests.manifest_data(index, source)?;
-    let manifest = MetatypeManifest::decode(&bytes)?;
+    let manifest = bytes.view()?;
     let state = manifest.state_for(object)?;
     if !plain_spore(state) || manifest.state_for(approval)? != [] {
         return None;

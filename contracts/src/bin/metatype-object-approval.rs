@@ -10,7 +10,7 @@ use ckb_std::{
     high_level::{load_cell_lock_hash, load_tx_hash},
 };
 use ed25519_dalek::{Signature, VerifyingKey};
-use stem_bridge_wire::metatype::{LogicalScript, MetatypeManifest};
+use stem_bridge_wire::metatype::LogicalScript;
 use stem_contracts::metatype::{ManifestResolver, with_invocation};
 
 entry!(main);
@@ -24,7 +24,7 @@ fn read(
     object: &[u8; 32],
 ) -> Option<Vec<u8>> {
     let bytes = manifests.manifest_data(index, source)?;
-    let manifest = MetatypeManifest::decode(&bytes)?;
+    let manifest = bytes.view()?;
     if !manifest.state_for(approval)?.is_empty() {
         return None;
     }

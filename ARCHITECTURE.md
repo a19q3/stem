@@ -304,8 +304,10 @@ One Data2 Type Script owns a Metatype deployment. Its args pin an
 immutable adapter table and CKB genesis. Cell Data either includes
 the complete Manifest or commits a shared definition by CKB data
 hash and carries its own state strings. The dispatcher, adapters
-and custody gate resolve definitions from actual Cell Deps. The
-dispatcher meters expanded bytes and derives a union of
+and custody gate resolve definitions from actual Cell Deps. Each
+VM validates and indexes a shared definition once, then borrows
+Script and state bytes for the logical view used by validation.
+The dispatcher meters expanded bytes and derives a union of
 logical Scripts and absolute input and output indices from the
 actual transaction, and spawns each pinned RISC-V adapter once for
 its complete group. The existing CKB Locks authorize consumption.

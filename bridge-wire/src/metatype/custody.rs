@@ -1,6 +1,6 @@
 //! Shared identities and principal projection for Metatype custody.
 
-use super::{Hash, MAX_STATE_BYTES, MetatypeManifest};
+use super::{Hash, MAX_STATE_BYTES, ManifestCell, MetatypeManifest};
 use crate::hash;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,8 +52,7 @@ impl Custody {
 
     /// The on-chain projection commits every original Script. One explicitly
     /// identified Script carries the original Cell Data.
-    pub fn data<'a>(&self, raw: &'a [u8]) -> Option<&'a [u8]> {
-        let manifest = MetatypeManifest::decode(raw)?;
+    pub fn data<'a>(&self, manifest: &MetatypeManifest<'a>) -> Option<&'a [u8]> {
         if manifest.id() != self.manifest {
             return None;
         }
@@ -73,21 +72,21 @@ impl Custody {
 
     pub fn transition<'a>(
         &self,
-        inputs: &[(u16, &'a [u8])],
-        outputs: &[(u16, &'a [u8])],
+        inputs: &[ManifestCell<'a>],
+        outputs: &[ManifestCell<'a>],
     ) -> Option<(Boundary, Principal<'a>)> {
         match self.profile {
             Profile::Immutable => {
                 let direction = Boundary::for_cardinality(inputs.len(), outputs.len())?;
-                let raw = match (inputs, outputs) {
-                    ([(_, before)], [(_, after)]) if before == after => *before,
-                    ([], [(_, data)]) | ([(_, data)], []) => *data,
+                let manifest = match (inputs, outputs) {
+                    ([(_, before)], [(_, after)]) if before == after => before,
+                    ([], [(_, data)]) | ([(_, data)], []) => data,
                     _ => return None,
                 };
-                Some((direction, Principal::Immutable(self.data(raw)?)))
+                Some((direction, Principal::Immutable(self.data(manifest)?)))
             }
             Profile::Fungible => {
-                let total = |cells: &[(u16, &[u8])]| {
+                let total = |cells: &[ManifestCell<'_>]| {
                     cells.iter().try_fold(0u128, |sum, (_, data)| {
                         sum.checked_add(positive_amount(self.data(data)?)?)
                     })
@@ -212,11 +211,24 @@ mod tests {
             data_script: identity_id,
         };
         let full = frame(&[(&identity, b"state"), (&policy, &[])]);
-        assert_eq!(custody.data(&full), Some(b"state".as_slice()));
-        assert!(custody.data(&frame(&[(&identity, b"state")])).is_none());
+        assert_eq!(
+            custody.data(&MetatypeManifest::decode(&full).unwrap()),
+            Some(b"state".as_slice())
+        );
         assert!(
             custody
-                .data(&frame(&[(&identity, b"state"), (&policy, b"extra")]))
+                .data(&MetatypeManifest::decode(&frame(&[(&identity, b"state")])).unwrap())
+                .is_none()
+        );
+        assert!(
+            custody
+                .data(
+                    &MetatypeManifest::decode(&frame(&[
+                        (&identity, b"state"),
+                        (&policy, b"extra")
+                    ]))
+                    .unwrap()
+                )
                 .is_none()
         );
         let upgraded = LogicalScript::encode(&[2; 32], 1, b"owner").unwrap();
@@ -226,7 +238,11 @@ mod tests {
             manifest: manifest_id(&[identity_id, policy_id]),
             ..custody
         };
-        assert!(custody.data(&type_addressed).is_none());
+        assert!(
+            custody
+                .data(&MetatypeManifest::decode(&type_addressed).unwrap())
+                .is_none()
+        );
     }
 
     #[test]
@@ -237,6 +253,10 @@ mod tests {
         assert_eq!(Boundary::for_cardinality(0, 0), None);
         assert_eq!(Boundary::for_cardinality(2, 1), None);
         assert_eq!(Boundary::for_cardinality(1, 2), None);
+    }
+
+    fn indexed(index: u16, raw: &[u8]) -> ManifestCell<'_> {
+        (index, MetatypeManifest::decode(raw).unwrap())
     }
 
     #[test]
@@ -255,7 +275,7 @@ mod tests {
         let row = |units: u128| frame(&[(&asset, &units.to_le_bytes()), (&policy, &[])]);
         let a = row(125);
         let b = row(100);
-        let outputs = [(2, a.as_slice()), (4, a.as_slice())];
+        let outputs = [indexed(2, &a), indexed(4, &a)];
         assert_eq!(
             custody.transition(&[], &outputs),
             Some((Boundary::Import, Principal::Fungible(250)))
@@ -265,21 +285,21 @@ mod tests {
             Some((Boundary::Transfer, Principal::Fungible(0)))
         );
         assert_eq!(
-            custody.transition(&outputs, &[(6, &b)]),
+            custody.transition(&outputs, &[indexed(6, &b)]),
             Some((Boundary::Return, Principal::Fungible(150)))
         );
         assert_eq!(
             custody.transition(&outputs, &[]),
             Some((Boundary::Return, Principal::Fungible(250)))
         );
-        assert_eq!(custody.transition(&[(0, &a)], &outputs), None);
-        assert_eq!(custody.transition(&[], &[(0, &row(0))]), None);
+        assert_eq!(custody.transition(&[indexed(0, &a)], &outputs), None);
+        assert_eq!(custody.transition(&[], &[indexed(0, &row(0))]), None);
         assert_eq!(
-            custody.transition(&[], &[(0, &row(u128::MAX)), (1, &b)]),
+            custody.transition(&[], &[indexed(0, &row(u128::MAX)), indexed(1, &b)]),
             None
         );
         let stripped = frame(&[(&asset, &125u128.to_le_bytes())]);
-        assert_eq!(custody.transition(&outputs, &[(0, &stripped)]), None);
+        assert_eq!(custody.transition(&outputs, &[indexed(0, &stripped)]), None);
         let gate = Gate {
             stem_escrow: [6; 32],
             metatype: [7; 32],

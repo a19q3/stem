@@ -14,7 +14,7 @@ use stem_bridge_wire::metatype::{
     Invocation, MAX_ADAPTER_TABLE_BYTES, MAX_LIVE_DATA, MetatypeAdapterTable, MetatypeDeployment,
     custody::Boundary, project, witness::GroupWitnesses,
 };
-use stem_contracts::metatype::{ManifestResolver, borrowed, bounded_data, witness_data};
+use stem_contracts::metatype::{ManifestResolver, bounded_data, views, witness_data};
 use stem_contracts::metatype_custody::require_gate;
 use stem_stake::Hash32;
 
@@ -52,8 +52,8 @@ fn verify() -> Result<(), i8> {
     let mut remaining = MAX_LIVE_DATA;
     let (input_count, inputs) = manifests.cells(Source::Input, &own_type, &mut remaining)?;
     let (_, outputs) = manifests.cells(Source::Output, &own_type, &mut remaining)?;
-    let inputs = borrowed(&inputs);
-    let outputs = borrowed(&outputs);
+    let inputs = views(&inputs).ok_or(43)?;
+    let outputs = views(&outputs).ok_or(43)?;
     let boundary = match table.custody {
         None => Boundary::Standalone,
         Some(custody) => {

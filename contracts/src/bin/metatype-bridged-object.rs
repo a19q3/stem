@@ -5,7 +5,7 @@
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
 use stem_bridge_wire::{
-    metatype::{LogicalScript, MetatypeManifest, custody::Boundary},
+    metatype::{LogicalScript, custody::Boundary},
     spore::plain_spore,
 };
 use stem_contracts::metatype::with_invocation;
@@ -36,7 +36,7 @@ fn main() -> i8 {
         ] {
             for index in indices {
                 let raw = manifests.manifest_data(index, source)?;
-                let manifest = MetatypeManifest::decode(&raw)?;
+                let manifest = raw.view()?;
                 if manifest.entries().len() != 2
                     || !manifest.state_for(policy)?.is_empty()
                     || !plain_spore(manifest.state_for(group.script)?)

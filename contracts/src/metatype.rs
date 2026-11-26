@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
 
 use ckb_std::{
     ckb_constants::Source,
@@ -15,8 +15,8 @@ use ckb_std::{
 };
 use stem_bridge_wire::metatype::{
     Invocation, MAX_CELLS_PER_SIDE, MAX_INVOCATION_BYTES, MAX_MANIFEST_BYTES,
-    MAX_MANIFEST_DEFINITION_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE, ManifestReference,
-    MetatypeManifest,
+    MAX_MANIFEST_DEFINITION_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE, ManifestCell,
+    ManifestDefinition, ManifestReference, MetatypeManifest,
     witness::{MAGIC, MAX_WITNESS_BYTES},
 };
 use stem_stake::Hash32;
@@ -80,15 +80,32 @@ pub fn with_invocation(
 #[derive(Default)]
 pub struct ManifestResolver {
     dependencies: Option<Vec<Hash32>>,
-    definitions: BTreeMap<Hash32, Vec<u8>>,
+    definitions: BTreeMap<Hash32, Rc<ManifestDefinition>>,
 }
 
-pub type Cells = Vec<(u16, Vec<u8>)>;
+pub struct CellData {
+    raw: Vec<u8>,
+    definition: Option<Rc<ManifestDefinition>>,
+    expanded_len: usize,
+}
 
-pub fn borrowed(cells: &Cells) -> Vec<(u16, &[u8])> {
+impl CellData {
+    pub fn view(&self) -> Option<MetatypeManifest<'_>> {
+        match self.definition.as_deref() {
+            Some(definition) => {
+                ManifestReference::decode(&self.raw)?.view(definition, self.expanded_len)
+            }
+            None => MetatypeManifest::decode(&self.raw),
+        }
+    }
+}
+
+pub type Cells = Vec<(u16, CellData)>;
+
+pub fn views(cells: &Cells) -> Option<Vec<ManifestCell<'_>>> {
     cells
         .iter()
-        .map(|(index, data)| (*index, data.as_slice()))
+        .map(|(index, data)| Some((*index, data.view()?)))
         .collect()
 }
 
@@ -108,7 +125,7 @@ impl ManifestResolver {
                             return Err(43);
                         }
                         let data = self.load(index as u16, source, *remaining).ok_or(43)?;
-                        *remaining -= data.len();
+                        *remaining -= data.expanded_len;
                         matched.push((index as u16, data));
                     }
                 }
@@ -134,29 +151,42 @@ impl ManifestResolver {
         Ok(self.dependencies.as_deref().expect("resolved Cell Deps"))
     }
 
-    /// Return the same bounded inline view to the dispatcher and each adapter.
-    pub fn load(&mut self, index: u16, source: Source, limit: usize) -> Option<Vec<u8>> {
+    fn definition(&mut self, hash: Hash32) -> Option<Rc<ManifestDefinition>> {
+        if let Some(definition) = self.definitions.get(&hash) {
+            return Some(Rc::clone(definition));
+        }
+        let index = self
+            .dependency_hashes()
+            .ok()?
+            .iter()
+            .position(|item| *item == hash)?;
+        let raw = bounded_data(index, Source::CellDep, MAX_MANIFEST_DEFINITION_BYTES).ok()?;
+        let definition = Rc::new(ManifestDefinition::decode(raw)?);
+        self.definitions.insert(hash, Rc::clone(&definition));
+        Some(definition)
+    }
+
+    fn load(&mut self, index: u16, source: Source, limit: usize) -> Option<CellData> {
         let limit = MAX_MANIFEST_BYTES.min(limit);
         let raw = bounded_data(usize::from(index), source, limit).ok()?;
         if raw.first() != Some(&0) {
-            return Some(raw);
+            return Some(CellData {
+                expanded_len: raw.len(),
+                raw,
+                definition: None,
+            });
         }
         let reference = ManifestReference::decode(&raw)?;
-        if !self.definitions.contains_key(&reference.definition_hash) {
-            let index = self
-                .dependency_hashes()
-                .ok()?
-                .iter()
-                .position(|hash| *hash == reference.definition_hash)?;
-            let definition =
-                bounded_data(index, Source::CellDep, MAX_MANIFEST_DEFINITION_BYTES).ok()?;
-            self.definitions
-                .insert(reference.definition_hash, definition);
-        }
-        reference.expand(self.definitions.get(&reference.definition_hash)?, limit)
+        let definition = self.definition(reference.definition_hash)?;
+        let expanded_len = reference.expanded_len(&definition, limit)?;
+        Some(CellData {
+            raw,
+            definition: Some(definition),
+            expanded_len,
+        })
     }
 
-    pub fn manifest_data(&mut self, index: u16, source: Source) -> Option<Vec<u8>> {
+    pub fn manifest_data(&mut self, index: u16, source: Source) -> Option<CellData> {
         self.load(index, source, MAX_MANIFEST_BYTES)
     }
 
@@ -168,7 +198,7 @@ impl ManifestResolver {
     ) -> Option<u128> {
         indices.iter().try_fold(0u128, |sum, &index| {
             let data = self.manifest_data(index, source)?;
-            let manifest = MetatypeManifest::decode(&data)?;
+            let manifest = data.view()?;
             let units = amount(&manifest, index)?;
             if units == 0 {
                 return None;

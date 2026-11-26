@@ -137,10 +137,12 @@ table and program dependencies.
 The two storage forms resolve to the same logical Manifest and can
 participate in the same virtual group. The dispatcher counts the
 full expanded length for per-Cell and transaction limits before
-spawning any adapter. Each executing VM reads its actual
-dependencies and caches the definition bytes locally. CKB cycles
-meter that work. Witnesses carry current transaction material under
-a separate size limit.
+spawning any adapter. Each executing VM authenticates its actual
+dependencies and caches validated Script ranges in the definition.
+The logical view borrows Script bytes from the definition and
+state bytes from the participating Cell. CKB cycles meter that work.
+Witnesses carry current transaction material under a separate size
+limit.
 
 The dispatcher reads the actual inputs and outputs from CKB,
 matches the full deployment Type hash, and decodes every matching

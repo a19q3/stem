@@ -21,7 +21,7 @@ use stem_bridge_wire::{
     },
 };
 use stem_contracts::{
-    metatype::{ManifestResolver, borrowed, bounded_data},
+    metatype::{ManifestResolver, bounded_data, views},
     metatype_custody::{find_unique, mailbox_policy},
 };
 use stem_stake::Hash32;
@@ -74,7 +74,7 @@ fn verify() -> Result<(), i8> {
         .map_err(|_| 51)?;
     let (boundary, principal) = gate
         .custody
-        .transition(&borrowed(&inputs), &borrowed(&outputs))
+        .transition(&views(&inputs).ok_or(51)?, &views(&outputs).ok_or(51)?)
         .ok_or(51)?;
     let incoming;
     let message = if next.outgoing.is_empty() {

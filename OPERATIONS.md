@@ -1283,6 +1283,12 @@ malformed definitions and the expanded transaction budget. Retain
 the exact definition bytes to republish them if a live dependency
 disappears.
 
+For the borrowed-Manifest comparison, pin the three RISC-V ELFs
+from each revision. Run each set with inline and shared data, then
+repeat the four runs in reverse order. Keep the fixture and its
+native Stem binary fixed. The report records the activated
+deployment, cycles, transaction bytes and inclusion for each split.
+
 ### Exercise immutable objects and independent approvals
 
 Include the following ELFs in the RISC-V build:

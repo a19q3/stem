@@ -4,7 +4,7 @@
 #![no_main]
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
-use stem_bridge_wire::metatype::{MetatypeManifest, fungible::AmountCap};
+use stem_bridge_wire::metatype::fungible::AmountCap;
 use stem_contracts::metatype::with_invocation;
 
 entry!(main);
@@ -20,7 +20,7 @@ fn main() -> i8 {
         ] {
             for index in indices {
                 let raw = manifests.manifest_data(index, source)?;
-                let manifest = MetatypeManifest::decode(&raw)?;
+                let manifest = raw.view()?;
                 let asset = manifest
                     .entries()
                     .iter()

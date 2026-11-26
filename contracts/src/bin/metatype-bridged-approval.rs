@@ -4,7 +4,7 @@
 #![no_main]
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
-use stem_bridge_wire::metatype::{MetatypeManifest, custody::Boundary};
+use stem_bridge_wire::metatype::custody::Boundary;
 use stem_contracts::metatype::{authorized, with_invocation};
 
 entry!(main);
@@ -31,7 +31,7 @@ fn main() -> i8 {
         ] {
             for index in indices {
                 let raw = manifests.manifest_data(index, source)?;
-                let manifest = MetatypeManifest::decode(&raw)?;
+                let manifest = raw.view()?;
                 let identity = manifest
                     .entries()
                     .iter()
