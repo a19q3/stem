@@ -36,6 +36,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     use_workflow = args.native_object_workflow is not None
     use_royalty = args.native_object_royalty is not None
     use_rotation = args.native_object_rotating_approval is not None
+    use_freeze = args.metatype_object_freeze
     early_return = args.metatype_workflow_early_return
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
@@ -119,6 +120,19 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         result = l1.reject(signed)
         assert any(f"error code {code} " in result for code in codes), result
         return result
+
+    freeze_history = []
+
+    def change_freeze(label, frozen):
+        previous_dep = dependency(rotation.location)
+        deps = [dep for dep in ckb_deps if dep != previous_dep]
+        generation = rotation.generation + 1
+        update = ckb_submit(rotation.update(label, generation, deps, frozen=frozen))
+        rotation.applied(update["hash"], generation, frozen)
+        ckb_deps.remove(previous_dep)
+        ckb_deps.append(dependency(rotation.location))
+        freeze_history.append({"label": label, "generation": generation, "frozen": frozen, "update": update})
+        return update
 
     def packed(point_):
         return binary(point_["tx_hash"]) + le(int(point_["index"], 16), 4)
@@ -696,7 +710,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             ("repeat_key", dict(data=le(1, 8) + rotation.record(0)[8:])),
             ("skip_generation", dict(data=le(2, 8) + rotation.record(1)[8:])),
             ("change_owner", dict(lock=fixture.owner_lock)),
-            ("invalid_key", dict(data=le(1, 8) + bytes(32))),
+            ("invalid_key", dict(data=le(1, 8) + bytes(33))),
+            ("invalid_freeze", dict(data=rotation.record(1)[:-1] + b"\x02")),
         ):
             rejected[f"ckb_rotation_{label}"] = reject_ckb(
                 rotation.update(label, 1, registry_deps, **update), 61)
@@ -915,15 +930,27 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if state_limit:
         rejected["ckb_return_without_rule"] = reject_ckb(return_ckb("return-missing-rule", deps=[
             dep for dep in ckb_deps if dep != dependency(l1_rule_replacement)]), 46)
+    if use_freeze:
+        change_freeze("freeze-before-burn", True)
+        frozen_before_burn = rotation.generation
+        rejected["ckb_frozen_transfer"] = reject_ckb(transfer("frozen-transfer",
+            contents=return_state, from_key=return_owner, recipient=fixture.owner_lock), 46)
+        rejected["ckb_frozen_burn"] = reject_ckb(return_ckb("frozen-burn"), 46)
+        assert l1.call("get_live_cell", wrapped_point, False)["status"] == "live"
+        change_freeze("thaw-before-burn", False)
+        rejected["ckb_old_same_key_seal"] = reject_ckb(return_ckb("pre-freeze-seal", rotation_signature=1), 46)
+
     burned = ckb_submit(return_ckb("burn"))
+    burn_generation = rotation.generation if use_rotation else None
     live_mailbox, authority_point = [point(burned["hash"], i) for i in (0, 2)]
     authority_funds -= FEE
     next_nonce = 1
     rejected["ckb_replay_after_burn"] = reject_ckb(mint_ckb("repeat-after-burn"), 85)
     assert l1.call("get_live_cell", wrapped_point, True)["status"] != "live"
 
+    frozen_after_burn = change_freeze("freeze-after-burn", True) if use_freeze else None
     l1.mine(spec["bridge"]["confirmations"])
-    anchor = burned["proof"]["header"]
+    anchor = (frozen_after_burn or burned)["proof"]["header"]
     advanced = attest_anchor("anchor", anchor)
     mailbox_votes = attest_references("return-mailbox", anchor, (live_mailbox, False))
     certified = mailbox_votes
@@ -990,6 +1017,30 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rejected[f"ckb_workflow_recovery_{label}"] = failed.stderr
         recovery = {"result": recovered, "first_ms": first_ms, "restart_ms": restart_ms,
                     "ownership_only": ownership_only}
+    restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup - royalty, authority)]
+    if use_freeze:
+        blocked_outputs = [*restored_outputs, cell(royalty, stem_payee, stem_tag)] if use_royalty else restored_outputs
+        rejected["stem_frozen_return"] = reject_stem(native_sign("frozen-return",
+            with_approval, blocked_outputs, endpoint=endpoint, message=inbound, receive=True,
+            votes=certified, workflow_proof=return_proof), "exited with 62")
+        frozen_generation = rotation.generation
+        freeze_height, absent = query("/stem/intercell/inbox", inbound["id"])
+        assert absent["record"] is None
+        pending = {"generation": frozen_generation, "escrow": certified_cell(original),
+                   "inbox": {**absent, "height": freeze_height, "finality": client.finality(freeze_height)["proof"]},
+                   "advance": advanced, "votes": certified}
+        assert pending["escrow"]["cell"]
+        thawed = change_freeze("thaw-after-burn", False)
+        l1.mine(spec["bridge"]["confirmations"])
+        anchor = thawed["proof"]["header"]
+        advanced = attest_anchor("anchor-thawed", anchor)
+        live_votes = certified = attest_references("approval-thawed", anchor,
+            (rotation.location, True), (live_mailbox, False),
+            *([(l1_rule_replacement, True)] if live_rule else []))
+        old_approval_history = attest_references("approval-spent-history-thawed", anchor, *old_targets)
+        rejected["stem_old_same_key_seal"] = reject_stem(native_sign("pre-thaw-seal",
+            with_approval, blocked_outputs, endpoint=endpoint, message=inbound, receive=True,
+            votes=certified, workflow_proof=return_proof, rotation_signature=frozen_generation), "exited with 62")
     rejected["stem_return_without_policy_approval"] = reject_stem(native_sign("return-no-consent",
         release_inputs + [(native_fee, owner, owner_key)], release + [cell(remainder - FEE - return_topup, owner)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified, workflow_proof=return_proof),
@@ -1028,7 +1079,6 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             with_approval, [release[0], cell(object_cap - 1, buyer, return_state, types),
                             cell(native_auth_capacity - 2 * FEE + 1, authority)],
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
-    restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup - royalty, authority)]
     if use_rotation:
         restored_with_payment = [*restored_outputs, cell(royalty, stem_payee, stem_tag)] if use_royalty else restored_outputs
         for label, votes, signer in (("retired-key", certified, 0), ("historical-record", old_approval_history, 0),
@@ -1094,11 +1144,20 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                             "ckb_tag": hex_bytes(ckb_tag), "stem_payee": stem_payee, "ckb_payee": ckb_payee,
                             "transfer": moved, "execution": execution(moved), "stem_payments": stem_payments,
                             "ckb_payment_index": 2}
+    freeze_evidence = None
+    if use_freeze:
+        inbox_height, consumed = query("/stem/intercell/inbox", inbound["id"])
+        assert consumed["record"] == inbound["record"]
+        freeze_evidence = {"updates": freeze_history, "pending": pending, "inbound": inbound,
+            "frozen_before_burn": frozen_before_burn, "burn_generation": burn_generation,
+            "redeem_generation": rotation.generation,
+            "consumed": {**consumed, "height": inbox_height, "finality": client.finality(inbox_height)["proof"]}}
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
             "approval_rotation": ({"type": rotation_type, "registry": rotation.registry,
                 "birth": rotation_birth, "rotation": rotated, "birth_stem_anchor": rotation_initial_anchor,
-                "records": [hex_bytes(rotation.record(generation)) for generation in (0, 1)],
+                "records": [hex_bytes(rotation.record(generation)) for generation in range(rotation.generation + 1)],
                 "birth_votes": rotation_votes, "return_votes": certified} if use_rotation else None),
+            "freeze": freeze_evidence,
             "royalty": royalty_evidence,
             "shared_manifest": shared_evidence,
             "external_rule": rule_evidence,

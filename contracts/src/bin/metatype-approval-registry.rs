@@ -1,4 +1,4 @@
-//! CKB Type ID registry for a rotating Metatype approval key.
+//! CKB Type ID registry for a rotating Metatype approval key and freeze state.
 
 #![no_std]
 #![no_main]

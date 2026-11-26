@@ -1491,6 +1491,13 @@ and releases using the next generation. It captures both registry
 transactions in `native_object.approval_rotation`. The same fixture
 can include a live capacity rule on a revisable object.
 
+Add `--metatype-object-freeze` to the rotating approval fixture.
+It freezes the object before a CKB burn, thaws for the burn, then
+freezes again before Stem release. It verifies that the failed release
+leaves the escrow live and the Inbox untouched. It advances Stem
+to the thawed record and releases the same message with a fresh
+approval. See `native_object.freeze` in the report.
+
 Add `--metatype-revision-topup` to test an update that exceeds the
 original Stem Cell's storage budget. The original asset holds 8 CKB.
 The signed return adds 5 CKB and keeps the exact authenticated state

@@ -585,6 +585,7 @@ def main():
     parser.add_argument("--metatype-revisable-object", action="store_true")
     parser.add_argument("--metatype-revision-topup", action="store_true")
     parser.add_argument("--metatype-workflow-early-return", action="store_true")
+    parser.add_argument("--metatype-object-freeze", action="store_true")
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--finish-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
@@ -639,6 +640,8 @@ def main():
                 args.metatype_approval_registry)
     if any(rotation) and not all((*rotation, metatype_object)):
         parser.error("The rotation fixture requires its registry, both adapters and the Metatype object route")
+    if args.metatype_object_freeze and not all(rotation):
+        parser.error("The freeze fixture requires both approval adapters and the registry")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

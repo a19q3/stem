@@ -33,22 +33,27 @@ class Rotation:
         identity = ckb_hash(le(0, 8) + binary(seed["tx_hash"]) + le(int(seed["index"], 16), 4) + le(0, 8))
         self.registry = script(hex_bytes(code), hex_bytes(identity), "data2")
         self.generation = 0
+        self.freeze_by_generation = {0: False, 1: False}
         self.location = seed
         self.capacity = 450 * CKB
 
-    def record(self, generation):
-        return le(generation, 8) + self.keys[generation].public_key().public_bytes_raw()
+    def record(self, generation, frozen=None):
+        if frozen is None:
+            frozen = self.freeze_by_generation[generation]
+        key = self.keys[int(generation != 0)]
+        return le(generation, 8) + key.public_key().public_bytes_raw() + bytes([frozen])
 
-    def update(self, label, generation, deps, *, data=None, lock=None, capacity=None):
-        amount = self.capacity - FEE if capacity is None else capacity
-        transfer = transaction([self.location], [output(amount, lock or self.fixture.standard, self.registry)],
-                               [hex_bytes(self.record(generation) if data is None else data)], deps)
+    def update(self, label, generation, deps, *, data=None, lock=None, frozen=None):
+        transfer = transaction([self.location],
+            [output(self.capacity - FEE, lock or self.fixture.standard, self.registry)],
+            [hex_bytes(self.record(generation, frozen) if data is None else data)], deps)
         return self.fixture.sign(f"object-approval-registry-{label}", transfer,
                                  [wallet_group(0, [self.fixture.faucet])])
 
-    def applied(self, tx_hash, generation):
+    def applied(self, tx_hash, generation, frozen=False):
         self.location = point(tx_hash, 0)
         self.generation = generation
+        self.freeze_by_generation[generation] = frozen
         self.capacity -= FEE
 
     def sign(self, transaction_id, generation, *, deployment=None):
@@ -56,7 +61,7 @@ class Rotation:
         scope = bytes(32) if deployment is None else deployment
         digest = ckb_hash(b"Stem Metatype rotating approval\0" + network + scope
                           + script_hash(self.rule) + self.record(generation) + binary(transaction_id))
-        return self.keys[generation].sign(digest)
+        return self.keys[int(generation != 0)].sign(digest)
 
     def ckb_sign(self, label, tx, signers, deployment, selected, workflow_row=()):
         from metatype_object_localnet import encode

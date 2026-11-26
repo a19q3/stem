@@ -47,6 +47,9 @@ fn main() -> i8 {
         }
         let authority =
             Authority::decode(&typed_dependency_data(approval.registry, Authority::SIZE)?)?;
+        if authority.frozen {
+            return None;
+        }
         let network = load_header(0, Source::HeaderDep).ok()?.calc_header_hash();
         let digest = authority.digest(
             network.as_slice().try_into().ok()?,

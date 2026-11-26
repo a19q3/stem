@@ -382,8 +382,10 @@ An independent approval group reads a rotating Ed25519 key from a
 CKB Type ID registry. Both VM hosts verify an exact-transaction
 seal with the registry generation. CKB reads the actual dependency
 and Stem reads a live record at its committed CKB anchor. Rotation
-preserves the object and approval Script identities during export,
-transfer and release.
+and freeze updates preserve the object and approval Script
+identities during custody. Both hosts require an active record.
+A frozen return leaves its mailbox message unconsumed and its
+escrow live.
 An independent append-only group binds the complete object identity
 and checks one old and one new state on either host. It preserves the
 MIME type and content prefix when the revision increases. Prefix

@@ -45,6 +45,9 @@ fn verify() -> Option<()> {
     check(Source::GroupOutput)?;
     let raw = native_type::live_ckb_data::<{ 32 + Authority::SIZE }>(approval.registry)?;
     let authority = Authority::decode(&raw[32..])?;
+    if authority.frozen {
+        return None;
+    }
     let (mut network, mut signature) = ([0; 32], [0; 64]);
     load::<2116>(&mut network)?;
     load::<2117>(&mut signature)?;

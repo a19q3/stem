@@ -416,7 +416,7 @@ new live attestation. This relies on the current CKB observation and
 confirmation model. Decreasing a limit or enforcing arbitrary external
 transition history requires settlement rules for earlier accepted state.
 
-### Rotating object approval
+### Rotating object approval and freeze
 
 An independent approval Type Script binds the full object Script
 hash and the full Type hash of a CKB approval registry. Its Manifest
@@ -424,25 +424,29 @@ entry has empty state. Every approved transition retains the exact
 approval Script alongside its bound object. It adds an approval role
 to the object's existing ownership and Type Group checks.
 
-The registry uses a CKB Type ID and a persistent owner Lock. Data
-is a little-endian u64 generation and a 32-byte Ed25519 public
-key. Creation uses generation zero. Updates require the same Lock,
-the exact next generation and a different, valid nonweak public key.
-The registry always recreates its Type ID. The consumed owner Lock
-authorizes updates independently of the approval key.
+The registry uses a CKB Type ID and a persistent owner Lock. Its
+41-byte data contains a little-endian u64 generation, a 32-byte
+Ed25519 public key and one byte of freeze state. Zero is active
+and one is frozen. Creation uses generation zero. Updates require
+the same Lock, the exact next generation, a valid nonweak key and
+a change to the key or freeze state. The registry always recreates
+its Type ID. The consumed owner Lock authorizes updates
+independently of the approval key.
 
 CKB resolves the actual typed Cell Dep. Stem resolves a guardian-
 authenticated typed live reference at its committed CKB anchor.
-A historical inclusion cannot provide a current key. The registry
-can rotate while an object is in custody, with the same object and
-approval Script identities. CKB enforces rotation once the old
-dependency is spent. Stem enforces the generation authenticated at
-its committed anchor, so revocation there depends on confirmation
-and anchor advancement.
+A historical inclusion cannot provide a current record. The registry
+can rotate, freeze or thaw while an object is in custody, with the
+same object and approval Script identities. CKB enforces the current
+record after the previous dependency is spent. Stem uses the
+generation authenticated at its committed anchor, so activation there
+depends on confirmation and anchor advancement. The owner Lock can
+freeze every object using that registry.
 
 The 64-byte Ed25519 signature covers the CKB hash of
 `"Stem Metatype rotating approval\0" || network || deployment ||
-approval_script_hash || generation_le64 || public_key || transaction_id`.
+approval_script_hash || generation_le64 || public_key || freeze_state ||
+transaction_id`.
 CKB uses its genesis hash, physical Metatype Type hash and raw
 transaction hash. Stem uses its network ID, a zero deployment
 field and its transaction ID, including the attached L1 certificate.
@@ -451,8 +455,11 @@ L1 attestations are fixed. CKB carries it as the seal in action 1
 of the group witness, with empty message and proof. Stem carries
 it in the native Type Group's Proof Data before Lock signing.
 Issuance, transfer, import, burn, export and release each require
-a seal for that exact transaction. The original lock, approval and
-custody checks remain mandatory.
+an active record and a seal for that exact transaction. A freeze
+blocks these operations, including release of an already burned object.
+The native escrow and the unconsumed return message remain available
+until a confirmed thaw and a fresh seal permit release. The original
+lock, approval and custody checks remain mandatory.
 
 ### Append-only revisions
 
@@ -683,7 +690,7 @@ commitments, and the participating owners' Locks.
 | Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
 | Rule record to object | A relayer replaces it with a looser rule, or spends the published copy | Resolve the pinned data hash in actual dependencies on both chains. Reject changed bytes and oversized states. Keep the original bytes available for publication at a new OutPoint. |
 | Live rule registry | An updater forks or removes the registry, reduces the limit after a transfer, or supplies an obsolete CKB observation to Stem | Enforce Type ID and a same-Lock successor with a strict increase. Resolve one current CKB dependency or one guardian-certified live reference at Stem's committed anchor. |
-| Rotating approval | A spender uses the old key, an obsolete or historical registry reference, or a seal for another group, deployment or transaction | Require the current typed registry, an exact-generation strict Ed25519 seal and the same object and approval identities. Keep the CKB registry Lock responsible for rotation. |
+| Rotating approval and freeze | A spender uses a superseded key or record, or supplies a valid signature while frozen | Require an active current registry, an exact-generation strict Ed25519 seal and the same object and approval identities. Keep the CKB registry Lock responsible for rotation and freezes. |
 | Append-only revision | An approval authorizes a rewrite, truncation, MIME change, or removal of the constraint | Bind the full identity Script, require a valid successor, and compare the exact revision relationship and decoded content prefix on both chains. |
 | Signed workflow history | A return omits a review or substitutes, reorders or replays approval from another subject or chain | Verify each role's signature over the preceding head and exact step. Bind the fully replayed head to the authenticated return state. |
 | Object royalty | A transfer omits payment, reuses a marker from another group or deployment, or replaces the rule | Require a fresh matching untyped output with sufficient Capacity and the same royalty Script on the successor. Run the original rule on Stem custody Lock changes. |
