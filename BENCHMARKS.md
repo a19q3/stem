@@ -4958,3 +4958,55 @@ binding tool version, and a fee-run command that combined mutually
 exclusive modes.
 
 [CPU samples, signed inputs, execution proofs, build fingerprints and commands](benchmarks/2026-11-26-stem-reference-cache.json.xz).
+
+## Append-only Metatype revisions
+
+Four Jolteon replicas and a CKB devnet exercised an object with
+identity, independent approval, a live length rule, and an append-only
+Type Script. The native and portable groups use the same relation over
+canonical revisioned data. Stem confirmed revision 1. CKB appended
+content in revisions 2 and 4, and Stem restored the 200-byte state
+at revision 4. The 120-byte rule rose to 200 during custody. WASM
+verified finality, four execution stages per configuration, and
+equal Capacity and full ordered Script sets for the escrowed and
+restored Cells.
+
+All four paired runs used the same valid content and revision sequence,
+and locked 1,000 CKB in the CKB representation. The three-constraint
+controls omit the append-only group. The CKB measurements are from the
+second CKB revision. The Stem measurements are from the finalized return.
+
+| Constraints and layout | Final CKB occupied | Shared definition occupied | CKB revision bytes / cycles | Raw witnesses | Stem return bytes / cycles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Three, inline | 820 CKB | — | 1,741 / 4,447,868 | 170 B | 3,541 / 14,153,863 |
+| Four, inline | 909 CKB | — | 1,867 / 4,797,035 | 170 B | 3,647 / 14,196,269 |
+| Three, shared | 429 CKB | 491 CKB | 1,387 / 4,496,091 | 170 B | 3,541 / 14,153,863 |
+| Four, shared | 431 CKB | 580 CKB | 1,426 / 4,868,977 | 170 B | 3,647 / 14,196,269 |
+
+The fourth group added 7.9% and 8.3% CKB cycles in the inline and
+shared deployments. The Stem return added 42,406 cycles.
+Submission through local mining took 314–416 ms at this revision
+across the four runs, including RPC and block production. The
+definition is separately funded and can serve multiple Cells.
+
+Both hosts rejected the same four proposed successor states given
+the same input bytes and valid owner and approval authorization.
+The cases rewrote or truncated the prefix, changed MIME, or bumped
+the revision without appending. Both hosts rejected removal of the
+constraint, and Stem rejected rewriting the restored object.
+
+The first test invocations expected a specific Type Group to report
+an invalid initial revision. The additional group could reject the
+invalid transaction first. The corrected fixture accepts either of
+the two applicable rejection reports for that case. A separate run
+with 900 CKB failed CKB occupied-capacity validation in the inline
+layout at 200 bytes. The shared layout completed at that funding
+level. The archive includes all those runs.
+
+487 workspace tests passed with 22 ignored. The real-network
+regressions covered the dedicated two-Script object mapping, Spore
+ID preservation, CKB and xUDT, capped Metatype UDT, four fee fund
+payouts, Intercell recovery, and a funded committee handoff. The Go
+proof suite and frozen CometBFT build check passed.
+
+[Signed cases, proofs, cycle and capacity measurements, fingerprints, commands and failures](benchmarks/2026-11-26-stem-metatype-append-only.json.xz).

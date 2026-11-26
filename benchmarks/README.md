@@ -113,5 +113,6 @@ available. Published network evidence contains public genesis and proof data.
 | Live Metatype rule registry | [Report](../BENCHMARKS.md#live-metatype-rule-registry), [signed increase, old-anchor rejection, controls and failed runs](2026-11-26-stem-metatype-live-rule.json.xz) |
 | CKB reference-set certificates | [Report](../BENCHMARKS.md#ckb-reference-set-certificates), [paired signed transactions, execution proofs and failures](2026-11-26-stem-reference-set.json.xz) |
 | Reusing verified CKB reference sets | [Report](../BENCHMARKS.md#reusing-verified-ckb-reference-sets), [CPU samples, paired devnets and proof checks](2026-11-26-stem-reference-cache.json.xz) |
+| Append-only Metatype revisions | [Report](../BENCHMARKS.md#append-only-metatype-revisions), [paired devnets, differential decisions and proof checks](2026-11-26-stem-metatype-append-only.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
