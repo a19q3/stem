@@ -3885,3 +3885,63 @@ that failure, the corrected build and both standalone shared runs.
 [Standalone reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
 [Custody reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
 [Signed runs, raw proofs and build logs](benchmarks/2026-11-26-stem-metatype-shared.json.xz).
+
+## Cap-bound fungible Metatype custody
+
+Four Stem Jolteon replicas and CKB 0.210.0 exported 250 native units
+subject to a 200-unit ceiling per Cell. The source UDT and independent
+cap Script both ran on Stem. The corresponding adapters each ran
+on CKB, where the fixture minted two 125-unit outputs and transferred
+them as 175 and 75. Both chains rejected a balanced merge above the
+ceiling and a transfer that stripped the bound cap.
+
+The shared-definition sequence redeemed 150 first, leaving 100
+native units in escrow and 100 wrapped units on CKB. The next
+mailbox nonce redeemed the final 100. The CKB representation was
+consumed, and the Stem escrow retained its Capacity in an empty
+untyped Cell. CKB rejected an internally well-formed return with a
+stale nonce. Stem rejected a replay of the first authenticated
+return. The independent WASM SDK verified four execution receipts,
+two initial escrow memberships, both original escrow spends,
+both release memberships, the remaining escrow's spend, and the
+final bond membership. The rebuilt node reached common height 35.
+
+The rows compare the first import, transfer and 150-unit redemption.
+Both Metatype layouts use the same CKB ELFs and logical Script set.
+The specialized control has one wrapped Cell per transfer and a
+different application rule set. Imports include the actual checkpoint
+witness from each devnet.
+
+| CKB operation | Specialized bytes / cycles | Inline Meta bytes / cycles | Shared Meta bytes / cycles |
+| --- | ---: | ---: | ---: |
+| Import 250 | 1,987 / 4,254,371 | 3,018 / 5,072,531 | 2,681 / 5,190,122 |
+| Transfer 250 | 526 / 1,668,424 | 1,646 / 2,583,199 | 1,207 / 2,639,096 |
+| Burn 150 | 1,542 / 3,413,509 | 2,178 / 4,382,641 | 1,977 / 4,449,597 |
+
+The first wrapped outputs occupy 962 CKB inline and 822 CKB with
+the shared definition included. The latter is 486 CKB for the
+two outputs and 336 CKB for the definition. The specialized Cell
+occupies 142 CKB. The shared sequence's second CKB burn takes
+1,723 bytes and 4,171,054 cycles. The separate shared full-return
+run burns all 250 units in one transaction and verifies both capped
+native release outputs.
+
+The consecutive return fixture rejected 22 cases, including
+inflation, wrong import recipient, missing mailbox or shared
+definition, escrow Capacity drain, underburn, insufficient or
+malformed route conditions, and stale or reused messages. The
+first fixture attempts omitted the native cap code from the
+deposit. Another early attempt reached the first redemption but
+crafted a stale nonce with an inconsistent successor counter.
+The final fixture distinguishes the mailbox's sequence rejection
+from that encoding error. The archive also contains the first
+contract-build error and corrected results.
+
+The locked release workspace passed 477 tests with 19 ignored.
+Go proof tests and the frozen CometBFT build passed. The
+real devnet regressions covered immutable Metatype shared custody,
+the specialized UDT route, standalone Metatype UDT, Spore, and
+funded Jolteon handoff with historical Intercell delivery.
+
+[Reproduction](OPERATIONS.md#exercise-cap-bound-metatype-fungible-custody) ·
+[Signed transactions, proofs and failed attempts](benchmarks/2026-11-26-stem-metatype-fungible.json.xz).
