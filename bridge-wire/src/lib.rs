@@ -1,5 +1,6 @@
 #![no_std]
 pub mod asset;
+pub mod expense;
 pub mod intercell;
 pub mod metatype;
 pub mod object;

@@ -443,6 +443,14 @@ stem checkpoint fund verify-expense --evidence expense.json --l1-genesis "$genes
 
 The receipt reports total input and output capacity, capacity returned to the payer and the actual miner fee, all in shannons. Its network-scoped transaction ID allows a reimbursement ledger to detect duplicates. An operator must independently establish which service the transaction paid for, the eligible amount, and whether the expense has already been settled before authorizing a payment. In the fixture the miner fee was 0.01 CKB, while 794 CKB went into a Live Cell service request. [Offline evidence and verification controls](evidence/2026-11-27-l1-expense.json.xz)
 
+### Reimburse one approved expense
+
+A fund recipient can authorize one previously committed expense by funding a dedicated `operating-expense-grant` Lock on CKB. The authorization pins the expense transaction hash, payer Lock hash, refund Lock hash and independent caps on the historical miner fee and the settlement miner fee. To build its Data2 Lock and redemption witness, run `stem checkpoint fund expense-grant --request grant.json --evidence expense.json`. The request fields are `l1_genesis`, `trusted_block`, `transaction`, `payer_lock`, `refund_lock`, `grant_code`, `max_expense_fee_shannons` and `max_settlement_fee_shannons`. The contract accepts a witness up to 256 KiB.
+
+The payer must retain the expense transaction's last output as plain change. At redemption, input zero spends that change with the payer's authorization. Input one spends the grant and carries the witness from the CLI. Output zero returns the change plus the verified historical miner fee. Output one sends the grant remainder to the approved refund Lock. The original change OutPoint can settle once, including when two grants name the same expense. To cancel an unused grant, use a refund-authorized input followed by the grant and return at least its whole principal in one plain output to the refund Lock.
+
+In the four-validator fixture the Ecosystem Fund received 800 CKB from a real Stem fee claim and CKB vault payout. Its registered CKB wallet authorized a 0.01 CKB miner fee for a paid Live Cell service request. Redemption used 1,764,576 CKB cycles and cost another 0.01 CKB. The request's service reward and receipt collateral remained separate. The fixture also redeemed the unused duplicate authorization back to the fund recipient. The checkpoint-only PoW Lock retains its original spending rules. Reproduce using the fee fund runner with `--fee-funds --expense-account ecosystem --expense-service /path/to/security-domain --expense-grant /path/to/operating-expense-grant`. [Payout, claim, offline proof and CKB settlement](evidence/2026-11-27-operating-grant.json.xz)
+
 ## Reproduce the CometBFT comparison
 
 The frozen comparison source is commit `12744bf`. A fresh comparison build

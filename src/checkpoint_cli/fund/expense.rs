@@ -15,7 +15,7 @@ use crate::{
     bridge_cli::{print_json, read_json_limited},
     l1::Rpc,
 };
-const MAX_INPUTS: usize = 64;
+use stem_bridge_wire::expense::{Grant, MAX_EXPENSE_INPUTS as MAX_INPUTS, MAX_GRANT_WITNESS};
 const MAX_PROOF_FILE: usize = 16 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -182,4 +182,88 @@ pub fn verify(path: &Path, genesis: &H256, block: &H256, tx: &H256, payer: &H256
     print_json(&serde_json::to_value(
         evidence.verify(genesis, block, tx, payer)?,
     )?)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantRequest {
+    l1_genesis: H256,
+    trusted_block: H256,
+    transaction: H256,
+    payer_lock: H256,
+    refund_lock: H256,
+    grant_code: H256,
+    max_expense_fee_shannons: u64,
+    max_settlement_fee_shannons: u64,
+}
+
+pub fn grant(request: &Path, evidence: &Path) -> Result<()> {
+    let request: GrantRequest = read_json_limited(request, 4096)?;
+    let evidence: Evidence = read_json_limited(evidence, MAX_PROOF_FILE)?;
+    let receipt = evidence.verify(
+        &request.l1_genesis,
+        &request.trusted_block,
+        &request.transaction,
+        &request.payer_lock,
+    )?;
+    let policy = Grant {
+        expense: request.transaction.0,
+        payer: request.payer_lock.0,
+        refund: request.refund_lock.0,
+        max_expense_fee: request.max_expense_fee_shannons,
+        max_settlement_fee: request.max_settlement_fee_shannons,
+    };
+    let args = policy.encode();
+    ensure!(
+        Grant::decode(&args).is_some()
+            && request.grant_code != H256::default()
+            && (1..=policy.max_expense_fee).contains(&receipt.miner_fee_shannons),
+        "invalid reimbursement authorization"
+    );
+    let lock = packed::Script::new_builder()
+        .code_hash(request.grant_code.pack())
+        .hash_type(core::ScriptHashType::Data2)
+        .args(ckb_types::bytes::Bytes::copy_from_slice(&args).pack())
+        .build();
+    let raw = packed::Transaction::from_slice(evidence.transaction.as_bytes())?.raw();
+    let index = raw
+        .outputs()
+        .len()
+        .checked_sub(1)
+        .context("missing expense change")?;
+    let last = raw.outputs().get(index).context("missing expense change")?;
+    ensure!(
+        last.lock().calc_script_hash().as_slice() == request.payer_lock.as_bytes()
+            && last.type_().to_opt().is_none()
+            && raw
+                .outputs_data()
+                .get(index)
+                .is_some_and(|v| v.raw_data().is_empty()),
+        "expense must end with plain change to the payer"
+    );
+    let change = packed::OutPoint::new(request.transaction.pack(), u32::try_from(index)?);
+    let values: Vec<packed::Bytes> = std::iter::once(raw.as_bytes().pack())
+        .chain(
+            evidence
+                .parents
+                .iter()
+                .map(|parent| parent.as_bytes().pack()),
+        )
+        .collect();
+    let payload = packed::BytesVec::new_builder()
+        .set(values)
+        .build()
+        .as_bytes();
+    let witness = packed::WitnessArgs::new_builder()
+        .lock(Some(payload).pack())
+        .build()
+        .as_bytes();
+    ensure!(
+        witness.len() <= MAX_GRANT_WITNESS,
+        "reimbursement witness exceeds contract limit"
+    );
+    print_json(
+        &json!({"receipt": receipt, "grant_lock": ckb_jsonrpc_types::Script::from(lock),
+        "expense_change": ckb_jsonrpc_types::OutPoint::from(change), "witness": JsonBytes::from_bytes(witness)}),
+    )
 }

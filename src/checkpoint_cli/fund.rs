@@ -51,6 +51,13 @@ pub enum Command {
         #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
         payer_lock: H256,
     },
+    /// Build a one-shot authorization and its redemption witness for a proved CKB miner fee.
+    ExpenseGrant {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        evidence: PathBuf,
+    },
     /// Derive the CKB Lock that receives the PoW Security Fund payout.
     Lock {
         #[arg(long)]
@@ -126,6 +133,7 @@ impl Command {
                 &transaction,
                 &payer_lock,
             ),
+            Self::ExpenseGrant { request, evidence } => expense::grant(&request, &evidence),
             Self::Lock { request } => lock(&request),
             Self::Update {
                 request,

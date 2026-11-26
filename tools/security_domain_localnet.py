@@ -47,7 +47,7 @@ def verify_expense_fixture(binary_path, directory, genesis, receipt, evidence):
 
 
 class Scenario:
-    def __init__(self, args, l1, fixture, contract, *, funding=None, network=None):
+    def __init__(self, args, l1, fixture, contract, *, funding=None, network=None, grant_funding=None):
         self.args, self.l1, self.fixture = args, l1, fixture
         self.rejections, self.committed, self.transactions = {}, {}, {}
         self.release_lock = fixture.standard
@@ -79,6 +79,10 @@ class Scenario:
         self.member_files = [write_key(args.output, f"service-{i}", key.private_bytes_raw())
                              for i, (_, key, _) in enumerate(self.members)]
         self.deploy(code)
+        self.expense_budget = None
+        if getattr(args, "expense_grant", None):
+            from operating_expense_localnet import ExpenseBudget
+            self.expense_budget = ExpenseBudget(self, args.expense_grant, grant_funding)
 
     def pay_transaction(self, inputs, outputs, data, deps, *, change_delta=0):
         change = self.wallet_capacity + change_delta - FEE
@@ -187,6 +191,9 @@ class Scenario:
             self.committed[name]["expense_receipt"] = receipt
             self.committed[name]["expense_rejections"] = verify_expense_fixture(
                 self.args.binary, self.args.output, self.genesis, receipt, bundle["evidence"])
+            if self.expense_budget:
+                self.committed[name]["reimbursement"] = self.expense_budget.settle(
+                    receipt, self.args.output / "operating-expense-evidence.json")
         return {"point": point(result, 0), "capacity": amount, "reward": reward, "buyer": buyer, "refund": refund}
 
     def sign_command(self, request, index):
@@ -605,6 +612,8 @@ def main():
         parser.add_argument(f"--{arg}", type=lambda path: Path(path).resolve(), required=True)
     parser.add_argument("--l1-port", type=int, default=27220)
     parser.add_argument("--audit-reorg", action="store_true")
+    parser.add_argument("--expense-grant", type=lambda path: Path(path).resolve(),
+                        help="exercise an explicitly funded one-shot miner fee reimbursement")
     args = parser.parse_args()
     args.output.mkdir(mode=0o700, parents=True)
     l1 = L1(args)

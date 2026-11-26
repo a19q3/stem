@@ -14,7 +14,7 @@ from bridge_localnet import (CKB, FEE, Fixtures, L1, binary, ckb_hash, dependenc
                              le, point, reject_cli, script, write_key)
 from jolteon_checkpoint_localnet import PublisherFixture, Relay
 from intercell_localnet import intercell_round
-from security_domain_localnet import use_stem_receipt
+from security_domain_localnet import Scenario, use_stem_receipt
 from checkpoint_fee_fund_localnet import deploy_fee_lock, use_fee_fund
 from asset_export_localnet import asset_round
 from metatype_multiasset_localnet import multiasset_round
@@ -112,7 +112,7 @@ def fee_payment(args, fixture, spec_path, mint, client, fee):
 
 
 def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, relay, fee_fund):
-    fee = (4000 if fee_fund else 800) * CKB
+    fee = (8000 if args.expense_grant else 4000 if fee_fund else 800) * CKB
     payment = fee_payment(args, fixture, spec_path, mint, client, fee)
 
     def proved(path):
@@ -179,10 +179,23 @@ def fee_round(args, l1, fixture, vault, spec, spec_path, lane, mint, client, rel
     assert proved("/stem/bridge-backing")["record"] == backing["record"]
     attributed_after = vault_revenue_proof(args, client, "after-fund-payouts", {lane: fee}, negative=True)
     assert attributed_after["query"]["record"] == attributed["query"]["record"]
+    operating = None
+    if args.expense_grant:
+        index = {"devfund": 1, "ecosystem": 2, "pow": 3}[args.expense_account]
+        source = point(payouts[index]["l1_payout"], 0)
+        provider = spec["bridge"]["fee_funds"][index]["recipient"]
+        scenario = Scenario(args, l1, fixture, args.expense_service, funding=vault["change_point"],
+            network=spec["network_id"], grant_funding=(source, provider, args.output / f"fund-{index}.key"))
+        scenario.open_domain()
+        scenario.open_request("query-one")
+        reconciled = scenario.committed["query-one"]["reimbursement"]
+        assert reconciled["treasury_input"] == source and reconciled["authorization"]["tx"]["inputs"][0]["previous_output"] == source
+        operating = {"fund_index": index, "fund_name": args.expense_account, "paid_shannons": amounts[index],
+                     "payout": payouts[index], "service_request": scenario.committed["query-one"], "reimbursement": reconciled}
     return {"vault_revenue": {"before_fee": zero_revenue, "before_claims": attributed,
                               "after_payouts": attributed_after},
             "payment": paid_fee, "before": before, "queued": queued, "backing_queued": backing_queued,
-            "payouts": payouts, "after": after, "backing": backing, "checkpoint_expenses": expenses,
+            "payouts": payouts, "after": after, "backing": backing, "checkpoint_expenses": expenses, "operating_expenses": operating,
             "rejections": {"unearned": unearned, "overclaim": wrong_amount, "dust": dust, "replay": replay}}
 
 
@@ -495,7 +508,7 @@ def bridge_round(args, l1, fixture, children):
     else:
         relay.advance(1, vault["secp"], probe=True)
     mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client,
-                            payment_capacity=(4400 if fee_fund else 1200) * CKB)
+                            payment_capacity=(8500 if args.expense_grant else 4400 if fee_fund else 1200) * CKB)
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
     if args.stem_native_object:
@@ -564,6 +577,10 @@ def main():
     parser.add_argument("--stem-transaction-cycles", type=int, default=20_000_000,
                         help="explicit per-transaction cycle limit in the Stem development genesis")
     parser.add_argument("--fee-funds", action="store_true")
+    parser.add_argument("--expense-grant", type=lambda path: Path(path).resolve())
+    parser.add_argument("--expense-service", type=lambda path: Path(path).resolve())
+    parser.add_argument("--expense-account", choices=["devfund", "ecosystem", "pow"])
+
     parser.add_argument("--native-spore-origin", type=lambda path: Path(path).resolve(),
                         help="issue an unrestricted immutable object on Stem and export to standard Spore V2")
     parser.add_argument("--spore-immortal", action="store_true", help="use the published Spore V2 immortal lifecycle")
@@ -609,6 +626,9 @@ def main():
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
     args = parser.parse_args()
+    expense = (args.expense_grant, args.expense_service, args.expense_account)
+    if any(expense) and (not all(expense) or not args.fee_funds or args.checkpoint_fee_fund):
+        parser.error("operating reimbursements require an explicit fee account, grant and service in the ordinary fee fund fixture")
     if not 1 <= args.stem_transaction_cycles <= BLOCK_CYCLES:
         parser.error("--stem-transaction-cycles must be positive and fit in the block budget")
     base = (args.stem_metatype_escrow, args.metatype_dispatcher, args.metatype_mailbox_lock)
