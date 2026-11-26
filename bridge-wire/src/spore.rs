@@ -13,6 +13,91 @@ pub const CKB_SPORE_CODE: Identity = [
 
 pub const TRANSFER_HEADER: usize = 64;
 pub const MAX_SPORE_DATA: usize = MAX_PAYLOAD - TRANSFER_HEADER;
+/// The native transaction envelope is at most 512 KiB, including all Cell metadata.
+pub const MAX_CELL_SPORE_DATA: usize = 512 * 1024;
+pub const CONTENT_COMMITMENT_TAG: &[u8; 4] = b"SPH1";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferContent<'a> {
+    Inline(&'a [u8]),
+    Committed { length: usize, digest: &'a Identity },
+}
+
+impl TransferContent<'_> {
+    pub fn matches(self, bytes: &[u8], hash: impl FnOnce() -> Option<Identity>) -> bool {
+        match self {
+            Self::Inline(raw) => raw == bytes,
+            Self::Committed { length, digest } => {
+                length == bytes.len() && hash().as_ref() == Some(digest)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CellTransfer<'a> {
+    pub original_type: Identity,
+    pub recipient: Identity,
+    pub content: TransferContent<'a>,
+}
+
+impl<'a> CellTransfer<'a> {
+    /// Build a mailbox payload from the complete Molecule bytes of the actual Spore Cell.
+    pub fn encode(
+        original_type: &Identity,
+        recipient: &Identity,
+        data: &[u8],
+        out: &'a mut [u8; MAX_PAYLOAD],
+    ) -> Option<&'a [u8]> {
+        if original_type == &[0; 32] || recipient == &[0; 32] {
+            return None;
+        }
+        SporeData::from_cell(data)?;
+        out[..32].copy_from_slice(original_type);
+        out[32..TRANSFER_HEADER].copy_from_slice(recipient);
+        let body = &mut out[TRANSFER_HEADER..];
+        let size = if data.len() <= MAX_SPORE_DATA {
+            body[..data.len()].copy_from_slice(data);
+            data.len()
+        } else {
+            body[..4].copy_from_slice(CONTENT_COMMITMENT_TAG);
+            body[4..8].copy_from_slice(&(data.len() as u32).to_le_bytes());
+            body[8..40].copy_from_slice(&hash(b"", &[data]));
+            40
+        };
+        Some(&out[..TRANSFER_HEADER + size])
+    }
+
+    pub fn decode(payload: &'a [u8]) -> Option<Self> {
+        let (header, body) = payload.split_at_checked(TRANSFER_HEADER)?;
+        let fields = header.as_chunks::<32>().0;
+        let [original_type, recipient] = fields else {
+            return None;
+        };
+        if fields.contains(&[0; 32]) {
+            return None;
+        }
+        let content = if let Some(rest) = body.strip_prefix(CONTENT_COMMITMENT_TAG) {
+            let (size, hash) = rest.split_at_checked(4)?;
+            let length = u32::from_le_bytes(size.try_into().ok()?) as usize;
+            if !(MAX_SPORE_DATA + 1..=MAX_CELL_SPORE_DATA).contains(&length) {
+                return None;
+            }
+            TransferContent::Committed {
+                length,
+                digest: hash.try_into().ok()?,
+            }
+        } else {
+            SporeData::decode(body)?;
+            TransferContent::Inline(body)
+        };
+        Some(Self {
+            original_type: *original_type,
+            recipient: *recipient,
+            content,
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SporeTransfer<'a> {
@@ -132,23 +217,27 @@ pub struct SporeData<'a> {
 
 impl<'a> SporeData<'a> {
     pub fn unclustered(data: &'a [u8]) -> Option<Self> {
-        Self::decode(data).filter(|spore| spore.cluster_id.is_none())
+        Self::from_cell(data).filter(|spore| spore.cluster_id.is_none())
     }
 
     pub fn immortal(&self) -> bool {
         self.content_type.ends_with(b";immortal=true")
     }
 
-    fn is_plain(&self) -> bool {
+    pub fn is_plain(&self) -> bool {
         self.cluster_id.is_none() && basic_content_type(self.content_type)
     }
 
     pub fn decode(data: &'a [u8]) -> Option<Self> {
+        (data.len() <= MAX_SPORE_DATA).then(|| Self::from_cell(data))?
+    }
+
+    pub fn from_cell(data: &'a [u8]) -> Option<Self> {
         let (header, _) = data.split_at_checked(16)?;
         let [total, mime, content, cluster] = header.as_chunks::<4>().0 else {
             return None;
         };
-        if data.len() > MAX_SPORE_DATA
+        if data.len() > MAX_CELL_SPORE_DATA
             || u32::from_le_bytes(*total) as usize != data.len()
             || u32::from_le_bytes(*mime) != 16
         {
@@ -189,6 +278,54 @@ fn molecule_bytes(raw: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cell_receipts_are_canonical_at_both_size_limits() {
+        let make_data = |size: usize| {
+            let mut data = [size as u32, 16, 30, size as u32, 10]
+                .map(u32::to_le_bytes)
+                .concat();
+            data.extend_from_slice(b"text/plain");
+            data.extend_from_slice(&((size - 34) as u32).to_le_bytes());
+            data.resize(size, b'x');
+            data
+        };
+        let mut buf = [0; MAX_PAYLOAD];
+        for size in [MAX_SPORE_DATA, MAX_SPORE_DATA + 1, MAX_CELL_SPORE_DATA] {
+            let bytes = make_data(size);
+            let encoded = CellTransfer::encode(&[1; 32], &[2; 32], &bytes, &mut buf).unwrap();
+            let transfer = CellTransfer::decode(encoded).unwrap();
+            assert_eq!(transfer.original_type, [1; 32]);
+            assert_eq!(transfer.recipient, [2; 32]);
+            if size == MAX_SPORE_DATA {
+                assert_eq!(transfer.content, TransferContent::Inline(&bytes));
+                assert!(transfer.content.matches(&bytes, || panic!("unneeded hash")));
+                continue;
+            }
+            assert_eq!(encoded.len(), TRANSFER_HEADER + 40);
+            let digest = hash(b"", &[&bytes]);
+            assert!(transfer.content.matches(&bytes, || Some(digest)));
+            assert!(
+                !transfer
+                    .content
+                    .matches(&bytes[1..], || panic!("different size"))
+            );
+            assert!(!transfer.content.matches(&bytes, || Some([0; 32])));
+            assert!(CellTransfer::decode(&encoded[..encoded.len() - 1]).is_none());
+            assert!(CellTransfer::decode(&[encoded, &[0]].concat()).is_none());
+            let mut malformed = encoded.to_vec();
+            for bad in [0, MAX_SPORE_DATA, MAX_CELL_SPORE_DATA + 1] {
+                malformed[68..72].copy_from_slice(&(bad as u32).to_le_bytes());
+                assert!(CellTransfer::decode(&malformed).is_none());
+            }
+            malformed[..32].fill(0);
+            assert!(CellTransfer::decode(&malformed).is_none());
+        }
+        let huge = make_data(MAX_CELL_SPORE_DATA + 1);
+        assert!(CellTransfer::encode(&[1; 32], &[2; 32], &huge, &mut buf).is_none());
+        assert!(CellTransfer::encode(&[1; 32], &[2; 32], b"invalid", &mut buf).is_none());
+        assert!(CellTransfer::encode(&[0; 32], &[2; 32], &make_data(40), &mut buf).is_none());
+    }
 
     #[test]
     fn multipart_profile_checks_the_full_boundary_and_refuses_unknown_parameters() {

@@ -11,17 +11,18 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash,
-        load_input_out_point, load_script, load_script_hash,
+        load_cell_capacity, load_cell_data, load_cell_data_hash, load_cell_lock,
+        load_cell_lock_hash, load_input_out_point, load_script, load_script_hash,
     },
 };
 use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
-    spore::{MAX_SPORE_DATA, SporeData, SporeTransfer, return_nonce},
+    spore::{CellTransfer, MAX_CELL_SPORE_DATA, SporeData, return_nonce},
 };
 
 entry!(main);
-default_alloc!();
+const HEAP_BYTES: usize = 1536 * 1024;
+default_alloc!(4096, HEAP_BYTES, 64);
 
 const LOAD_TYPE_HASH: u64 = 2112;
 const FIND_TYPE: u64 = 2113;
@@ -62,9 +63,9 @@ fn verify() -> Result<(), i8> {
 
 fn object_type(script: &Script, endpoint: &Identity) -> Result<(), i8> {
     let read = |source| -> Result<_, i8> {
-        match load_cell_data(0, source) {
+        match stem_contracts::metatype::bounded_data(0, source, MAX_CELL_SPORE_DATA) {
             Ok(data)
-                if SporeData::decode(&data).is_some()
+                if SporeData::from_cell(&data).is_some()
                     && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound) =>
             {
                 Ok(Some(data))
@@ -153,7 +154,7 @@ fn endpoint_lock(script: &Script, fields: &[[u8; 32]; 7]) -> Result<(), i8> {
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..size]).ok_or(108)?;
-    let transfer = SporeTransfer::decode(message.payload).ok_or(108)?;
+    let transfer = CellTransfer::decode(message.payload).ok_or(108)?;
     if transfer.original_type != *original {
         return Err(108);
     }
@@ -206,7 +207,7 @@ fn inspect(
     source: Source,
     endpoint: &Identity,
     representation: &Identity,
-    transfer: &SporeTransfer<'_>,
+    transfer: &CellTransfer<'_>,
 ) -> Result<State, i8> {
     let mut state = State::default();
     for index in 0.. {
@@ -245,8 +246,12 @@ fn inspect(
         {
             return Err(109);
         }
-        let data = load_cell_data(index, source).map_err(|_| 109)?;
-        if data.len() > MAX_SPORE_DATA || data.as_slice() != transfer.data {
+        let data = stem_contracts::metatype::bounded_data(index, source, MAX_CELL_SPORE_DATA)
+            .map_err(|_| 109)?;
+        if !transfer
+            .content
+            .matches(&data, || load_cell_data_hash(index, source).ok())
+        {
             return Err(109);
         }
         state.object = true;

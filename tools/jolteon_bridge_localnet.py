@@ -507,8 +507,9 @@ def bridge_round(args, l1, fixture, children):
         publisher.publish("bootstrap-checkpoint", 1)
     else:
         relay.advance(1, vault["secp"], probe=True)
+    payment_ckb = 8500 if args.expense_grant else 4400 if fee_fund else 1200
     mint = deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, client,
-                            payment_capacity=(8500 if args.expense_grant else 4400 if fee_fund else 1200) * CKB)
+                            payment_capacity=(payment_ckb + 3*((args.spore_content_bytes + 99)//100)) * CKB)
     write_json(args.output / "native-mint-report.json", mint)
     report = {"mint": mint}
     if args.stem_native_object:
@@ -585,6 +586,8 @@ def main():
                         help="issue an unrestricted immutable object on Stem and export to standard Spore V2")
     parser.add_argument("--native-spore-approval", type=lambda path: Path(path).resolve(),
                         help="deploy the native approval Type and carry its policy in a CKB Spore holder Lock")
+    parser.add_argument("--spore-content-bytes", type=int, default=0,
+                        help="exercise commitment settlement with a plain text body of the requested size")
     native_media = parser.add_mutually_exclusive_group()
     native_media.add_argument("--native-spore-json", action="store_true", help="use application/json data in the native asset fixture")
     native_media.add_argument("--native-spore-multipart", action="store_true", help="use a multipart/mixed native object with a boundary")
@@ -651,6 +654,9 @@ def main():
     if args.native_spore_approval and (not args.native_spore_origin or args.native_spore_json
             or args.native_spore_multipart or args.spore_immortal):
         parser.error("the approved native identity uses the immutable plain Spore content profile")
+    if args.spore_content_bytes and (not args.spore_v2 or args.native_spore_json or args.native_spore_multipart
+            or not 4096 <= args.spore_content_bytes < 512 * 1024):
+        parser.error("the large Spore fixture needs a plain body from 4096 bytes up to the native transaction limit")
     if args.spore_immortal and not args.spore_v2:
         parser.error("--spore-immortal requires the original Spore V2 settlement fixture")
     if args.native_spore_origin and any((args.stem_spore, args.spore_cluster_v2, args.stem_native_object, args.export_udt)):

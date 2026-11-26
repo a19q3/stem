@@ -9,17 +9,19 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash, load_cell_type,
-        load_cell_type_hash, load_input, load_script, load_script_hash, load_witness_args,
+        load_cell_capacity, load_cell_data, load_cell_data_hash, load_cell_lock,
+        load_cell_lock_hash, load_cell_type, load_cell_type_hash, load_input, load_script,
+        load_script_hash, load_witness_args,
     },
 };
 use stem_bridge_wire::{
     intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
-    spore::{CKB_SPORE_CODE, SporeData, SporeTransfer},
+    spore::{CKB_SPORE_CODE, CellTransfer, MAX_CELL_SPORE_DATA, SporeData},
 };
 
 entry!(main);
-default_alloc!();
+const HEAP_BYTES: usize = 1536 * 1024;
+default_alloc!(4096, HEAP_BYTES, 64);
 
 fn main() -> i8 {
     verify().err().unwrap_or(0)
@@ -113,9 +115,15 @@ fn verify() -> Result<(), i8> {
     {
         return Err(112);
     }
-    let output = load_cell_data(spore_output, Source::Output).map_err(|_| 110)?;
-    if (!first_export && load_cell_data(input_index, Source::Input).map_err(|_| 110)? != output)
-        || (counterpart.is_some() && SporeData::unclustered(&output).is_none())
+    let output =
+        stem_contracts::metatype::bounded_data(spore_output, Source::Output, MAX_CELL_SPORE_DATA)
+            .map_err(|_| 110)?;
+    if (!first_export
+        && stem_contracts::metatype::bounded_data(input_index, Source::Input, MAX_CELL_SPORE_DATA)
+            .map_err(|_| 110)?
+            != output)
+        || !SporeData::from_cell(&output)
+            .is_some_and(|s| counterpart.is_none() || s.cluster_id.is_none())
         || load_cell_capacity(input_index, Source::Input).map_err(|_| 110)?
             != load_cell_capacity(spore_output, Source::Output).map_err(|_| 110)?
     {
@@ -126,7 +134,14 @@ fn verify() -> Result<(), i8> {
         if message.receiver != *endpoint {
             return Err(113);
         }
-        verify_transfer(message.payload, origin, &output, None, endpoint)?;
+        verify_transfer(
+            message.payload,
+            origin,
+            spore_output,
+            &output,
+            None,
+            endpoint,
+        )?;
     } else {
         if !next.outgoing.is_empty() {
             return Err(113);
@@ -145,7 +160,14 @@ fn verify() -> Result<(), i8> {
         } else {
             after
         };
-        verify_transfer(message.payload, origin, &output, Some(&recipient), &owner)?;
+        verify_transfer(
+            message.payload,
+            origin,
+            spore_output,
+            &output,
+            Some(&recipient),
+            &owner,
+        )?;
     }
     Ok(())
 }
@@ -318,13 +340,16 @@ fn matching(source: Source, target: &Identity) -> Result<Option<usize>, i8> {
 fn verify_transfer(
     payload: &[u8],
     original: &Identity,
+    output_index: usize,
     data: &[u8],
     recipient: Option<&Identity>,
     custody: &Identity,
 ) -> Result<(), i8> {
-    let transfer = SporeTransfer::decode(payload).ok_or(113)?;
+    let transfer = CellTransfer::decode(payload).ok_or(113)?;
     if transfer.original_type != *original
-        || transfer.data != data
+        || !transfer.content.matches(data, || {
+            load_cell_data_hash(output_index, Source::Output).ok()
+        })
         || &transfer.recipient == custody
         || recipient.is_some_and(|recipient| *recipient != transfer.recipient)
     {

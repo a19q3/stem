@@ -9,6 +9,7 @@ use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
 use stem_bridge_wire::intercell::{Delivery, MAX_PAYLOAD, Message, record_key};
+use stem_bridge_wire::spore::{CellTransfer, MAX_CELL_SPORE_DATA};
 use stem_ledger::block::Header;
 use stem_stake::{
     finality::NATIVE_HEADER_BYTES,
@@ -20,6 +21,15 @@ use crate::bridge_cli::{print_json, read_json_limited};
 
 #[derive(Subcommand)]
 pub enum Intercell {
+    /// Build the settlement payload from a complete binary Molecule SporeData file.
+    SporePayload {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        original_type: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        recipient: H256,
+        #[arg(long)]
+        data: PathBuf,
+    },
     /// Encode a canonical message and return its stable nonce identity.
     Encode {
         #[arg(long)]
@@ -118,6 +128,22 @@ fn historical_evidence(path: PathBuf, network: &[u8; 32]) -> Result<Vec<u8>> {
 impl Intercell {
     pub fn run(self) -> Result<()> {
         match self {
+            Self::SporePayload {
+                original_type,
+                recipient,
+                data,
+            } => {
+                let bytes = crate::bridge_cli::read_limited(&data, MAX_CELL_SPORE_DATA)?;
+                let mut buffer = [0; MAX_PAYLOAD];
+                let payload = CellTransfer::encode(
+                    &original_type.into(),
+                    &recipient.into(),
+                    &bytes,
+                    &mut buffer,
+                )
+                .context("invalid SporeData or settlement identity")?;
+                print_json(&json!({ "payload": JsonBytes::from_vec(payload.to_vec()) }))
+            }
             Self::RecoverInbox(args) => args.run(),
             Self::Encode { request } => {
                 let request: Request = read_json_limited(&request, 2 * MAX_PAYLOAD + 1024)?;

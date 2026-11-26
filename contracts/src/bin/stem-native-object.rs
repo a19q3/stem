@@ -11,21 +11,25 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_lock_hash, load_input_out_point, load_script,
-        load_script_hash,
+        load_cell_capacity, load_cell_data, load_cell_data_hash, load_cell_lock_hash,
+        load_input_out_point, load_script, load_script_hash,
     },
 };
 use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
     metatype::MAX_STATE_BYTES,
     object::{ObjectArgs, creation_id, revision},
-    spore::{MAX_SPORE_DATA, SporeData, SporeTransfer, return_nonce},
+    spore::{
+        CellTransfer, MAX_CELL_SPORE_DATA, MAX_SPORE_DATA, SporeData, SporeTransfer,
+        TransferContent, return_nonce,
+    },
 };
 
 use stem_contracts::metatype::bounded_data;
 
 entry!(main);
-default_alloc!();
+const HEAP_BYTES: usize = 1536 * 1024;
+default_alloc!(4096, HEAP_BYTES, 64);
 
 const LOAD_TYPE_HASH: u64 = 2112;
 const FIND_TYPE: u64 = 2113;
@@ -60,14 +64,14 @@ fn verify() -> Result<(), i8> {
         return Err(116);
     }
     if let Some(object) = ObjectArgs::decode(&args) {
-        return identity(&object, &network);
+        return identity(&object, &network, false);
     }
     if args.len() == 160 {
         let object = ObjectArgs::decode(&args[..128]).ok_or(116)?;
         if args[128..] == [0; 32] {
             return Err(116);
         }
-        return identity(&object, &network);
+        return identity(&object, &network, true);
     }
     let (raw, route) = match (args.first(), args.len()) {
         (Some(1), 257) => (&args[1..], Route::Standard),
@@ -102,7 +106,7 @@ enum Route<'a> {
     ApprovedStandard(&'a Identity),
 }
 
-fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
+fn identity(object: &ObjectArgs<'_>, network: &Identity, standard: bool) -> Result<(), i8> {
     let original = load_script_hash().map_err(|_| 116)?;
     let args = [original.as_slice(), object.native_authority].concat();
     let policy = Script::new_builder()
@@ -111,15 +115,24 @@ fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
         .args(args.pack())
         .build()
         .calc_script_hash();
-    let limit = if object.revisable {
+    let limit = if standard {
+        MAX_CELL_SPORE_DATA
+    } else if object.revisable {
         MAX_STATE_BYTES
     } else {
         MAX_SPORE_DATA
     };
+    let valid = |data: &[u8]| {
+        if standard {
+            SporeData::from_cell(data).is_some_and(|spore| spore.is_plain())
+        } else {
+            object.valid_state(data)
+        }
+    };
     let read = |source| -> Result<_, i8> {
         match bounded_data(0, source, limit) {
             Ok(data)
-                if object.valid_state(&data)
+                if valid(&data)
                     && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
                     && load(
                         FIND_TYPE,
@@ -137,7 +150,14 @@ fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
         }
     };
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
-        (Some(input), Some(output)) if object.permits(&input, &output) => Ok(()),
+        (Some(input), Some(output)) => {
+            let permitted = if standard {
+                input == output
+            } else {
+                object.permits(&input, &output)
+            };
+            permitted.then_some(()).ok_or(117)
+        }
         (None, Some(output)) if !object.revisable || revision(&output) == Some(0) => {
             verify_creation(network, object.id)?;
             Ok(())
@@ -168,7 +188,7 @@ fn verify_creation(network: &Identity, id: &Identity) -> Result<(), i8> {
 }
 
 fn plain_identity(id: &Identity, network: &Identity) -> Result<(), i8> {
-    let read = |source| match bounded_data(0, source, MAX_SPORE_DATA) {
+    let read = |source| match bounded_data(0, source, MAX_CELL_SPORE_DATA) {
         Ok(data)
             if load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
                 && load(LOAD_TYPE_HASH, source as u64, 0, 1, &mut []).0 == INDEX_OUT_OF_BOUND =>
@@ -242,12 +262,10 @@ fn escrow(
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..len]).ok_or(118)?;
-    let transfer = if matches!(route, Route::Standard) {
-        SporeTransfer::decode(message.payload).filter(|s| s.cluster_id.is_none())
-    } else {
-        SporeTransfer::decode_plain(message.payload)
+    let transfer = CellTransfer::decode(message.payload).ok_or(118)?;
+    if matches!(route, Route::Original) && SporeTransfer::decode_plain(message.payload).is_none() {
+        return Err(118);
     }
-    .ok_or(118)?;
     if transfer.original_type != *object {
         return Err(118);
     }
@@ -284,7 +302,7 @@ fn escrow(
         object,
         binding,
         &lock,
-        transfer.data,
+        transfer.content,
         route,
     )?;
     let right = inspect(
@@ -293,7 +311,7 @@ fn escrow(
         object,
         binding,
         &lock,
-        transfer.data,
+        transfer.content,
         route,
     )?;
     let (
@@ -321,7 +339,7 @@ fn inspect(
     object: &Identity,
     binding: &Identity,
     escrow: &Identity,
-    data: &[u8],
+    content: TransferContent<'_>,
     route: Route<'_>,
 ) -> Result<Assets, i8> {
     let mut bond = None;
@@ -354,7 +372,10 @@ fn inspect(
                     || matches!(route, Route::ApprovedStandard(authority) if args.get(64..96) != Some(authority.as_slice()))
                     || load(LOAD_TYPE_HASH, source as u64, index, type_count, &mut []).0
                         != INDEX_OUT_OF_BOUND
-                    || load_cell_data(index, source).map_err(|_| 119)? != data
+                    || !content.matches(
+                        &bounded_data(index, source, MAX_CELL_SPORE_DATA).map_err(|_| 119)?,
+                        || load_cell_data_hash(index, source).ok(),
+                    )
                     || asset
                         .replace((load_cell_capacity(index, source).map_err(|_| 119)?, lock))
                         .is_some()

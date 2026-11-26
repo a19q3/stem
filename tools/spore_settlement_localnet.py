@@ -57,7 +57,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     buyer = script(native_lock_code, fixture.key(fixture.friend)["blake160"], "data")
     mailbox_code, escrow_code = [ckb_hash(program) for program in (mailbox_bin, ckb_lock_bin)]
     secp = vault["secp"]
-    spore_cap = (650 if approved_origin else 480 if args.native_spore_multipart else 360) * CKB
+    spore_cap = ((650 if approved_origin else 480 if args.native_spore_multipart else 360) + args.spore_content_bytes) * CKB
     mailbox_cap, relay_funds = 1000 * CKB, 1800 * CKB
     codes = [code, mailbox_bin, ckb_lock_bin]
     cluster_code = args.spore_cluster_v2.read_bytes() if args.spore_cluster_v2 else None
@@ -139,6 +139,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         if approved_origin:
             asset_types.append(script(hex_bytes(policy_code), hex_bytes(original + script_hash(owner)), "data"))
         mime, content = (b"application/json", b'{"origin":"Stem"}') if args.native_spore_json else (b"text/plain", b"Issued on Stem")
+        if args.spore_content_bytes:
+            content = content.ljust(args.spore_content_bytes, b"x")
         if args.native_spore_multipart:
             mime = b"multipart/mixed;boundary=stem-boundary"
             content = b"--stem-boundary\r\nContent-Type: text/plain\r\n\r\nStem\r\n--stem-boundary--\r\n"
@@ -156,7 +158,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         original = script_hash(object_type)
         def spore_data(id_):
             mime = b"text/plain;immortal=true" if args.spore_immortal else b"text/plain"
-            return table(molecule_bytes(mime), molecule_bytes(b"One Spore across two networks"),
+            content = b"One Spore across two networks".ljust(args.spore_content_bytes, b"x")
+            return table(molecule_bytes(mime), molecule_bytes(content),
                          molecule_bytes(id_) if id_ else b"")
 
         data = spore_data(cluster_id)
@@ -208,12 +211,14 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     fee_capacity = relay_funds
     nonce_frontier = 0
 
-    def packet(label, outbound, recipient, nonce, content=data):
+    def packet(label, outbound, recipient, nonce, content=data, wire_content=None):
         source, destination, sender, receiver = ((network, genesis, endpoint_id, mailbox_id) if outbound
                                                  else (genesis, network, mailbox_id, endpoint_id))
         path = args.output / f"spore-{label}-message.json"
+        if wire_content is None:
+            wire_content = content if len(content) <= 4032 else b"SPH1" + le(len(content), 4) + ckb_hash(content)
         write_json(path, dict(source=source, destination=destination, sender=hex_bytes(sender),
-            receiver=hex_bytes(receiver), nonce=nonce, payload=hex_bytes(original + recipient + content)))
+            receiver=hex_bytes(receiver), nonce=nonce, payload=hex_bytes(original + recipient + wire_content)))
         return json.loads(run(args.binary, "intercell", "encode", "--request", path))
 
     def query(path, data="0x"):
@@ -309,7 +314,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
 
     def export_native():
         bond_cap = 120 * CKB
-        object_cap = (800 if approved_origin else 360 if args.native_spore_multipart else 240) * CKB
+        object_cap = ((800 if approved_origin else 360 if args.native_spore_multipart else 240)
+                      + (args.spore_content_bytes+99)//100) * CKB
         remaining = mint["payment_capacity"] - bond_cap - object_cap - FEE
         empty_root = bytes(32)
         rejected = {}
@@ -352,10 +358,10 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             return script(hex_bytes(escrow_code), hex_bytes(fields), "data2")
 
         owner_holder, friend_holder = holder(fixture.owner_lock), holder(fixture.friend_lock)
-        def outbound(label, bond_location):
+        def outbound(label, bond_location, wire_content=None):
             key = binary(bond_location["tx_hash"]) + le(int(bond_location["index"], 16), 4)
             nonce = int.from_bytes(ckb_hash(b"Stem Spore return nonce\0" + key)[:8], "little")
-            return packet(label, True, script_hash(fixture.owner_lock), nonce)
+            return packet(label, True, script_hash(fixture.owner_lock), nonce, wire_content=wire_content)
 
         def lock_asset(label, location, bond_location, fee_location, capacity, msg):
             return stem_signed(label, fee_location, [cell(bond_cap, endpoint),
@@ -367,6 +373,12 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                 [cell(object_cap - FEE, owner)]), "exited with 117")
 
         send = outbound("initial-export", bond_point)
+        if args.spore_content_bytes:
+            for label, length, digest in [("wrong_content_hash", len(data), bytes(32)),
+                                          ("wrong_content_length", len(data)-1, ckb_hash(data))]:
+                changed = outbound(label, bond_point, b"SPH1"+le(length, 4)+digest)
+                rejected[label] = stem_reject(lock_asset(label, original_point, bond_point, fee_point,
+                                                         remaining, changed), "exited with 119")
         rejected["changed_native_content"] = stem_reject(stem_signed("edited-native", original_point,
             [cell(object_cap - FEE, owner, data[:-1] + b"?", asset_types)]), "exited with 117")
         locked = commit(lock_asset("lock-origin", original_point, bond_point, fee_point, remaining, send))
@@ -535,6 +547,11 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             groups = [wallet_group(1, [fixture.faucet])]
         return fixture.sign(f"spore-{label}", tx, groups)
 
+    if args.spore_content_bytes:
+        for label, length, digest in [("ckb_wrong_content_hash", len(data), bytes(32)),
+                                      ("ckb_wrong_content_length", len(data)-1, ckb_hash(data))]:
+            msg = packet(label, False, script_hash(owner), 0, wire_content=b"SPH1"+le(length, 4)+digest)
+            rejected[label] = ckb_reject(deposit(label, policy=msg), 113)
     held_signed = deposit("deposit")
     held_cycles = estimate(held_signed)
     rejected["ckb_deposit_without_original"] = ckb_reject(deposit("fake-deposit", move=False), 111)
@@ -556,7 +573,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     assert l1.call("get_live_cell", point(minted["hash"], 0), True)["status"] != "live"
 
     anchor, approved = observe_deposit("import", held)
-    bond, mapped_cap = 100 * CKB, 80 * CKB
+    bond, mapped_cap = 100 * CKB, (80 + (args.spore_content_bytes+99)//100) * CKB
     source_cap = mint["payment_capacity"] - bond - FEE
     initialized = commit(stem_signed("create-endpoint", mint["payment"],
         [cell(bond, endpoint), cell(source_cap, owner)]))
