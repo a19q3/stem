@@ -4819,3 +4819,48 @@ and both L1 Cell Reference modes. The Go proof suite and frozen
 CometBFT build check passed.
 
 [Signed transactions, proof inputs, measurements, failed runs and reproduction commands](benchmarks/2026-11-26-stem-metatype-external-rule.json.xz).
+
+## Live Metatype rule registry
+
+Four Jolteon replicas and a real CKB devnet exercised the same
+three-constraint object with a Type ID registry. While the object
+was held on CKB, the issuer increased its ceiling from 120 to 200
+bytes. The registry maintained its Type and Lock across the update.
+CKB admitted a larger revision after the update. Stem advanced its
+committed CKB anchor, verified two separately certified references,
+and restored the 200-byte revision with the three original Type
+Scripts and the original Capacity. WASM verified the restored Cell
+and execution receipts against native finality.
+
+The signed controls exercised a forged Type ID creation, a lower
+or unchanged ceiling, registry removal and replacement of its Lock.
+Both hosts rejected missing or substituted registry data. Stem
+rejected a historical observation offered as a live rule, an old
+live observation at the new anchor, and a fresh request to attest
+the consumed registry Cell as live. Removal of the rule Script and
+return without its dependency were also rejected.
+
+| Run | CKB transfer bytes | CKB transfer cycles | CKB burn cycles | Stem return bytes | Stem return cycles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Fixed data hash, shared | 1,225 | 4,498,548 | 4,543,735 | 2,997 | 14,198,809 |
+| Live registry, inline repeat | 1,616 | 4,432,217 | 4,493,720 | 3,747 | 26,153,686 |
+| Live registry, shared retry | 1,262 | 4,483,859 | 4,567,701 | 3,747 | 26,153,686 |
+
+The CKB registry update is 475 bytes and consumed 1.64–1.68 million
+cycles across the successful runs. CKB transfer witnesses remained
+170 bytes. The live custody fixture uses a 50-million-cycle Stem
+transaction budget. Three additional guardian signatures account
+for the 12-million-cycle fixed charge on the return. The larger
+restored Cell and additional certificate also contribute to the
+byte difference. These are transaction and receipt measurements
+from the devnets. The initial shared run stopped because a network
+port was occupied, and the verifier could not find its report. Both
+failures are recorded with the successful runs on different ports.
+
+The workspace passed 484 tests with 22 ignored. Regression devnets
+verified CKB and xUDT round trips, capped Metatype UDT, Spore
+settlement, four fee payouts, both L1 Cell Reference modes, and
+funded Jolteon handoff with historical Intercell delivery. The Go
+proof suite and CometBFT build check passed.
+
+[Signed cases, proof traces, build fingerprints, measurements and commands](benchmarks/2026-11-26-stem-metatype-live-rule.json.xz).
