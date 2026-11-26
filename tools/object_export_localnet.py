@@ -1,6 +1,7 @@
 """Export a native object, enforce its Type Scripts on CKB and return it."""
 
 import json
+import subprocess
 import time
 
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
@@ -29,8 +30,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     shared_manifest = args.metatype_shared_manifest
     revisable = args.metatype_revisable_object
     topup = args.metatype_revision_topup
+    live_rule = args.metatype_rule_registry is not None
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
+    next_limit = 200 if live_rule else state_limit
     profile = bytes([3 if revisable else 1])
     mailbox_bin = args.intercell_mailbox.read_bytes()
     gate_bin = (args.metatype_mailbox_lock if metatype else args.ckb_stem_object).read_bytes()
@@ -48,10 +51,14 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                      args.metatype_bridged_object, args.metatype_bridged_approval))
     if state_limit:
         codes.append(args.metatype_object_state_limit.read_bytes())
-    ckb_items = codes + rule_records
+    if live_rule:
+        codes.append(args.metatype_rule_registry.read_bytes())
+    ckb_items = codes + ([b""] if live_rule else rule_records)
     mailbox_seed_index = len(ckb_items)
     auth_index, change_index = mailbox_seed_index + 1, mailbox_seed_index + 2
     item_caps = [(len(item) + 100) * CKB for item in ckb_items]
+    if live_rule:
+        item_caps[-1] = 800 * CKB
     funding_change = vault["change"] - sum(item_caps) - mailbox_cap - authority_funds - 2 * FEE
     funding = transaction([vault["change_point"]],
         [output(cap, fixture.standard) for cap in item_caps] +
@@ -68,6 +75,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         native_deps.append(point(mint["mint_id"], 4))
     if state_limit:
         native_deps.append(point(mint["mint_id"], 5))
+    if state_limit and not live_rule:
         l1_rule_point = point(funded, len(codes))
         l1_rule_dep = dependency(l1_rule_point)
         l1_other_rule_dep = dependency(point(funded, len(codes) + 1))
@@ -88,7 +96,34 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         assert any(f"error code {code} " in result for code in codes), result
         return result
 
-    def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None):
+    def packed(point_):
+        return binary(point_["tx_hash"]) + le(int(point_["index"], 16), 4)
+
+    registry_rejections = {}
+    if live_rule:
+        rule_seed = point(funded, len(codes))
+        registry_code = hex_bytes(ckb_hash(codes[-1]))
+        rule_types = [script(registry_code, hex_bytes(ckb_hash(le(0, 8) + packed(rule_seed) + le(i, 8))),
+                             "data2") for i in range(2)]
+        rule_cap = 350 * CKB
+        birth = transaction([rule_seed], [output(rule_cap, fixture.standard, ty) for ty in rule_types]
+                            + [output(item_caps[-1] - 2 * rule_cap - FEE, fixture.standard)],
+                            [hex_bytes(raw) for raw in rule_records] + ["0x"], ckb_deps)
+        forged = transaction([rule_seed], [output(rule_cap, fixture.standard, rule_types[1])],
+                             [hex_bytes(rule_records[0])], ckb_deps)
+        registry_rejections["wrong_type_id_birth"] = reject_ckb(
+            fixture.sign("object-false-rule-registry", forged, [wallet_group(0, [fixture.faucet])]), 57)
+        registry_birth = ckb_submit(fixture.sign("object-rule-registry", birth, [wallet_group(0, [fixture.faucet])]))
+        l1_rule_point = point(registry_birth["hash"], 0)
+        l1_rule_dep = dependency(l1_rule_point)
+        other_rule_point = point(registry_birth["hash"], 1)
+        l1_other_rule_dep = dependency(other_rule_point)
+        ckb_deps.append(l1_rule_dep)
+
+    live_votes = None
+
+    def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None,
+                    use_live_votes=True, rule_votes=None):
         locks = sorted({packed_script(lock): (lock, key) for _, lock, key in spending}.values(),
                        key=lambda pair: packed_script(pair[0]))
         points = [p for p, _, _ in spending]
@@ -104,10 +139,15 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         context = args.output / f"object-{label}-context.json"
         write_json(path, request)
         write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", path)))
-        if votes:
+        observations = [*votes] if votes else []
+        if live_rule and use_live_votes:
+            observations.extend(rule_votes if rule_votes is not None else live_votes or [])
+        if observations:
+            observation_file = args.output / f"object-{label}-references.json"
+            write_json(observation_file, observations)
             attached = args.output / f"object-{label}-attached.json"
             write_json(attached, json.loads(run(args.binary, "bridge", "attach-references", "--genesis", spec_path,
-                "--transaction", draft, "--observations", votes)))
+                "--transaction", draft, "--observations", observation_file)))
             draft = attached
         write_json(context, {"cells": [signing_cell(client, p) for p in points + deps]})
         for index, (lock, key) in enumerate(locks):
@@ -137,18 +177,37 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     def at(tx, index):
         return point("0x" + tx["hash"], index)
 
-    def packed(point_):
-        return binary(point_["tx_hash"]) + le(int(point_["index"], 16), 4)
-
     def query(path, data="0x"):
         reply = client.query(path, data=data, prove=True)
         return reply["height"], json.loads(bytes.fromhex(reply["value"]))
+
+    def attest(command, label, params):
+        votes = []
+        for index, key in enumerate(fixture.guardian_keys[:3]):
+            votes.append(json.loads(run(args.binary, "bridge", command, "--genesis", spec_path,
+                "--l1-rpc", l1.url, "--key-file", key, "--journal", args.output / f"object-{label}-{index}", *params)))
+        write_json(args.output / f"object-{label}-approvals.json", votes)
+        return votes
+
+    def attest_anchor(label, header):
+        previous = query("/stem/bridge-anchor")[1]
+        height = int(header["number"], 16)
+        approvals = attest("attest-anchor", label, ["--previous-height", str(previous["height"]),
+            "--previous-hash", previous["hash"], "--height", str(height)])
+        approval_file = args.output / f"object-{label}-approvals.json"
+        return commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", approval_file)))
+
+    def attest_reference(label, outpoint, header, *, live):
+        request = args.output / f"object-{label}-reference-request.json"
+        write_json(request, {"out_point": outpoint, "anchor_height": int(header["number"], 16),
+                             "anchor_hash": header["hash"], "live_at_anchor": live})
+        return attest("attest-reference", label, ["--request", request])
 
     seed_cap, auth_cap, object_cap, bond_cap = [capacity * CKB for capacity in (450, 200, 200, 120)]
     if topup:
         object_cap = (9 if state_limit else 8) * CKB
     return_topup = 5 * CKB if topup else 0
-    native_rules = [cell(100 * CKB, owner, raw) for raw in rule_records]
+    native_rules = [cell(100 * CKB, owner, raw) for raw in rule_records] if not live_rule else []
     remainder = mint["payment_capacity"] - seed_cap - auth_cap - len(native_rules) * 100 * CKB - FEE
     separated = commit(native_sign("split", [(mint["payment"], owner, owner_key)],
                                    [cell(seed_cap, owner), cell(auth_cap, authority), cell(remainder, owner),
@@ -161,11 +220,22 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     policy = script(policy_code, hex_bytes(identity_hash + script_hash(authority)), "data")
     types = [identity, policy]
     if state_limit:
-        rule_hash = ckb_hash(rule_records[0])
+        rule_hash = script_hash(rule_types[0]) if live_rule else ckb_hash(rule_records[0])
+        substitute_hash = script_hash(rule_types[1]) if live_rule else ckb_hash(rule_records[1])
+        rule_tag = bytes([int(live_rule)])
         state_limit_code = ckb_hash(args.native_object_state_limit.read_bytes())
-        types.append(script(hex_bytes(state_limit_code), hex_bytes(identity_hash + rule_hash), "data"))
-        native_rule_point, native_other_rule_point = [at(separated, i) for i in (3, 4)]
-        native_deps.append(native_rule_point)
+        types.append(script(hex_bytes(state_limit_code), hex_bytes(identity_hash + rule_tag + rule_hash), "data"))
+        if live_rule:
+            birth_header = registry_birth["proof"]["header"]
+            l1.mine(spec["bridge"]["confirmations"])
+            first_rule_anchor = attest_anchor("rule-anchor-initial", birth_header)
+            initial_votes = attest_reference("rule-initial", l1_rule_point, birth_header, live=True)
+            other_votes = attest_reference("rule-other", other_rule_point, birth_header, live=True)
+            historical_votes = attest_reference("rule-historical", l1_rule_point, birth_header, live=False)
+            live_votes = initial_votes
+        else:
+            native_rule_point, native_other_rule_point = [at(separated, i) for i in (3, 4)]
+            native_deps.append(native_rule_point)
     def object_data(content, revision=0):
         raw = table(molecule_bytes(b"text/plain"), molecule_bytes(content), b"")
         return le(revision, 8) + raw if revisable else raw
@@ -283,16 +353,24 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             "exited with 117")
         if state_limit:
             valid_update = [cell(object_cap, owner, native_update, types), cheaper_auth]
+            absent = dict(use_live_votes=False) if live_rule else dict(deps=native_deps[:-1])
+            unrelated = (dict(rule_votes=other_votes) if live_rule else
+                         dict(deps=[*native_deps[:-1], native_other_rule_point]))
             rejected["stem_revision_missing_external_rule"] = reject_stem(native_sign("missing-external-rule", previous,
-                valid_update, deps=native_deps[:-1]), "exited with 56")
+                valid_update, **absent), "exited with 56")
             rejected["stem_revision_substituted_external_rule"] = reject_stem(native_sign("substitute-external-rule", previous,
-                valid_update, deps=[*native_deps[:-1], native_other_rule_point]), "exited with 56")
+                valid_update, **unrelated), "exited with 56")
+            if live_rule:
+                rejected["stem_historical_rule"] = reject_stem(native_sign("historical-rule", previous,
+                    valid_update, rule_votes=historical_votes), "exited with 56")
             rejected["stem_revision_removes_state_limit"] = reject_stem(native_sign("remove-state-limit", previous,
                 [cell(object_cap, owner, native_update, types[:-1]), cheaper_auth]), "exited with 56")
-            substitute = dict(types[-1], args=hex_bytes(identity_hash + ckb_hash(rule_records[1])))
+            substitute = dict(types[-1], args=hex_bytes(identity_hash + rule_tag + substitute_hash))
+            both = (dict(rule_votes=[*initial_votes, *other_votes]) if live_rule else
+                    dict(deps=[*native_deps, native_other_rule_point]))
             rejected["stem_revision_replaces_state_limit"] = reject_stem(native_sign("replace-state-limit", previous,
                 [cell(object_cap, owner, native_update, [*types[:-1], substitute]), cheaper_auth],
-                deps=[*native_deps, native_other_rule_point]), "exited with 56")
+                **both), "exited with 56")
         revised = commit(native_sign("revise-in-stem", previous,
             [cell(object_cap, owner, native_update, types), cheaper_auth]))
         revisions["native"] = revised
@@ -463,32 +541,54 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     rule_evidence = None
     if state_limit:
-        rotate = transaction([l1_rule_point], [output(item_caps[len(codes)] - FEE, fixture.standard)],
-                             [hex_bytes(rule_records[0])], [secp])
-        republished = ckb_submit(fixture.sign("object-republish-external-rule", rotate,
-                                             [wallet_group(0, [fixture.faucet])]))
+        if live_rule:
+            def rule_update(label, value, *, keep_type=True, lock=None):
+                tx = transaction([l1_rule_point], [output(rule_cap - FEE, lock or fixture.standard,
+                    rule_types[0] if keep_type else None)], [hex_bytes(le(value, 2))],
+                    [secp, dependency(point(funded, len(codes) - 1))])
+                return fixture.sign(f"object-{label}", tx, [wallet_group(0, [fixture.faucet])])
+
+            registry_rejections["decrease"] = reject_ckb(rule_update("decrease-rule", state_limit - 1), 57)
+            registry_rejections["unchanged"] = reject_ckb(rule_update("same-rule", state_limit), 57)
+            registry_rejections["remove"] = reject_ckb(rule_update("remove-rule", next_limit, keep_type=False), 57)
+            registry_rejections["owner_change"] = reject_ckb(rule_update("rule-owner-change", next_limit,
+                                                                       lock=fixture.friend_lock), 57)
+            republished = ckb_submit(rule_update("expand-rule", next_limit))
+            rule_birth = registry_birth["proof"]
+        else:
+            rotate = transaction([l1_rule_point], [output(item_caps[len(codes)] - FEE, fixture.standard)],
+                                 [hex_bytes(rule_records[0])], [secp])
+            republished = ckb_submit(fixture.sign("object-republish-external-rule", rotate,
+                                                 [wallet_group(0, [fixture.faucet])]))
+            rule_birth = l1.prove_committed(funded)
         assert l1.call("get_live_cell", l1_rule_point, True)["status"] != "live"
         l1_rule_replacement = point(republished["hash"], 0)
         ckb_deps.remove(l1_rule_dep)
         ckb_deps.append(dependency(l1_rule_replacement))
-        rule_evidence = {"bytes": hex_bytes(rule_records[0]), "data_hash": hex_bytes(rule_hash),
+        rule_evidence = {"bytes": hex_bytes(rule_records[0]),
                          "state_byte_limit": state_limit, "type": types[-1],
                          "differential_input": hex_bytes(data), "differential_rejected_output": hex_bytes(over_limit),
-                         "stem_initial": certified_cell(native_rule_point),
-                         "ckb_initial_point": l1_rule_point, "ckb_initial_inclusion": l1.prove_committed(funded),
-                         "ckb_replacement_point": l1_rule_replacement, "ckb_republication": republished}
+                         "ckb_initial_point": l1_rule_point, "ckb_initial_inclusion": rule_birth,
+                         "ckb_replacement_point": l1_rule_replacement}
+        if live_rule:
+            rule_evidence.update(registry_type=rule_types[0], registry_hash=hex_bytes(rule_hash),
+                                 next_limit=next_limit, updated_bytes=hex_bytes(le(next_limit, 2)), ckb_update=republished,
+                                 first_rule_anchor=first_rule_anchor, registry_rejections=registry_rejections)
+        else:
+            rule_evidence.update(data_hash=hex_bytes(rule_hash), ckb_republication=republished,
+                                 stem_initial=certified_cell(native_rule_point))
 
     if revisable:
         rejected["ckb_revision_rollback"] = reject_ckb(
             transfer("revision-rollback", contents=data, from_key=fixture.friend), 48)
         content = b"CKB authorized revision before return"
         if state_limit:
-            content = content.ljust(state_limit - len(object_data(b"", 4)), b".")
+            content = content.ljust(next_limit - len(object_data(b"", 4)), b".")
         elif topup:
             content = content.ljust(630, b".")
         return_state = object_data(content, 4)
         if state_limit:
-            assert len(return_state) == state_limit
+            assert len(return_state) == next_limit
         updated = ckb_submit(transfer("revise-on-ckb", contents=return_state, from_key=fixture.friend))
         revisions["ckb"] = updated
         wrapped_point, authority_point = [point(updated["hash"], i) for i in range(2)]
@@ -533,26 +633,20 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     rejected["ckb_replay_after_burn"] = reject_ckb(mint_ckb("repeat-after-burn"), 85)
     assert l1.call("get_live_cell", wrapped_point, True)["status"] != "live"
 
-    def attest(command, label, params):
-        votes = []
-        for index, key in enumerate(fixture.guardian_keys[:3]):
-            votes.append(json.loads(run(args.binary, "bridge", command, "--genesis", spec_path,
-                "--l1-rpc", l1.url, "--key-file", key, "--journal", args.output / f"object-{label}-{index}", *params)))
-        approval = args.output / f"object-{label}-approvals.json"
-        write_json(approval, votes)
-        return approval
-
     l1.mine(spec["bridge"]["confirmations"])
-    _, previous = query("/stem/bridge-anchor")
     anchor = burned["proof"]["header"]
-    height = int(anchor["number"], 16)
-    approvals = attest("attest-anchor", "anchor", ["--previous-height", str(previous["height"]),
-        "--previous-hash", previous["hash"], "--height", str(height)])
-    advanced = commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", approvals)))
-    observation = args.output / "object-reference-request.json"
-    write_json(observation, {"out_point": live_mailbox, "anchor_height": height,
-                             "anchor_hash": anchor["hash"], "live_at_anchor": False})
-    certified = attest("attest-reference", "return", ["--request", observation])
+    advanced = attest_anchor("anchor", anchor)
+    certified = attest_reference("return", live_mailbox, anchor, live=False)
+    if live_rule:
+        live_votes = attest_reference("rule-expanded", l1_rule_replacement, anchor, live=True)
+        old = args.output / "object-consumed-rule-request.json"
+        write_json(old, {"out_point": l1_rule_point, "anchor_height": int(anchor["number"], 16),
+                         "anchor_hash": anchor["hash"], "live_at_anchor": True})
+        refused = subprocess.run([args.binary, "bridge", "attest-reference", "--genesis", spec_path,
+            "--l1-rpc", l1.url, "--key-file", fixture.guardian_keys[0], "--request", old,
+            "--journal", args.output / "object-consumed-rule"], capture_output=True, text=True)
+        assert refused.returncode and "no longer live" in refused.stderr, refused
+        rejected["stem_consumed_rule_observation"] = refused.stderr
 
     release_inputs = [(bond, endpoint, None), (original, endpoint, None)]
     release = [cell(bond_cap, endpoint), cell(object_cap + return_topup, buyer, return_state, types)]
@@ -573,7 +667,12 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if state_limit:
         rejected["stem_return_under_missing_rule"] = reject_stem(native_sign("return-missing-rule", with_approval,
             release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)],
-            endpoint=endpoint, message=inbound, receive=True, votes=certified, deps=native_deps[:-1]), "exited with 56")
+            endpoint=endpoint, message=inbound, receive=True, votes=certified, **absent), "exited with 56")
+    if live_rule:
+        rejected["stem_return_under_superseded_rule_anchor"] = reject_stem(native_sign("return-old-rule-anchor", with_approval,
+            release + [cell(native_auth_capacity - 2 * FEE, authority)],
+            endpoint=endpoint, message=inbound, receive=True, votes=certified, rule_votes=initial_votes),
+            "committed CKB anchor")
     if topup:
         rejected["stem_return_without_required_topup"] = reject_stem(native_sign("return-underfunded",
             with_approval, [release[0], cell(object_cap, buyer, return_state, types),

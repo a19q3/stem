@@ -1,4 +1,4 @@
-//! Portable adapter for the native object state limit and its immutable rule.
+//! Portable adapter for the native object state limit and its rule source.
 
 #![no_std]
 #![no_main]
@@ -6,9 +6,9 @@
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
 use stem_bridge_wire::metatype::{
     custody::Boundary,
-    object_policy::{ObjectPolicy, StateLimit},
+    object_policy::{ObjectPolicy, RuleSource, StateLimit},
 };
-use stem_contracts::metatype::with_invocation;
+use stem_contracts::metatype::{typed_dependency_data, with_invocation};
 
 entry!(main);
 default_alloc!();
@@ -22,7 +22,14 @@ fn main() -> i8 {
             return None;
         }
         let policy = ObjectPolicy::decode(group.script.args())?;
-        let raw = manifests.dependency_data(policy.rule_hash, StateLimit::ENCODED_BYTES)?;
+        let raw = match policy.rule {
+            RuleSource::DataHash(hash) => {
+                manifests.dependency_data(hash, StateLimit::ENCODED_BYTES)?
+            }
+            RuleSource::LiveCkbType(hash) => {
+                typed_dependency_data(hash, StateLimit::ENCODED_BYTES)?
+            }
+        };
         let limit = StateLimit::decode(&raw)?;
         for (source, indices) in [
             (Source::Input, group.input_indices),

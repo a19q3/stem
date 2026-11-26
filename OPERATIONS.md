@@ -1493,6 +1493,16 @@ Stem record. Combine the rule with `--metatype-revision-topup` to raise
 the fixture's rule limit to 700 bytes. This run starts at 9 CKB and
 adds 5 CKB to restore all three Scripts and the final state.
 
+Build `metatype-rule-registry` and add
+`--metatype-rule-registry "$contract_dir/metatype-rule-registry"` to
+the revisable three-Script command to exercise a live rule. The
+CKB registry Type ID stays fixed while the two-byte record changes
+from 120 to 200. The run advances Stem's CKB anchor twice and obtains
+guardians' live rule observations. It verifies that an old reference
+cannot authorize a return under the new anchor. The fixture configures
+50 million transaction cycles for this profile because returning the
+object executes two separately certified references.
+
 ### Exercise cap-bound Metatype fungible custody
 
 Build and run the fungible Metatype profile against CKB devnet with

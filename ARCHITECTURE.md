@@ -134,7 +134,7 @@ Calls retain the CKB buffer convention. `a0` is the buffer pointer, `a1` points 
 | 2121 | Recover a 33-byte compressed secp256k1 key from a 65-byte compact seal at `a0` and a 32-byte digest at `a1`. Writes the key at `a2`. Returns 4 for an invalid or high-S seal. Each call charges 1,900,000 cycles, including invalid seals. |
 | 2122 | Candidate height and committed parent time as two little-endian u64 values, followed by the 32-byte parent Header ID. Source and index must be zero. |
 | 2123 | The encoded Group Message. Source 0 and index 0 select the current group. Source 1 selects the absolute group index. |
-| 2130 | Authenticated read-only CKB reference, in OutPoint order at index `a3`. Set `a4` and `a5` to zero. It uses the normal buffer and offset ABI. |
+| 2130 | Authenticated read-only CKB reference in OutPoint order at index `a3`, with `a4=0`. Selector `a5=0` returns the full record. Selector `a5=1` returns the 32-byte CKB Type Script hash followed by Cell Data for a typed `LiveAtAnchor` record. A historical or untyped record returns `ITEM_MISSING` for selector 1. Both selectors use the normal buffer and offset ABI. |
 | 2124 | For paired Lock authorization, the 32-byte network-bound ordered dependency digest, little-endian u64 transaction fee and the 32-byte Action manifest digest. Source and index must be zero. Available to the Data-addressed paired Lock code when the transaction uses the paired proof scope. |
 | 2072, 2082 | Native Header, or fields height 0, time 1, parent ID 2, transaction root 3, Cell root 4, system root 5, history root 6, receipt root 7 |
 
@@ -371,6 +371,11 @@ complete Manifest and runs the extra adapters. Its independent state
 limit Script and adapter resolve the same content-addressed rule
 record from actual dependencies on both chains. Republishing that
 record changes its OutPoint and preserves its rule identity.
+The state limit also supports a CKB Type ID registry with a stable
+Type hash and a strictly increasing ceiling. Stem reads the registry
+through an authenticated live reference at the committed CKB anchor.
+The portable adapter reads it directly as a CKB dependency. This rule
+can expand while a represented object remains on CKB.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and

@@ -36,6 +36,24 @@ pub fn bounded_data(index: usize, source: Source, limit: usize) -> Result<Vec<u8
     Ok(data)
 }
 
+pub fn typed_dependency_data(hash: &Hash32, max_bytes: usize) -> Option<Vec<u8>> {
+    let mut found = None;
+    for index in 0..=MAX_DEPS {
+        match load_cell_type_hash(index, Source::CellDep) {
+            Ok(current) if index < MAX_DEPS => {
+                if current.as_ref() == Some(hash) && found.replace(index).is_some() {
+                    return None;
+                }
+            }
+            Err(SysError::IndexOutOfBound) => {
+                return bounded_data(found?, Source::CellDep, max_bytes).ok();
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 pub fn witness_data(index: usize) -> Result<Option<Vec<u8>>, SysError> {
     let mut prefix = [0; MAGIC.len()];
     let length = match load_witness(&mut prefix, 0, index, Source::Input) {

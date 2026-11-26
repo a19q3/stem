@@ -20,7 +20,11 @@ use ckb_vm::{
 };
 use lru::LruCache;
 use rayon::prelude::*;
-use stem_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, block::Header};
+use stem_ledger::{
+    CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind,
+    block::Header,
+    protocol::l1_reference::{L1Reference, L1ReferenceKind},
+};
 
 use ckb_script::runtime::{
     Close, CurrentCycles, DataPieceId, ExecV2, INDEX_OUT_OF_BOUND, ITEM_MISSING, InheritedFd,
@@ -407,13 +411,30 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
             LOAD_TRANSACTION_SYSCALL_NUMBER => store_data(machine, tx.as_slice()),
             LOAD_NETWORK_ID => store_data(machine, context.tx.network_id().as_slice()),
             LOAD_L1_REFERENCE => {
-                if source != 0 || arg != 0 {
+                if source != 0 {
                     return Ok(status(machine, INDEX_OUT_OF_BOUND));
                 }
                 let Some(reference) = context.tx.l1_references().get(index) else {
                     return Ok(status(machine, INDEX_OUT_OF_BOUND));
                 };
-                store_data(machine, reference)
+                match arg {
+                    0 => store_data(machine, reference),
+                    1 => {
+                        let observed = L1Reference::decode(reference)
+                            .map_err(|error| Error::External(error.to_string()))?;
+                        let Some(script) = observed.output.type_().to_opt() else {
+                            return Ok(status(machine, ITEM_MISSING));
+                        };
+                        if observed.kind != L1ReferenceKind::LiveAtAnchor {
+                            return Ok(status(machine, ITEM_MISSING));
+                        }
+                        let mut data = Vec::with_capacity(32 + observed.data.len());
+                        data.extend_from_slice(script.calc_script_hash().as_slice());
+                        data.extend_from_slice(&observed.data);
+                        store_data(machine, &data)
+                    }
+                    _ => return Ok(status(machine, INDEX_OUT_OF_BOUND)),
+                }
             }
             LOAD_BLOCK_CONTEXT => {
                 if source != 0 || index != 0 {

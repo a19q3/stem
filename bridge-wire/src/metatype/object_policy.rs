@@ -2,19 +2,32 @@ use crate::intercell::Identity;
 
 use super::MAX_STATE_BYTES;
 
-/// The extra Type Script binds a complete object Script and a Cell Dep's raw data.
+/// The extra Type Script binds a complete object Script and its rule source.
 pub struct ObjectPolicy<'a> {
     pub object: &'a Identity,
-    pub rule_hash: &'a Identity,
+    pub rule: RuleSource<'a>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum RuleSource<'a> {
+    DataHash(&'a Identity),
+    LiveCkbType(&'a Identity),
 }
 
 impl<'a> ObjectPolicy<'a> {
     pub fn decode(raw: &'a [u8]) -> Option<Self> {
-        let (fields, tail) = raw.as_chunks::<32>();
-        let [object, rule_hash] = fields else {
+        let (object, raw) = raw.split_first_chunk::<32>()?;
+        let (&kind, raw) = raw.split_first()?;
+        let id: &Identity = raw.try_into().ok()?;
+        if *object == [0; 32] || *id == [0; 32] {
             return None;
+        }
+        let rule = match kind {
+            0 => RuleSource::DataHash(id),
+            1 => RuleSource::LiveCkbType(id),
+            _ => return None,
         };
-        (tail.is_empty() && !fields.contains(&[0; 32])).then_some(Self { object, rule_hash })
+        Some(Self { object, rule })
     }
 }
 
@@ -33,6 +46,10 @@ impl StateLimit {
     pub fn permits(&self, state: &[u8]) -> bool {
         !state.is_empty() && state.len() <= self.0
     }
+
+    pub fn increases(&self, previous: &Self) -> bool {
+        self.0 > previous.0
+    }
 }
 
 #[cfg(test)]
@@ -41,13 +58,21 @@ mod tests {
 
     #[test]
     fn binds_a_nonzero_object_and_rule_and_rejects_noncanonical_limits() {
-        let mut args = [[1; 32], [2; 32]].as_flattened().to_vec();
+        let mut args = [&[1; 32][..], &[0], &[2; 32]].concat();
         let policy = ObjectPolicy::decode(&args).unwrap();
         assert_eq!(policy.object, &[1; 32]);
-        assert_eq!(policy.rule_hash, &[2; 32]);
+        assert_eq!(policy.rule, RuleSource::DataHash(&[2; 32]));
+        args[32] = 1;
+        assert_eq!(
+            ObjectPolicy::decode(&args).unwrap().rule,
+            RuleSource::LiveCkbType(&[2; 32])
+        );
+        args[32] = 2;
+        assert!(ObjectPolicy::decode(&args).is_none());
+        args[32] = 1;
         args.push(0);
         assert!(ObjectPolicy::decode(&args).is_none());
-        assert!(ObjectPolicy::decode(&[0; 64]).is_none());
+        assert!(ObjectPolicy::decode(&[0; 65]).is_none());
 
         let rule = StateLimit::decode(&3u16.to_le_bytes()).unwrap();
         assert!(rule.permits(b"abc"));
@@ -56,5 +81,9 @@ mod tests {
         assert!(StateLimit::decode(&[0, 0]).is_none());
         assert!(StateLimit::decode(&[3, 0, 0]).is_none());
         assert!(StateLimit::decode(&((MAX_STATE_BYTES + 1) as u16).to_le_bytes()).is_none());
+        let larger = StateLimit::decode(&4u16.to_le_bytes()).unwrap();
+        assert!(larger.increases(&rule));
+        assert!(!rule.increases(&larger));
+        assert!(!rule.increases(&rule));
     }
 }

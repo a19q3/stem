@@ -445,7 +445,7 @@ def bridge_round(args, l1, fixture, children):
     generic_intercell = args.intercell_mailbox and not any(
         (args.export_udt, args.stem_spore, args.stem_native_object))
     # The generic receive fixture carries three separately certified references.
-    transaction_cycles = 50_000_000 if generic_intercell else 20_000_000
+    transaction_cycles = 50_000_000 if generic_intercell or args.metatype_rule_registry else 20_000_000
     spec = {"chain_id": "stem-jolteon-ckb-local", "network_id": network, "genesis_time_ms": 1_735_689_600_000,
             "capacity": {"bond_per_byte": 1_000_000, "state_overhead": 80},
             "limits": {"transaction_count": 64, "transaction_bytes": 2 * 1024 * 1024,
@@ -567,7 +567,7 @@ def main():
     for name in ("stem-native-object", "object-policy", "ckb-stem-object",
                  "stem-metatype-escrow", "metatype-dispatcher", "metatype-mailbox-lock",
                  "metatype-bridged-object", "metatype-bridged-approval", "native-object-state-limit",
-                 "metatype-object-state-limit", "native-amount-cap",
+                 "metatype-object-state-limit", "metatype-rule-registry", "native-amount-cap",
                  "metatype-udt-adapter", "metatype-amount-cap-adapter"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--metatype-shared-manifest", action="store_true")
@@ -609,6 +609,8 @@ def main():
     state_limit = (args.native_object_state_limit, args.metatype_object_state_limit)
     if any(state_limit) and not all((*state_limit, metatype_object, args.metatype_revisable_object)):
         parser.error("The state limit fixture requires both Type Script binaries and a revisable Metatype object")
+    if args.metatype_rule_registry and (not all(state_limit) or args.metatype_revision_topup):
+        parser.error("The live rule fixture requires the state limit scripts and uses its own capacity profile")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

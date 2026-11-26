@@ -357,13 +357,15 @@ Scripts at both boundaries because it has no adapter table.
 
 An object can carry an independent limit on the length of its complete
 encoded state. This includes the revision prefix and object encodings.
-The third Script's arguments are the complete identity Script hash and
-the CKB data hash of the rule record. The record is exactly one
+The third Script's arguments are the complete identity Script hash,
+a one-byte rule source, and its 32-byte commitment. Source `0` uses
+the CKB data hash of an immutable record. Source `1` uses the full
+CKB Type Script hash of a rule registry. The record is exactly one
 little-endian u16 from 1 through 2,048. The identity group checks
 canonical state, the approval group checks authorization, and the
 consumption Locks enforce ownership.
 
-Both hosts resolve the rule from an actual Cell Dep and compare its
+For source `0`, both hosts resolve the rule from an actual Cell Dep and compare its
 data hash. The configured bytes can be published independently on
 each chain and at a new OutPoint. The rule's integrity comes from its
 content hash. Availability requires a live copy of those bytes on the
@@ -375,12 +377,36 @@ leaves Stem custody. Source Cell Data remains in the identity entry
 of the CKB Manifest. The limit entry has empty state.
 
 The escrow and adapter table pin the three complete Scripts. Changing
-the rule bytes changes their Manifest commitment. Republish the same
-bytes to recover availability. A rule change for an existing object
-would need an explicitly authorized transition accepted by its old
-constraint. Neither chain follows a publisher's latest state. Rules
-that depend on mutable authority, an external live state assertion,
-or every intermediate transition need their own authenticated context.
+the immutable rule bytes changes their Manifest commitment. Republish
+the same bytes to recover availability.
+
+### Live registry for an increasing ceiling
+
+With rule source `1`, the application configures the audited CKB
+`metatype-rule-registry` Type code and a specific Type ID. Creation
+binds the first consumed OutPoint and output index using CKB Type ID
+rules. A transition must recreate exactly one registry Cell with the
+same Type and Lock and a strictly increased ceiling. The consumed Lock
+authorizes the change. The registry cannot be retired or replaced by a
+new Type under this profile.
+
+CKB resolves exactly one actual Cell Dep with that full Type hash.
+Stem resolves exactly one typed `LiveAtAnchor` CKB reference whose
+Type hash matches. The existing CKB guardian quorum must authenticate
+it at the current committed anchor. StemVM exposes the typed projection
+through syscall 2130. A historical inclusion supplies no live rule
+data. The caller supplies the attestation for every transition that
+executes this group. A return carries a separate historical message
+record at the same anchor.
+
+Rule updates keep the Manifest, deployment and object identity fixed.
+Every later valid ceiling also accepts earlier authorized states. If
+CKB updated the rule after Stem's current anchor, a transaction that
+needs the higher ceiling must first advance Stem's anchor and get a
+new live attestation. This relies on the current CKB observation and
+confirmation model. Decreasing a limit, changing issuer authorization
+or enforcing arbitrary external transition history needs a different
+profile with its own settlement guarantees.
 
 ### Cap-bound fungible UDT
 
@@ -446,6 +472,7 @@ commitments, and the participating owners' Locks.
 | Existing state to output state | A transfer removes a freeze, approval, identity or supply rule | Run all consumed groups and all created groups. Original policy decides whether retirement or migration is authorized. Revisable custody rejects rollback, same-revision edits and substituting stale data at the return boundary. |
 | Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
 | Rule record to object | A relayer replaces it with a looser rule, or spends the published copy | Resolve the pinned data hash in actual dependencies on both chains. Reject changed bytes and oversized states. Keep the original bytes available for publication at a new OutPoint. |
+| Live rule registry | An updater forks or removes the registry, reduces the limit after a transfer, or supplies an obsolete CKB observation to Stem | Enforce Type ID and a same-Lock successor with a strict increase. Resolve one current CKB dependency or one guardian-certified live reference at Stem's committed anchor. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |
 | Guest and dependency bounds | Recursive execution, malformed lengths, or excessive combinations consume resources | Use bounded lists and byte reads, immutable reviewed adapters, sequential spawn and CKB cycles. Reject unknown dependencies and failed child results. |
