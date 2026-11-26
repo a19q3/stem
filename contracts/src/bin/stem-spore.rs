@@ -17,7 +17,7 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
-    spore::{MAX_SPORE_DATA, SporeTransfer, plain_spore, return_nonce},
+    spore::{MAX_SPORE_DATA, SporeData, SporeTransfer, return_nonce},
 };
 
 entry!(main);
@@ -64,7 +64,7 @@ fn object_type(script: &Script, endpoint: &Identity) -> Result<(), i8> {
     let read = |source| -> Result<_, i8> {
         match load_cell_data(0, source) {
             Ok(data)
-                if plain_spore(&data)
+                if SporeData::decode(&data).is_some()
                     && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound) =>
             {
                 Ok(Some(data))

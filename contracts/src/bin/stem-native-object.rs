@@ -175,7 +175,7 @@ fn escrow(script: &Script, fields: &[[u8; 32]; 8], network: &Identity) -> Result
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..len]).ok_or(118)?;
-    let transfer = SporeTransfer::decode(message.payload).ok_or(118)?;
+    let transfer = SporeTransfer::decode_plain(message.payload).ok_or(118)?;
     if transfer.original_type != *object {
         return Err(118);
     }

@@ -10,6 +10,7 @@ from stake_localnet import witness
 
 # Published Spore V2 mainnet code and the CoBuild ScriptInfo hash used by CCC.
 SPORE_CODE = bytes.fromhex("4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5")
+CLUSTER_CODE = bytes.fromhex("7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075")
 SCRIPT_INFO = bytes.fromhex("23cde495cfd125019140ea933e76e3cbf16189483232ab5a05d88fb34d1023e1")
 
 
@@ -26,13 +27,14 @@ def molecule_bytes(data):
     return le(len(data), 4) + data
 
 
-def cobuild(spore, object_id, source, target, *, data=None):
+def cobuild(object_type, object_id, source, target, *, data=None, cluster=False):
     to = le(0, 4) + packed_script(target)
+    tag = 3 if cluster else 0
     if source is None:
-        detail = le(0, 4) + table(object_id, to, ckb_hash(data))
+        detail = le(tag, 4) + table(object_id, to, ckb_hash(data))
     else:
-        detail = le(1, 4) + table(object_id, le(0, 4) + packed_script(source), to)
-    action = table(SCRIPT_INFO, script_hash(spore), molecule_bytes(detail))
+        detail = le(tag + 1, 4) + table(object_id, le(0, 4) + packed_script(source), to)
+    action = table(SCRIPT_INFO, script_hash(object_type), molecule_bytes(detail))
     return hex_bytes(le(0xff000001, 4) + table(molecule_bytes(b""), table(table(action))))
 
 
@@ -53,19 +55,31 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     secp = vault["secp"]
     spore_cap, mailbox_cap, relay_funds = 360 * CKB, 1000 * CKB, 1800 * CKB
     codes = [code, mailbox_bin, ckb_lock_bin]
+    cluster_code = args.spore_cluster_v2.read_bytes() if args.spore_cluster_v2 else None
+    cluster_cap, proxy_cap = 300 * CKB, 120 * CKB if cluster_code else 0
+    if cluster_code:
+        assert ckb_hash(cluster_code) == CLUSTER_CODE, "the fixture requires the published Cluster ELF"
+        codes.append(cluster_code)
     capacities = [(len(binary_) + 100) * CKB for binary_ in codes]
+    funds = [(spore_cap + proxy_cap + FEE, fixture.standard), (mailbox_cap + FEE, fixture.standard),
+             (relay_funds, fixture.standard)]
+    if cluster_code:
+        funds += [(cluster_cap + FEE, fixture.standard), (spore_cap + proxy_cap + FEE, fixture.owner_lock)]
     fund = transaction([vault["change_point"]],
         [output(amount, fixture.standard) for amount in capacities] +
-        [output(spore_cap + FEE, fixture.standard), output(mailbox_cap + FEE, fixture.standard),
-         output(relay_funds, fixture.standard),
-         output(vault["change"] - sum(capacities) - spore_cap - mailbox_cap - relay_funds - 3 * FEE,
+        [output(amount, lock) for amount, lock in funds] +
+        [output(vault["change"] - sum(capacities) - sum(amount for amount, _ in funds) - FEE,
                 fixture.standard)],
-        [hex_bytes(binary_) for binary_ in codes] + ["0x"] * 4, [secp])
+        [hex_bytes(binary_) for binary_ in codes] + ["0x"] * (len(funds) + 1), [secp])
     funded = l1.send(fixture.sign("spore-fund", fund, [wallet_group(0, [fixture.faucet])]))
     deps = [secp] + [dependency(point(funded, i)) for i in range(3)]
 
-    def submit_ckb(signed):
-        cycles = int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
+    def estimate(signed):
+        return int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
+
+    def submit_ckb(signed, cycles=None):
+        if cycles is None:
+            cycles = estimate(signed)
         tx = l1.send(signed)
         return {"hash": tx, "inclusion": l1.prove_committed(tx), "cycles": cycles,
                 "bytes": len(binary(signed["molecule"]))}
@@ -79,16 +93,56 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     def type_id(index):
         return ckb_hash(le(0, 8) + binary(funded) + le(index, 4) + le(0, 8))
 
-    object_id = type_id(3)
+    mint_source = len(codes)
+    cluster_id, cluster = b"", None
+    rejected = {}
+    if cluster_code:
+        cluster_id = type_id(mint_source + 3)
+        cluster_type = script(hex_bytes(CLUSTER_CODE), hex_bytes(cluster_id), "data1")
+        cluster_data = table(molecule_bytes(b"Cross-chain collection"), molecule_bytes(b"CKB custody"), b"")
+        cluster_dep = dependency(point(funded, 3))
+        creation = transaction([point(funded, mint_source + 3)],
+            [output(cluster_cap, fixture.standard, cluster_type)], [hex_bytes(cluster_data)],
+            [secp, cluster_dep])
+        creation["witnesses"] = ["0x", cobuild(cluster_type, cluster_id, None, fixture.standard,
+                                                  data=cluster_data, cluster=True)]
+        created_cluster = submit_ckb(fixture.sign("spore-cluster-mint", creation, [wallet_group(0, [fixture.faucet])]))
+        cluster_point = point(created_cluster["hash"], 0)
+        cluster = {"id": hex_bytes(cluster_id), "type": cluster_type, "minted": created_cluster}
+
+    object_id = type_id(mint_source)
     object_type = script(hex_bytes(SPORE_CODE), hex_bytes(object_id), "data1")
     original = script_hash(object_type)
-    data = table(molecule_bytes(b"text/plain"), molecule_bytes(b"One Spore across two networks"), b"")
-    creator = transaction([point(funded, 3)], [output(spore_cap, fixture.owner_lock, object_type)],
-                          [hex_bytes(data)], deps)
-    creator["witnesses"] = ["0x", cobuild(object_type, object_id, None, fixture.owner_lock, data=data)]
-    minted = submit_ckb(fixture.sign("spore-mint", creator, [wallet_group(0, [fixture.faucet])]))
+    def spore_data(id_):
+        return table(molecule_bytes(b"text/plain"), molecule_bytes(b"One Spore across two networks"),
+                     molecule_bytes(id_) if id_ else b"")
+
+    data = spore_data(cluster_id)
+
+    def mint_spore(label, index=mint_source, key=fixture.faucet, include_cluster=True):
+        id_ = type_id(index)
+        type_ = {**object_type, "args": hex_bytes(id_)}
+        outputs = [output(spore_cap, fixture.owner_lock, type_)]
+        payload, dependencies = [hex_bytes(data)], deps.copy()
+        if cluster:
+            outputs.append(output(proxy_cap, fixture.standard))
+            payload.append("0x")
+            if include_cluster:
+                dependencies.append(dependency(cluster_point))
+        tx = transaction([point(funded, index)], outputs, payload, dependencies)
+        tx["witnesses"] = ["0x", cobuild(type_, id_, None, fixture.owner_lock, data=data)]
+        return fixture.sign(f"spore-{label}", tx, [wallet_group(0, [key])])
+
+    if cluster:
+        for label, tx in (
+            ("mint_without_cluster", mint_spore("no-cluster", include_cluster=False)),
+            ("mint_without_cluster_authority", mint_spore("no-cluster-authority", mint_source + 4, fixture.owner)),
+        ):
+            rejected[f"ckb_{label}"] = ckb_reject(tx)
+            assert SPORE_CODE.hex() in rejected[f"ckb_{label}"], rejected[f"ckb_{label}"]
+    minted = submit_ckb(mint_spore("mint"))
     object_point = point(minted["hash"], 0)
-    sequencer_id = type_id(4)
+    sequencer_id = type_id(mint_source + 1)
     checkpoint_code, checkpoint_id = binary(vault["anchor"]["hash"]), vault["anchor"]["id"]
     endpoint = script(stem_spore_code, hex_bytes(original + binary(genesis) + mailbox_code
         + sequencer_id + escrow_code + checkpoint_code + checkpoint_id), "data")
@@ -99,12 +153,12 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         + script_hash(ckb_escrow) + checkpoint_code + checkpoint_id), "data2")
     mailbox_id = script_hash(mailbox)
     mapped_type = script(stem_spore_code, hex_bytes(endpoint_id), "data")
-    initial = transaction([point(funded, 4)], [output(mailbox_cap, ckb_escrow, mailbox)],
+    initial = transaction([point(funded, mint_source + 1)], [output(mailbox_cap, ckb_escrow, mailbox)],
                           [hex_bytes(le(0, 8) + empty)], deps)
     initial["header_deps"] = [genesis]
     created = l1.send(fixture.sign("spore-mailbox", initial, [wallet_group(0, [fixture.faucet])]))
     mailbox_point = point(created, 0)
-    l1_fee_point = point(funded, 5)
+    l1_fee_point = point(funded, mint_source + 2)
     fee_capacity = relay_funds
     nonce_frontier = 0
 
@@ -137,17 +191,21 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             groups = [wallet_group(1, [fixture.faucet])]
         return fixture.sign(f"spore-{label}", tx, groups)
 
-    rejected = {}
+    held_signed = deposit("deposit")
+    held_cycles = estimate(held_signed)
     rejected["ckb_deposit_without_original"] = ckb_reject(deposit("fake-deposit", move=False), 111)
     rejected["ckb_missing_spore_cobuild"] = ckb_reject(deposit("no-cobuild", include_cobuild=False))
     assert SPORE_CODE.hex() in rejected["ckb_missing_spore_cobuild"], rejected["ckb_missing_spore_cobuild"]
     rejected["ckb_mutated_original"] = ckb_reject(deposit("mutated-deposit", content=data[:-1] + b"?"))
-    clustered = table(molecule_bytes(b"text/plain"), molecule_bytes(b"unsupported"), molecule_bytes(bytes(32)))
-    rejected["ckb_cluster_payload"] = ckb_reject(deposit("unsupported-cluster",
-        policy=packet("unsupported-cluster", False, script_hash(owner), 0, clustered)), 113)
+    wrong_cluster = spore_data(ckb_hash(b"A different Cluster"))
+    rejected["ckb_forged_cluster"] = ckb_reject(deposit("forged-cluster",
+        policy=packet("forged-cluster", False, script_hash(owner), 0, wrong_cluster)), 113)
+    if cluster:
+        rejected["ckb_removed_cluster"] = ckb_reject(deposit("removed-cluster",
+            policy=packet("removed-cluster", False, script_hash(owner), 0, spore_data(b""))), 113)
     rejected["ckb_deposit_to_stem_endpoint"] = ckb_reject(deposit("deposit-to-stem-endpoint",
         policy=packet("deposit-to-stem-endpoint", False, endpoint_id, 0)), 113)
-    held = submit_ckb(deposit("deposit"))
+    held = submit_ckb(held_signed, held_cycles)
     mailbox_point, object_point, l1_fee_point = [point(held["hash"], i) for i in range(3)]
     fee_capacity -= FEE
     nonce_frontier += 1
@@ -156,6 +214,14 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     def query(path, data="0x"):
         proof = client.query(path, data=data, prove=True)
         return proof["height"], json.loads(bytes.fromhex(proof["value"]))
+
+    def certified(path, data):
+        height, proof = query(path, data)
+        return {**proof, "height": height, "finality": client.finality(height)["proof"]}
+
+    def cell_proof(location):
+        key = hex_bytes(binary(location["tx_hash"]) + le(int(location["index"], 16), 4))
+        return {**certified("/stem/cell", key), "point": key}
 
     def commit(tx):
         result = client.call("broadcast_tx_commit", tx=tx)
@@ -248,6 +314,19 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
 
     rejected["stem_mutated_transfer"] = stem_reject(stem_signed("modify", mapped_at,
         [cell(mapped_cap - FEE, buyer, data[:-1] + b"?", [mapped_type])]), "exited with 107")
+    if cluster:
+        rejected["stem_removed_cluster"] = stem_reject(stem_signed("remove-cluster", mapped_at,
+            [cell(mapped_cap - FEE, buyer, spore_data(b""), [mapped_type])]), "exited with 107")
+        tx = transaction([cluster_point, l1_fee_point],
+            [output(cluster_cap, fixture.friend_lock, cluster_type), output(fee_capacity - FEE, fixture.standard)],
+            [hex_bytes(cluster_data), "0x"], [secp, cluster_dep])
+        tx["witnesses"] = ["0x", "0x", cobuild(cluster_type, cluster_id, fixture.standard,
+                                                   fixture.friend_lock, cluster=True)]
+        group = {**wallet_group(0, [fixture.faucet]), "inputs": [0, 1]}
+        cluster["transferred"] = submit_ckb(fixture.sign("spore-cluster-transfer", tx, [group]))
+        l1_fee_point = point(cluster["transferred"]["hash"], 1)
+        fee_capacity -= FEE
+        assert l1.call("get_live_cell", cluster_point, True)["status"] != "live"
     transferred = commit(stem_signed("transfer", mapped_at, [cell(mapped_cap - FEE, buyer, data, [mapped_type])]))
     mapped_at = at(transferred, 0)
     nonce = int.from_bytes(ckb_hash(b"Stem Spore return nonce\0" + binary(bond_at["tx_hash"])
@@ -292,8 +371,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     assert final["output"] == output(spore_cap, fixture.friend_lock, object_type)
     assert final["data"]["content"] == hex_bytes(data)
     assert l1.call("get_live_cell", object_point, True)["status"] != "live"
-    end_cell = client.query("/stem/cell", data=hex_bytes(binary(mapped_at["tx_hash"]) + le(0, 4)), prove=True)
-    assert json.loads(bytes.fromhex(end_cell["value"]))["cell"] is None
+    end_cell = cell_proof(mapped_at)
+    assert end_cell["cell"] is None
 
     mailbox_point, object_point, l1_fee_point = [point(released["hash"], i) for i in range(3)]
     fee_capacity -= FEE
@@ -312,21 +391,29 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     revived_cell = signing_cell(client, at(reimported, 1))
     assert revived_cell["cell"] == revived
     assert l1.call("get_live_cell", object_point, True)["cell"]["output"] == output(spore_cap, ckb_escrow, object_type)
+    if cluster:
+        cluster["live_after_reimport"] = l1.call("get_live_cell", point(cluster["transferred"]["hash"], 0), True)["cell"]
+        assert cluster["live_after_reimport"]["output"] == output(cluster_cap, fixture.friend_lock, cluster_type)
+        assert cluster["live_after_reimport"]["data"]["content"] == hex_bytes(cluster_data)
 
     def execution(committed):
         location = client.locations[committed["hash"]]
-        response = client.query("/stem/execution", height=location["height"],
+        height = location["height"]
+        response = client.query("/stem/execution", height=height,
                                 data=hex_bytes(le(location["index"], 4)), prove=True)
-        return json.loads(bytes.fromhex(response["value"]))
+        return {**json.loads(bytes.fromhex(response["value"])), "height": height,
+                "finality": client.finality(height)["proof"]}
 
-    return {"id": hex_bytes(object_id), "original_type": object_type, "mapped_type": mapped_type,
+    return {"id": hex_bytes(object_id), "original_type": object_type, "mapped_type": mapped_type, "cluster": cluster,
             "mailbox_creation": l1.prove_committed(created), "mailbox": mailbox, "endpoint": endpoint,
             "minted": minted, "held": held, "anchor": anchor, "imported": imported,
             "transferred": transferred, "burned": burned, "released": released, "final_ckb": final,
             "locked_bond": signing_cell(client, at(reimported, 0)), "spent_mapping": end_cell,
-            "outbox": outbox, "inbox": query("/stem/intercell/inbox", importing["id"])[1],
+            "outbox": certified("/stem/intercell/outbox", returning["id"]),
+            "inbox": certified("/stem/intercell/inbox", importing["id"]),
             "redeposited": redeposited, "second_anchor": second_anchor,
             "reimported": reimported, "reimported_cell": revived_cell,
+            "reimported_proof": cell_proof(at(reimported, 1)),
 
             "execution": {name: execution(tx) for name, tx in (
                 ("imported", imported), ("transferred", transferred), ("burned", burned), ("reimported", reimported))},

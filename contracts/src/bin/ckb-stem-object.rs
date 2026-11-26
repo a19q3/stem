@@ -118,7 +118,7 @@ fn mailbox_lock(script: &Script, policy: &[[u8; 32]; 5]) -> Result<(), i8> {
         let input_type = witness.input_type().to_opt().ok_or(123)?.raw_data();
         let bytes = Delivery::decode(&input_type).ok_or(123)?.record;
         let message = Message::decode(bytes).ok_or(123)?;
-        let transfer = SporeTransfer::decode(message.payload).ok_or(123)?;
+        let transfer = SporeTransfer::decode_plain(message.payload).ok_or(123)?;
         let output = right.ok_or(123)?;
         if left.is_some()
             || message.sender != *stem
@@ -131,7 +131,7 @@ fn mailbox_lock(script: &Script, policy: &[[u8; 32]; 5]) -> Result<(), i8> {
         }
     } else {
         let message = Message::decode(next.outgoing).ok_or(123)?;
-        let transfer = SporeTransfer::decode(message.payload).ok_or(123)?;
+        let transfer = SporeTransfer::decode_plain(message.payload).ok_or(123)?;
         let input = left.ok_or(123)?;
         if right.is_some()
             || message.receiver != *stem

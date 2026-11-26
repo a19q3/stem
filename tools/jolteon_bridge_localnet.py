@@ -565,6 +565,8 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     for name in ("stem-spore", "ckb-spore-escrow", "spore-v2"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
+    parser.add_argument("--spore-cluster-v2", type=lambda path: Path(path).resolve(),
+                        help="mint the fixture in a Cluster using its published CKB ELF")
     for name in ("stem-native-object", "object-policy", "ckb-stem-object",
                  "stem-metatype-escrow", "metatype-dispatcher", "metatype-mailbox-lock",
                  "metatype-bridged-object", "metatype-bridged-approval", "native-object-state-limit",
@@ -608,7 +610,7 @@ def main():
             not all((args.export_udt, args.intercell_mailbox))
             or not (all(portable_udt) or all((args.asset_escrow, args.ckb_stem_udt)))):
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
-    if any((args.stem_spore, args.ckb_spore_escrow, args.spore_v2)) and (
+    if any((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.spore_cluster_v2)) and (
             not all((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
             or args.export_udt):
         parser.error("Spore settlement requires its three binaries and the Intercell mailbox")

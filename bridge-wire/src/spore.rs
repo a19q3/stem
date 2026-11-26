@@ -1,4 +1,4 @@
-//! The limited, immutable Spore data accepted by object settlement.
+//! Canonical, immutable Spore data accepted by object settlement.
 
 use crate::{
     hash,
@@ -19,6 +19,7 @@ pub struct SporeTransfer<'a> {
     pub original_type: Identity,
     pub recipient: Identity,
     pub data: &'a [u8],
+    pub cluster_id: Option<&'a Identity>,
 }
 
 impl<'a> SporeTransfer<'a> {
@@ -26,14 +27,21 @@ impl<'a> SporeTransfer<'a> {
         let (header, data) = payload.split_at_checked(TRANSFER_HEADER)?;
         let original_type = header[..32].try_into().ok()?;
         let recipient = header[32..].try_into().ok()?;
-        if original_type == [0; 32] || recipient == [0; 32] || !plain_spore(data) {
+        if original_type == [0; 32] || recipient == [0; 32] {
             return None;
         }
         Some(Self {
             original_type,
             recipient,
             data,
+            cluster_id: SporeData::decode(data)?.cluster_id,
         })
+    }
+
+    /// Stem-issued objects use the plain content profile.
+    pub fn decode_plain(payload: &'a [u8]) -> Option<Self> {
+        let transfer = Self::decode(payload)?;
+        transfer.cluster_id.is_none().then_some(transfer)
     }
 }
 
@@ -47,24 +55,52 @@ pub fn plain_spore(data: &[u8]) -> bool {
 }
 
 pub(crate) fn plain_spore_fields(data: &[u8]) -> Option<(&[u8], &[u8])> {
-    let (header, _) = data.split_at_checked(16)?;
-    let (words, _) = header.as_chunks::<4>();
-    let [total, mime, content, cluster] = words else {
-        return None;
-    };
-    let content = u32::from_le_bytes(*content) as usize;
-    if data.len() > MAX_SPORE_DATA
-        || u32::from_le_bytes(*total) as usize != data.len()
-        || u32::from_le_bytes(*mime) != 16
-        || u32::from_le_bytes(*cluster) as usize != data.len()
-    {
-        return None;
+    let data = SporeData::decode(data)?;
+    data.cluster_id
+        .is_none()
+        .then_some((data.content_type, data.content))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SporeData<'a> {
+    pub content_type: &'a [u8],
+    pub content: &'a [u8],
+    pub cluster_id: Option<&'a Identity>,
+}
+
+impl<'a> SporeData<'a> {
+    pub fn decode(data: &'a [u8]) -> Option<Self> {
+        let (header, _) = data.split_at_checked(16)?;
+        let [total, mime, content, cluster] = header.as_chunks::<4>().0 else {
+            return None;
+        };
+        if data.len() > MAX_SPORE_DATA
+            || u32::from_le_bytes(*total) as usize != data.len()
+            || u32::from_le_bytes(*mime) != 16
+        {
+            return None;
+        }
+        let content = u32::from_le_bytes(*content) as usize;
+        let cluster = u32::from_le_bytes(*cluster) as usize;
+        let content_type = molecule_bytes(data.get(16..content)?)?;
+        let content = molecule_bytes(data.get(content..cluster)?)?;
+        let cluster_id = match data.get(cluster..)? {
+            [] => None,
+            raw => {
+                let id: &Identity = molecule_bytes(raw)?.try_into().ok()?;
+                if id == &[0; 32] {
+                    return None;
+                }
+                Some(id)
+            }
+        };
+        (matches!(content_type, b"text/plain" | b"application/octet-stream") && !content.is_empty())
+            .then_some(Self {
+                content_type,
+                content,
+                cluster_id,
+            })
     }
-    let (mime, content) = data[16..].split_at_checked(content.checked_sub(16)?)?;
-    let mime = molecule_bytes(mime)?;
-    let content = molecule_bytes(content)?;
-    (matches!(mime, b"text/plain" | b"application/octet-stream") && !content.is_empty())
-        .then_some((mime, content))
 }
 
 fn molecule_bytes(raw: &[u8]) -> Option<&[u8]> {
@@ -77,7 +113,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_noncanonical_molecule_and_cluster_data() {
+    fn canonical_spore_accepts_only_a_complete_optional_cluster_id() {
         let mut data = [
             &[36, 0, 0, 0, 16, 0, 0, 0, 30, 0, 0, 0, 36, 0, 0, 0][..],
             &[10, 0, 0, 0],
@@ -94,6 +130,26 @@ mod tests {
         assert!(!plain_spore(&data));
         data[12] = 36;
         data[20] = b'!';
+        assert!(SporeData::decode(&data).is_none());
+        data[20] = b't';
+        data[0] = 72;
+        data.extend_from_slice(&32u32.to_le_bytes());
+        data.extend_from_slice(&[7; 32]);
+        let decoded = SporeData::decode(&data).unwrap();
+        assert_eq!(decoded.cluster_id, Some(&[7; 32]));
+        assert_eq!(decoded.content, b"hi");
         assert!(!plain_spore(&data));
+        let mut message = [[1; 32], [2; 32]].concat();
+        message.extend_from_slice(&data);
+        assert_eq!(
+            SporeTransfer::decode(&message).unwrap().cluster_id,
+            Some(&[7; 32])
+        );
+        assert!(SporeTransfer::decode_plain(&message).is_none());
+        data[40..].fill(0);
+        assert!(SporeData::decode(&data).is_none());
+        data[40] = 7;
+        data[36] = 31;
+        assert!(SporeData::decode(&data).is_none());
     }
 }
