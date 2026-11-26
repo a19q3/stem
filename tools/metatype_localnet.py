@@ -66,9 +66,10 @@ def exercise(args, l1, fixture):
     deploy_tx = deployment["transaction"]
     deps = [secp, *[dependency(point(deploy_tx, i)) for i in range(4)]]
     fund_point = point(deploy_tx, len(deployed_data))
-    namespace = ckb_hash(b"Metatype localnet\0" + binary(genesis["header"]["hash"]))
-    physical = script(hex_bytes(dispatcher_code), hex_bytes(namespace + ckb_hash(table)), "data2")
-    foreign = dict(physical, args=hex_bytes(ckb_hash(b"Metatype foreign\0" + namespace) + ckb_hash(table)))
+    genesis_hash = binary(genesis["header"]["hash"])
+    namespace = ckb_hash(b"Metatype localnet\0" + genesis_hash)
+    physical = script(hex_bytes(dispatcher_code), hex_bytes(genesis_hash + namespace + ckb_hash(table)), "data2")
+    foreign = dict(physical, args=hex_bytes(genesis_hash + ckb_hash(b"Metatype foreign\0" + namespace) + ckb_hash(table)))
     issuer, recipient = script_hash(fixture.standard), script_hash(fixture.friend_lock)
     rejections = {}
 
@@ -82,6 +83,7 @@ def exercise(args, l1, fixture):
         tx = transaction(inputs,
                          [output(amount, lock, ty) for amount in occupied] + [output(change, fixture.friend_lock)],
                          [hex_bytes(data) for data in rows] + ["0x"], selected_deps)
+        tx["header_deps"] = [hex_bytes(genesis_hash)]
         groups = [{"inputs": list(range(len(inputs))), "keys": [str(fixture.friend)]}]
         return fixture.sign(name, tx, groups), occupied
 
@@ -113,6 +115,7 @@ def exercise(args, l1, fixture):
                            [output(amount, fixture.friend_lock, physical) for amount in amounts]
                            + [output(funds, fixture.standard)],
                            [hex_bytes(data) for data in original] + ["0x"], deps)
+        mint["header_deps"] = [hex_bytes(genesis_hash)]
         minted = confirmed(l1, fixture.sign(f"mint-{count}", mint, [wallet_group(0, [fixture.faucet])]))
         prior = [(point(minted["transaction"], i), value) for i, value in enumerate(amounts)]
         fund_point = point(minted["transaction"], len(amounts))

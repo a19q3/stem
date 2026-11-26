@@ -7,10 +7,11 @@ applicable virtual Type Groups. Stem retains native Polytype Cells
 and their existing Script Groups.
 
 The standalone CKB dispatcher, adapter table and virtual group ABI
-are implemented with independently deployed UDT and transfer policy
-adapters. The cross-chain profile below specifies the required
-settlement checks. Its Metatype endpoints and native differential
-validation are pending. [Implementation status](STEM-EVOLUTION.md)
+run independently deployed UDT, transfer policy, object identity
+and object approval adapters. Standalone object cases run against
+both CKB Metatype and four native Stem Polytype replicas. The
+cross-chain profile specifies the required settlement checks.
+Its Metatype endpoints remain pending. [Implementation status](STEM-EVOLUTION.md)
 
 ## Historical sources
 
@@ -43,8 +44,12 @@ dispatch mechanism. [Native group construction](ledger/src/lib.rs)
 ## Deployment and identity
 
 The physical Type Script is a Data2 reference to the dispatcher.
-Its args commit a nonzero deployment namespace and the data hash of
-a canonical, immutable adapter table. All Metatype Cells in a
+Its args commit the actual CKB genesis hash, a nonzero deployment
+namespace and the data hash of a canonical, immutable adapter table.
+Every spend and creation supplies that canonical genesis Header as
+the first Header Dep. The dispatcher checks height zero and its hash.
+A different chain cannot instantiate the pinned deployment with a
+foreign genesis. All Metatype Cells in a
 deployment use the same full physical Script. Their manifests and
 state vary in Cell Data. The CKB kernel therefore invokes the
 dispatcher once for all of those Cells. Independently configured
@@ -85,10 +90,10 @@ Molecule Script encoding is exact, with no trailing fields.
 
 | Record | Reference encoding |
 | --- | --- |
-| Type args | 32-byte deployment namespace, 32-byte adapter table data hash |
+| Type args | 32-byte CKB genesis hash, 32-byte deployment namespace, 32-byte adapter table data hash |
 | Cell Data | one-byte entry count, then each logical Molecule Script and state byte string, each prefixed by its own u16 length |
 | Adapter table | one-byte entry count, then records of logical code hash, one-byte addressing mode and adapter ELF data hash |
-| Adapter argument | full physical Type hash, u16 length and complete logical Script, then the input and output index lists |
+| Adapter argument | full physical Type hash, u16 length and complete logical Script, input and output index lists, then optional group witness fields |
 | Index list | one-byte count and strictly ascending absolute u16 transaction indices |
 
 Adapter table records are ordered by logical code hash and addressing
@@ -131,15 +136,65 @@ The physical CKB Group Input/Output indices refer to all deployment
 Cells. The portable ABI uses explicit virtual indices, so receiving
 a child PID does not change CKB's syscall group. A Metatype Adapter
 uses its logical Script and hash from the dispatch context. The
-CKB Lock still checks ownership over the actual transaction. For
-transaction-specific messages, proofs and seals, adapter APIs must
-associate bytes with the stable logical Script identity and verify
-the signatures and data commitments their rules require. With a
-standard CKB Sighash Lock an extra witness can be committed by its
-normal witness digest. Transaction witnesses alone cannot establish
-an output's persistent governance. The current reference dispatcher
-carries Script and Cell indices only. It does not dispatch Metatype
-Group Messages or Seal fields.
+CKB Lock still checks ownership over the actual transaction.
+
+## Group witness and detached approval
+
+The first witness after all actual transaction inputs can carry a
+Metatype witness envelope. A missing witness or one with a different
+prefix represents no Metatype witness. The envelope begins with
+`Stem Metatype Witness\0` and a one-byte entry count of 1–32.
+Entries are sorted by the 32-byte physical Type hash then the 32-byte
+logical Script hash. Each entry carries those two hashes, then a
+nonzero u16 action, and Message, Proof Data and Seal byte strings with
+their own u16 lengths. Field limits are 512, 1,024 and 128 bytes.
+The complete envelope is limited to 32 KiB.
+
+The dispatcher rejects a malformed envelope and an entry for its
+own deployment with no actual virtual group. It gives each group
+only its own entry. Entries for other deployments are handled by
+their dispatchers. A row does not imply any verification obligation
+and cannot add or suppress a group. Independent witnesses for other
+applications can follow the envelope. The normal CKB Sighash Lock
+commits extra witnesses in its existing signing digest.
+
+The object approval adapter uses a detached Ed25519 seal. Its
+domain is `Stem Metatype approval\0`. Its digest includes the
+physical Type hash, logical Script hash, CKB raw transaction hash
+and action, then the Message and Proof Data with independent u32
+lengths. It excludes Seal bytes so different authorities can sign
+independently. The raw transaction hash commits input OutPoints,
+Cell Deps, Header Deps, outputs and output data. The adapter checks
+the Message against the actual output Lock hash and the Proof Data
+against the actual object content hash before verifying the seal.
+A copied seal fails for a new input, recipient, deployment, group
+or changed proof.
+
+## Portable immutable object
+
+The identity adapter accepts a single output and either zero or
+one virtual input. Local creation derives the ID from the physical
+deployment, the first actual input OutPoint and absolute output
+index. A transfer preserves the object's data byte for byte. The
+identity Script requires its exact companion approval Script in
+both input and output manifests. The companion identity derives
+from the identity Script hash, independent Ed25519 authority and
+the approval code committed by the identity Script.
+
+The approval group checks that its members still carry the original
+logical object Script. Action 1 approves creation, and action 2
+approves transfer. A valid seal cannot override immutable content,
+mandatory membership, or the one-head rule. This local profile does
+not permit destruction or import. Custody-based export and return
+need separate bridge authorization as specified below.
+
+The native control uses the existing Polytype identity and policy
+ELFs. Both fixture paths exercise the same content bytes, object
+roles, ownership changes, independent permission and decision
+cases. Their authorization carriers differ. The native policy
+requires a separate signed authority input and the CKB Metatype
+policy verifies a detached seal. Neither fixture establishes
+binary or signature portability for arbitrary contracts.
 
 ## Execution choices
 
@@ -206,6 +261,7 @@ commitments, and the participating owners' Locks.
 | --- | --- | --- |
 | Physical Type to virtual groups | A constraint is omitted, duplicated, or split across manifests | Derive the union and membership from every matching real input and output. Run each logical group once. |
 | Group to adapter | A similar Script substitutes its arguments, code, or source indices | Bind full encoding, scope and data-authenticated program. Verify closed and bounded canonical traversal. |
+| Group witness to authorization | A builder swaps approvals or carries a seal to a different group, output, chain or raw transaction | Address rows by full deployment and group. Compare actual recipient and content. Verify the genesis dependency and strict Ed25519 seal over the domain-separated digest. |
 | Existing state to output state | A transfer removes a freeze, approval, identity or supply rule | Run all consumed groups and all created groups. Original policy decides whether retirement or migration is authorized. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Store required manifest and state preimages in live Cells. Use authenticated context that states what was proven at the pinned anchor. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |

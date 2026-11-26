@@ -513,6 +513,7 @@ dependencies = [
  "bls12_381",
  "ckb-hash",
  "ckb-std",
+ "ed25519-dalek",
  "sha2 0.9.9",
  "stem-bridge-wire",
  "stem-intent",

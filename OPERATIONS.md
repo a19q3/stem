@@ -1263,3 +1263,34 @@ transaction bytes, witness payload sizes, actual occupied Capacity
 and local submission-to-mining timing. The current fixture uses a
 standalone CKB deployment. See the [Metatype specification](METATYPE.md)
 for limits, adapter review and the cross-chain requirements.
+
+### Exercise immutable objects and independent approvals
+
+Include the following ELFs in the RISC-V build:
+
+```sh
+CARGO_TARGET_DIR=target/stem-metatype \
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf \
+  --bin metatype --bin metatype-object --bin metatype-object-approval \
+  --bin stem-lock --bin stem-native-object --bin stem-object-policy
+
+contract_dir=target/stem-metatype/riscv64imac-unknown-none-elf/release
+python3 tools/metatype_object_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb \
+  --dispatcher "$contract_dir/metatype" \
+  --object "$contract_dir/metatype-object" \
+  --approval "$contract_dir/metatype-object-approval" \
+  --native-lock "$contract_dir/stem-lock" \
+  --native-object "$contract_dir/stem-native-object" \
+  --native-policy "$contract_dir/stem-object-policy" \
+  --port 30450 --l1-port 30440 --output /tmp/stem-metatype-objects
+```
+
+The first CKB Header Dep supplies the genesis Header pinned in the
+deployment args. The owner signs with the CKB Sighash Lock after the
+independent approvals have been placed in the first extra witness.
+The fixture writes CKB inclusion proofs, proposal and receipt
+evidence from four native replicas, and each negative case. Use
+the three native script options together for the differential run.

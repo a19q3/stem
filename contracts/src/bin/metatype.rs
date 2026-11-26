@@ -11,16 +11,17 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        encode_hex, load_cell_data_hash, load_cell_type_hash, load_script, load_script_hash,
-        spawn_cell,
+        encode_hex, load_cell_data_hash, load_cell_type_hash, load_header, load_script,
+        load_script_hash, spawn_cell,
     },
     syscalls::wait,
 };
 use stem_bridge_wire::metatype::{
     Invocation, MAX_ADAPTER_TABLE_BYTES, MAX_CELLS_PER_SIDE, MAX_MANIFEST_BYTES,
     MAX_TRANSACTION_CELLS_PER_SIDE, MetatypeAdapterTable, MetatypeDeployment, project,
+    witness::GroupWitnesses,
 };
-use stem_contracts::metatype::bounded_data;
+use stem_contracts::metatype::{bounded_data, witness_data};
 use stem_stake::Hash32;
 
 entry!(main);
@@ -41,6 +42,11 @@ fn verify() -> Result<(), i8> {
     let own_code: Hash32 = script.code_hash().unpack();
     let own_type = load_script_hash().map_err(|_| 41)?;
     let deployment = MetatypeDeployment::decode(&script.args().raw_data()).ok_or(41)?;
+    let genesis = load_header(0, Source::HeaderDep).map_err(|_| 41)?;
+    let height: u64 = genesis.raw().number().unpack();
+    if height != 0 || genesis.calc_header_hash().as_slice() != deployment.ckb_genesis {
+        return Err(41);
+    }
     let mut available = Vec::new();
     for index in 0..=MAX_DEPS {
         match load_cell_data_hash(index, Source::CellDep) {
@@ -58,11 +64,22 @@ fn verify() -> Result<(), i8> {
     let table = MetatypeAdapterTable::decode(&raw_table).ok_or(42)?;
 
     let mut remaining = MAX_LIVE_DATA;
-    let inputs = cells(Source::Input, &own_type, &mut remaining)?;
-    let outputs = cells(Source::Output, &own_type, &mut remaining)?;
+    let (input_count, inputs) = cells(Source::Input, &own_type, &mut remaining)?;
+    let (_, outputs) = cells(Source::Output, &own_type, &mut remaining)?;
     let inputs = borrowed(&inputs);
     let outputs = borrowed(&outputs);
     let groups = project(&inputs, &outputs).ok_or(43)?;
+    let raw_witness = witness_data(input_count).map_err(|_| 47)?;
+    let witnesses = match raw_witness.as_deref() {
+        Some(raw) => {
+            let witnesses = GroupWitnesses::decode(raw).ok_or(47)?;
+            if !witnesses.validate_groups(&own_type, &groups) {
+                return Err(47);
+            }
+            witnesses
+        }
+        None => GroupWitnesses::default(),
+    };
     for group in groups {
         let adapter = table.adapter(group.script).ok_or(44)?;
         if adapter == &own_code || !available.contains(adapter) {
@@ -71,6 +88,7 @@ fn verify() -> Result<(), i8> {
         let argument = encode_hex(
             &Invocation {
                 deployment_type: &own_type,
+                witness: witnesses.for_group(&own_type, group.script.id()),
                 group,
             }
             .encode(),
@@ -88,7 +106,7 @@ fn cells(
     source: Source,
     own_type: &Hash32,
     remaining: &mut usize,
-) -> Result<Vec<(u16, Vec<u8>)>, i8> {
+) -> Result<(usize, Vec<(u16, Vec<u8>)>), i8> {
     let mut matched = Vec::new();
     for index in 0..=MAX_TRANSACTION_CELLS_PER_SIDE {
         match load_cell_type_hash(index, source) {
@@ -103,7 +121,7 @@ fn cells(
                     matched.push((index as u16, data));
                 }
             }
-            Err(SysError::IndexOutOfBound) => return Ok(matched),
+            Err(SysError::IndexOutOfBound) => return Ok((index, matched)),
             _ => return Err(43),
         }
     }

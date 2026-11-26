@@ -28,6 +28,7 @@ ckb-hash = { version = "=1.1.1", default-features = false, features = ["ckb-cont
 stem-bridge-wire = { path = "../bridge-wire" }
 stem-stake = { path = "../stake" }
 stem-intent = { path = "../intent" }
+ed25519-dalek = { version = "2.1", default-features = false }
 ckb-std = { version = "=1.1.0", default-features = false, features = ["allocator", "calc-hash", "type-id"] }
 
 [dev-dependencies]

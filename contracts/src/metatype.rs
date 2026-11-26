@@ -9,11 +9,12 @@ use ckb_std::{
     env,
     error::SysError,
     high_level::{decode_hex, load_cell_lock_hash, load_script_hash},
-    syscalls::load_cell_data,
+    syscalls::{load_cell_data, load_witness},
 };
 use stem_bridge_wire::metatype::{
-    Invocation, MAX_CELLS_PER_SIDE, MAX_MANIFEST_BYTES, MAX_SCRIPT_BYTES,
-    MAX_TRANSACTION_CELLS_PER_SIDE, MetatypeManifest,
+    Invocation, MAX_INVOCATION_BYTES, MAX_MANIFEST_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE,
+    MetatypeManifest,
+    witness::{MAGIC, MAX_WITNESS_BYTES},
 };
 use stem_stake::Hash32;
 
@@ -30,9 +31,27 @@ pub fn bounded_data(index: usize, source: Source, limit: usize) -> Result<Vec<u8
     Ok(data)
 }
 
+pub fn witness_data(index: usize) -> Result<Option<Vec<u8>>, SysError> {
+    let mut prefix = [0; MAGIC.len()];
+    let length = match load_witness(&mut prefix, 0, index, Source::Input) {
+        Ok(length) | Err(SysError::LengthNotEnough(length)) => length,
+        Err(SysError::IndexOutOfBound) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if &prefix != MAGIC || length < MAGIC.len() {
+        return Ok(None);
+    }
+    if length > MAX_WITNESS_BYTES {
+        return Err(SysError::Encoding);
+    }
+    let mut data = alloc::vec![0; length];
+    if load_witness(&mut data, 0, index, Source::Input)? != length {
+        return Err(SysError::Encoding);
+    }
+    Ok(Some(data))
+}
+
 pub fn with_invocation(validate: impl FnOnce(Invocation<'_>) -> Option<()>) -> i8 {
-    const MAX_INVOCATION_BYTES: usize =
-        32 + 2 + MAX_SCRIPT_BYTES + 2 * (1 + 2 * MAX_CELLS_PER_SIDE);
     let result = || {
         let [argument] = env::argv() else { return None };
         if argument.to_bytes().len() > 2 * MAX_INVOCATION_BYTES {

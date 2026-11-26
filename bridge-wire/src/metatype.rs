@@ -6,6 +6,9 @@ use alloc::{collections::BTreeMap, vec::Vec};
 
 use crate::{HASH_SIZE, hash};
 
+pub mod witness;
+use witness::{GroupWitness, MAX_FIELDS_BYTES};
+
 pub const MAX_TYPE_SCRIPTS: usize = 16;
 pub const MAX_GROUPS: usize = 32;
 pub const MAX_CELLS_PER_SIDE: usize = 64;
@@ -20,19 +23,23 @@ type Hash = [u8; HASH_SIZE];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MetatypeDeployment {
+    pub ckb_genesis: Hash,
     pub namespace: Hash,
     pub adapter_table_data_hash: Hash,
 }
 
 impl MetatypeDeployment {
     pub fn decode(args: &[u8]) -> Option<Self> {
-        let [namespace, adapter_table_data_hash] = args.as_chunks::<HASH_SIZE>().0 else {
+        let [ckb_genesis, namespace, adapter_table_data_hash] = args.as_chunks::<HASH_SIZE>().0
+        else {
             return None;
         };
-        (args.len() == 2 * HASH_SIZE
+        (args.len() == 3 * HASH_SIZE
+            && *ckb_genesis != [0; HASH_SIZE]
             && *namespace != [0; HASH_SIZE]
             && *adapter_table_data_hash != [0; HASH_SIZE])
             .then_some(Self {
+                ckb_genesis: *ckb_genesis,
                 namespace: *namespace,
                 adapter_table_data_hash: *adapter_table_data_hash,
             })
@@ -58,6 +65,22 @@ impl<'a> LogicalScript<'a> {
             return None;
         }
         Some(Self { encoded: raw })
+    }
+
+    pub fn encode(code_hash: &Hash, addressing: u8, args: &[u8]) -> Option<Vec<u8>> {
+        let length = 53usize.checked_add(args.len())?;
+        if length > MAX_SCRIPT_BYTES || !matches!(addressing, 0 | 1) || *code_hash == [0; 32] {
+            return None;
+        }
+        let mut raw = Vec::with_capacity(length);
+        for field in [length as u32, 16, 48, 49] {
+            raw.extend_from_slice(&field.to_le_bytes());
+        }
+        raw.extend_from_slice(code_hash);
+        raw.push(addressing);
+        raw.extend_from_slice(&(args.len() as u32).to_le_bytes());
+        raw.extend_from_slice(args);
+        Some(raw)
     }
 
     pub fn as_slice(self) -> &'a [u8] {
@@ -215,9 +238,13 @@ pub fn project<'a>(
     (!groups.is_empty()).then(|| groups.into_values().collect())
 }
 
+pub const MAX_INVOCATION_BYTES: usize =
+    32 + 2 + MAX_SCRIPT_BYTES + 2 * (1 + 2 * MAX_CELLS_PER_SIDE) + MAX_FIELDS_BYTES;
+
 pub struct Invocation<'a> {
     pub deployment_type: &'a Hash,
     pub group: VirtualTypeGroup<'a>,
+    pub witness: Option<GroupWitness<'a>>,
 }
 
 impl<'a> Invocation<'a> {
@@ -232,18 +259,30 @@ impl<'a> Invocation<'a> {
                 raw.extend_from_slice(&index.to_le_bytes());
             }
         }
+        if let Some(witness) = self.witness {
+            witness.write_into(&mut raw);
+        }
         raw
     }
 
     pub fn decode(raw: &'a [u8]) -> Option<Self> {
+        if raw.len() > MAX_INVOCATION_BYTES {
+            return None;
+        }
         let (deployment, mut raw) = raw.split_at_checked(HASH_SIZE)?;
         let script = LogicalScript::decode(take_bytes(&mut raw)?)?;
         let input_indices = take_indices(&mut raw)?;
         let output_indices = take_indices(&mut raw)?;
+        let witness = if raw.is_empty() {
+            None
+        } else {
+            Some(GroupWitness::take(&mut raw)?)
+        };
         (raw.is_empty()
             && deployment != [0; HASH_SIZE]
             && !(input_indices.is_empty() && output_indices.is_empty()))
         .then_some(Self {
+            witness,
             deployment_type: deployment.try_into().ok()?,
             group: VirtualTypeGroup {
                 script,
@@ -289,13 +328,7 @@ mod tests {
     use super::*;
 
     fn script(code: u8, arg: u8) -> Vec<u8> {
-        let mut encoded = Vec::new();
-        for field in [54_u32, 16, 48, 49] {
-            encoded.extend_from_slice(&field.to_le_bytes());
-        }
-        encoded.extend_from_slice(&[code; HASH_SIZE]);
-        encoded.extend_from_slice(&[0, 1, 0, 0, 0, arg]);
-        encoded
+        LogicalScript::encode(&[code; HASH_SIZE], 0, &[arg]).unwrap()
     }
 
     fn manifest(entries: &[&[u8]]) -> Vec<u8> {
@@ -328,10 +361,17 @@ mod tests {
             let invocation = Invocation {
                 deployment_type: &[8; HASH_SIZE],
                 group,
+                witness: Some(GroupWitness {
+                    action: 1,
+                    message: b"hello",
+                    proof: &[],
+                    seal: &[],
+                }),
             };
             let encoded = invocation.encode();
             let decoded = Invocation::decode(&encoded).unwrap();
             assert_eq!(decoded.group, invocation.group);
+            assert_eq!(decoded.witness, invocation.witness);
             assert_eq!(decoded.deployment_type, invocation.deployment_type);
         }
     }
