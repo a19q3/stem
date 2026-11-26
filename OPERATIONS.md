@@ -41,6 +41,18 @@ Keep a reachable archive for replicas recovering from beyond the ordinary
 window. Create a fresh development home when replacing an older research
 build whose database predates ordered pruning.
 
+## Validator admission and guardian authority
+
+| Decision | Who authorizes it | What operators can verify |
+| --- | --- | --- |
+| Route a message to a peer | Each node loads an ordered Ed25519 public-key and address directory at startup. The local signing key and genesis voters must be present. | A newly elected key can lack a route. The committee handoff rebuilds routing from the existing directory. Directory membership alone grants zero voting weight. [Peer configuration and handoff](src/jolteon.rs) |
+| Recognize CKB stake and activate a new validator set | Stake guardians certify the registry observation. Stem applies the registry, election and activation rules. Rotation of the stake guardian generation requires the departing and arriving quorums over the same registry transition. | Compare the CKB registry identity, sequence, and snapshot against the pinned network. Without a stake guardian quorum, a fresh snapshot requiring that certificate cannot activate. [Registry rotation](stake/src/l1.rs) · [Snapshot activation](src/native_store/staking.rs) |
+| Finalize a Stem block or verify its direct CKB checkpoint | The active weighted Jolteon committee certifies the chain. The CKB contract verifies the finality evidence and committee handoffs against its pinned checkpoint. | Check the execution Header, committee and two-chain proof. A guardian statement alone cannot finalize a block. [Jolteon verifier](contracts/src/bin/jolteon-checkpoint.rs) |
+| Accept a new CKB anchor or authenticated Cell observation on Stem | The bridge guardian generation is pinned in the bridge genesis. Its certificate requires strictly more than two-thirds of its weight. Historical output and anchored live Cell statements have distinct semantics. | Check the network, header, outpoint, observation kind and anchor against the operation. Losing this quorum prevents fresh certificates for these operations. Stake guardian rotation has a separate domain. [Bridge state](src/native_store/bridge.rs) · [Observation CLI](src/bridge_cli/reference.rs) |
+| Move reserves on CKB | The vault Type Script enforces the applicable transition. The CKB custody multisig authorizes reserve consolidation, reserve movement and vault rotation. | Compare the live vault, its full Type Script and the actual CKB transaction. A certificate accepted by Stem supplies evidence to Stem. Spending the vault uses its CKB rules. [Vault contract](contracts/src/bin/vault-type.rs) |
+
+For an open-admission rehearsal, start with a new operator whose key is absent from the existing nodes' startup directories. Record how the network learns its endpoint, when its on-chain weight takes effect, the first finalized block carrying its vote, and a verified exit and handoff. Restart an older replica and compare its authenticated tip and direct CKB checkpoint with an independent observer. The existing preconfigured handoff experiments exercise the stake and voting path. Dynamic endpoint discovery is still required for this rehearsal.
+
 ## Operate a replica under systemd
 
 Install the `ops/systemd/stem@.service` unit for the service user and derive
