@@ -10,6 +10,7 @@ pub mod custody;
 pub mod fungible;
 pub mod object_policy;
 pub mod witness;
+pub mod workflow;
 use custody::{Boundary, Custody, manifest_id};
 use witness::{GroupWitness, MAX_FIELDS_BYTES};
 

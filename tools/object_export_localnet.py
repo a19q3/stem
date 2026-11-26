@@ -32,6 +32,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     topup = args.metatype_revision_topup
     live_rule = args.metatype_rule_registry is not None
     append_only = args.native_object_append_only is not None
+    use_workflow = args.native_object_workflow is not None
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
     next_limit = 200 if live_rule else state_limit
@@ -45,7 +46,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     mailbox_cap = 1_000 * CKB
     funded_mailbox_cap = 3_300 * CKB if revisable else mailbox_cap
     authority_funds = (5_000 if revisable else 2_500 if metatype else 1_200) * CKB
-    token_cap = (1_200 if topup else 1_000 if live_rule else 900 if metatype else 360) * CKB
+    token_cap = (1_200 if topup else 1_000 if live_rule or use_workflow else 900 if metatype else 360) * CKB
     codes = [mailbox_bin, gate_bin]
     if metatype:
         codes.extend(path.read_bytes() for path in (args.metatype_dispatcher,
@@ -55,6 +56,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if append_only:
         append_adapter = args.metatype_object_append_only.read_bytes()
         codes.append(append_adapter)
+    if use_workflow:
+        workflow_adapter = args.metatype_object_workflow.read_bytes()
+        codes.append(workflow_adapter)
     if live_rule:
         codes.append(args.metatype_rule_registry.read_bytes())
     ckb_items = codes + ([b""] if live_rule else rule_records)
@@ -75,7 +79,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     ckb_deps = [secp, *[dependency(point(funded, i)) for i in range(len(codes))]]
     native_deps = [mint["lock_dep"], point(mint["mint_id"], 2), point(mint["mint_id"], 3)]
     authority_point = point(funded, auth_index)
-    for index in range(sum((metatype, state_limit is not None, append_only))):
+    for index in range(sum((metatype, state_limit is not None, append_only, use_workflow))):
         native_deps.append(point(mint["mint_id"], 4 + index))
     if state_limit and not live_rule:
         l1_rule_point = point(funded, len(codes))
@@ -124,7 +128,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     live_votes = None
 
-    def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None):
+    def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None,
+                    workflow_proof=b""):
         locks = sorted({packed_script(lock): (lock, key) for _, lock, key in spending}.values(),
                        key=lambda pair: packed_script(pair[0]))
         points = [p for p, _, _ in spending]
@@ -135,6 +140,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             group = next(i for i, (lock, _) in enumerate(locks) if lock == endpoint)
             request["messages"] = [{"group_index": group, "actions": [
                 {"kind": 0xff01 if receive else 0xff00, "data": message["record"]}]}]
+        if workflow_proof:
+            scripts = sorted(map(packed_script, types))
+            index = len(locks) + scripts.index(packed_script(workflow_type))
+            request["proofs"] = [{"group_index": index, "proof_data": hex_bytes(workflow_proof)}]
         path = args.output / f"object-{label}-request.json"
         draft = args.output / f"object-{label}-draft.json"
         context = args.output / f"object-{label}-context.json"
@@ -246,6 +255,29 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     stem_content = initial_content + b"; revised on Stem"
     ckb_content = stem_content + b"; transferred on CKB"
     data = object_data(initial_content)
+    if use_workflow:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from metatype_object_localnet import encode as encode_group_witnesses
+        keys = [Ed25519PrivateKey.from_private_bytes(ckb_hash(b"Stem workflow fixture key" + bytes([i])))
+                for i in range(3)]
+        workflow_code = ckb_hash(args.native_object_workflow.read_bytes())
+        escrow_code = ckb_hash(args.stem_metatype_escrow.read_bytes())
+        workflow_type = script(hex_bytes(workflow_code), hex_bytes(binary(network) + identity_hash + escrow_code
+            + b"".join(key.public_key().public_bytes_raw() for key in keys)), "data")
+        types.append(workflow_type)
+        workflow_id = script_hash(workflow_type)
+        workflow_subject = ckb_hash(b"Stem workflow fixture subject")
+        workflow_heads = [ckb_hash(b"Stem Metatype workflow start\0" + workflow_id)]
+        workflow_proofs = []
+        data_at = lambda revision, subject, head: object_data(subject + head, revision, b"application/octet-stream")
+        workflow_states = [data_at(0, empty, workflow_heads[0])]
+        for index, key in enumerate(keys, 1):
+            head = ckb_hash(b"Stem Metatype workflow step\0" + binary(network) + workflow_id
+                            + workflow_heads[-1] + workflow_subject + le(index, 8))
+            workflow_heads.append(head)
+            workflow_proofs.append(key.sign(head))
+            workflow_states.append(data_at(index, workflow_subject, head))
+        data = workflow_states[0]
     append_probes = {
         "rewrite": object_data(b"X" + stem_content[1:] + b".", 2),
         "truncate": object_data(stem_content[:-1], 2),
@@ -276,6 +308,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             adapter_entries.append(state_limit_code + b"\0" + ckb_hash(codes[5]))
         if append_only:
             adapter_entries.append(append_code + b"\0" + ckb_hash(append_adapter))
+        if use_workflow:
+            adapter_entries.append(workflow_code + b"\0" + ckb_hash(workflow_adapter))
         adapter_table = bytes([len(adapter_entries)]) + b"".join(sorted(adapter_entries)) + profile + custody
         table_capacity = (len(adapter_table) + 100) * CKB
         table_outputs = [output(table_capacity, fixture.standard)]
@@ -348,7 +382,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     rejected["stem_forged_id"] = reject_stem(native_sign("forged-object", [(seed, owner, owner_key), auth_input],
         [cell(object_cap, owner, data, [wrong, wrong_policy]), *issued_outputs[1:]]), "exited with 117")
     if revisable:
-        revision_errors = ("exited with 117", "exited with 58") if append_only else ("exited with 117",)
+        revision_errors = ("exited with 117",)
+        if append_only or use_workflow:
+            revision_errors += (f"exited with {58 if append_only else 59}",)
         rejected["stem_mint_at_nonzero_revision"] = reject_stem(native_sign("nonzero-revision",
             [(seed, owner, owner_key), auth_input],
             [cell(object_cap, owner, object_data(b"nonzero revision", 1), types), *issued_outputs[1:]]),
@@ -360,7 +396,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     native_auth_capacity = auth_cap
     if revisable:
         previous = [(wrapped_input, owner, owner_key), (native_authority, authority, authority_key)]
-        native_update = object_data(stem_content, 1)
+        native_update = workflow_states[1] if use_workflow else object_data(stem_content, 1)
         cheaper_auth = cell(auth_cap - FEE, authority)
         rejected["stem_edit_without_revision"] = reject_stem(native_sign("edit-without-revision", previous,
             [cell(object_cap, owner, object_data(b"edited under revision zero"), types), cheaper_auth]),
@@ -390,8 +426,21 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             retained = [item for item in types if item != append_script]
             rejected["stem_revision_removes_append_only"] = reject_stem(native_sign("remove-append-only", previous,
                 [cell(object_cap, owner, native_update, retained), cheaper_auth]), "exited with 58")
+        if use_workflow:
+            initial_nonce = int.from_bytes(ckb_hash(b"Stem Metatype escrow nonce\0" + packed(bond))[:8], "little")
+            rejected["stem_workflow_export_before_request"] = reject_stem(native_sign("workflow-unopened",
+                [(bond, endpoint, None), *previous],
+                [cell(bond_cap, endpoint), cell(object_cap, endpoint, data, types), cheaper_auth],
+                endpoint=endpoint, message=packet("workflow-unopened", True,
+                    script_hash(fixture.owner_lock), initial_nonce)), "exited with 59")
+            request_step = [cell(object_cap, owner, native_update, types), cheaper_auth]
+            rejected["stem_workflow_step_missing"] = reject_stem(native_sign("workflow-missing",
+                previous, request_step), "exited with 59")
+            rejected["stem_workflow_step_wrong_role"] = reject_stem(native_sign("workflow-wrong-role",
+                previous, request_step, workflow_proof=keys[1].sign(workflow_heads[1])), "exited with 59")
         revised = commit(native_sign("revise-in-stem", previous,
-            [cell(object_cap, owner, native_update, types), cheaper_auth]))
+            [cell(object_cap, owner, native_update, types), cheaper_auth],
+            workflow_proof=workflow_proofs[0] if use_workflow else b""))
         revisions["native"] = revised
         wrapped_input, native_authority = [at(revised, i) for i in range(2)]
         data = native_update
@@ -435,7 +484,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
              cell(native_auth_capacity - FEE, authority)], endpoint=endpoint, message=outbound),
             "exited with 119")
     if revisable:
-        forged = object_data(stem_content + b"; edit in escrow", 2)
+        forged = workflow_states[2] if use_workflow else object_data(stem_content + b"; edit in escrow", 2)
         rejected["stem_export_changes_revision"] = reject_stem(native_sign("export-revising",
             route_inputs + [(native_authority, authority, authority_key)],
             [route_outputs[0], cell(object_cap, endpoint, forged, types),
@@ -517,7 +566,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     mailbox_cap = funded_mailbox_cap
 
     def transfer(label, authority_consent=True, include_policy=True, contents=data,
-                 from_key=fixture.owner, *, selected=None, deps=None):
+                 from_key=fixture.owner, *, selected=None, deps=None, workflow_proof=b""):
         inputs = [wrapped_point]
         outputs = [output(token_cap - (0 if authority_consent else FEE), fixture.friend_lock, wrapper)]
         keys = [wallet_group(0, [from_key])]
@@ -530,6 +579,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         tx = transaction(inputs, outputs, body, ckb_deps if deps is None else deps)
         if metatype:
             tx["header_deps"] = [genesis]
+        if workflow_proof:
+            row = (wrapper_hash, workflow_id, 1, b"", workflow_proof, b"")
+            tx["witnesses"] = ["0x"] * len(inputs) + [hex_bytes(encode_group_witnesses([row]))]
         return fixture.sign(f"object-{label}", tx, keys)
 
     approval_invalid = 46 if metatype else 121
@@ -538,11 +590,24 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         rejected["ckb_transfer_policy_removed"] = reject_ckb(transfer("transfer-without-policy", include_policy=False), 48)
     return_state = data
     if revisable:
-        ckb_update = object_data(ckb_content, 2)
+        ckb_update = workflow_states[2] if use_workflow else object_data(ckb_content, 2)
+        ckb_first_proof = workflow_proofs[1] if use_workflow else b""
         rejected["ckb_edit_without_revision"] = reject_ckb(
             transfer("edit-without-revision", contents=object_data(b"same revision tamper", 1)), 48)
         rejected["ckb_revision_without_approval"] = reject_ckb(
-            transfer("revision-without-approval", False, contents=ckb_update), approval_invalid)
+            transfer("revision-without-approval", False, contents=ckb_update, workflow_proof=ckb_first_proof),
+            approval_invalid)
+        if use_workflow:
+            rejected["ckb_workflow_step_missing"] = reject_ckb(
+                transfer("workflow-missing-proof", contents=ckb_update), 46)
+            rejected["ckb_workflow_replay_old_role"] = reject_ckb(transfer("workflow-replayed-proof",
+                contents=ckb_update, workflow_proof=workflow_proofs[0]), 46)
+            alternate = ckb_hash(b"Stem Metatype workflow step\0" + bytes([7]) * 32 + workflow_id
+                                 + workflow_heads[1] + workflow_subject + le(2, 8))
+            rejected["ckb_workflow_wrong_network"] = reject_ckb(transfer("workflow-foreign-proof",
+                contents=ckb_update, workflow_proof=keys[1].sign(alternate)), 46)
+            rejected["ckb_workflow_skip_valid_steps"] = reject_ckb(transfer("workflow-skip",
+                contents=workflow_states[3], workflow_proof=b"".join(workflow_proofs[1:])), 46)
         for label, invalid in append_probes.items():
             rejected[f"ckb_append_{label}"] = reject_ckb(
                 transfer(f"append-{label}", contents=invalid), 46)
@@ -563,7 +628,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rejected["ckb_revision_replaces_state_limit"] = reject_ckb(
                 transfer("replace-state-limit", contents=ckb_update, selected=[*types[:-1], substitute],
                          deps=[*ckb_deps, l1_other_rule_dep]), 48)
-        transferred = ckb_submit(transfer("transfer-and-revise", contents=ckb_update))
+        transferred = ckb_submit(transfer("transfer-and-revise", contents=ckb_update,
+                                          workflow_proof=ckb_first_proof))
     else:
         transferred = ckb_submit(transfer("transfer"))
     wrapped_point, authority_point = [point(transferred["hash"], i) for i in range(2)]
@@ -616,10 +682,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             content = content.ljust(next_limit - len(object_data(b"", 4)), b".")
         elif topup:
             content = content.ljust(630, b".")
-        return_state = object_data(content, 4)
+        return_state = workflow_states[3] if use_workflow else object_data(content, 4)
         if state_limit:
             assert len(return_state) == next_limit
-        updated = ckb_submit(transfer("revise-on-ckb", contents=return_state, from_key=fixture.friend))
+        updated = ckb_submit(transfer("revise-on-ckb", contents=return_state, from_key=fixture.friend,
+                                      workflow_proof=workflow_proofs[2] if use_workflow else b""))
         revisions["ckb"] = updated
         wrapped_point, authority_point = [point(updated["hash"], i) for i in range(2)]
         authority_funds -= FEE
@@ -681,9 +748,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     release_inputs = [(bond, endpoint, None), (original, endpoint, None)]
     release = [cell(bond_cap, endpoint), cell(object_cap + return_topup, buyer, return_state, types)]
     with_approval = release_inputs + [(native_authority, authority, authority_key)]
+    return_proof = b"".join(workflow_proofs[1:]) if use_workflow else b""
     rejected["stem_return_without_policy_approval"] = reject_stem(native_sign("return-no-consent",
         release_inputs + [(native_fee, owner, owner_key)], release + [cell(remainder - FEE - return_topup, owner)],
-        endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 115")
+        endpoint=endpoint, message=inbound, receive=True, votes=certified, workflow_proof=return_proof),
+        "exited with 115")
     rejected["stem_return_policy_removed"] = reject_stem(native_sign("return-without-policy",
         with_approval, [release[0], cell(object_cap + return_topup, buyer, return_state, [identity]),
                         cell(native_auth_capacity - 2 * FEE - return_topup, authority)],
@@ -714,9 +783,16 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             with_approval, [release[0], cell(object_cap - 1, buyer, return_state, types),
                             cell(native_auth_capacity - 2 * FEE + 1, authority)],
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
-    redeemed = commit(native_sign("redeem", with_approval,
-        release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)],
-        endpoint=endpoint, message=inbound, receive=True, votes=certified))
+    restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)]
+    if use_workflow:
+        for label, evidence in (("omitted", b""), ("incomplete", workflow_proofs[2]),
+                                ("reordered", b"".join(reversed(workflow_proofs[1:]))),
+                                ("tampered", bytes([return_proof[0] ^ 1]) + return_proof[1:])):
+            rejected[f"stem_workflow_return_{label}"] = reject_stem(native_sign(f"workflow-return-{label}",
+                with_approval, restored_outputs, endpoint=endpoint, message=inbound, receive=True,
+                votes=certified, workflow_proof=evidence), "exited with 59")
+    redeemed = commit(native_sign("redeem", with_approval, restored_outputs,
+        endpoint=endpoint, message=inbound, receive=True, votes=certified, workflow_proof=return_proof))
     restored = signing_cell(client, at(redeemed, 1))
     assert restored["cell"] == release[1]
     spent_escrow = certified_cell(original)
@@ -748,6 +824,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             "append_only": ({"type": append_script, "input": hex_bytes(data),
                              "rejected_outputs": {name: hex_bytes(raw) for name, raw in append_probes.items()}}
                             if append_only else None),
+            "workflow": ({"type": workflow_type, "states": list(map(hex_bytes, workflow_states)),
+                          "step_proofs": list(map(hex_bytes, workflow_proofs))} if use_workflow else None),
             "revisions": ({**revisions, "exported": hex_bytes(data), "returned": hex_bytes(return_state),
                            "topup_capacity": return_topup,
                            "native_execution": execution(revisions["native"])} if revisable else None),

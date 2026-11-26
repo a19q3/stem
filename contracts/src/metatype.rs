@@ -13,6 +13,7 @@ use ckb_std::{
     },
     syscalls::{load_cell_data, load_witness},
 };
+use ed25519_dalek::{Signature, VerifyingKey};
 use stem_bridge_wire::metatype::{
     Invocation, MAX_CELLS_PER_SIDE, MAX_INVOCATION_BYTES, MAX_MANIFEST_BYTES,
     MAX_MANIFEST_DEFINITION_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE, ManifestCell,
@@ -22,6 +23,18 @@ use stem_bridge_wire::metatype::{
 use stem_stake::Hash32;
 
 const MAX_DEPS: usize = 128;
+
+pub fn workflow_key(key: &Hash32) -> Option<VerifyingKey> {
+    let key = VerifyingKey::from_bytes(key).ok()?;
+    (!key.is_weak()).then_some(key)
+}
+
+pub fn verify_workflow_signature(key: &Hash32, digest: &Hash32, signature: &[u8; 64]) -> bool {
+    workflow_key(key).is_some_and(|key| {
+        key.verify_strict(digest, &Signature::from_bytes(signature))
+            .is_ok()
+    })
+}
 
 pub fn bounded_data(index: usize, source: Source, limit: usize) -> Result<Vec<u8>, SysError> {
     let length = match load_cell_data(&mut [], 0, index, source) {

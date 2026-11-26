@@ -443,8 +443,55 @@ the escrowed state to the authenticated return state after multiple
 CKB revisions. The independent ownership, approval, and optional
 length groups still execute. This predicate uses bounded state
 reads and needs no additional cross-chain observation. A rule
-requiring a particular intermediate event or one approval per
-revision at the source would need authenticated transition history.
+requiring a particular intermediate event requires authentication
+of the intervening changes.
+
+### Signed workflow history
+
+An independent workflow Type Script binds the 32-byte Stem network,
+full object identity Script hash, data-addressed Stem escrow code hash,
+and three distinct 32-byte Ed25519 public keys in step order. The keys
+authorize request, review and completion independently. The object
+uses the existing revisable encoding with MIME
+`application/octet-stream` and 64 content bytes, consisting of a
+32-byte subject and 32-byte workflow head. The workflow entry in the
+Metatype Manifest has empty state.
+
+Revision zero has an empty subject and the CKB hash of
+`"Stem Metatype workflow start\0" || workflow Script hash`.
+The configured Stem escrow accepts the object only after the request.
+A nonzero subject chosen at the request stays fixed. For step
+`n` from one through three, the new head and signed digest are the
+CKB hash of the following concatenation.
+
+```text
+"Stem Metatype workflow step\0" || Stem network || workflow Script hash
+    || previous head || subject || n_le_u64
+```
+
+An unchanged state carries no proof. A change supplies exactly the
+concatenated 64-byte signatures for the intervening steps, in order.
+Stem reads Proof Data from its current group. The Metatype adapter
+reads a group witness with action 1, empty Message and Seal, and the
+step proof. It verifies each CKB edit advances exactly one revision.
+Import and return use the existing authenticated mailbox and carry
+no additional CKB workflow proof. The initial request takes place
+on Stem, so redemption replays at most two steps. The native group
+requires the recreated head to equal the authenticated CKB state.
+An early return preserves the current revision and requires only
+the signatures for the steps completed since export.
+The original owner and object approval Locks still apply. A proof
+authorizes a specific workflow step independently of the relay
+transaction and its recipient.
+
+This profile demonstrates a bounded history with distinct semantic
+obligations for each step. It authenticates the authorization chain
+and the burned CKB state. Applications that also need exact CKB
+heights or witness inclusion outside the normal CKB validation
+assumption can verify the individual transaction and witness proofs
+against authenticated CKB headers. Relayers and owners must retain
+the CKB step witnesses until return. Additional workflow cycles and
+proof bytes enter the ordinary Stem resource budget.
 
 ### Cap-bound fungible UDT
 
@@ -512,6 +559,7 @@ commitments, and the participating owners' Locks.
 | Rule record to object | A relayer replaces it with a looser rule, or spends the published copy | Resolve the pinned data hash in actual dependencies on both chains. Reject changed bytes and oversized states. Keep the original bytes available for publication at a new OutPoint. |
 | Live rule registry | An updater forks or removes the registry, reduces the limit after a transfer, or supplies an obsolete CKB observation to Stem | Enforce Type ID and a same-Lock successor with a strict increase. Resolve one current CKB dependency or one guardian-certified live reference at Stem's committed anchor. |
 | Append-only revision | An approval authorizes a rewrite, truncation, MIME change, or removal of the constraint | Bind the full identity Script, require a valid successor, and compare the exact revision relationship and decoded content prefix on both chains. |
+| Signed workflow history | A return omits a review or substitutes, reorders or replays approval from another subject or chain | Verify each role's signature over the preceding head and exact step. Bind the fully replayed head to the authenticated return state. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |
 | Guest and dependency bounds | Recursive execution, malformed lengths, or excessive combinations consume resources | Use bounded lists and byte reads, immutable reviewed adapters, sequential spawn and CKB cycles. Reject unknown dependencies and failed child results. |

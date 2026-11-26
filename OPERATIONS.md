@@ -1524,6 +1524,19 @@ and ports. Omit the two append-only binaries for a matching
 three-constraint control with the same valid content and revision
 trajectory.
 
+To exercise signed intermediate history, build
+`stem-object-workflow` and `metatype-object-workflow` and add
+`--native-object-workflow "$contract_dir/stem-object-workflow"` and
+`--metatype-object-workflow "$contract_dir/metatype-object-workflow"`
+to the revisable object command. The workflow fixture uses its own
+object data and is run separately from the length and append-only
+fixtures. Run it with and without `--metatype-shared-manifest`.
+The report records the request at revision 1, separately confirmed
+CKB revisions 2 and 3, and the two signatures attached to the Stem
+return witness. In application deployments relayers and owners can
+retain those step signatures from CKB witnesses before submitting
+the return.
+
 ### Exercise cap-bound Metatype fungible custody
 
 Build and run the fungible Metatype profile against CKB devnet with

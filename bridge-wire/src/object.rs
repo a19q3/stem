@@ -66,7 +66,7 @@ pub fn revision(raw: &[u8]) -> Option<u64> {
     Some(revision)
 }
 
-fn revision_fields(raw: &[u8]) -> Option<(u64, &[u8], &[u8])> {
+pub(crate) fn revision_fields(raw: &[u8]) -> Option<(u64, &[u8], &[u8])> {
     if raw.len() > MAX_STATE_BYTES {
         return None;
     }

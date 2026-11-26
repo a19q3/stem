@@ -383,6 +383,11 @@ and checks one old and one new state on either host. It preserves the
 MIME type and content prefix when the revision increases. Prefix
 extension composes across multiple CKB transfers, so the original
 Stem group can verify the aggregate change on restoration.
+The bounded workflow group covers a different case. Each review
+or completion commits the preceding head and needs its own key.
+CKB validates each step before changing the object. Stem replays
+the ordered signatures from the escrowed head using its existing
+Proof Data and verifies the resulting authenticated return state.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and
