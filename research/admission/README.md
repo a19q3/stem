@@ -25,3 +25,16 @@ python3 research/storage/summarize.py research/admission/*.json.xz
 ```
 
 The archives include the signed-workload digest, per-command client dispatch/write/response times, per-node admission and execution counters, common block observations, serial lineage audit, history-index proof and process samples.
+
+## Ten-minute matched-volume follow-up
+
+The next pair used 40 planned commands per second for 600 seconds with a 24-second drain, a 750 ms proposal cadence and the same 16 validators. The slower cadence permits the complete 10-minute horizon under the fixture's existing height-1000 signed expiry guard. The 60-second and 600-second runs therefore answer different load questions.
+
+| Binary | Identical signed IDs confirmed | Driver drops | Common-visible TPS during offer | Common p99 (s) | Client response p99 (ms) | Replica CPU (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Prehash | 24,000 | 0 | 39.878 | 3.544 | 42.65 | 545.44 |
+| Reference | 24,000 | 0 | 39.798 | 3.944 | 325.07 | 549.51 |
+
+Every transaction's ID appeared in both common-finality histories. Each replay verified the common pool at version 24,000 and the other 64 trader Heads, with 48,000 Head updates total and 48,000,000 in fees. The two live schedules reached different final heights. The reference had one transient status-sampling error, then completed and verified common finality. A 40-TPS offered load leaves little room for interpreting the 0.080 TPS difference. The lower client response p99 warrants a repeated, host-isolated comparison. This longer pair does not overcome the opposite short-run tail movement or establish increased saturation capacity.
+
+Replay using the command above with `--rate 40 --seconds 600 --cadence-ms 750 --drain 24`. The files long-prehash.json.xz and long-ref.json.xz contain all client rows, sampled Headers, audits and counters. The long-summary.json file includes the cross-run finalized ID set comparison.

@@ -1,0 +1,124 @@
+{
+  "archives": [
+    {
+      "file": "long-prehash.json.xz",
+      "replicas": 16,
+      "seconds": 600,
+      "planned": 24000,
+      "written": 24000,
+      "admitted": 24000,
+      "visible": 24000,
+      "drops": 0,
+      "visible_tps": 39.87833333333333,
+      "p99_common_us": 3544035,
+      "p99_client_queue_us": 18,
+      "p99_client_response_us": 42645,
+      "cpu_seconds": 545.44,
+      "peak_sampled_node_rss_kib": 167772,
+      "process_write_B_per_confirmed_replica": 12350.88,
+      "wal_bytes": 2636579378,
+      "compaction_jobs_creating_files": 1,
+      "sst": {
+        "flush": {
+          "files": 48,
+          "bytes": 742068252
+        },
+        "compaction": {
+          "files": 1,
+          "bytes": 17316805
+        },
+        "recovery": {
+          "files": 1,
+          "bytes": 6519054
+        },
+        "other": {
+          "files": 0,
+          "bytes": 0
+        }
+      },
+      "batch": {
+        "finality_serialized": 2381428658,
+        "finality_sync_microseconds": 153142215,
+        "finality_writes": 11648,
+        "journal_serialized": 255150720,
+        "journal_sync_microseconds": 158033361,
+        "journal_writes": 23292
+      },
+      "agreed_height": 733,
+      "workload_sha256": "c9460713af464421cced338408b572a23071fc4dba179158001013afbe9c4702",
+      "genesis_sha256": "33484f175326d6a17f170f419bd672233ac7309425fb0dd5b6028c7a09b46ef3",
+      "observer_errors": 0,
+      "candidate_verify_mean_us": 33295.371062271064,
+      "proposal_mean_us": 21902.271978021978,
+      "commit_mean_us": 13581.999828296703,
+      "lineage": {
+        "applied": 24000,
+        "cycles": 94133066250,
+        "fee": 48000000,
+        "head_updates": 48000,
+        "serial_replay_us": 27985990
+      }
+    },
+    {
+      "file": "long-ref.json.xz",
+      "replicas": 16,
+      "seconds": 600,
+      "planned": 24000,
+      "written": 24000,
+      "admitted": 24000,
+      "visible": 24000,
+      "drops": 0,
+      "visible_tps": 39.79833333333333,
+      "p99_common_us": 3944036,
+      "p99_client_queue_us": 18,
+      "p99_client_response_us": 325073,
+      "cpu_seconds": 549.51,
+      "peak_sampled_node_rss_kib": 169744,
+      "process_write_B_per_confirmed_replica": 11644.458666666667,
+      "wal_bytes": 2556625231,
+      "compaction_jobs_creating_files": 1,
+      "sst": {
+        "flush": {
+          "files": 48,
+          "bytes": 745132483
+        },
+        "compaction": {
+          "files": 1,
+          "bytes": 17051054
+        },
+        "recovery": {
+          "files": 1,
+          "bytes": 5011945
+        },
+        "other": {
+          "files": 0,
+          "bytes": 0
+        }
+      },
+      "batch": {
+        "finality_serialized": 2300729606,
+        "finality_sync_microseconds": 434497457,
+        "finality_writes": 10816,
+        "journal_serialized": 255895625,
+        "journal_sync_microseconds": 621790621,
+        "journal_writes": 21697
+      },
+      "agreed_height": 681,
+      "workload_sha256": "c9460713af464421cced338408b572a23071fc4dba179158001013afbe9c4702",
+      "genesis_sha256": "33484f175326d6a17f170f419bd672233ac7309425fb0dd5b6028c7a09b46ef3",
+      "observer_errors": 1,
+      "candidate_verify_mean_us": 35759.712031558185,
+      "proposal_mean_us": 23968.16838995569,
+      "commit_mean_us": 40641.379807692305,
+      "lineage": {
+        "applied": 24000,
+        "cycles": 94133066250,
+        "fee": 48000000,
+        "head_updates": 48000,
+        "serial_replay_us": 77790988
+      }
+    }
+  ],
+  "signed_ids_common_to_both_finalized_sets": 24000,
+  "same_finalized_transaction_set": true
+}
