@@ -172,12 +172,14 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
             .check(&make_tx(Byte32::from_slice(&[30; 32])?)?)
             .is_err()
     );
+    let admitted = store.check(&tx)?;
     assert!(
         store
             .prepare(&[tx.clone(), tx.clone()], TIME, false)
             .is_err()
     );
     let pending = store.prepare(std::slice::from_ref(&tx), TIME, false)?;
+    assert_eq!(pending.receipts(), std::slice::from_ref(&admitted));
     assert_eq!(pending.receipts()[0].fee, 0);
     assert!(pending.validator_updates().is_empty());
     store.commit(pending)?;

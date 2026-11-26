@@ -296,3 +296,82 @@ pub(crate) fn verify_comet_genesis(spec: &Spec, path: &Path) -> Result<ckb_types
     );
     Ok(state.genesis_id().clone())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeSet, time::Instant};
+
+    use anyhow::{Context, Result, ensure};
+    use ckb_hash::{blake2b_256, new_blake2b};
+    use ckb_jsonrpc_types::JsonBytes;
+    use serde_json::json;
+    use stem::native_store::{Retention, Store};
+    use stem_ledger::Transaction;
+
+    #[test]
+    #[ignore = "uses a stopped CKB-funded Jolteon archive and signed payments"]
+    fn measure_funded_admission() -> Result<()> {
+        let path = |name: &str| {
+            std::env::var_os(name)
+                .map(std::path::PathBuf::from)
+                .with_context(|| format!("missing {name}"))
+        };
+        let spec = super::load(&path("STEM_FUNDED_ADMISSION_GENESIS")?)?;
+        ensure!(spec.stake.is_some(), "expected a stake-backed genesis");
+        let database = path("STEM_FUNDED_ADMISSION_DB")?;
+        let workload = std::fs::read(path("STEM_FUNDED_ADMISSION_WORKLOAD")?)?;
+        let wires: Vec<JsonBytes> = serde_json::from_slice(&workload)?;
+        let payments = wires
+            .iter()
+            .map(|wire| Transaction::from_slice(wire.as_bytes()))
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(!payments.is_empty(), "empty payment probe");
+        let mut ids = BTreeSet::new();
+        for tx in &payments {
+            ensure!(
+                tx.operation().is_none() && ids.insert(tx.id(&spec.network)),
+                "expected distinct ordinary payments"
+            );
+        }
+        let mut samples = Vec::new();
+        let mut expected = None;
+        for _ in 0..13 {
+            let store = Store::open(&database, &spec, Retention::Archive)?;
+            let check = || {
+                let started = Instant::now();
+                let receipts = payments
+                    .iter()
+                    .map(|tx| store.check(tx))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok::<_, anyhow::Error>((started.elapsed().as_nanos(), receipts))
+            };
+            let (first_ns, first) = check()?;
+            let (repeated_ns, repeated) = check()?;
+            assert_eq!(repeated, first);
+            let mut receipts = new_blake2b();
+            for receipt in first {
+                receipts.update(&receipt.encode());
+            }
+            let mut digest = [0; 32];
+            receipts.finalize(&mut digest);
+            let result = json!({
+                "height": store.tip().context.height,
+                "header": hex::encode(store.tip().encode()),
+                "receipt_digest": hex::encode(digest),
+            });
+            assert_eq!(expected.get_or_insert_with(|| result.clone()), &result);
+            samples.push(json!({"first_ns": first_ns, "repeated_ns": repeated_ns}));
+        }
+        let report = json!({
+            "state": expected,
+            "payments": payments.len(),
+            "workload_blake2b": hex::encode(blake2b_256(&workload)),
+            "samples": samples,
+        });
+        if let Some(output) = std::env::var_os("STEM_FUNDED_ADMISSION_REPORT") {
+            std::fs::write(output, serde_json::to_vec(&report)?)?;
+        }
+        println!("{report}");
+        Ok(())
+    }
+}

@@ -1167,7 +1167,7 @@ impl Store {
                 <= self.limits.transaction_count as usize,
             "block transaction count exceeded"
         );
-        let mut overlay = self.overlay()?;
+        let mut overlay = self.overlay(self.stage_stake()?);
         let with_due = (!due.commands.is_empty()).then(|| {
             due.commands
                 .iter()
@@ -1463,7 +1463,7 @@ impl Store {
         max_bytes: u64,
     ) -> Result<ProposalSelection> {
         let mut budget = Budget::new(self.limits);
-        let mut overlay = self.overlay()?;
+        let mut overlay = self.overlay(self.stage_stake()?);
         let mut wire_bytes = max_bytes;
         let context =
             HeaderContext::after(&self.network, &self.tip, timestamp_ms, Byte32::default())?;
@@ -1536,20 +1536,20 @@ impl Store {
             &context,
             &Origin::new(&self.network, &context),
             &mut Budget::new(self.limits),
-            &mut self.overlay()?,
+            &mut self.overlay(None),
             None,
             |resolved, limit| self.cache.verify(resolved, limit, false),
         )
     }
 
-    fn overlay(&self) -> Result<Overlay> {
-        Ok(Overlay {
+    fn overlay(&self, stake: Option<StagedStake>) -> Overlay {
+        Overlay {
             live: BTreeMap::new(),
-            stake: self.stage_stake()?,
+            stake,
             bridge: self.bridge.as_deref().map(Bridge::stage),
             lineages: BTreeMap::new(),
             keeper: keeper::Stage::default(),
-        })
+        }
     }
 
     fn resolve_live(
@@ -1747,11 +1747,15 @@ impl Store {
         } = overlay;
         let operation = tx.operation();
         if matches!(operation, Some(Operation::StakeSnapshot(_))) {
-            let (staking, stake) = self
+            let staking = self
                 .staking
                 .as_ref()
-                .zip(stake.as_mut())
                 .context("native staking is not configured")?;
+            let stake = match stake {
+                Some(staged) => staged,
+                // Individual admission starts with no staged registry state.
+                None => stake.insert(staking.load(self)?),
+            };
             let receipt = staking.verify(self, context.height, tx, stake)?;
             *budget = next;
             return Ok(receipt);
