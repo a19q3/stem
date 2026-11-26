@@ -5085,3 +5085,47 @@ Devnet regressions verified Intercell, CKB and xUDT, Spore, fee payouts,
 funded committee handoff and append-only custody.
 
 [Recovery requests, signed transactions, proofs, timings, commands and failures](benchmarks/2026-11-26-stem-workflow-recovery.json.xz).
+
+## Atomic settlement of two Metatype assets
+
+Four Jolteon replicas and a real CKB devnet settled two capped
+assets with distinct series IDs, Manifest IDs, escrows
+and mailboxes. The fixture exported 160 and 250 units, imported
+both on CKB, exchanged their owners in one CKB transaction, burned
+both, and released the native assets to distinct recipients. Each
+stage used one transaction. The Stem return used a single
+guardian reference-set certificate for both CKB mailbox outputs.
+
+| Manifest layout | CKB import bytes / cycles | CKB swap bytes / cycles | CKB burn bytes / cycles | Stem return bytes / cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Inline | 4,537 / 8,359,930 | 1,768 / 4,765,656 | 2,804 / 6,621,611 | 4,295 / 14,284,682 |
+| Shared | 4,135 / 8,483,494 | 1,366 / 4,842,060 | 2,878 / 6,713,677 | 4,295 / 14,284,682 |
+
+Each CKB asset occupied 481 CKB inline or 243 CKB with a shared
+definition. Each shared definition occupied another 336 CKB.
+The Stem export consumed 2,297,985 cycles and its receipt
+committed both message IDs. The return ran under the existing
+20-million-cycle transaction cap. The independent four-action
+case used 7,683,284 cycles with a 128-byte result.
+
+The CKB controls substituted one import witness, inflated one
+swap output and misstated the second burn amount. All affected CKB
+inputs remained live after rejection. Stem rejected an omitted
+export action, a second action in the same Lock group, an omitted
+burn reference, a redirected release and a replay. Before the
+successful redeem, both escrow Cells remained live and both Inbox
+records were absent. The five-action probe left every record absent.
+Its successful four-action counterpart finalized exactly four
+records and four ordered IDs.
+
+WASM verified finality, execution receipts, message membership
+and absence, and the original Type Scripts' presence on the
+released Cells. Twelve CKB output inclusion checks verified both
+outputs from each import, swap and burn under the recorded
+headers with transaction and witness paths. The workspace passed
+488 tests with 22 ignored. The Go proof suite and CometBFT build
+check passed. Real CKB devnet regressions covered the single-lane
+Metatype return, workflow proof recovery, Intercell, native CKB
+and xUDT, Spore, fee payouts and funded committee handoff.
+
+[Signed transactions, proofs, measurements, commands and rejection controls](benchmarks/2026-11-26-stem-metatype-multiasset.json.xz).
