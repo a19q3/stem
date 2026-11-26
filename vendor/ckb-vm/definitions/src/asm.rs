@@ -6,6 +6,7 @@ use crate::{
 // The number of trace items to keep
 pub const TRACE_SIZE: usize = 8192;
 pub const TRACE_ITEM_LENGTH: usize = 16;
+const TRACE_WORD_BITS: usize = u64::BITS as usize;
 
 pub const RET_DECODE_TRACE: u8 = 1;
 pub const RET_ECALL: u8 = 2;
@@ -62,9 +63,51 @@ pub struct AsmCoreMachine {
 
     pub flags: [u8; RISCV_PAGES],
     pub frames: [u8; MEMORY_FRAMES],
-    pub traces: [Trace; TRACE_SIZE],
+    traces: [Trace; TRACE_SIZE],
+    live_traces: [u64; TRACE_SIZE / TRACE_WORD_BITS],
 
     pub memory: [u8; RISCV_MAX_MEMORY],
+}
+
+impl AsmCoreMachine {
+    #[doc(hidden)]
+    pub const TRACES_OFFSET: usize = std::mem::offset_of!(Self, traces);
+
+    #[doc(hidden)]
+    pub fn initialize_traces(&mut self) {
+        self.traces.fill_with(Trace::default);
+        self.live_traces.fill(0);
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    pub fn install_trace(&mut self, trace: Trace) {
+        debug_assert_ne!(trace.length, 0);
+        let slot = calculate_slot(trace.address);
+        self.live_traces[slot / TRACE_WORD_BITS] |= 1 << (slot % TRACE_WORD_BITS);
+        self.traces[slot] = trace;
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    pub fn clear_trace(&mut self, slot: usize) {
+        self.traces[slot].length = 0;
+        self.live_traces[slot / TRACE_WORD_BITS] &= !(1 << (slot % TRACE_WORD_BITS));
+    }
+
+    /// Invalidate cached instructions before reusing a core for different code.
+    pub fn clear_traces(&mut self) {
+        // Both assembly backends test length before dispatching a trace.
+        // Installing a trace replaces its full payload.
+        for (word, live) in self.live_traces.iter_mut().enumerate() {
+            let mut bits = std::mem::take(live);
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                self.traces[word * TRACE_WORD_BITS + bit].length = 0;
+                bits &= bits - 1;
+            }
+        }
+    }
 }
 
 impl AsRef<Box<AsmCoreMachine>> for Box<AsmCoreMachine> {

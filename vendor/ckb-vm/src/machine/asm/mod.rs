@@ -7,7 +7,7 @@ use ckb_vm_definitions::{
     asm::{
         RET_CYCLES_OVERFLOW, RET_DECODE_TRACE, RET_DYNAMIC_JUMP, RET_EBREAK, RET_ECALL,
         RET_INVALID_PERMISSION, RET_MAX_CYCLES_EXCEEDED, RET_OUT_OF_BOUND, RET_PAUSE, RET_SLOWPATH,
-        TRACE_ITEM_LENGTH, TRACE_SIZE, Trace, calculate_slot,
+        TRACE_ITEM_LENGTH, Trace, calculate_slot,
     },
     instructions::OP_CUSTOM_TRACE_END,
 };
@@ -66,9 +66,7 @@ impl AsmCoreMachineRevealer for Box<AsmCoreMachine> {
         machine.version = version;
         machine.isa = isa;
         machine.flags = [0; RISCV_PAGES];
-        for i in 0..TRACE_SIZE {
-            machine.traces[i] = Trace::default();
-        }
+        machine.initialize_traces();
         machine.frames = [0; MEMORY_FRAMES];
 
         machine.memory_size = memory_size as u64;
@@ -502,9 +500,7 @@ where
         m.registers = [0; RISCV_GENERAL_REGISTER_NUMBER];
         m.pc = 0;
         m.flags = [0; RISCV_PAGES];
-        for i in 0..TRACE_SIZE {
-            m.traces[i] = Trace::default();
-        }
+        m.clear_traces();
         m.frames = [0; MEMORY_FRAMES];
         m.cycles = 0;
         m.max_cycles = max_cycles;
@@ -580,7 +576,6 @@ where
             match result {
                 RET_DECODE_TRACE => {
                     let pc = *self.machine.pc();
-                    let slot = calculate_slot(pc);
                     let mut trace = Trace::default();
                     let mut current_pc = pc;
                     let mut i = 0;
@@ -614,7 +609,7 @@ where
                     if trace.length == 0 {
                         return Err(Error::TraceLengthError);
                     }
-                    self.machine.inner_mut().as_mut().traces[slot] = trace;
+                    self.machine.inner_mut().as_mut().install_trace(trace);
                 }
                 RET_ECALL => self.machine.ecall()?,
                 RET_EBREAK => self.machine.ebreak()?,
@@ -686,7 +681,7 @@ where
         };
         trace.address = pc;
         trace.length = len;
-        self.machine.inner_mut().as_mut().traces[slot] = trace;
+        self.machine.inner_mut().as_mut().install_trace(trace);
 
         let result = unsafe {
             ckb_vm_x64_execute(
@@ -708,7 +703,7 @@ where
             }
             _ => return Err(Error::Asm(result)),
         }
-        self.machine.inner_mut().as_mut().traces[slot] = Trace::default();
+        self.machine.inner_mut().as_mut().clear_trace(slot);
         Ok(())
     }
 }

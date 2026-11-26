@@ -14,7 +14,7 @@ use ckb_vm::{
     machine::asm::{AsmCoreMachine, AsmMachine},
 };
 #[cfg(has_asm)]
-use ckb_vm_definitions::asm::{TRACE_ITEM_LENGTH, Trace, calculate_slot};
+use ckb_vm_definitions::asm::{TRACE_ITEM_LENGTH, Trace};
 use ckb_vm_definitions::instructions as insts;
 use std::fs;
 
@@ -99,7 +99,6 @@ pub fn test_asm_auipc_fusion() {
     ));
 
     let pc = *machine.machine.pc();
-    let slot = calculate_slot(pc);
     let mut trace = Trace::default();
     let mut current_pc = pc;
     let mut i = 0;
@@ -132,7 +131,7 @@ pub fn test_asm_auipc_fusion() {
     };
     trace.address = pc;
     trace.length = (current_pc - pc) as u8;
-    machine.machine.inner_mut().traces[slot] = trace;
+    machine.machine.inner_mut().install_trace(trace);
 
     let result = machine.run().expect("run");
     assert_eq!(result, 0);

@@ -906,6 +906,16 @@ and reply latency alongside replica admission queue and service time.
 Use `STEM_STORAGE_SENDERS=64 STEM_STORAGE_RATE=2000 STEM_STORAGE_SECONDS=20`
 for the short high-rate comparison.
 
+For the assembly trace reset comparison, build both node revisions with
+`cargo build --locked --release --bin stem` and pin one
+`native_store` test executable for both. Set
+`STEM_TEST_REPLICA_BIN` to each node binary in turn. Use a fresh
+evidence directory per run, four replicas, 64 senders, fresh sockets,
+two VM workers, a 250 ms proposal interval, a two-billion-cycle block
+budget and a 12-second drain. The matched runs use 1,000 TPS for 35
+seconds and 2,000 TPS for 24 seconds. The benchmark archive contains
+the exact commands and the isolated trace probe.
+
 For the fixed Patricia editor probe, run:
 
 ```sh

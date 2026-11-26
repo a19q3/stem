@@ -196,7 +196,7 @@ fn main() {
     );
     println!(
         "#define CKB_VM_ASM_ASM_CORE_MACHINE_OFFSET_TRACES {}",
-        (&m.traces as *const Trace as usize) - m_address
+        AsmCoreMachine::TRACES_OFFSET
     );
     println!(
         "#define CKB_VM_ASM_ASM_CORE_MACHINE_OFFSET_FRAMES {}",

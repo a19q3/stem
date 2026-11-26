@@ -34,11 +34,7 @@ pub(crate) fn allocate_core(isa: u8, version: u32, max_cycles: u64) -> Box<AsmCo
     core.last_write_page = u64::MAX;
     core.flags.fill(0);
     core.frames.fill(0);
-    // Both assembly backends require a nonzero length before using a trace.
-    // The decoder replaces every field before publishing it again.
-    for trace in &mut core.traces {
-        trace.length = 0;
-    }
+    core.clear_traces();
     core
 }
 
@@ -103,6 +99,15 @@ mod tests {
             ISA_IMC | ISA_B | ISA_MOP
         };
         let mut core = allocate(isa, version, max_cycles);
+        load_at_same_address(&mut core, program);
+        M::new(
+            DefaultMachineBuilder::new(core)
+                .instruction_cycle_func(Box::new(estimate_cycles))
+                .build(),
+        )
+    }
+
+    fn load_at_same_address(core: &mut Box<AsmCoreMachine>, program: &[u32]) {
         let bytes: Vec<_> = program.iter().flat_map(|word| word.to_le_bytes()).collect();
         core.init_pages(
             CODE,
@@ -114,11 +119,6 @@ mod tests {
         .unwrap();
         core.update_pc(CODE);
         core.commit_pc();
-        M::new(
-            DefaultMachineBuilder::new(core)
-                .instruction_cycle_func(Box::new(estimate_cycles))
-                .build(),
-        )
     }
 
     #[test]
@@ -163,5 +163,40 @@ mod tests {
             assert_eq!(fresh.run(), expected);
             assert_eq!(reused.inner_mut().cycles(), fresh.inner_mut().cycles());
         }
+    }
+
+    #[test]
+    fn reset_and_reuse_invalidate_traces_at_multiple_addresses() {
+        let program = |entry: u32, target: u32| {
+            let mut words = [0; 67];
+            words[0] = (entry << 20) | 0x0000_0513; // addi a0, zero, entry
+            words[1] = 0x0fc0_006f; // jal zero, 252; target is in another bitmap word
+            words[64] = (target << 20) | 0x0005_0513; // addi a0, a0, target
+            words[65] = 0x05d0_0893; // addi a7, zero, 93
+            words[66] = 0x0000_0073; // ecall
+            words
+        };
+        let first_code = program(1, 7);
+        let reset_code = program(2, 9);
+        let reused_code = program(3, 11);
+        let mut first = machine::<ReusableMachine>(allocate_core, VERSION2, 10_000, &first_code);
+        assert_eq!(first.run(), Ok(8));
+        let address = std::ptr::from_ref(&**first.inner_mut());
+        first.inner_mut().reset(10_000);
+        load_at_same_address(first.inner_mut(), &reset_code);
+        assert_eq!(first.run(), Ok(11));
+        drop(first);
+
+        let mut reused = machine::<ReusableMachine>(allocate_core, VERSION2, 10_000, &reused_code);
+        let mut fresh = machine::<AsmMachine>(
+            <Box<AsmCoreMachine> as SupportMachine>::new,
+            VERSION2,
+            10_000,
+            &reused_code,
+        );
+        assert_eq!(std::ptr::from_ref(&**reused.inner_mut()), address);
+        assert_eq!(reused.run(), Ok(14));
+        assert_eq!(fresh.run(), Ok(14));
+        assert_eq!(reused.inner_mut().cycles(), fresh.inner_mut().cycles());
     }
 }
