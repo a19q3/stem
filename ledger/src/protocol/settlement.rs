@@ -16,6 +16,34 @@ use crate::{
     wire,
 };
 
+/// Native and CKB vaults commit the same fixed prefix and a canonical CKB Script.
+pub fn withdrawal_receipt(
+    lane: &Byte32,
+    nonce: u64,
+    tx_id: &Byte32,
+    index: u32,
+    capacity: u64,
+    units: u128,
+    recipient: &ckb_types::packed::Script,
+) -> Vec<u8> {
+    let prefix = wire::WithdrawalReceiptPrefix::new_builder()
+        .lane(super::byte32(lane))
+        .nonce(super::uint64(nonce))
+        .transaction(super::byte32(tx_id))
+        .index(wire::Uint32::new_unchecked(
+            index.to_le_bytes().to_vec().into(),
+        ))
+        .capacity(super::uint64(capacity))
+        .units(wire::Uint128::new_unchecked(
+            units.to_le_bytes().to_vec().into(),
+        ))
+        .build();
+    let mut receipt = Vec::with_capacity(prefix.as_slice().len() + recipient.as_slice().len());
+    receipt.extend_from_slice(prefix.as_slice());
+    receipt.extend_from_slice(recipient.as_slice());
+    receipt
+}
+
 /// Counters derived from the authenticated L1 vault and pending receipts.
 /// The vault Capacity is liquid Capacity, excluding its L1 storage collateral.
 #[derive(Clone, Debug, Eq, PartialEq)]

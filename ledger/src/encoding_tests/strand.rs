@@ -251,6 +251,9 @@ int main(int argc, char **argv) {
     size_t len = fread(bytes, 1, sizeof(bytes), stdin);
     tg_seg_t frame = {bytes, len};
     if (argc != 2) return 2;
+    if (argv[1][0] == 'i') return TgReader_IntercellEnvelope_verify(&frame);
+    if (argv[1][0] == 'b') return TgReader_BridgeGenesisConfig_verify(&frame);
+    if (argv[1][0] == 'k') return TgReader_KeeperReservation_verify(&frame);
     if (argv[1][0] == 'r') return TgReader_Receipt_verify(&frame);
     if (argv[1][0] == 's') return TgReader_StateSnapshot_verify(&frame);
     if (argv[1][0] == 'h') return TgReader_HistoricalHeaderProof_verify(&frame);
@@ -294,16 +297,37 @@ int main(int argc, char **argv) {
     let snapshot = codec::StateSnapshot::default();
     let history = codec::HistoricalHeaderProof::default();
     let principal = codec::StakePrincipalProof::default();
+    let bridge = codec::BridgeGenesisConfig::new_builder()
+        .lanes(codec::Byte32Vec::new_builder().set(vec![fixed(&[42; 32])]).build())
+        .build();
+    let message = stem_bridge_wire::intercell::Message {
+        source: [1;32], destination: [2;32], sender: [3;32], receiver: [4;32],
+        nonce: 42, payload: &[],
+    };
+    let envelope = message.header();
+    let view = codec::IntercellEnvelopeReader::from_slice(&envelope)?;
+    assert_eq!(view.source().as_slice(), message.source);
+    assert_eq!(view.destination().as_slice(), message.destination);
+    assert_eq!(view.sender().as_slice(), message.sender);
+    assert_eq!(view.receiver().as_slice(), message.receiver);
+    assert_eq!(view.nonce().as_slice(), message.nonce.to_le_bytes());
+    let reservation = codec::KeeperReservation::default();
     for (kind, canonical) in [
         ("tx", transaction.as_slice()),
         ("receipt", &receipt),
         ("snapshot", snapshot.as_slice()),
         ("history", history.as_slice()),
         ("principal", principal.as_slice()),
+        ("bridge", bridge.as_slice()),
+        ("intercell", envelope.as_slice()),
+        ("keeper", reservation.as_slice()),
     ] {
         let validate = |value: &[u8]| match kind {
             "tx" => codec::TransactionReader::verify(value).is_ok(),
             "receipt" => codec::ReceiptReader::verify(value).is_ok(),
+            "intercell" => codec::IntercellEnvelopeReader::verify(value).is_ok(),
+            "bridge" => codec::BridgeGenesisConfigReader::verify(value).is_ok(),
+            "keeper" => codec::KeeperReservationReader::verify(value).is_ok(),
             "snapshot" => codec::StateSnapshotReader::verify(value).is_ok(),
             "history" => codec::HistoricalHeaderProofReader::verify(value).is_ok(),
             _ => codec::StakePrincipalProofReader::verify(value).is_ok(),

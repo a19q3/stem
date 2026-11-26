@@ -57,6 +57,28 @@ pub fn decode_epoch_rewards(data: &[u8]) -> Result<EpochRewards> {
     Ok(EpochRewards::decode(view.as_slice())?)
 }
 
+/// The committee tail is a sequence of fixed-width members extending to the record boundary.
+pub fn decode_committee(data: &[u8]) -> Result<stem_stake::jolteon::CommitteeChange> {
+    let prefix = wire::CommitteePositionReader::span(data)?;
+    ensure!(
+        (data.len() - prefix).is_multiple_of(wire::StakeMember::TOTAL_SIZE),
+        "invalid committee member span"
+    );
+    Ok(stem_stake::jolteon::CommitteeChange::decode(data)?)
+}
+
+pub fn decode_registry_application(data: &[u8]) -> Result<stem_stake::l1::RegistryApplication> {
+    let record = wire::RegistryApplicationRecordReader::from_slice(data)?;
+    Ok(stem_stake::l1::RegistryApplication {
+        previous_sequence: u64::from_le_bytes(record.previous_sequence().as_slice().try_into()?),
+        effective_height: u64::from_le_bytes(record.effective_height().as_slice().try_into()?),
+        l1_anchor: Anchor {
+            height: u64::from_le_bytes(record.anchor().height().as_slice().try_into()?),
+            hash: record.anchor().hash().as_slice().try_into()?,
+        },
+    })
+}
+
 pub fn encode_accepted(accepted: AcceptedSnapshot, members: &[Member]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&accepted.epoch.to_le_bytes());

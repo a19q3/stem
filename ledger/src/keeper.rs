@@ -9,7 +9,7 @@ use ckb_types::{
 
 use crate::{
     Transaction,
-    strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
+    strand::prelude::{Builder as WireBuilder, Entity as WireEntity, Reader as WireReader},
     wire,
 };
 
@@ -145,7 +145,7 @@ pub struct Reservation {
 }
 
 impl Reservation {
-    pub const SIZE: usize = Trigger::SIZE + OutPoint::TOTAL_SIZE + 32 + 1;
+    pub const SIZE: usize = wire::KeeperReservation::TOTAL_SIZE;
 
     pub fn encode(&self) -> Vec<u8> {
         [
@@ -158,12 +158,9 @@ impl Reservation {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        ensure!(
-            bytes.len() == Self::SIZE,
-            "incorrect Keeper reservation size"
-        );
-        let (trigger, primary_fee, command_id) = decode_command_key(&bytes[..Self::SIZE - 1])?;
-        let in_agenda = match bytes[Self::SIZE - 1] {
+        let record = wire::KeeperReservationReader::from_slice(bytes)?;
+        let (trigger, primary_fee, command_id) = decode_command_key(record.command().as_slice())?;
+        let in_agenda = match record.in_agenda().as_slice()[0] {
             0 if matches!(trigger, Trigger::Height(_)) => false,
             1 => true,
             _ => bail!("invalid Keeper reservation index"),
@@ -294,14 +291,10 @@ pub fn decode_agenda(bytes: &[u8]) -> Result<Vec<AgendaEntry>> {
 }
 
 fn decode_command_key(bytes: &[u8]) -> Result<(Trigger, OutPoint, Byte32)> {
-    let end = Trigger::SIZE + OutPoint::TOTAL_SIZE;
-    ensure!(
-        bytes.len() == end + 32,
-        "incorrect Keeper command reference size"
-    );
-    let trigger = Trigger::decode(&bytes[..Trigger::SIZE])?;
-    let fee = OutPoint::from_slice(&bytes[Trigger::SIZE..end])?;
-    let command_id = Byte32::from_slice(&bytes[end..])?;
+    let record = wire::KeeperCommandKeyReader::from_slice(bytes)?;
+    let trigger = Trigger::decode(record.trigger().as_slice())?;
+    let fee = OutPoint::from_slice(record.fee().as_slice())?;
+    let command_id = Byte32::from_slice(record.command().as_slice())?;
     ensure!(
         !fee.is_null() && command_id != Byte32::default(),
         "Keeper command reference must identify a fee Cell and command"

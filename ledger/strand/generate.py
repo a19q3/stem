@@ -212,6 +212,7 @@ def rust():
    prefix+=f'#[cfg(not(target_os="none"))]pub fn write_count<W:std::io::Write>(count:usize,w:&mut W)->std::io::Result<()>{{w.write_all(&u32::try_from(count).map_err(|_|{ioerror})?.to_le_bytes())}}'
    prefix+='#[cfg(not(target_os="none"))]pub fn write_prefix<W:std::io::Write>(sizes:impl Iterator<Item=usize>+Clone,w:&mut W)->std::io::Result<()>{Self::write_count(sizes.count(),w)}'
    write=f'{n}::write_prefix(self.items.iter().map(|v|v.as_slice().len()),w)?;for v in &self.items{{w.write_all(v.as_slice())?;}}Ok(())'
+  if fixed(n):prefix+=f'pub const TOTAL_SIZE:usize={fixed(n)};'
   header_size=t['flag_bytes'] if k=='flagged' else 0
   tag_bytes=t.get('tag_bytes',1) if k=='union' else 0
   tags=''.join(f'pub const TAG_{re.sub(r"(?<!^)(?=[A-Z])","_",v).upper()}:usize={i};' for i,v in enumerate(t.get('variants',[])))

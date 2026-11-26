@@ -126,6 +126,25 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     fixture.spec.stake.as_mut().unwrap().config.minimum_bond = config.minimum_bond;
     let path = tempfile::tempdir()?;
     let mut store = Store::open(path.path(), &fixture.spec, Retention::Recent(4))?;
+    let (record, proof) = store.prove_stake_snapshot()?;
+    let record = record.context("genesis snapshot record")?;
+    assert!(Store::verify_stake_snapshot(store.network(), store.tip(), Some(&record), &proof));
+    let (statement, registry, votes) = protocol::read_genesis_snapshot(&record)?;
+    let genesis = fixture.spec.stake.as_ref().unwrap();
+    assert_eq!(statement, genesis.statement);
+    assert_eq!(registry.encode(), genesis.registry.encode());
+    assert_eq!(votes, genesis.signatures);
+    let mut original = Vec::new();
+    let statement = genesis.statement.encode();
+    original.extend((statement.len() as u16).to_le_bytes());
+    original.extend(statement);
+    original.extend(0u16.to_le_bytes());
+    original.extend(genesis.registry.encode());
+    original.extend((votes.len() as u16).to_le_bytes());
+    for vote in votes { original.extend(vote.guardian.to_le_bytes()); original.extend(vote.signature); }
+    assert_eq!(record, original);
+    original.push(0);
+    assert!(protocol::read_genesis_snapshot(&original).is_err());
     assert_eq!(store.genesis_validators(), &[(first, 10)]);
     let mut stakes = vec![
         make_stake(first, 10, 0, Some(1)),

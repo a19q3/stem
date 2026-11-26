@@ -612,3 +612,10 @@ Polytype 的边际成本采用控制实验。固定输入数量和数据、输�
 已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。Jolteon 实际网络覆盖 4 至 128 副本，并在 CKB devnet 核验跨 epoch 交接、观察节点恢复与原生检查点发布。当前默认入口为加权 Jolteon，CometBFT 保留为冻结的实验对照。默认节点已在 CKB devnet 验证无许可兑付、退休、解押和双签罚没。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
 
 CKB 历史输出验证器从可信区块哈希重算 Header、交易及见证根，并按 OutPoint 提取原始输出。Rust 客户端与离线 CLI 可独立验证历史输出。StemVM 可读取 guardians 认证的历史输出或指定锚点存活记录。当前 CKB tip 的实时状态由独立查询处理。
+
+
+### 原生系统记录的兼容编码
+
+创世参数由固定宽度的限制、费率、容量策略和链名长度开头，随后是原始链名字节及验证者条目。桥接配置的主体使用 `BridgeGenesisConfig`，包含三类控制预算、守护者、按创世顺序给出的通道及收款约束。尾部沿用既有约定，依次为可选的 32 字节邮箱代码哈希，以及可选的基金标签和代码哈希。Keeper 策略保留高度策略后的可选时间策略。单字节标识、计数和高度使用既有原始字节和小端整数。
+
+质押系统沿用长度为 40 字节的成员条目。创世快照中的声明长度、轮换人数、Registry 记录数和证明签名数均按历史 u16 读取。运行期快照继续按原签名域验证声明、轮换授权与 Registry 业务规则。提款收据保存固定原生前缀和原始 CKB 收款 Script。Intercell 信封后的业务负载保持原字节，CKB 合约和 Stem 共享消息 ID。以上布局可在 [Strand schema](ledger/schemas/strand.json) 查阅。新旧导出、C/Rust 读取器及创世夹具见[验证记录](evidence/2026-11-27-strand-system-records.json.xz)。

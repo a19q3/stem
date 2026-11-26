@@ -71,14 +71,10 @@ impl KeeperPolicy {
     }
 
     pub(super) fn record(self) -> (&'static [u8], Vec<u8>) {
-        let mut record = Vec::with_capacity(22);
-        record.extend(self.max_delay.to_le_bytes());
-        record.extend(self.per_height.to_le_bytes());
-        record.extend(self.reservation_fee.to_le_bytes());
-        if let Some(time) = self.time {
-            record.extend(time.per_height.to_le_bytes());
-            record.extend(time.max_delay_ms.to_le_bytes());
-        }
+        let record = stem_ledger::protocol::genesis::keeper_policy(
+            self.max_delay, self.per_height, self.reservation_fee,
+            self.time.map(|time| (time.per_height, time.max_delay_ms)),
+        );
         (CONFIG, record)
     }
 

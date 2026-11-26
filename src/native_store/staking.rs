@@ -10,7 +10,7 @@ use stem_ledger::{
     Transaction,
     block::Receipt,
     patricia::{Key, Namespace, Patricia},
-    protocol::{BlockBudget, FeeFund, Limits, Operation, SnapshotContext, snapshot_body},
+    protocol::{BlockBudget, FeeFund, Limits, Operation, SnapshotContext},
     replay::Key as ReplayKey,
     stake_proof::{decode_accepted, decode_members, encode_accepted, encode_members},
 };
@@ -131,27 +131,12 @@ impl Staking {
             },
             submitted: None,
         };
-        let mut config = Vec::new();
-        for item in [
-            genesis.config.minimum_bond,
-            genesis.config.shannons_per_power,
-            u64::try_from(genesis.config.max_validators)?,
-            genesis.config.max_total_power,
-            genesis.config.blocks_per_epoch,
-            genesis.signing_window,
-            genesis.limits.bytes,
-            u64::from(genesis.limits.operations),
-            u64::from(genesis.limits.signatures),
-        ] {
-            config.extend_from_slice(&item.to_le_bytes());
-        }
-        config.extend_from_slice(&encode_members(&genesis.guardians));
-        let mut snapshot = snapshot_body(&genesis.statement, &genesis.registry, &[])?.to_vec();
-        snapshot.extend_from_slice(&u16::try_from(genesis.signatures.len())?.to_le_bytes());
-        for attestation in &genesis.signatures {
-            snapshot.extend_from_slice(&attestation.guardian.to_le_bytes());
-            snapshot.extend_from_slice(&attestation.signature);
-        }
+        let config = stem_ledger::protocol::genesis::stake_config(
+            &genesis.config, genesis.signing_window, genesis.limits, &genesis.guardians,
+        )?;
+        let snapshot = stem_ledger::protocol::genesis_snapshot(
+            &genesis.statement, &genesis.registry, &genesis.signatures,
+        )?;
         let system = Patricia::new(domain.stem_network_id.pack(), Namespace::System);
         Ok((
             Self {
@@ -479,7 +464,7 @@ impl StakeState {
             accepted,
             eligible,
             applied_sequence,
-            announced: CommitteeChange::decode(announced)?,
+            announced: stem_ledger::stake_proof::decode_committee(announced)?,
             submitted: None,
         })
     }

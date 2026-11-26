@@ -547,16 +547,10 @@ impl Store {
             .set_batch(&allocations, |_, _, _| {})
             .context("invalid genesis allocations")?;
         let mut system_edit = system.edit(system.empty_root(), |_| Ok(None::<Vec<u8>>));
-        let mut params = spec.limits.encode();
-        params.extend_from_slice(&spec.fees.encode());
-        params.extend_from_slice(&spec.capacity.bond_per_byte.to_le_bytes());
-        params.extend_from_slice(&spec.capacity.state_overhead.to_le_bytes());
-        params.push(spec.chain_id.len() as u8);
-        params.extend_from_slice(spec.chain_id.as_bytes());
-        for (public_key, power) in &validators {
-            params.extend_from_slice(public_key);
-            params.extend_from_slice(&power.to_le_bytes());
-        }
+        let params = stem_ledger::protocol::genesis::network_parameters(
+            &spec.limits.encode(), &spec.fees.encode(), spec.capacity.bond_per_byte,
+            spec.capacity.state_overhead, &spec.chain_id, &validators,
+        )?;
         if spec.vm_crypto_v1 {
             let id = system.record_key(b"vm/crypto-abi");
             system_edit.set(id, Some(system.value_hash(&[1])))?;
@@ -854,12 +848,12 @@ impl Store {
         registry: &stem_stake::Hash32,
         sequence: u64,
     ) -> Result<(Option<stem_stake::l1::RegistryApplication>, Proof)> {
-        use stem_stake::l1::{RegistryApplication, registry_application_key};
+        use stem_stake::l1::registry_application_key;
         let (record, proof) = self.prove_system(&registry_application_key(registry, sequence))?;
         Ok((
             record
                 .as_deref()
-                .map(RegistryApplication::decode)
+                .map(stem_ledger::stake_proof::decode_registry_application)
                 .transpose()?,
             proof,
         ))
@@ -927,7 +921,7 @@ impl Store {
         Ok(self
             .system_record(COMMITTEE_RECORD)?
             .as_deref()
-            .map(CommitteeChange::decode)
+            .map(stem_ledger::stake_proof::decode_committee)
             .transpose()?)
     }
 
@@ -1340,7 +1334,7 @@ impl Store {
             validator_updates = updates;
             for (name, value) in records {
                 if name == COMMITTEE_RECORD {
-                    committee_change = Some(CommitteeChange::decode(&value)?);
+                    committee_change = Some(stem_ledger::stake_proof::decode_committee(&value)?);
                 }
                 let id = self.system.record_key(&name);
                 system_changes.push((id, Some(self.system.value_hash(&value))));

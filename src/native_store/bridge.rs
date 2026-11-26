@@ -231,29 +231,7 @@ impl Bridge {
         let mut assets = BTreeSet::new();
         let mut vaults = BTreeSet::new();
         let mut identities = BTreeSet::new();
-        let mut config = Vec::new();
-        for id in [
-            &spec.l1_genesis,
-            &spec.guardian_generation,
-            &spec.wrapped_code_hash,
-            &spec.burn_code_hash,
-        ] {
-            config.extend_from_slice(id.as_slice());
-        }
-        for limit in [spec.mint_limits, spec.settlement_limits, spec.anchor_limits] {
-            config.extend_from_slice(&limit.operations.to_le_bytes());
-            config.extend_from_slice(&limit.bytes.to_le_bytes());
-            config.extend_from_slice(&limit.signatures.to_le_bytes());
-        }
-        config.extend_from_slice(&spec.confirmations.to_le_bytes());
-        config.extend_from_slice(&spec.deposits_per_block.to_le_bytes());
-        config.extend_from_slice(&u32::try_from(spec.guardians.len())?.to_le_bytes());
-        for guardian in &spec.guardians {
-            config.extend_from_slice(&guardian.key);
-            config.extend_from_slice(&guardian.power.to_le_bytes());
-        }
-
-        config.extend_from_slice(&u32::try_from(spec.lanes.len())?.to_le_bytes());
+        let mut lane_ids = Vec::with_capacity(spec.lanes.len());
         for lane in &spec.lanes {
             let vault_type_hash = lane.vault_type.calc_script_hash();
             ensure!(
@@ -268,7 +246,7 @@ impl Bridge {
             }
             ensure!(assets.insert(l1_hash.clone()), "duplicate L1 asset");
             let name = lane_id(&spec.l1_genesis, &vault_type_hash, l1_hash.as_ref());
-            config.extend_from_slice(name.as_slice());
+            lane_ids.push(name.clone());
             let wrapped = l1_hash.map(|id| {
                 Script::new_builder()
                     .hash_type(ScriptHashType::Data)
@@ -305,29 +283,14 @@ impl Bridge {
         )?;
         records.insert(VaultRevenue::KEY.to_vec(), Some(revenue.encode().to_vec()));
 
-        config.extend_from_slice(&u32::try_from(spec.recipient_locks.len())?.to_le_bytes());
-        let recipient_locks = spec
-            .recipient_locks
-            .iter()
-            .map(|lock| {
-                config.extend_from_slice(lock.code_hash.as_slice());
-                config.push(lock.hash_type as u8);
-                config.extend_from_slice(&lock.args_len.to_le_bytes());
-                (lock.code_hash.clone(), lock.hash_type as u8, lock.args_len)
-            })
+        let recipient_locks: Vec<_> = spec.recipient_locks.iter()
+            .map(|lock| (lock.code_hash.clone(), lock.hash_type as u8, lock.args_len))
             .collect();
-        config
-            .extend_from_slice(&u32::try_from(spec.reserved_recipient_locks.len())?.to_le_bytes());
-        for lock in &spec.reserved_recipient_locks {
-            config.extend_from_slice(&u32::try_from(lock.as_slice().len())?.to_le_bytes());
-            config.extend_from_slice(lock.as_slice());
-        }
         let intercell_mailbox = if let Some(code) = &spec.intercell_mailbox_code {
             ensure!(
                 *code != Byte32::default() && network != &spec.l1_genesis,
                 "invalid Intercell network policy"
             );
-            config.extend_from_slice(code.as_slice());
             let vault = spec
                 .lanes
                 .first()
@@ -347,9 +310,22 @@ impl Bridge {
                         .any(|recipient| recipient.code_hash == *code),
                 "restricted checkpoint fee fund cannot be a general withdrawal recipient"
             );
-            config.extend_from_slice(b"Stem checkpoint fee fund\0");
-            config.extend_from_slice(code.as_slice());
         }
+        let config = stem_ledger::protocol::genesis::BridgeConfig {
+            l1_genesis: &spec.l1_genesis,
+            guardian_generation: &spec.guardian_generation,
+            wrapped_code: &spec.wrapped_code_hash,
+            burn_code: &spec.burn_code_hash,
+            budgets: [spec.mint_limits, spec.settlement_limits, spec.anchor_limits],
+            confirmations: spec.confirmations,
+            deposits_per_block: spec.deposits_per_block,
+            guardians: &spec.guardians,
+            lanes: &lane_ids,
+            recipients: &recipient_locks,
+            reserved: &spec.reserved_recipient_locks,
+            mailbox: spec.intercell_mailbox_code.as_ref(),
+            checkpoint_fund: spec.checkpoint_fee_fund_code.as_ref(),
+        }.encode()?;
         records.insert(CONFIG.to_vec(), Some(config));
 
         let mut bridge = Self {
@@ -1217,14 +1193,10 @@ impl View<'_> {
             "withdrawal exceeds available vault reserve"
         );
         let next = nonce.checked_add(1).context("withdrawal nonce exhausted")?;
-        let mut receipt = Vec::new();
-        receipt.extend_from_slice(withdrawal.lane.as_slice());
-        receipt.extend_from_slice(&nonce.to_le_bytes());
-        receipt.extend_from_slice(withdrawal.tx_id.as_slice());
-        receipt.extend_from_slice(&withdrawal.index.to_le_bytes());
-        receipt.extend_from_slice(&withdrawal.capacity.to_le_bytes());
-        receipt.extend_from_slice(&withdrawal.units.to_le_bytes());
-        receipt.extend_from_slice(withdrawal.recipient.as_slice());
+        let receipt = stem_ledger::protocol::withdrawal_receipt(
+            withdrawal.lane, nonce, withdrawal.tx_id, withdrawal.index, withdrawal.capacity,
+            withdrawal.units, withdrawal.recipient,
+        );
         let id = stem_bridge_wire::withdrawal_receipt_id(&self.store.network().unpack(), &receipt);
         let mut pending = id.to_vec();
         pending.extend_from_slice(&receipt);

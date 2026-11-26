@@ -1260,6 +1260,232 @@
         { "name": "anchor", "type": "L1Anchor" },
         { "name": "adopted_at", "type": "Uint64" }
       ]
+    },
+    {
+      "name": "ControlBudget",
+      "kind": "struct",
+      "fields": [
+        { "name": "operations", "type": "Uint32" },
+        { "name": "bytes", "type": "Uint64" },
+        { "name": "signatures", "type": "Uint32" }
+      ]
+    },
+    {
+      "name": "BridgeRecipientTemplate",
+      "kind": "struct",
+      "fields": [
+        { "name": "code_hash", "type": "Byte32" },
+        { "name": "hash_type", "type": "byte" },
+        { "name": "args_len", "type": "Uint32" }
+      ]
+    },
+    {
+      "name": "BridgeRecipientTemplates",
+      "kind": "dense_vector",
+      "item": "BridgeRecipientTemplate"
+    },
+    {
+      "name": "StakeMembers",
+      "kind": "dense_vector",
+      "item": "StakeMember"
+    },
+    {
+      "name": "ReservedLockScripts",
+      "kind": "dense_vector",
+      "item": "Bytes"
+    },
+    {
+      "name": "BridgeGenesisConfig",
+      "kind": "sequence",
+      "fields": [
+        { "name": "l1_genesis", "type": "Byte32" },
+        { "name": "guardian_generation", "type": "Byte32" },
+        { "name": "wrapped_code", "type": "Byte32" },
+        { "name": "burn_code", "type": "Byte32" },
+        { "name": "mint", "type": "ControlBudget" },
+        { "name": "settlement", "type": "ControlBudget" },
+        { "name": "anchor", "type": "ControlBudget" },
+        { "name": "confirmations", "type": "Uint64" },
+        { "name": "deposits_per_block", "type": "Uint32" },
+        { "name": "guardians", "type": "StakeMembers" },
+        { "name": "lanes", "type": "Byte32Vec" },
+        { "name": "recipients", "type": "BridgeRecipientTemplates" },
+        { "name": "reserved", "type": "ReservedLockScripts" }
+      ]
+    },
+    {
+      "name": "StakeGenesisParameters",
+      "kind": "struct",
+      "fields": [
+        { "name": "minimum_bond", "type": "Uint64" },
+        { "name": "shannons_per_power", "type": "Uint64" },
+        { "name": "max_validators", "type": "Uint64" },
+        { "name": "max_total_power", "type": "Uint64" },
+        { "name": "blocks_per_epoch", "type": "Uint64" },
+        { "name": "signing_window", "type": "Uint64" },
+        { "name": "limit_bytes", "type": "Uint64" },
+        { "name": "limit_operations", "type": "Uint64" },
+        { "name": "limit_signatures", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "KeeperHeightPolicy",
+      "kind": "struct",
+      "fields": [
+        { "name": "max_delay", "type": "Uint16" },
+        { "name": "per_height", "type": "Uint16" },
+        { "name": "reservation_fee", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "KeeperTimePolicy",
+      "kind": "struct",
+      "fields": [
+        { "name": "per_height", "type": "Uint16" },
+        { "name": "max_delay_ms", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "GenesisLimits",
+      "kind": "struct",
+      "fields": [
+        { "name": "transaction_count", "type": "Uint64" },
+        { "name": "transaction_bytes", "type": "Uint64" },
+        { "name": "transaction_cycles", "type": "Uint64" },
+        { "name": "block_cycles", "type": "Uint64" },
+        { "name": "cell_reads", "type": "Uint64" },
+        { "name": "cell_read_bytes", "type": "Uint64" },
+        { "name": "cell_write_bytes", "type": "Uint64" },
+        { "name": "header_dep_age", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "GenesisFeeRates",
+      "kind": "struct",
+      "fields": [
+        { "name": "scale", "type": "Uint64" },
+        { "name": "encoded_byte", "type": "Uint64" },
+        { "name": "cycle", "type": "Uint64" },
+        { "name": "cell_read", "type": "Uint64" },
+        { "name": "cell_read_byte", "type": "Uint64" },
+        { "name": "cell_write_byte", "type": "Uint64" },
+        { "name": "cell_delete", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "NetworkParameters",
+      "kind": "struct",
+      "fields": [
+        { "name": "limits", "type": "GenesisLimits" },
+        { "name": "fees", "type": "GenesisFeeRates" },
+        { "name": "bond_per_byte", "type": "Uint64" },
+        { "name": "state_overhead", "type": "Uint64" },
+        { "name": "chain_id_len", "type": "byte" }
+      ]
+    },
+    {
+      "name": "StakeRegistryHeader",
+      "kind": "struct",
+      "fields": [
+        { "name": "network", "type": "Byte32" },
+        { "name": "sequence", "type": "Uint64" },
+        { "name": "generation", "type": "Byte32" },
+        { "name": "retired_root", "type": "Byte32" },
+        { "name": "members", "type": "Uint16" }
+      ]
+    },
+    {
+      "name": "StakeSnapshotStatementPrefix",
+      "kind": "struct",
+      "fields": [
+        { "name": "network", "type": "Byte32" },
+        { "name": "ckb_genesis", "type": "Byte32" },
+        { "name": "registry_id", "type": "Byte32" },
+        { "name": "generation", "type": "Byte32" },
+        { "name": "target_epoch", "type": "Uint64" },
+        { "name": "registry_height", "type": "Uint64" },
+        { "name": "registry_hash", "type": "Byte32" },
+        { "name": "registry_sequence", "type": "Uint64" },
+        { "name": "registry_commitment", "type": "Byte32" },
+        { "name": "has_parent", "type": "byte" }
+      ]
+    },
+    {
+      "name": "StakeRegistryEntry",
+      "kind": "struct",
+      "fields": [
+        { "name": "validator", "type": "Byte32" },
+        { "name": "bonded", "type": "Uint64" },
+        { "name": "activated", "type": "Uint64" },
+        { "name": "has_exit", "type": "byte" },
+        { "name": "exit_epoch", "type": "Uint64" },
+        { "name": "fault_height", "type": "Uint64" },
+        { "name": "first_active", "type": "Uint64" },
+        { "name": "first_inactive", "type": "Uint64" },
+        { "name": "stake_cell", "type": "Byte32" },
+        { "name": "delegated", "type": "Uint64" },
+        { "name": "unbonding", "type": "Uint64" },
+        { "name": "delegation_root", "type": "Byte32" },
+        { "name": "commission_bps", "type": "Uint16" },
+        { "name": "fault_start", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "KeeperCommandKey",
+      "kind": "struct",
+      "fields": [
+        { "name": "trigger", "type": "KeeperTrigger" },
+        { "name": "fee", "type": "OutPoint" },
+        { "name": "command", "type": "Byte32" }
+      ]
+    },
+    {
+      "name": "KeeperReservation",
+      "kind": "struct",
+      "fields": [
+        { "name": "command", "type": "KeeperCommandKey" },
+        { "name": "in_agenda", "type": "byte" }
+      ]
+    },
+    {
+      "name": "RegistryApplicationRecord",
+      "kind": "struct",
+      "fields": [
+        { "name": "previous_sequence", "type": "Uint64" },
+        { "name": "effective_height", "type": "Uint64" },
+        { "name": "anchor", "type": "L1Anchor" }
+      ]
+    },
+    {
+      "name": "WithdrawalReceiptPrefix",
+      "kind": "struct",
+      "fields": [
+        { "name": "lane", "type": "Byte32" },
+        { "name": "nonce", "type": "Uint64" },
+        { "name": "transaction", "type": "Byte32" },
+        { "name": "index", "type": "Uint32" },
+        { "name": "capacity", "type": "Uint64" },
+        { "name": "units", "type": "Uint128" }
+      ]
+    },
+    {
+      "name": "CommitteePosition",
+      "kind": "struct",
+      "fields": [
+        { "name": "epoch", "type": "Uint64" },
+        { "name": "activation_height", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "IntercellEnvelope",
+      "kind": "struct",
+      "fields": [
+        { "name": "source", "type": "Byte32" },
+        { "name": "destination", "type": "Byte32" },
+        { "name": "sender", "type": "Byte32" },
+        { "name": "receiver", "type": "Byte32" },
+        { "name": "nonce", "type": "Uint64" }
+      ]
     }
   ]
 }
