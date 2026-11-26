@@ -55,15 +55,48 @@ pub(super) fn canonical(stored: &[u8]) -> Result<CanonicalNode> {
 
 #[cfg(test)]
 mod tests {
-    use std::{hint::black_box, time::Instant};
+    use std::{collections::BTreeMap, hint::black_box, time::Instant};
 
-    use ckb_db::internal::{DB, Options, WriteBatch, WriteOptions, prelude::*};
+    use anyhow::Context;
+    use ckb_db::internal::{
+        DB, FlushOptions, Options, ReadOptions, WriteBatch, WriteOptions, prelude::*,
+    };
     use ckb_types::prelude::*;
     use serde_json::json;
     use stem_ledger::patricia::{Namespace, Patricia};
     use stem_stake::patricia::{Commitment, Key, Node, canonical_prefix};
 
     use super::*;
+
+    const PROBE_CELLS: u32 = 8192;
+    const PROBE_CHURN: u32 = 512;
+
+    struct EditFixture {
+        root: Key,
+        nodes: BTreeMap<Key, Option<Vec<u8>>>,
+        changes: Vec<(Key, Option<Key>)>,
+    }
+
+    fn edit_fixture(tree: &Patricia) -> Result<EditFixture> {
+        let key = |i: u32| tree.record_key(&i.to_le_bytes());
+        let value = |i: u32| Some(tree.value_hash(&i.to_le_bytes()));
+        let mut initial = (0..PROBE_CELLS)
+            .map(|i| (key(i), value(i)))
+            .collect::<Vec<_>>();
+        initial.sort_unstable_by_key(|(key, _)| *key);
+        let mut seed = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
+        seed.set_batch(&initial, |_, _, _| {})?;
+        let mut changes = (0..PROBE_CHURN)
+            .map(|i| (key(i), None))
+            .chain((PROBE_CELLS..PROBE_CELLS + PROBE_CHURN).map(|i| (key(i), value(i))))
+            .collect::<Vec<_>>();
+        changes.sort_unstable_by_key(|(key, _)| *key);
+        Ok(EditFixture {
+            root: seed.root(),
+            nodes: seed.into_writes(),
+            changes,
+        })
+    }
 
     #[test]
     fn roundtrip_every_branch_prefix_and_reject_wrong_lengths() -> Result<()> {
@@ -94,24 +127,14 @@ mod tests {
     #[test]
     #[ignore = "paired warm RocksDB Patricia read, edit and batch measurements"]
     fn measure_patricia_node_storage() -> Result<()> {
-        const LIVE: u32 = 8192;
-        const CHURN: u32 = 512;
         let network = [6; 32];
         let tree = Patricia::new(network.pack(), Namespace::Cells);
         let commitment = Commitment::new(network, Namespace::Cells);
-        let key = |i: u32| tree.record_key(&i.to_le_bytes());
-        let value = |i: u32| Some(tree.value_hash(&i.to_le_bytes()));
-        let mut initial = (0..LIVE).map(|i| (key(i), value(i))).collect::<Vec<_>>();
-        initial.sort_unstable_by_key(|(key, _)| *key);
-        let mut seed = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
-        seed.set_batch(&initial, |_, _, _| {})?;
-        let root = seed.root();
-        let nodes = seed.into_writes();
-        let mut changes = (0..CHURN)
-            .map(|i| (key(i), None))
-            .chain((LIVE..LIVE + CHURN).map(|i| (key(i), value(i))))
-            .collect::<Vec<_>>();
-        changes.sort_unstable_by_key(|(key, _)| *key);
+        let EditFixture {
+            root,
+            nodes,
+            changes,
+        } = edit_fixture(&tree)?;
         let directory = tempfile::tempdir()?;
         let mut options = Options::default();
         options.create_if_missing(true);
@@ -192,10 +215,95 @@ mod tests {
             }
         }
         let evidence = json!({
-            "seed_cells": LIVE, "removed": CHURN, "inserted": CHURN,
+            "seed_cells": PROBE_CELLS, "removed": PROBE_CHURN, "inserted": PROBE_CHURN,
             "root": hex::encode(expected_root), "samples": samples,
         });
         if let Some(path) = std::env::var_os("STEM_PATRICIA_REPORT") {
+            std::fs::write(path, serde_json::to_vec(&evidence)?)?;
+        }
+        println!("{evidence}");
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "paired Patricia point reads from a memtable and a warmed SST"]
+    fn measure_patricia_point_reads() -> Result<()> {
+        let tree = Patricia::new([6u8; 32].pack(), Namespace::Cells);
+        let EditFixture {
+            root,
+            nodes,
+            changes,
+        } = edit_fixture(&tree)?;
+        let mut reference = tree.edit(root, |id| Ok(nodes.get(id).and_then(Option::as_deref)));
+        reference.set_batch(&changes, |_, _, _| {})?;
+        let expected_root = reference.root();
+        let expected_writes = reference.into_writes();
+
+        let directory = tempfile::tempdir()?;
+        let mut options = Options::default();
+        options.create_if_missing(true);
+        let db = DB::open(&options, directory.path())?;
+        let mut batch = WriteBatch::default();
+        for (id, node) in nodes {
+            batch.put(&id, &compact(node.expect("new node")))?;
+        }
+        db.write_opt(&batch, &WriteOptions::default())?;
+        let reads = ReadOptions::default();
+        let methods = ["get", "get_opt", "get_pinned_opt"];
+        let mut samples = Vec::new();
+        for storage in ["memtable", "warm_sst"] {
+            if storage == "warm_sst" {
+                let mut flush = FlushOptions::default();
+                flush.set_wait(true);
+                db.flush_opt(&flush)?;
+            }
+            for round in 0..24 {
+                for index in 0..methods.len() {
+                    let method = methods[(index + round) % methods.len()];
+                    let mut read_count = 0;
+                    let mut read_bytes = 0;
+                    let mut read_ns = 0;
+                    let mut editor = tree.edit(root, |id: &Key| {
+                        let start = Instant::now();
+                        let owned;
+                        let pinned;
+                        let stored = if method == "get_pinned_opt" {
+                            pinned = db.get_pinned_opt(id, &reads)?.context("seeded node")?;
+                            pinned.as_ref()
+                        } else {
+                            owned = if method == "get_opt" {
+                                db.get_opt(id, &reads)?
+                            } else {
+                                db.get(id)?
+                            }
+                            .context("seeded node")?;
+                            owned.as_ref()
+                        };
+                        read_ns += start.elapsed().as_nanos();
+                        read_count += 1;
+                        read_bytes += stored.len();
+                        canonical(stored).map(Some)
+                    });
+                    let start = Instant::now();
+                    editor.set_batch(&changes, |_, _, _| {})?;
+                    let edit_ns = start.elapsed().as_nanos();
+                    assert_eq!(editor.root(), expected_root);
+                    assert_eq!(editor.into_writes(), expected_writes);
+                    if round >= 3 {
+                        samples.push(json!({
+                            "storage": storage, "round": round, "method": method,
+                            "read_count": read_count, "read_bytes": read_bytes,
+                            "read_ns": read_ns, "edit_ns": edit_ns,
+                        }));
+                    }
+                }
+            }
+        }
+        let evidence = json!({
+            "seed_cells": PROBE_CELLS, "removed": PROBE_CHURN, "inserted": PROBE_CHURN,
+            "root": hex::encode(expected_root), "samples": samples,
+        });
+        if let Some(path) = std::env::var_os("STEM_PATRICIA_READ_REPORT") {
             std::fs::write(path, serde_json::to_vec(&evidence)?)?;
         }
         println!("{evidence}");

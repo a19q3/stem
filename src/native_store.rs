@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
-use ckb_db::internal::{DB, DBVector, Options, WriteBatch, WriteOptions, prelude::*};
+use ckb_db::internal::{DB, DBVector, Options, ReadOptions, WriteBatch, WriteOptions, prelude::*};
 use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
@@ -252,6 +252,7 @@ pub enum Retention {
 
 pub struct Store {
     db: Arc<DB>,
+    read_options: Arc<ReadOptions>,
     metrics: Option<Arc<StorageMetrics>>,
     network: Byte32,
     chain_id: String,
@@ -667,6 +668,7 @@ impl Store {
         };
         Ok(Self {
             db: Arc::new(db),
+            read_options: Arc::new(ReadOptions::default()),
             metrics,
             network,
             chain_id: spec.chain_id.clone(),
@@ -761,6 +763,7 @@ impl Store {
         }
         let view = Self {
             db: self.db.clone(),
+            read_options: self.read_options.clone(),
             metrics: self.metrics.clone(),
             network: self.network.clone(),
             chain_id: self.chain_id.clone(),
@@ -792,7 +795,10 @@ impl Store {
                 return Ok(value.as_deref().map(ReadValue::Candidate));
             }
         }
-        Ok(self.db.get(key)?.map(ReadValue::Committed))
+        Ok(self
+            .db
+            .get_opt(key, &self.read_options)?
+            .map(ReadValue::Committed))
     }
 
     pub(crate) fn consensus_record(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {

@@ -24,6 +24,9 @@ restores the canonical bytes in a fixed-size buffer before checking
 the node hash. The editor borrows nodes it has already staged and
 copies node bytes into an owned proof only when a proof is requested.
 The local storage marker binds the stored layout to the genesis ID.
+The committed Store and its candidate views share immutable default
+RocksDB point-read options. Each lookup checks the candidate batches
+first and reads the database on a miss.
 
 A prepared block retains its decoded Live Cell changes by OutPoint.
 The Patricia leaf hashes the OutPoint, creation metadata and Cell
