@@ -309,10 +309,20 @@ fn validate_script(packed_len: usize, hash_type: u8) -> Result<()> {
     }
 }
 
+// The decoded command belongs to a single immutable encoded transaction. Its
+// clones can share the network-scoped hashes used at admission and execution.
+#[derive(Debug)]
+struct ParsedLineageCommand {
+    command: lineage::Command,
+    network: OnceLock<Byte32>,
+    id: OnceLock<Byte32>,
+    commitment: OnceLock<[u8; 32]>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Transaction {
     encoded: wire::Transaction,
-    lineage_command: Option<Arc<lineage::Command>>,
+    lineage_command: Option<Arc<ParsedLineageCommand>>,
     lineage_intent: Option<Arc<lineage::Intent>>,
     lineage_batch: Option<Arc<[Transaction]>>,
     keeper_schedule: Option<keeper::Schedule>,
@@ -493,7 +503,14 @@ impl Transaction {
             .to_opt()
             .map(lineage::Command::decode)
             .transpose()?
-            .map(Arc::new);
+            .map(|command| {
+                Arc::new(ParsedLineageCommand {
+                    command,
+                    network: OnceLock::new(),
+                    id: OnceLock::new(),
+                    commitment: OnceLock::new(),
+                })
+            });
         let keeper_schedule = raw
             .keeper_schedule()
             .to_opt()
@@ -699,13 +716,24 @@ impl Transaction {
         self.encoded.as_bytes()
     }
 
+    fn command_hashes(&self, network: &Byte32) -> Option<&ParsedLineageCommand> {
+        let parsed = self.lineage_command.as_deref()?;
+        (parsed.network.get_or_init(|| network.clone()) == network).then_some(parsed)
+    }
+
     pub fn id(&self, network_id: &Byte32) -> Byte32 {
-        let references = self.encoded.l1_reference_certificate();
-        hash(
-            b"Stem transaction ID\0",
-            network_id,
-            &[self.encoded.raw().as_slice(), references.as_slice()],
-        )
+        let compute = || {
+            let references = self.encoded.l1_reference_certificate();
+            hash(
+                b"Stem transaction ID\0",
+                network_id,
+                &[self.encoded.raw().as_slice(), references.as_slice()],
+            )
+        };
+        match self.command_hashes(network_id) {
+            Some(parsed) => parsed.id.get_or_init(compute).clone(),
+            None => compute(),
+        }
     }
 
     pub fn commitment(&self, network_id: &Byte32) -> Byte32 {
@@ -713,11 +741,17 @@ impl Transaction {
     }
 
     fn commitment_bytes(&self, network_id: &Byte32) -> [u8; 32] {
-        hash_bytes(
-            b"Stem transaction commitment\0",
-            network_id,
-            &[self.as_slice()],
-        )
+        let compute = || {
+            hash_bytes(
+                b"Stem transaction commitment\0",
+                network_id,
+                &[self.as_slice()],
+            )
+        };
+        match self.command_hashes(network_id) {
+            Some(parsed) => *parsed.commitment.get_or_init(compute),
+            None => compute(),
+        }
     }
 
     pub fn valid_before_height(&self) -> Option<u64> {
@@ -787,7 +821,7 @@ impl Transaction {
     }
 
     pub fn lineage_command(&self) -> Option<&lineage::Command> {
-        self.lineage_command.as_deref()
+        self.lineage_command.as_ref().map(|entry| &entry.command)
     }
 
     pub fn has_lineage_command(&self) -> bool {

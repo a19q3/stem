@@ -1196,6 +1196,85 @@ fn measure_lineage_hotspot_amm() -> Result<()> {
 }
 
 #[test]
+fn lineage_hashes_follow_network_and_encoded_witnesses() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let dynamic = DynamicLineage::fund(&mut fixture, 1)?;
+    let signed = dynamic.signed(&fixture, 0, &[0, 1], (0, 2), 3)?;
+    let networks = [fixture.spec.network.clone(), [171; 32].pack()];
+    let expected = networks.each_ref().map(|network| {
+        let fresh = Transaction::from_slice(signed.as_slice()).unwrap();
+        let commitment = blake2b_256(
+            [
+                b"Stem transaction commitment\0".as_slice(),
+                network.as_slice(),
+                signed.as_slice(),
+            ]
+            .concat(),
+        );
+        (fresh.id(network), commitment.pack())
+    });
+    assert_ne!(expected[0].0, expected[1].0);
+    assert_ne!(expected[0].1, expected[1].1);
+    let shared = Transaction::from_slice(signed.as_slice())?;
+    std::thread::scope(|scope| {
+        for (network, expected) in networks.iter().zip(&expected).cycle().take(8) {
+            let clone = shared.clone();
+            scope.spawn(move || {
+                assert_eq!((clone.id(network), clone.commitment(network)), *expected);
+            });
+        }
+    });
+    let mut witness = signed.witness(0).unwrap();
+    let mut seal = witness.seal.to_vec();
+    seal[0] ^= 1;
+    witness.seal = Bytes::from(seal);
+    let changed = signed.with_witnesses(vec![witness])?;
+    for (network, (id, commitment)) in networks.iter().zip(expected) {
+        assert_eq!(changed.id(network), id);
+        assert_ne!(changed.commitment(network), commitment);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "compare repeated and first-use hashes of the same signed Lineage command"]
+fn measure_lineage_command_hashes() -> Result<()> {
+    use std::{hint::black_box, time::Instant};
+    let mut fixture = Fixture::new()?;
+    let dynamic = DynamicLineage::fund(&mut fixture, 1)?;
+    let tx = dynamic.signed(&fixture, 0, &[0, 1], (0, 2), 3)?;
+    let network = &fixture.spec.network;
+    let measure = |rounds, iterations, fresh| -> Result<Vec<u128>> {
+        let mut results = Vec::new();
+        for _ in 0..rounds {
+            let start = Instant::now();
+            for _ in 0..iterations {
+                let command = if fresh {
+                    Transaction::from_bytes(tx.as_bytes())?
+                } else {
+                    tx.clone()
+                };
+                black_box((
+                    command.id(black_box(network)),
+                    command.commitment(black_box(network)),
+                ));
+            }
+            results.push(start.elapsed().as_nanos() / iterations);
+        }
+        Ok(results)
+    };
+    println!(
+        "{}",
+        serde_json::json!({
+            "signed_bytes": tx.as_slice().len(),
+            "clone_and_repeated_hashes_ns": measure(11, 5000, false)?,
+            "decode_and_first_hashes_ns": measure(11, 1500, true)?,
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn wallet_builds_and_seals_the_native_lineage_command() -> Result<()> {
     use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 

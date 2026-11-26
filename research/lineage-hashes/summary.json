@@ -1,0 +1,383 @@
+{
+  "cohorts_by_offer_rate": {
+    "200": {
+      "seconds": 40,
+      "genesis": "2d9dbc24d60799e3a171a54730e89386acd743f67003aaa843ffdc3901db9bfb",
+      "signed_workload": "e01c6ed8fb93a2ec4e76f5e86efe28204daeaccb5f26ba7a3c27a2c46cc1fd03",
+      "confirmed_set": "dc1eb245a71fe996bb7c22c2b221e1a9f0ad991a366edfc18a0b155c32cd50e1",
+      "cycles": 31377688750,
+      "fees": 16000000,
+      "head_updates": 16000
+    }
+  },
+  "runs": [
+    {
+      "file": "0-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 8000,
+      "visible_tps": 195.925,
+      "candidate_verify_mean_us": 26115.99864498645,
+      "p99_common_us": 913260,
+      "cpu_seconds": 136.81,
+      "peak_sampled_node_rss_kib": 101828,
+      "observer_errors": 0
+    },
+    {
+      "file": "1-memo-200.json.xz",
+      "binary_sha256": "3f40259cbff4a1ef5ea7783ac10c6b25f62435b67b50067737004218b5e6468d",
+      "rate": 200,
+      "visible": 8000,
+      "visible_tps": 196.425,
+      "candidate_verify_mean_us": 25807.02995951417,
+      "p99_common_us": 904029,
+      "cpu_seconds": 134.39,
+      "peak_sampled_node_rss_kib": 101112,
+      "observer_errors": 0
+    },
+    {
+      "file": "2-memo-200.json.xz",
+      "binary_sha256": "3f40259cbff4a1ef5ea7783ac10c6b25f62435b67b50067737004218b5e6468d",
+      "rate": 200,
+      "visible": 8000,
+      "visible_tps": 195.5,
+      "candidate_verify_mean_us": 26023.67967479675,
+      "p99_common_us": 903831,
+      "cpu_seconds": 134.68,
+      "peak_sampled_node_rss_kib": 101964,
+      "observer_errors": 0
+    },
+    {
+      "file": "3-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 8000,
+      "visible_tps": 196.425,
+      "candidate_verify_mean_us": 25995.441835357626,
+      "p99_common_us": 903261,
+      "cpu_seconds": 135.96,
+      "peak_sampled_node_rss_kib": 101376,
+      "observer_errors": 0
+    },
+    {
+      "file": "4-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 8000,
+      "visible_tps": 196.125,
+      "candidate_verify_mean_us": 26273.71436314363,
+      "p99_common_us": 912676,
+      "cpu_seconds": 136.06,
+      "peak_sampled_node_rss_kib": 101072,
+      "observer_errors": 0
+    },
+    {
+      "file": "5-memo-200.json.xz",
+      "binary_sha256": "3f40259cbff4a1ef5ea7783ac10c6b25f62435b67b50067737004218b5e6468d",
+      "rate": 200,
+      "visible": 8000,
+      "visible_tps": 196.125,
+      "candidate_verify_mean_us": 25901.456950067477,
+      "p99_common_us": 904917,
+      "cpu_seconds": 134.6,
+      "peak_sampled_node_rss_kib": 102072,
+      "observer_errors": 0
+    }
+  ],
+  "store_samples": {
+    "micro-0-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        97,
+        152,
+        168
+      ],
+      "parallel_prepare_us": [
+        5428,
+        6933,
+        7986
+      ],
+      "serial_prepare_us": [
+        5358,
+        5785,
+        7858
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-1-memo.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        100,
+        146,
+        158
+      ],
+      "parallel_prepare_us": [
+        5529,
+        8139,
+        9615
+      ],
+      "serial_prepare_us": [
+        5452,
+        9159,
+        9437
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-2-memo.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        100,
+        154,
+        160
+      ],
+      "parallel_prepare_us": [
+        5445,
+        6541,
+        6696
+      ],
+      "serial_prepare_us": [
+        5427,
+        6467,
+        6484
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-3-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        104,
+        150,
+        151
+      ],
+      "parallel_prepare_us": [
+        5495,
+        6060,
+        6508
+      ],
+      "serial_prepare_us": [
+        5455,
+        7672,
+        7791
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-4-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        97,
+        124,
+        187
+      ],
+      "parallel_prepare_us": [
+        5540,
+        6848,
+        7087
+      ],
+      "serial_prepare_us": [
+        5450,
+        6395,
+        6888
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-5-memo.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        99,
+        138,
+        148
+      ],
+      "parallel_prepare_us": [
+        5438,
+        7289,
+        9036
+      ],
+      "serial_prepare_us": [
+        5430,
+        7779,
+        8413
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-6-memo.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        97,
+        139,
+        150
+      ],
+      "parallel_prepare_us": [
+        5299,
+        6383,
+        7585
+      ],
+      "serial_prepare_us": [
+        5368,
+        7702,
+        9765
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-7-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        94,
+        112,
+        113
+      ],
+      "parallel_prepare_us": [
+        5397,
+        6278,
+        9791
+      ],
+      "serial_prepare_us": [
+        5425,
+        5772,
+        5862
+      ],
+      "workload": "hotspot-amm"
+    }
+  },
+  "hash_samples": {
+    "hash-0-ref.log": {
+      "clone_and_repeated_hashes_ns": [
+        1621,
+        1537,
+        1540,
+        1530,
+        1532,
+        1525,
+        1524,
+        1526,
+        1525,
+        1524,
+        1523
+      ],
+      "decode_and_first_hashes_ns": [
+        6310,
+        6156,
+        5988,
+        5964,
+        5964,
+        5957,
+        5971,
+        5959,
+        5981,
+        5980,
+        5966
+      ],
+      "signed_bytes": 505
+    },
+    "hash-1-memo.log": {
+      "clone_and_repeated_hashes_ns": [
+        34,
+        33,
+        34,
+        36,
+        34,
+        34,
+        34,
+        34,
+        34,
+        35,
+        35
+      ],
+      "decode_and_first_hashes_ns": [
+        6013,
+        6016,
+        6087,
+        6056,
+        6052,
+        6014,
+        6053,
+        6027,
+        6045,
+        6037,
+        6005
+      ],
+      "signed_bytes": 505
+    },
+    "hash-2-memo.log": {
+      "clone_and_repeated_hashes_ns": [
+        35,
+        35,
+        34,
+        35,
+        34,
+        34,
+        34,
+        34,
+        36,
+        34,
+        35
+      ],
+      "decode_and_first_hashes_ns": [
+        6032,
+        5996,
+        6014,
+        6032,
+        6093,
+        6150,
+        6126,
+        6106,
+        6089,
+        6053,
+        6040
+      ],
+      "signed_bytes": 505
+    },
+    "hash-3-ref.log": {
+      "clone_and_repeated_hashes_ns": [
+        1530,
+        1526,
+        1526,
+        1534,
+        1528,
+        1526,
+        1519,
+        1521,
+        1522,
+        1519,
+        1519
+      ],
+      "decode_and_first_hashes_ns": [
+        6207,
+        6166,
+        5959,
+        5967,
+        5973,
+        5957,
+        5971,
+        6001,
+        5989,
+        5987,
+        5995
+      ],
+      "signed_bytes": 505
+    }
+  }
+}
