@@ -71,7 +71,7 @@ def wait_for(func, label, seconds=20):
 
 
 def application_programs(args):
-    for name in ("export_udt", "asset_escrow", "stem_spore", "native_spore_origin", "stem_native_object",
+    for name in ("export_udt", "asset_escrow", "stem_spore", "native_spore_origin", "native_spore_approval", "stem_native_object",
                  "object_policy", "stem_metatype_escrow", "native_amount_cap", "native_object_state_limit",
                  "native_object_append_only", "native_object_workflow", "native_object_royalty",
                  "native_object_rotating_approval"):

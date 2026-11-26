@@ -28,6 +28,12 @@ fn main() -> i8 {
 fn verify() -> Result<(), i8> {
     let script = load_script().map_err(|_| 110)?;
     let args = script.args().raw_data();
+    if args.len() == 129 && args[0] == 1 {
+        let [spore, authority, gate, holder] = args[1..].as_chunks::<32>().0 else {
+            return Err(115);
+        };
+        return holder_transfer(&script, spore, authority, gate, holder);
+    }
     let (fields, rest) = args.as_chunks::<32>();
     if !rest.is_empty()
         || fields.contains(&[0; 32])
@@ -35,10 +41,13 @@ fn verify() -> Result<(), i8> {
     {
         return Err(110);
     }
-    let (mailbox_id, endpoint, origin, mailbox_code, counterpart) = match fields {
+    let (mailbox_id, endpoint, origin, mailbox_code, counterpart, approval) = match fields {
         [id, code] => return reservation(&script, id, code),
-        [id, endpoint, original, code] => (id, endpoint, original, code, None),
-        [id, endpoint, native, code, spore] => (id, endpoint, native, code, Some(spore)),
+        [id, endpoint, original, code] => (id, endpoint, original, code, None, None),
+        [id, endpoint, native, code, spore] => (id, endpoint, native, code, Some(spore), None),
+        [id, endpoint, native, code, spore, authority] => {
+            (id, endpoint, native, code, Some(spore), Some(authority))
+        }
         _ => return Err(110),
     };
     let original = counterpart.unwrap_or(origin);
@@ -129,9 +138,79 @@ fn verify() -> Result<(), i8> {
         if message.sender != *endpoint {
             return Err(113);
         }
-        verify_transfer(message.payload, origin, &output, Some(&after), &owner)?;
+        let recipient = if let Some(authority) = approval {
+            require_input_lock(authority)?;
+            let next = load_cell_lock(spore_output, Source::Output).map_err(|_| 115)?;
+            holder_identity(&script, &next, original, authority, &owner)?
+        } else {
+            after
+        };
+        verify_transfer(message.payload, origin, &output, Some(&recipient), &owner)?;
     }
     Ok(())
+}
+
+fn require_input_lock(required: &Identity) -> Result<(), i8> {
+    for i in 0.. {
+        match load_cell_lock_hash(i, Source::Input) {
+            Ok(lock) if &lock == required => return Ok(()),
+            Ok(_) => {}
+            Err(_) => return Err(115),
+        }
+    }
+    unreachable!()
+}
+
+fn holder_identity(
+    program: &Script,
+    output: &Script,
+    spore: &Identity,
+    authority: &Identity,
+    gate: &Identity,
+) -> Result<Identity, i8> {
+    let args = output.args().raw_data();
+    if program.code_hash() != output.code_hash()
+        || program.hash_type() != output.hash_type()
+        || args.len() != 129
+        || args[0] != 1
+    {
+        return Err(115);
+    }
+    let [asset, policy, escrow, next] = args[1..].as_chunks::<32>().0 else {
+        return Err(115);
+    };
+    if asset != spore || policy != authority || escrow != gate || next == &[0; 32] {
+        return Err(115);
+    }
+    Ok(*next)
+}
+
+// A standard Spore has one Type slot. Its owner Lock carries forward the
+// immutable approval policy while its ordinary owner and approver authorize
+// the transaction with their own CKB input Locks.
+fn holder_transfer(
+    program: &Script,
+    spore: &Identity,
+    authority: &Identity,
+    gate: &Identity,
+    holder: &Identity,
+) -> Result<(), i8> {
+    if u8::from(program.hash_type()) != ScriptHashType::Data2 as u8
+        || [spore, authority, gate, holder].contains(&&[0; 32])
+        || load_cell_type_hash(0, Source::GroupInput).map_err(|_| 115)? != Some(*spore)
+        || load_cell_capacity(1, Source::GroupInput) != Err(SysError::IndexOutOfBound)
+    {
+        return Err(115);
+    }
+    require_input_lock(holder)?;
+    require_input_lock(authority)?;
+    let index = matching(Source::Output, spore)?.ok_or(115)?;
+    let lock = load_cell_lock(index, Source::Output).map_err(|_| 115)?;
+    if lock.calc_script_hash().as_slice() == gate {
+        require_input_lock(gate)
+    } else {
+        holder_identity(program, &lock, spore, authority, gate).map(|_| ())
+    }
 }
 
 // A reservation uses the unique mailbox creation ID. Its own future OutPoint
@@ -175,7 +254,8 @@ fn reservation(script: &Script, id: &Identity, code: &Identity) -> Result<(), i8
         let lock = load_cell_lock(index, Source::Input).map_err(|_| 114)?;
         let args = lock.args().raw_data();
         let (fields, rest) = args.as_chunks::<32>();
-        if let [gate_id, _, _, gate_code, counterpart] = fields
+        if let [gate_id, _, _, gate_code, counterpart, tail @ ..] = fields
+            && tail.len() <= 1
             && rest.is_empty()
             && gate_id == id
             && gate_code == code

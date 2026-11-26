@@ -904,6 +904,14 @@ The first 64 bytes of the message payload hold the original Type Script hash and
 
 A native object with a second approval, freeze or royalty Type must use a route that enforces that rule on subsequent CKB wallet transfers. The native standard fixture checks this boundary by rejecting issuance with a second Type. The published Spore V2 contract can invoke extensions named in a `mutant[]` MIME parameter using recognized dependency code hashes. This Stem profile rejects such parameters. To add a particular extension, compare its mint, transfer and melt decisions on both chains, including a normal wallet transfer while the object is away from the bridge. [Native rejection and wallet proof](evidence/2026-11-27-native-standard-spore.json.xz) · [Upstream Spore V2 extension verifier](https://github.com/sporeprotocol/spore-contract/blob/3c796b6c02e5d3857bbaa42476adcb23e1c88722/contracts/spore/src/entry.rs) · [Existing Metatype policies](METATYPE.md)
 
+#### Standard Spore with native approval
+
+Use `--native-spore-approval /path/to/stem-object-policy` with `--native-spore-origin` and the standard Spore options above. The original has two Types, its immutable identity and its approval policy. Append the full reserved CKB Spore Type hash to the four-field native identity. The tagged native escrow starts with byte 2 and appends the CKB approver Lock hash to the standard escrow fields. The CKB mailbox Lock similarly appends that approver to its five existing fields. The certified message names the recipient's ordinary wallet Lock hash.
+
+CKB keeps the published Spore V2 Type and carries approval in the holder Lock. Its Data2 code is the escrow program. Its arguments are one tag byte (1), then four 32-byte hashes: the full Spore Type, approver Lock, complete mailbox Lock and current owner's ordinary Lock. A wallet transfer spends the Spore plus authorized inputs belonging to the owner and approver. The output must preserve the policy and select the next owner, or deposit the asset through its live mailbox. The holder Lock also enforces the native identity's prohibition on melting. The recipient can inspect the Spore using its usual Type and data. Spending requires wallet support for the holder Lock and the approval input.
+
+Four validators and a CKB devnet exercised native issuance, an approved native transfer, standard mint, a CKB wallet transfer, return and re-export of the same Spore. The 16 rejection cases include missing owner or approver, naked ownership, changed authority or mailbox, and melt. [Approved route and three compatibility runs](evidence/2026-11-27-approved-standard-spore.json.xz)
+
 ### Exercise Stem native object settlement
 
 Build the contracts and use the [Intercell runner](#exercise-intercell-messaging) with

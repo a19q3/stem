@@ -62,11 +62,23 @@ fn verify() -> Result<(), i8> {
     if let Some(object) = ObjectArgs::decode(&args) {
         return identity(&object, &network);
     }
-    let standard_route = args.len() == 257 && args[0] == 1;
-    let raw = if standard_route {
-        &args[1..]
-    } else {
-        &args[..]
+    if args.len() == 160 {
+        let object = ObjectArgs::decode(&args[..128]).ok_or(116)?;
+        if args[128..] == [0; 32] {
+            return Err(116);
+        }
+        return identity(&object, &network);
+    }
+    let (raw, route) = match (args.first(), args.len()) {
+        (Some(1), 257) => (&args[1..], Route::Standard),
+        (Some(2), 289) => {
+            let authority = (&args[257..]).try_into().map_err(|_| 116)?;
+            if authority == &[0; 32] {
+                return Err(116);
+            }
+            (&args[1..257], Route::ApprovedStandard(authority))
+        }
+        _ => (&args[..], Route::Original),
     };
     let (fields, rest) = raw.as_chunks::<32>();
     if !rest.is_empty() || fields.contains(&[0; 32]) {
@@ -79,8 +91,15 @@ fn verify() -> Result<(), i8> {
         &script,
         fields.try_into().map_err(|_| 116)?,
         &network,
-        standard_route,
+        route,
     )
+}
+
+#[derive(Clone, Copy)]
+enum Route<'a> {
+    Original,
+    Standard,
+    ApprovedStandard(&'a Identity),
 }
 
 fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
@@ -172,7 +191,7 @@ fn escrow(
     script: &Script,
     fields: &[[u8; 32]; 8],
     network: &Identity,
-    standard_route: bool,
+    route: Route<'_>,
 ) -> Result<(), i8> {
     let [
         object,
@@ -186,7 +205,10 @@ fn escrow(
         binding,
     ] = fields;
     let lock = load_script_hash().map_err(|_| 116)?;
-    let owner_args = [type_id.as_slice(), &lock, object, mailbox_code, binding].concat();
+    let mut owner_args = [type_id.as_slice(), &lock, object, mailbox_code, binding].concat();
+    if let Route::ApprovedStandard(authority) = route {
+        owner_args.extend_from_slice(authority);
+    }
     let owner = Script::new_builder()
         .code_hash(owner_code.pack())
         .hash_type(ScriptHashType::Data2)
@@ -220,7 +242,7 @@ fn escrow(
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..len]).ok_or(118)?;
-    let transfer = if standard_route {
+    let transfer = if matches!(route, Route::Standard) {
         SporeTransfer::decode(message.payload).filter(|s| s.cluster_id.is_none())
     } else {
         SporeTransfer::decode_plain(message.payload)
@@ -263,7 +285,7 @@ fn escrow(
         binding,
         &lock,
         transfer.data,
-        standard_route,
+        route,
     )?;
     let right = inspect(
         Source::Output,
@@ -272,7 +294,7 @@ fn escrow(
         binding,
         &lock,
         transfer.data,
-        standard_route,
+        route,
     )?;
     let (
         (Some(before_bond), Some((before, input_lock))),
@@ -300,7 +322,7 @@ fn inspect(
     binding: &Identity,
     escrow: &Identity,
     data: &[u8],
-    standard_route: bool,
+    route: Route<'_>,
 ) -> Result<Assets, i8> {
     let mut bond = None;
     let mut asset = None;
@@ -310,7 +332,12 @@ fn inspect(
             Err(SysError::IndexOutOfBound) => return Ok((bond, asset)),
             Err(_) => return Err(119),
         };
-        let mut raw = [0u8; 53 + 4 * 32];
+        let mut raw = [0u8; 53 + 5 * 32];
+        let (arg_len, binding_offset, type_count) = match route {
+            Route::Original => (128, 64, 2),
+            Route::Standard => (64, 32, 1),
+            Route::ApprovedStandard(_) => (160, 128, 2),
+        };
         match load(
             FIND_TYPE,
             source as u64,
@@ -318,31 +345,15 @@ fn inspect(
             object.as_ptr() as u64,
             &mut raw,
         ) {
-            (0, size)
-                if size
-                    == (if standard_route {
-                        53 + 2 * 32
-                    } else {
-                        raw.len()
-                    }) =>
-            {
+            (0, size) if size == 53 + arg_len => {
                 let ty = Script::from_slice(&raw[..size]).map_err(|_| 119)?;
                 let args = ty.args().raw_data();
                 if ty.code_hash() != code.code_hash()
                     || ty.hash_type() != code.hash_type()
-                    || (if standard_route {
-                        &args[32..64]
-                    } else {
-                        &args[64..96]
-                    }) != binding
-                    || load(
-                        LOAD_TYPE_HASH,
-                        source as u64,
-                        index,
-                        if standard_route { 1 } else { 2 },
-                        &mut [],
-                    )
-                    .0 != INDEX_OUT_OF_BOUND
+                    || args.get(binding_offset..binding_offset + 32) != Some(binding.as_slice())
+                    || matches!(route, Route::ApprovedStandard(authority) if args.get(64..96) != Some(authority.as_slice()))
+                    || load(LOAD_TYPE_HASH, source as u64, index, type_count, &mut []).0
+                        != INDEX_OUT_OF_BOUND
                     || load_cell_data(index, source).map_err(|_| 119)? != data
                     || asset
                         .replace((load_cell_capacity(index, source).map_err(|_| 119)?, lock))
