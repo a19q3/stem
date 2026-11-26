@@ -65,7 +65,8 @@ fn object_type(script: &Script, endpoint: &Identity) -> Result<(), i8> {
     let read = |source| -> Result<_, i8> {
         match stem_contracts::metatype::bounded_data(0, source, MAX_CELL_SPORE_DATA) {
             Ok(data)
-                if SporeData::from_cell(&data).is_some()
+                if (SporeData::from_cell(&data).is_some()
+                    || SporeData::custody_mutant(&data).is_some())
                     && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound) =>
             {
                 Ok(Some(data))
@@ -75,7 +76,10 @@ fn object_type(script: &Script, endpoint: &Identity) -> Result<(), i8> {
         }
     };
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
-        (Some(input), Some(output)) if stem_contracts::spore::same_content(&input, &output) => {
+        (Some(input), Some(output))
+            if SporeData::from_cell(&input).is_some()
+                && stem_contracts::spore::same_content(&input, &output) =>
+        {
             Ok(())
         }
         (Some(_), None) | (None, Some(_)) => {
@@ -156,7 +160,7 @@ fn endpoint_lock(script: &Script, fields: &[[u8; 32]; 7]) -> Result<(), i8> {
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..size]).ok_or(108)?;
-    let transfer = CellTransfer::decode(message.payload).ok_or(108)?;
+    let transfer = CellTransfer::decode_custody(message.payload).ok_or(108)?;
     if transfer.original_type != *original {
         return Err(108);
     }

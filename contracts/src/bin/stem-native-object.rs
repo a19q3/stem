@@ -11,8 +11,8 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_lock_hash, load_input_out_point, load_script,
-        load_script_hash,
+        load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash,
+        load_input_out_point, load_script, load_script_hash,
     },
 };
 use stem_bridge_wire::{
@@ -73,7 +73,17 @@ fn verify() -> Result<(), i8> {
         }
         return identity(&object, &network, true);
     }
+    if args.len() == 97 && args[0] == 4 {
+        let [id, counterpart, route] = args[1..].as_chunks::<32>().0 else {
+            return Err(116);
+        };
+        if [id, counterpart, route].contains(&&[0; 32]) {
+            return Err(116);
+        }
+        return mutant_identity(&script, id, counterpart, route, &network);
+    }
     let (raw, route) = match (args.first(), args.len()) {
+        (Some(3), 257) => (&args[1..], Route::Mutant),
         (Some(1), 257) => (&args[1..], Route::Standard),
         (Some(2), 289) => {
             let authority = (&args[257..]).try_into().map_err(|_| 116)?;
@@ -103,6 +113,7 @@ fn verify() -> Result<(), i8> {
 enum Route<'a> {
     Original,
     Standard,
+    Mutant,
     ApprovedStandard(&'a Identity),
 }
 
@@ -187,6 +198,60 @@ fn verify_creation(network: &Identity, id: &Identity) -> Result<(), i8> {
     Ok(())
 }
 
+// The native title moves only through the object's pinned custody endpoint.
+fn mutant_identity(
+    script: &Script,
+    id: &Identity,
+    counterpart: &Identity,
+    route: &Identity,
+    network: &Identity,
+) -> Result<(), i8> {
+    let read = |source| match bounded_data(0, source, MAX_CELL_SPORE_DATA) {
+        Ok(data)
+            if SporeData::custody_mutant(&data).is_some()
+                && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
+                && load(LOAD_TYPE_HASH, source as u64, 0, 1, &mut []).0 == INDEX_OUT_OF_BOUND =>
+        {
+            Ok(Some(data))
+        }
+        Err(SysError::IndexOutOfBound) => Ok(None),
+        _ => Err(117),
+    };
+    let object = script.calc_script_hash();
+    let gate = |source| -> Result<Option<Identity>, i8> {
+        let lock = load_cell_lock(0, source).map_err(|_| 117)?;
+        let args = lock.args().raw_data();
+        Ok((lock.code_hash() == script.code_hash()
+            && lock.hash_type() == script.hash_type()
+            && args.len() == 257
+            && args[0] == 3
+            && &args[1..33] == object.as_slice()
+            && ckb_hash::blake2b_256(&args[33..225]) == *route
+            && &args[225..] == counterpart)
+            .then(|| lock.calc_script_hash().unpack()))
+    };
+    match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
+        (None, Some(_)) => verify_creation(network, id),
+        (Some(before), Some(after)) if stem_contracts::spore::same_content(&before, &after) => {
+            match (gate(Source::GroupInput)?, gate(Source::GroupOutput)?) {
+                (Some(_), None) => Ok(()), // The spending endpoint Lock executes the authenticated return.
+                (None, Some(endpoint)) => {
+                    // Export must also consume the endpoint bond and execute its outbox rule.
+                    for index in 0.. {
+                        if load_cell_lock_hash(index, Source::Input).map_err(|_| 117)? == endpoint {
+                            return Ok(());
+                        }
+                    }
+                    unreachable!()
+                }
+                _ => Err(117),
+            }
+        }
+        (Some(_), None) if gate(Source::GroupInput)?.is_some() => Ok(()),
+        _ => Err(117),
+    }
+}
+
 fn plain_identity(id: &Identity, network: &Identity) -> Result<(), i8> {
     let read = |source| match bounded_data(0, source, MAX_CELL_SPORE_DATA) {
         Ok(data)
@@ -233,6 +298,9 @@ fn escrow(
     if let Route::ApprovedStandard(authority) = route {
         owner_args.extend_from_slice(authority);
     }
+    if matches!(route, Route::Mutant) {
+        owner_args.insert(0, 3);
+    }
     let owner = Script::new_builder()
         .code_hash(owner_code.pack())
         .hash_type(ScriptHashType::Data2)
@@ -268,11 +336,17 @@ fn escrow(
     let message = Message::decode(&action[12..len]).ok_or(118)?;
     let melt = MeltReceipt::decode(message.payload);
     let terminal = melt.is_some();
-    if terminal && !(kind == RECEIVE_ACTION && matches!(route, Route::Standard)) {
+    if terminal && !(kind == RECEIVE_ACTION && matches!(route, Route::Standard | Route::Mutant)) {
         return Err(118);
     }
     let transfer = melt
-        .or_else(|| CellTransfer::decode(message.payload))
+        .or_else(|| {
+            if matches!(route, Route::Mutant) {
+                CellTransfer::decode_custody(message.payload)
+            } else {
+                CellTransfer::decode(message.payload)
+            }
+        })
         .ok_or(118)?;
     if matches!(route, Route::Original) && SporeTransfer::decode_plain(message.payload).is_none() {
         return Err(118);
@@ -403,6 +477,7 @@ fn inspect(
         let (arg_len, binding_offset, type_count) = match route {
             Route::Original => (128, 64, 2),
             Route::Standard => (64, 32, 1),
+            Route::Mutant => (97, 33, 1),
             Route::ApprovedStandard(_) => (160, 128, 2),
         };
         match load(

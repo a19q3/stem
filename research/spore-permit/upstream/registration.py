@@ -13,14 +13,15 @@ ISSUER = "94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47"
 LIB = "ed08faee8c29b7a7c29bd9d495b4b93cc207bd70ca93f7b356f39c677e7ab0fc"
 
 
-def exercise(args, l1):
-    fixture = Fixtures(args)
+def exercise(args, l1, issuer=ISSUER, fixture=None):
+    if fixture is None:
+        fixture = Fixtures(args)
     genesis = l1.call("get_block_by_number", "0x0")
     coinbase, groups = genesis["transactions"][:2]
     secp = dependency(point(groups["hash"], 0), "dep_group")
     index, source = next((i, o) for i, o in enumerate(coinbase["outputs"]) if o["lock"]["args"] == FAUCET_ARG)
     code, lib = args.extension.read_bytes(), args.lua.read_bytes()
-    assert ckb_hash(code).hex() == ISSUER and ckb_hash(lib).hex() == LIB
+    assert ckb_hash(code).hex() == issuer and ckb_hash(lib).hex() == LIB
     budgets = [(len(x) + 200) * CKB for x in (code, lib)]
     registration_budget = 600 * CKB
     amounts = [*budgets, registration_budget + FEE]
@@ -30,7 +31,7 @@ def exercise(args, l1):
     funded = l1.send(fixture.sign("deploy", funding, [wallet_group(0, [fixture.faucet])]))
     deps = [secp, dependency(point(funded, 0)), dependency(point(funded, 1))]
     type_id = ckb_hash(le(0, 8) + binary(funded) + le(2, 4) + le(0, 8))
-    registry = script("0x" + ISSUER, hex_bytes(type_id), "data1")
+    registry = script("0x" + issuer, hex_bytes(type_id), "data1")
     lua = hex_bytes(b"print('hello world')")
     def commit(name, proposal, key):
         signed = fixture.sign(name, proposal, [wallet_group(0, [key])])
@@ -60,7 +61,7 @@ def exercise(args, l1):
                                       "--request", req, "--l1-rpc", l1.url)))
     verified = json.loads(run(args.binary, "ckb-wallet", "verify-type-history", "--request", req, "--proof", proof))
     assert len(verified["transitions"]) == 3 and len(verified["matched_states"]) == 1
-    return {"genesis": genesis["header"]["hash"], "issuer_hash": "0x"+ISSUER, "lua_library_hash": "0x"+LIB,
+    return {"genesis": genesis["header"]["hash"], "issuer_hash": "0x"+issuer, "lua_library_hash": "0x"+LIB,
             "type": registry, "created": created, "transferred": moved, "returned": returned, "live": head,
             "request": request, "history": verified}
 

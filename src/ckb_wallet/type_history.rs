@@ -34,6 +34,8 @@ struct Request {
     end_transaction: H256,
     #[serde(default)]
     required_states: Vec<RequiredState>,
+    #[serde(default)]
+    required_dependencies: Vec<RequiredDependency>,
 }
 
 #[derive(Deserialize)]
@@ -41,6 +43,14 @@ struct Request {
 struct RequiredState {
     lock_hash: Option<H256>,
     data_hash: Option<H256>,
+}
+
+/// A dependency's data commitment and, optionally, the Type of its issuing registry.
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
+struct RequiredDependency {
+    type_hash: Option<H256>,
+    data_hash: H256,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -73,7 +83,9 @@ pub(super) fn prove(path: &Path, url: &str) -> Result<()> {
             "repeated Type history transaction"
         );
         let (tx, height, proof) = history.witnessed(&next)?;
-        let (parent, _) = transition(&tx, &request.type_hash, |point| history.referenced(point))?;
+        let (parent, _) = transition(&tx, &request.type_hash, &[], |point| {
+            history.referenced(point)
+        })?;
         steps.push(Step {
             height,
             transaction: JsonBytes::from_bytes(tx.data().as_bytes()),
@@ -117,6 +129,7 @@ pub(super) fn verify(path: &Path, proof: &Path) -> Result<()> {
 fn transition(
     tx: &TransactionView,
     expected: &H256,
+    required: &[RequiredDependency],
     mut resolve: impl FnMut(&OutPoint) -> Result<(CellOutput, Bytes)>,
 ) -> Result<(Option<OutPoint>, Option<OutPoint>)> {
     let matches = |cell: CellOutput| {
@@ -152,7 +165,30 @@ fn transition(
         }
     }
     // Authenticate every dependency and DepGroup member by the exact OutPoint in the transaction.
-    resolve_dependencies(tx, resolve)?;
+    let deps = resolve_dependencies(tx, resolve)?;
+    if !required.is_empty() {
+        let mut missing: HashSet<_> = required.iter().cloned().collect();
+        for (cell, data) in deps {
+            let data_hash = H256::from(ckb_hash::blake2b_256(&data));
+            missing.remove(&RequiredDependency {
+                type_hash: None,
+                data_hash: data_hash.clone(),
+            });
+            if let Some(script) = cell.type_().to_opt() {
+                missing.remove(&RequiredDependency {
+                    type_hash: Some(script.calc_script_hash().unpack()),
+                    data_hash,
+                });
+            }
+            if missing.is_empty() {
+                break;
+            }
+        }
+        ensure!(
+            missing.is_empty(),
+            "required CKB dependency absent from Type transition"
+        );
+    }
     Ok((previous, next))
 }
 
@@ -216,6 +252,16 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
                 .all(|s| s.lock_hash.is_some() || s.data_hash.is_some()),
         "invalid intermediate state requirements"
     );
+    ensure!(
+        request.required_dependencies.len() <= super::metatype_history::MAX_DEPS
+            && request
+                .required_dependencies
+                .iter()
+                .collect::<HashSet<_>>()
+                .len()
+                == request.required_dependencies.len(),
+        "invalid Type history dependency requirements"
+    );
     let mut visits = Vec::new();
     let mut head = None;
     let mut trace = Vec::new();
@@ -236,21 +282,26 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         let packed = packed::Transaction::from_slice(step.transaction.as_bytes())?;
         let tx =
             stem::l1_proof::verify_packed_transaction(&header.hash(), header, packed, &step.proof)?;
-        let (previous, next) = transition(&tx, &request.type_hash, |point| {
-            let hash = point.tx_hash();
-            let raw = sources
-                .get(&hash)
-                .context("missing referenced CKB transaction")?;
-            unused.remove(&hash);
-            let i = u32::from(point.index()) as usize;
-            Ok((
-                raw.outputs().get(i).context("referenced output missing")?,
-                raw.outputs_data()
-                    .get(i)
-                    .context("referenced Cell data missing")?
-                    .raw_data(),
-            ))
-        })?;
+        let (previous, next) = transition(
+            &tx,
+            &request.type_hash,
+            &request.required_dependencies,
+            |point| {
+                let hash = point.tx_hash();
+                let raw = sources
+                    .get(&hash)
+                    .context("missing referenced CKB transaction")?;
+                unused.remove(&hash);
+                let i = u32::from(point.index()) as usize;
+                Ok((
+                    raw.outputs().get(i).context("referenced output missing")?,
+                    raw.outputs_data()
+                        .get(i)
+                        .context("referenced Cell data missing")?
+                        .raw_data(),
+                ))
+            },
+        )?;
         if index == 0 {
             ensure!(
                 previous.is_none() && next.as_ref() == Some(&origin),
@@ -306,8 +357,10 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         "required intermediate state absent or out of order"
     );
     ensure!(unused.is_empty(), "unused CKB Type history references");
-    Ok(
-        json!({"anchor":request.anchor, "type_hash":request.type_hash, "origin":request.origin,
-        "end_transaction":request.end_transaction, "ended_in_burn":head.is_none(), "matched_states":visits, "transitions":trace}),
-    )
+    let mut result = json!({"anchor":request.anchor, "type_hash":request.type_hash, "origin":request.origin,
+        "end_transaction":request.end_transaction, "ended_in_burn":head.is_none(), "matched_states":visits, "transitions":trace});
+    if !request.required_dependencies.is_empty() {
+        result["required_dependencies_per_transition"] = json!(request.required_dependencies);
+    }
+    Ok(result)
 }

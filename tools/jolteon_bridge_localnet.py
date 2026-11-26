@@ -606,7 +606,7 @@ def main():
                         help="use restricted checkpoint Lock for the PoW Security Fund")
     for name in ("export-udt", "asset-escrow", "ckb-stem-udt"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
-    for name in ("stem-spore", "ckb-spore-escrow", "spore-v2"):
+    for name in ("stem-spore", "ckb-spore-escrow", "spore-v2", "spore-mutant-lua", "ckb-lua-library", "spore-mutant-program"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--spore-cluster-v2", type=lambda path: Path(path).resolve(),
                         help="mint the fixture in a Cluster using its published CKB ELF")
@@ -659,6 +659,11 @@ def main():
             not all((args.export_udt, args.intercell_mailbox))
             or not (all(portable_udt) or all((args.asset_escrow, args.ckb_stem_udt)))):
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
+    if args.spore_mutant_lua or args.ckb_lua_library or args.spore_mutant_program:
+        if not all((args.spore_mutant_lua, args.ckb_lua_library, args.stem_spore or args.native_spore_origin)) or any((
+                args.spore_cluster_v2, args.spore_immortal, args.native_spore_approval,
+                args.native_spore_json, args.native_spore_multipart)):
+            parser.error("the Mutant fixture needs both Lua artifacts and a single unclustered Spore")
     if (args.native_spore_json or args.native_spore_multipart) and not args.native_spore_origin:
         parser.error("the native media fixtures require --native-spore-origin")
     if args.native_spore_sync_melt and (not args.native_spore_origin or args.native_spore_approval or args.spore_immortal):

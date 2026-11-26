@@ -11,6 +11,12 @@ pub const CKB_SPORE_CODE: Identity = [
     0x3b, 0x61, 0x50, 0xc9, 0x78, 0x8c, 0xb7, 0x5d, 0xcf, 0x67, 0x47, 0x24, 0x71, 0x32, 0xb9, 0xf5,
 ];
 
+/// Published Spore 0.2.2-beta.2 testnet program.
+pub const TESTNET_SPORE_BETA2: Identity = [
+    0x68, 0x5a, 0x60, 0x21, 0x93, 0x9, 0x2, 0x9d, 0x1, 0x31, 0x3, 0x11, 0xdb, 0xa9, 0x53, 0xd6,
+    0x70, 0x29, 0x17, 0xc, 0xa4, 0x84, 0x8a, 0x4f, 0xf6, 0x38, 0xe5, 0x70, 0x2, 0x13, 0xa, 0xd,
+];
+
 pub const TRANSFER_HEADER: usize = 64;
 pub const MAX_SPORE_DATA: usize = MAX_PAYLOAD - TRANSFER_HEADER;
 /// The native transaction envelope is at most 512 KiB, including all Cell metadata.
@@ -47,7 +53,10 @@ impl MeltReceipt {
     }
 
     pub fn encode(original: &Identity, recipient: &Identity, data: &[u8]) -> Option<[u8; 104]> {
-        if SporeData::unclustered(data)?.immortal() || original == &[0; 32] || recipient == &[0; 32]
+        if (!SporeData::unclustered(data).is_some_and(|spore| !spore.immortal())
+            && SporeData::custody_mutant(data).is_none())
+            || original == &[0; 32]
+            || recipient == &[0; 32]
         {
             return None;
         }
@@ -93,10 +102,30 @@ impl<'a> CellTransfer<'a> {
         data: &[u8],
         out: &'a mut [u8; MAX_PAYLOAD],
     ) -> Option<&'a [u8]> {
+        SporeData::from_cell(data)?;
+        Self::write(original_type, recipient, data, out)
+    }
+
+    /// Construct a message for a custody endpoint that also accepts executable Mutants.
+    pub fn encode_custody(
+        original_type: &Identity,
+        recipient: &Identity,
+        data: &[u8],
+        out: &'a mut [u8; MAX_PAYLOAD],
+    ) -> Option<&'a [u8]> {
+        SporeData::from_cell(data).or_else(|| SporeData::custody_mutant(data))?;
+        Self::write(original_type, recipient, data, out)
+    }
+
+    fn write(
+        original_type: &Identity,
+        recipient: &Identity,
+        data: &[u8],
+        out: &'a mut [u8; MAX_PAYLOAD],
+    ) -> Option<&'a [u8]> {
         if original_type == &[0; 32] || recipient == &[0; 32] {
             return None;
         }
-        SporeData::from_cell(data)?;
         out[..32].copy_from_slice(original_type);
         out[32..TRANSFER_HEADER].copy_from_slice(recipient);
         let body = &mut out[TRANSFER_HEADER..];
@@ -113,6 +142,15 @@ impl<'a> CellTransfer<'a> {
     }
 
     pub fn decode(payload: &'a [u8]) -> Option<Self> {
+        Self::read(payload, false)
+    }
+
+    /// A custodied CKB original can also carry an executable Mutant.
+    pub fn decode_custody(payload: &'a [u8]) -> Option<Self> {
+        Self::read(payload, true)
+    }
+
+    fn read(payload: &'a [u8], custody: bool) -> Option<Self> {
         let (header, body) = payload.split_at_checked(TRANSFER_HEADER)?;
         let fields = header.as_chunks::<32>().0;
         let [original_type, recipient] = fields else {
@@ -132,7 +170,12 @@ impl<'a> CellTransfer<'a> {
                 digest: hash.try_into().ok()?,
             }
         } else {
-            SporeData::decode(body)?;
+            if body.len() > MAX_SPORE_DATA
+                || !(SporeData::from_cell(body).is_some()
+                    || custody && SporeData::custody_mutant(body).is_some())
+            {
+                return None;
+            }
             TransferContent::Inline(body)
         };
         Some(Self {
@@ -277,6 +320,32 @@ impl<'a> SporeData<'a> {
     }
 
     pub fn from_cell(data: &'a [u8]) -> Option<Self> {
+        let spore = Self::fields(data)?;
+        let mime = spore
+            .content_type
+            .strip_suffix(b";immortal=true")
+            .unwrap_or(spore.content_type);
+        portable_content(mime, spore.content).then_some(spore)
+    }
+
+    /// One unclustered canonical Mutant reference. Its program executes on CKB at custody changes.
+    pub fn custody_mutant(data: &'a [u8]) -> Option<Self> {
+        let spore = Self::fields(data)?;
+        let (base, suffix) = spore
+            .content_type
+            .split_at(spore.content_type.iter().position(|b| *b == b';')?);
+        let id = suffix.strip_prefix(b";mutant[]=")?;
+        (spore.cluster_id.is_none()
+            && !spore.content.is_empty()
+            && portable_mime(base)
+            && id.len() == 64
+            && id
+                .iter()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b)))
+        .then_some(spore)
+    }
+
+    fn fields(data: &'a [u8]) -> Option<Self> {
         let (header, _) = data.split_at_checked(16)?;
         let [total, mime, content, cluster] = header.as_chunks::<4>().0 else {
             return None;
@@ -301,12 +370,7 @@ impl<'a> SporeData<'a> {
                 Some(id)
             }
         };
-        // Custody preserves the original Cell through deposits and returns.
-        // An immortal Spore cannot be melted; its mapped Cell redeems only by releasing that original.
-        let mime = content_type
-            .strip_suffix(b";immortal=true")
-            .unwrap_or(content_type);
-        portable_content(mime, content).then_some(Self {
+        Some(Self {
             content_type,
             content,
             cluster_id,
@@ -340,7 +404,11 @@ mod tests {
             let melt = MeltReceipt::encode(&[1; 32], &[2; 32], &bytes).unwrap();
             let terminal = MeltReceipt::decode(&melt).unwrap();
             assert_eq!(terminal.recipient, [2; 32]);
-            assert!(terminal.content.matches(&bytes, || Some(hash(b"", &[&bytes]))));
+            assert!(
+                terminal
+                    .content
+                    .matches(&bytes, || Some(hash(b"", &[&bytes])))
+            );
             assert!(CellTransfer::decode(&melt).is_none());
             assert!(MeltReceipt::decode(&melt[..103]).is_none());
             let encoded = CellTransfer::encode(&[1; 32], &[2; 32], &bytes, &mut buf).unwrap();
@@ -389,6 +457,28 @@ mod tests {
             b"x"
         ));
         assert!(!portable_content(b"multipart/mixed;boundary=", b"----\r\n"));
+    }
+
+    #[test]
+    fn mutant_payloads_use_only_the_custody_decoder() {
+        let mut mime = b"text/plain;mutant[]=".to_vec();
+        mime.extend_from_slice(&[b'a'; 64]);
+        let content = 20 + mime.len() as u32;
+        let total = content + 5;
+        let mut data = [total, 16, content, total, mime.len() as u32]
+            .map(u32::to_le_bytes)
+            .concat();
+        data.extend_from_slice(&mime);
+        data.extend_from_slice(&[1, 0, 0, 0, b'x']);
+        let mut buf = [0; MAX_PAYLOAD];
+        assert!(CellTransfer::encode(&[1; 32], &[2; 32], &data, &mut buf).is_none());
+        let payload = CellTransfer::encode_custody(&[1; 32], &[2; 32], &data, &mut buf).unwrap();
+        assert!(CellTransfer::decode_custody(payload).is_some());
+        assert!(CellTransfer::decode(payload).is_none());
+        assert!(SporeData::from_cell(&data).is_none());
+        assert!(MeltReceipt::encode(&[1; 32], &[2; 32], &data).is_some());
+        data[content as usize - 1] = b'G';
+        assert!(SporeData::custody_mutant(&data).is_none());
     }
 
     #[test]

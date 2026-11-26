@@ -16,7 +16,10 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
-    spore::{CKB_SPORE_CODE, CellTransfer, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData},
+    spore::{
+        CKB_SPORE_CODE, CellTransfer, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData,
+        TESTNET_SPORE_BETA2,
+    },
 };
 
 entry!(main);
@@ -36,7 +39,9 @@ fn verify() -> Result<(), i8> {
         };
         return holder_transfer(&script, spore, authority, gate, holder);
     }
-    let (fields, rest) = args.as_chunks::<32>();
+    let mutant_origin = args.len() == 161 && args[0] == 3;
+    let raw = if mutant_origin { &args[1..] } else { &args[..] };
+    let (fields, rest) = raw.as_chunks::<32>();
     if !rest.is_empty()
         || fields.contains(&[0; 32])
         || u8::from(script.hash_type()) != ScriptHashType::Data2 as u8
@@ -70,7 +75,7 @@ fn verify() -> Result<(), i8> {
     let spore_input = matching(Source::Input, original)?;
     let Some(spore_output) = matching(Source::Output, original)? else {
         // A terminal receipt is available only to the external holder of a
-        // meltable, plain native-origin counterpart.
+        // native-origin counterpart whose CKB Type accepts this melt.
         let input = spore_input.ok_or(111)?;
         if counterpart.is_none()
             || approval.is_some()
@@ -86,10 +91,16 @@ fn verify() -> Result<(), i8> {
         let bytes =
             stem_contracts::metatype::bounded_data(input, Source::Input, MAX_CELL_SPORE_DATA)
                 .map_err(|_| 110)?;
-        if ty.code_hash().as_slice() != CKB_SPORE_CODE
+        let meltable = if mutant_origin {
+            ty.code_hash().as_slice() == TESTNET_SPORE_BETA2
+                && SporeData::custody_mutant(&bytes).is_some()
+        } else {
+            ty.code_hash().as_slice() == CKB_SPORE_CODE
+                && SporeData::unclustered(&bytes).is_some_and(|s| !s.immortal())
+        };
+        if !meltable
             || u8::from(ty.hash_type()) != ScriptHashType::Data1 as u8
             || ty.args().raw_data().len() != 32
-            || !SporeData::unclustered(&bytes).is_some_and(|spore| !spore.immortal())
         {
             return Err(112);
         }
@@ -146,8 +157,7 @@ fn verify() -> Result<(), i8> {
     let object_type = load_cell_type(spore_output, Source::Output)
         .map_err(|_| 110)?
         .ok_or(110)?;
-    if object_type.code_hash().as_slice() != CKB_SPORE_CODE
-        || u8::from(object_type.hash_type()) != ScriptHashType::Data1 as u8
+    if u8::from(object_type.hash_type()) != ScriptHashType::Data1 as u8
         || object_type.args().raw_data().len() != 32
     {
         return Err(112);
@@ -155,12 +165,19 @@ fn verify() -> Result<(), i8> {
     let output =
         stem_contracts::metatype::bounded_data(spore_output, Source::Output, MAX_CELL_SPORE_DATA)
             .map_err(|_| 110)?;
+    let code = object_type.code_hash();
+    let supported = (!mutant_origin
+        && code.as_slice() == CKB_SPORE_CODE
+        && SporeData::from_cell(&output)
+            .is_some_and(|s| counterpart.is_none() || s.cluster_id.is_none()))
+        || ((counterpart.is_none() || mutant_origin)
+            && code.as_slice() == TESTNET_SPORE_BETA2
+            && SporeData::custody_mutant(&output).is_some());
     if (!first_export
         && stem_contracts::metatype::bounded_data(input_index, Source::Input, MAX_CELL_SPORE_DATA)
             .map_err(|_| 110)?
             != output)
-        || !SporeData::from_cell(&output)
-            .is_some_and(|s| counterpart.is_none() || s.cluster_id.is_none())
+        || !supported
         || load_cell_capacity(input_index, Source::Input).map_err(|_| 110)?
             != load_cell_capacity(spore_output, Source::Output).map_err(|_| 110)?
     {
@@ -292,8 +309,7 @@ fn reservation(script: &Script, id: &Identity, code: &Identity) -> Result<(), i8
     hash.update(&0u64.to_le_bytes());
     let mut spore_id = [0; 32];
     hash.finalize(&mut spore_id);
-    if spore.code_hash().as_slice() != CKB_SPORE_CODE
-        || u8::from(spore.hash_type()) != ScriptHashType::Data1 as u8
+    if u8::from(spore.hash_type()) != ScriptHashType::Data1 as u8
         || spore.args().raw_data().as_ref() != spore_id
     {
         return Err(114);
@@ -312,10 +328,18 @@ fn reservation(script: &Script, id: &Identity, code: &Identity) -> Result<(), i8
         }
         let lock = load_cell_lock(index, Source::Input).map_err(|_| 114)?;
         let args = lock.args().raw_data();
-        let (fields, rest) = args.as_chunks::<32>();
+        let mutant_gate = args.len() == 161 && args[0] == 3;
+        let raw = if mutant_gate { &args[1..] } else { &args[..] };
+        let (fields, rest) = raw.as_chunks::<32>();
+        let expected = if mutant_gate {
+            TESTNET_SPORE_BETA2
+        } else {
+            CKB_SPORE_CODE
+        };
         if let [gate_id, _, _, gate_code, counterpart, tail @ ..] = fields
             && tail.len() <= 1
             && rest.is_empty()
+            && spore.code_hash().as_slice() == expected
             && gate_id == id
             && gate_code == code
             && counterpart.as_slice() == spore_hash.as_slice()
@@ -382,7 +406,7 @@ fn verify_transfer(
     recipient: Option<&Identity>,
     custody: &Identity,
 ) -> Result<(), i8> {
-    let transfer = CellTransfer::decode(payload).ok_or(113)?;
+    let transfer = CellTransfer::decode_custody(payload).ok_or(113)?;
     if transfer.original_type != *original
         || !transfer.content.matches(data, || {
             load_cell_data_hash(output_index, Source::Output).ok()

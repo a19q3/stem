@@ -27,7 +27,7 @@ use crate::l1::Rpc;
 pub(super) const MAX_HEADERS: u64 = 4_096;
 pub(super) const MAX_RAW_TRANSACTIONS: usize = 512;
 pub(super) const MAX_RAW_BYTES: usize = 32 * 1024 * 1024;
-const MAX_DEPS: usize = 128;
+pub(super) const MAX_DEPS: usize = 128;
 
 pub(super) fn output(tx: &TransactionView, point: &OutPoint) -> Result<(CellOutput, Bytes)> {
     let index = u32::from(point.index()) as usize;

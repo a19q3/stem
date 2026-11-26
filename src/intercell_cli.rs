@@ -191,8 +191,9 @@ impl Intercell {
                     );
                 }
                 let mut buffer = [0; MAX_PAYLOAD];
-                let payload = CellTransfer::encode(&original, &recipient, &bytes, &mut buffer)
-                    .context("invalid SporeData or settlement identity")?;
+                let payload =
+                    CellTransfer::encode_custody(&original, &recipient, &bytes, &mut buffer)
+                        .context("invalid SporeData or settlement identity")?;
                 print_json(&json!({ "payload": JsonBytes::from_vec(payload.to_vec()) }))
             }
             Self::RecoverInbox(args) => args.run(),
