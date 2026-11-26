@@ -1,0 +1,30 @@
+   Compiling stem-vm v0.1.0 (/home/arthur/a19q3/stem/vm)
+    Finished `release` profile [optimized] target(s) in 2.32s
+     Running unittests src/lib.rs (target/release/deps/stem_vm-813f5224c1dfad21)
+
+running 5 tests
+test crypto::tests::measure_crypto_v1 ... ignored, calibrate crypto ABI against uncached native recovery on a pinned CPU
+test crypto::tests::measure_signature_recovery_reuse ... ignored, controlled native recovery cache microbenchmark
+test crypto::tests::cached_recovery_keys_cover_digest_compact_seal_and_recovery_id ... ok
+test crypto::tests::agrees_with_the_riscv_lock_reference ... ok
+test executor::executor_tests::runner_preserves_guest_outputs_and_exact_cycle_cutoffs ... ok
+
+test result: ok. 3 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/native.rs (target/release/deps/native-18b446750a88cc7d)
+
+running 12 tests
+test resolved_job_scheduling::measure_resolved_job_schedules ... ignored, matched independent verification scheduling experiment
+test payment_verification_reuses_cycles_after_the_parent_changes ... ok
+test complete_authorization_binds_input_data_and_dep_group_members ... ok
+test separate_lock_groups_collect_seals_independently ... ok
+test crypto_v1_guest_uses_genesis_rules_and_fixed_cycle_limits ... ok
+test identity_lifecycle_and_single_type_asset_are_executed ... ok
+test spawn_and_exec_read_the_same_native_script_group ... ok
+test native_witness_proofs_and_seals_are_bound_to_the_resolved_groups ... ok
+test native_group_message_is_signed_and_owned_by_a_derived_group ... ok
+test block_context_uses_committed_parent_time_and_partitions_cache ... ok
+test multi_asset_settlement_runs_every_group_with_real_signature ... ok
+test measure_type_groups_with_matched_payment_fixture ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.62s

@@ -1,0 +1,248 @@
+diff --git a/vendor/ckb-script/src/runtime.rs b/vendor/ckb-script/src/runtime.rs
+index ae4cd27..2c479e4 100644
+--- a/vendor/ckb-script/src/runtime.rs
++++ b/vendor/ckb-script/src/runtime.rs
+@@ -23,6 +23,22 @@ pub use crate::{
+ use crate::{Scheduler, types::SyscallGenerator};
+ use ckb_vm::DefaultMachineRunner;
+
++/// Allocate a standalone VM core with the same fresh-state semantics as the scheduler.
++pub fn standalone_core(
++    isa: u8,
++    version: u32,
++    max_cycles: u64,
++) -> <Machine as DefaultMachineRunner>::Inner {
++    #[cfg(all(has_asm, feature = "vm-reuse"))]
++    {
++        crate::reusable_asm::allocate_core(isa, version, max_cycles)
++    }
++    #[cfg(not(all(has_asm, feature = "vm-reuse")))]
++    {
++        ckb_vm::SupportMachine::new(isa, version, max_cycles)
++    }
++}
++
+ pub fn scheduler<C: ScriptContext, V: Clone>(
+     group: C,
+     syscalls: SyscallGenerator<C, V, <Machine as DefaultMachineRunner>::Inner>,
+diff --git a/vm/Cargo.toml b/vm/Cargo.toml
+index 942a887..6b6ecf4 100644
+--- a/vm/Cargo.toml
++++ b/vm/Cargo.toml
+@@ -6,6 +6,10 @@ rust-version = "1.95.0"
+ license = "MIT"
+ publish = false
+
++[features]
++lineage-native-runner = []
++lineage-reused-runner = ["lineage-native-runner"]
++
+ [dependencies]
+ anyhow.workspace = true
+ ckb-script = { workspace = true, default-features = false, features = ["detect-asm", "vm-reuse"] }
+diff --git a/vm/src/executor.rs b/vm/src/executor.rs
+index 342a4d5..70a6b63 100644
+--- a/vm/src/executor.rs
++++ b/vm/src/executor.rs
+@@ -7,8 +7,8 @@ use anyhow::{Context, Result, ensure};
+ use ckb_script::runtime::{store_data, transferred_byte_cycles};
+ use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
+ use ckb_vm::{
+-    DefaultCoreMachine, DefaultMachineBuilder, Error, ISA_B, ISA_IMC, ISA_MOP, Memory, Register,
+-    SparseMemory, SupportMachine, Syscalls, WXorXMemory,
++    DefaultMachineBuilder, DefaultMachineRunner, Error, ISA_B, ISA_IMC, ISA_MOP, Memory, Register,
++    SupportMachine, Syscalls,
+     cost_model::estimate_cycles,
+     machine::VERSION2,
+     registers::{A0, A1, A2, A3, A4, A7},
+@@ -20,6 +20,11 @@ use stem_ledger::{
+
+ use crate::crypto::{SECP256K1_RECOVERY_CYCLES, recover_cached};
+
++#[cfg(any(not(feature = "lineage-native-runner"), test))]
++type Interpreter = ckb_vm::DefaultMachine<
++    ckb_vm::DefaultCoreMachine<u64, ckb_vm::WXorXMemory<ckb_vm::SparseMemory<u64>>>,
++>;
++
+ pub const LOAD_EXECUTOR_CONTEXT: u64 = 2126;
+ pub const LOAD_EXECUTOR_DATA: u64 = 2127;
+ pub const WRITE_EXECUTOR_OUTPUT: u64 = 2128;
+@@ -84,31 +89,55 @@ pub fn run_with_crypto(
+     max_cycles: u64,
+     crypto_v1: bool,
+ ) -> Result<(Vec<Output>, u64)> {
++    const ISA: u8 = ISA_IMC | ISA_B | ISA_MOP;
++    #[cfg(feature = "lineage-reused-runner")]
++    type Runner = ckb_script::runtime::Machine;
++    #[cfg(all(
++        feature = "lineage-native-runner",
++        not(feature = "lineage-reused-runner")
++    ))]
++    type Runner = ckb_script::types::Machine;
++    #[cfg(not(feature = "lineage-native-runner"))]
++    type Runner = Interpreter;
++    #[cfg(feature = "lineage-reused-runner")]
++    let core = ckb_script::runtime::standalone_core(ISA, VERSION2, max_cycles);
++    #[cfg(not(feature = "lineage-reused-runner"))]
++    let core =
++        <<Runner as DefaultMachineRunner>::Inner as SupportMachine>::new(ISA, VERSION2, max_cycles);
++    execute::<Runner>(program, context, core, crypto_v1)
++}
++
++fn execute<R: DefaultMachineRunner>(
++    program: &Bytes,
++    context: ContextData,
++    core: R::Inner,
++    crypto_v1: bool,
++) -> Result<(Vec<Output>, u64)>
++where
++    R::Inner: 'static,
++{
+     let outputs = Arc::new(Mutex::new(vec![None; context.inputs.len()]));
+     let host = Executor {
+         context,
+         outputs: Arc::clone(&outputs),
+     };
+-    let core = DefaultCoreMachine::<u64, WXorXMemory<SparseMemory<u64>>>::new(
+-        ISA_IMC | ISA_B | ISA_MOP,
+-        VERSION2,
+-        max_cycles,
+-    );
+     let mut builder = DefaultMachineBuilder::new(core)
+         .instruction_cycle_func(Box::new(estimate_cycles))
+         .syscall(Box::new(host));
+     if crypto_v1 {
+         builder = builder.syscall(Box::new(crate::crypto::V1));
+     }
+-    let mut machine = builder.build();
++    let mut machine = R::new(builder.build());
+     let loaded = machine.load_program(program, std::iter::empty())?;
+-    machine.add_cycles(transferred_byte_cycles(loaded))?;
++    machine
++        .machine_mut()
++        .add_cycles(transferred_byte_cycles(loaded))?;
+     let exit = machine.run()?;
+     ensure!(
+         exit == 0,
+         "Lineage Executor rejected the operation ({exit})"
+     );
+-    let cycles = machine.cycles();
++    let cycles = machine.machine().cycles();
+     drop(machine);
+     let outputs = Arc::into_inner(outputs)
+         .expect("Executor VM released its output buffer")
+@@ -199,3 +228,7 @@ impl<M: SupportMachine> Syscalls<M> for Executor {
+         Ok(true)
+     }
+ }
++
++#[cfg(test)]
++#[path = "executor_tests.rs"]
++mod executor_tests;
+diff --git a/vm/src/executor_tests.rs b/vm/src/executor_tests.rs
+new file mode 100644
+index 0000000..da5f21a
+--- /dev/null
++++ b/vm/src/executor_tests.rs
+@@ -0,0 +1,101 @@
++use super::*;
++use std::path::Path;
++
++#[allow(dead_code)]
++#[path = "../../contracts/test_support.rs"]
++mod contract;
++
++fn context(height: u64, count: usize, increment: u64, value: u128) -> ContextData {
++    ContextData {
++        height,
++        parent_time_ms: height * 1000,
++        payer_lock: [11; 32].pack(),
++        actors: vec![[7; 32].pack()],
++        payload: Bytes::copy_from_slice(&increment.to_le_bytes()),
++        inputs: (0..count)
++            .map(|index| Input {
++                id: [index as u8 + 1; 32].pack(),
++                version: height + index as u64,
++                capacity: 100_000_000_000 + index as u64,
++                data: Bytes::copy_from_slice(&value.to_le_bytes()),
++            })
++            .collect(),
++    }
++}
++
++#[test]
++fn runner_preserves_guest_outputs_and_exact_cycle_cutoffs() -> Result<()> {
++    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
++    let code = contract::native_contract(&root, "stem-lineage-counter")?;
++    const ISA: u8 = ISA_IMC | ISA_B | ISA_MOP;
++    let unpack = |run: Result<(Vec<Output>, u64)>| {
++        run.map(|(outputs, cycles)| {
++            (
++                outputs
++                    .into_iter()
++                    .map(|out| (out.capacity, out.data))
++                    .collect::<Vec<_>>(),
++                cycles,
++            )
++        })
++        .map_err(|e| e.to_string())
++    };
++    for active in [false, true] {
++        for (height, heads, increment, value) in [
++            (1, 1, 1, 0),
++            (5, 4, 7, 91),
++            (3, 2, 1, u128::MAX),
++            (8, 1, 0, 4),
++            (2, 8, 2, 71),
++            (1, 1, 1, 0),
++        ] {
++            let make = || context(height, heads, increment, value);
++            let interpreter = |limit| {
++                unpack(execute::<Interpreter>(
++                    &code,
++                    make(),
++                    <<Interpreter as DefaultMachineRunner>::Inner as SupportMachine>::new(
++                        ISA, VERSION2, limit,
++                    ),
++                    active,
++                ))
++            };
++            let expected = interpreter(20_000_000);
++            let mut budgets = vec![0, 300, 20_000_000];
++            if let Ok((output, cycles)) = &expected {
++                assert_eq!(output.len(), heads);
++                for (index, (capacity, data)) in output.iter().enumerate() {
++                    assert_eq!(*capacity, 100_000_000_000 + index as u64);
++                    assert_eq!(data.as_ref(), (value + u128::from(increment)).to_le_bytes());
++                }
++                budgets.extend([cycles - 1, *cycles, cycles + 1]);
++            } else {
++                assert!(increment == 0 || value == u128::MAX);
++            }
++            for limit in budgets {
++                let reference = interpreter(limit);
++                assert_eq!(
++                    unpack(execute::<ckb_script::types::Machine>(
++                        &code,
++                        make(),
++                        <<ckb_script::types::Machine as DefaultMachineRunner>::Inner as SupportMachine>::new(
++                            ISA, VERSION2, limit
++                        ),
++                        active
++                    )),
++                    reference
++                );
++                assert_eq!(
++                    unpack(execute::<ckb_script::runtime::Machine>(
++                        &code,
++                        make(),
++                        ckb_script::runtime::standalone_core(ISA, VERSION2, limit),
++                        active
++                    )),
++                    reference
++                );
++            }
++        }
++    }
++    Ok(())
++}

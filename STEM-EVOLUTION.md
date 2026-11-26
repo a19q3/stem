@@ -51,7 +51,7 @@
 
 第 16 项增加了单付款 Lock 的普通 CKB 支出凭证。在独立固定的区块哈希下，离线核验交易、见证及每一笔输入的来源。实测一笔 Live Cell 请求付出 0.01 CKB 矿工费，另向请求 Cell 锁入 794 CKB。该凭证用于下述逐笔授权报销。[可离线复核的凭证](evidence/2026-11-27-l1-expense.json.xz)
 
-第 09 项补测 RISC-V 程序加载。复用已验证的 ELF 头部解析结果后，四个合约的解析从约 105–106 ns 降至 22–23 ns。16 副本 AMM、两档相同签名集的整网对照未改善共同确认吞吐，200 TPS 档 p99 从 919 ms 增至 1,058 ms。保留默认加载器。[原始报告和候选补丁](research/elf-loading/README.md)
+第 09 项补测 RISC-V 程序加载。复用已验证的 ELF 头部解析结果后，四个合约的解析从约 105–106 ns 降至 22–23 ns。16 副本 AMM、两档相同签名集的整网对照未改善共同确认吞吐，200 TPS 档 p99 从 919 ms 增至 1,058 ms。保留默认加载器。[原始报告和候选补丁](research/elf-loading/README.md) 单独替换 Lineage Executor 的 14 轮 16 副本对照也已完成。每次重新分配的汇编内核使 200 TPS 档候选复验从 33.06 增至 43.94 ms；复用内核后为 33.21 ms，对照为 32.83 ms。保留默认解释器。[整网与逐周期对照](research/lineage-engine/README.md)
 
 第 20 项已验证 Stem 原生普通不可变对象直接导出为 CKB 标准 Spore V2。普通 CKB 钱包用原版合约转让，返程恢复同一 Stem 对象，二次导出释放同一 Spore。新路径接受单一 Type 和不可变内容。Stem 原生 JSON 永生对象也完成了同一路径，Stem 和原版 CKB 合约分别以 117 和 65 拒绝持有人销毁。[永生对象往返](evidence/2026-11-27-native-immortal-json-spore.json.xz)已有 Cluster 永生对象及审批复合对象路径分别复跑通过。可销毁的原生 multipart 对象也已通过四副本和原版 CKB 合约往返。第二次导出后，持有人在 CKB 销毁了原件，Stem 托管输出仍可证明。[可销毁对象实测](evidence/2026-11-27-native-multipart-spore.json.xz) 可执行扩展与额外约束的等价映射仍有剩余范围。[四副本与 CKB 报告](evidence/2026-11-27-native-standard-spore.json.xz)
 

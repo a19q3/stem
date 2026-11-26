@@ -1,0 +1,370 @@
+{
+  "cohorts_by_offer_rate": {
+    "200": {
+      "seconds": 60,
+      "genesis": "1894997669881b60a6cd276e4f804d4cbf7a7f4874b8c79783b9b1f491e6ed81",
+      "signed_workload": "0a7224bd82a26d3cb320c50ee5b197dcff8ee73396ac5aefb5ab0f2f76844906",
+      "confirmed_set": "86c936d44efc2dda3f1df1e89e6bccef405d96886dc985dd3386ad14e0820d0c",
+      "cycles": 47066533125,
+      "fees": 24000000,
+      "head_updates": 24000
+    },
+    "240": {
+      "seconds": 60,
+      "genesis": "db68eeb4655ee4455fdf96257dba17e47e2fc489d4e9afaeadcb1106461a7c64",
+      "signed_workload": "2988835b25fa5d2e14db996a2c60ecbbe6b191040b3c0db644b372291af02644",
+      "confirmed_set": "bbbc7386a22d49c4e7ab6c24225ccead0eb6851b8fe72630d22da998d2afaf1b",
+      "cycles": 56479839750,
+      "fees": 28800000,
+      "head_updates": 28800
+    }
+  },
+  "runs": [
+    {
+      "file": "0-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 198.06666666666666,
+      "candidate_verify_mean_us": 33106.76098104794,
+      "p99_common_us": 922881,
+      "cpu_seconds": 209.41,
+      "peak_sampled_node_rss_kib": 138664,
+      "observer_errors": 0
+    },
+    {
+      "file": "1-asm-200.json.xz",
+      "binary_sha256": "33892ecd0b94e8682b33fabddac7c2ba14d67381019da149c2c8b4519af5322b",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 196.73333333333332,
+      "candidate_verify_mean_us": 44042.49131455399,
+      "p99_common_us": 1048919,
+      "cpu_seconds": 256.86,
+      "peak_sampled_node_rss_kib": 146388,
+      "observer_errors": 0
+    },
+    {
+      "file": "2-asm-200.json.xz",
+      "binary_sha256": "33892ecd0b94e8682b33fabddac7c2ba14d67381019da149c2c8b4519af5322b",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 196.81666666666666,
+      "candidate_verify_mean_us": 43805.73145539906,
+      "p99_common_us": 1065503,
+      "cpu_seconds": 256.12,
+      "peak_sampled_node_rss_kib": 146292,
+      "observer_errors": 0
+    },
+    {
+      "file": "3-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 197.98333333333332,
+      "candidate_verify_mean_us": 32980.22222222222,
+      "p99_common_us": 923874,
+      "cpu_seconds": 209.64,
+      "peak_sampled_node_rss_kib": 139080,
+      "observer_errors": 0
+    },
+    {
+      "file": "4-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 197.9,
+      "candidate_verify_mean_us": 33058.5972810341,
+      "p99_common_us": 925812,
+      "cpu_seconds": 209.83,
+      "peak_sampled_node_rss_kib": 138736,
+      "observer_errors": 0
+    },
+    {
+      "file": "5-asm-200.json.xz",
+      "binary_sha256": "33892ecd0b94e8682b33fabddac7c2ba14d67381019da149c2c8b4519af5322b",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 197.01666666666668,
+      "candidate_verify_mean_us": 43939.449765258214,
+      "p99_common_us": 1061382,
+      "cpu_seconds": 256.02,
+      "peak_sampled_node_rss_kib": 146452,
+      "observer_errors": 0
+    },
+    {
+      "file": "6-asm-240.json.xz",
+      "binary_sha256": "33892ecd0b94e8682b33fabddac7c2ba14d67381019da149c2c8b4519af5322b",
+      "rate": 240,
+      "visible": 14400,
+      "visible_tps": 236.33333333333334,
+      "candidate_verify_mean_us": 54904.42280049566,
+      "p99_common_us": 1215189,
+      "cpu_seconds": 295.64,
+      "peak_sampled_node_rss_kib": 153028,
+      "observer_errors": 0
+    },
+    {
+      "file": "7-ref-240.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 240,
+      "visible": 14400,
+      "visible_tps": 234.53333333333333,
+      "candidate_verify_mean_us": 41583.86039488966,
+      "p99_common_us": 1280789,
+      "cpu_seconds": 246.62,
+      "peak_sampled_node_rss_kib": 143984,
+      "observer_errors": 0
+    },
+    {
+      "file": "pool-0-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 197.28333333333333,
+      "candidate_verify_mean_us": 32796.0547429078,
+      "p99_common_us": 919300,
+      "cpu_seconds": 208.74,
+      "peak_sampled_node_rss_kib": 139112,
+      "observer_errors": 0
+    },
+    {
+      "file": "pool-1-pooled-200.json.xz",
+      "binary_sha256": "4e917f8eaf655858b38205aae0a8c8e875450d13746f2348dde99ecab664bfa9",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 198.1,
+      "candidate_verify_mean_us": 32461.626356589146,
+      "p99_common_us": 917707,
+      "cpu_seconds": 207.47,
+      "peak_sampled_node_rss_kib": 138720,
+      "observer_errors": 0
+    },
+    {
+      "file": "pool-2-pooled-200.json.xz",
+      "binary_sha256": "4e917f8eaf655858b38205aae0a8c8e875450d13746f2348dde99ecab664bfa9",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 197.7,
+      "candidate_verify_mean_us": 33411.083389074694,
+      "p99_common_us": 975221,
+      "cpu_seconds": 212.01,
+      "peak_sampled_node_rss_kib": 138696,
+      "observer_errors": 0
+    },
+    {
+      "file": "pool-3-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 197.36666666666667,
+      "candidate_verify_mean_us": 33206.92218506132,
+      "p99_common_us": 924331,
+      "cpu_seconds": 210.82,
+      "peak_sampled_node_rss_kib": 138476,
+      "observer_errors": 0
+    },
+    {
+      "file": "pool-4-ref-200.json.xz",
+      "binary_sha256": "9967feaec350f9c76efd679fdb537188953b5602b76a06e409ebedccfb36575d",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 197.93333333333334,
+      "candidate_verify_mean_us": 32832.44949832776,
+      "p99_common_us": 923186,
+      "cpu_seconds": 209.29,
+      "peak_sampled_node_rss_kib": 139024,
+      "observer_errors": 0
+    },
+    {
+      "file": "pool-5-pooled-200.json.xz",
+      "binary_sha256": "4e917f8eaf655858b38205aae0a8c8e875450d13746f2348dde99ecab664bfa9",
+      "rate": 200,
+      "visible": 12000,
+      "visible_tps": 196.71666666666667,
+      "candidate_verify_mean_us": 33205.014,
+      "p99_common_us": 952248,
+      "cpu_seconds": 211.19,
+      "peak_sampled_node_rss_kib": 138716,
+      "observer_errors": 0
+    }
+  ],
+  "store_samples": {
+    "micro-0-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        97,
+        128,
+        139
+      ],
+      "parallel_prepare_us": [
+        5408,
+        5849,
+        7152
+      ],
+      "serial_prepare_us": [
+        5330,
+        6081,
+        7267
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-1-asm.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        95,
+        117,
+        118
+      ],
+      "parallel_prepare_us": [
+        6360,
+        6621,
+        7660
+      ],
+      "serial_prepare_us": [
+        6300,
+        6693,
+        7090
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-2-asm.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        96,
+        115,
+        115
+      ],
+      "parallel_prepare_us": [
+        6351,
+        6787,
+        7958
+      ],
+      "serial_prepare_us": [
+        6291,
+        6661,
+        7289
+      ],
+      "workload": "hotspot-amm"
+    },
+    "micro-3-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        99,
+        128,
+        139
+      ],
+      "parallel_prepare_us": [
+        5440,
+        6923,
+        7499
+      ],
+      "serial_prepare_us": [
+        5480,
+        5941,
+        7463
+      ],
+      "workload": "hotspot-amm"
+    },
+    "pool-micro-0-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        90,
+        142,
+        174
+      ],
+      "parallel_prepare_us": [
+        5777,
+        6946,
+        8818
+      ],
+      "serial_prepare_us": [
+        5638,
+        6640,
+        8304
+      ],
+      "workload": "hotspot-amm"
+    },
+    "pool-micro-1-pooled.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        105,
+        177,
+        186
+      ],
+      "parallel_prepare_us": [
+        5322,
+        7239,
+        8738
+      ],
+      "serial_prepare_us": [
+        5304,
+        8586,
+        9362
+      ],
+      "workload": "hotspot-amm"
+    },
+    "pool-micro-2-pooled.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        93,
+        151,
+        166
+      ],
+      "parallel_prepare_us": [
+        5356,
+        6199,
+        6323
+      ],
+      "serial_prepare_us": [
+        5333,
+        6897,
+        8843
+      ],
+      "workload": "hotspot-amm"
+    },
+    "pool-micro-3-ref.log": {
+      "blocks": 31,
+      "commands_per_block": 8,
+      "head_updates_per_block": 16,
+      "mean_charged_cycles_per_block": 31378016,
+      "parallel_commit_us": [
+        93,
+        160,
+        173
+      ],
+      "parallel_prepare_us": [
+        5458,
+        6719,
+        7872
+      ],
+      "serial_prepare_us": [
+        5399,
+        8173,
+        9490
+      ],
+      "workload": "hotspot-amm"
+    }
+  }
+}
