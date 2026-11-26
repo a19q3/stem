@@ -53,7 +53,7 @@
 
 第 09 项补测 RISC-V 程序加载。复用已验证的 ELF 头部解析结果后，四个合约的解析从约 105–106 ns 降至 22–23 ns。16 副本 AMM、两档相同签名集的整网对照未改善共同确认吞吐，200 TPS 档 p99 从 919 ms 增至 1,058 ms。保留默认加载器。[原始报告和候选补丁](research/elf-loading/README.md)
 
-第 20 项已验证 Stem 原生普通不可变对象直接导出为 CKB 标准 Spore V2。普通 CKB 钱包用原版合约转让，返程恢复同一 Stem 对象，二次导出释放同一 Spore。新路径接受单一 Type 和不可变内容。Stem 原生 JSON 永生对象也完成了同一路径，Stem 和原版 CKB 合约分别以 117 和 65 拒绝持有人销毁。[永生对象往返](evidence/2026-11-27-native-immortal-json-spore.json.xz)已有 Cluster 永生对象及审批复合对象路径分别复跑通过。任意扩展与额外约束的等价映射仍有剩余范围。[四副本与 CKB 报告](evidence/2026-11-27-native-standard-spore.json.xz)
+第 20 项已验证 Stem 原生普通不可变对象直接导出为 CKB 标准 Spore V2。普通 CKB 钱包用原版合约转让，返程恢复同一 Stem 对象，二次导出释放同一 Spore。新路径接受单一 Type 和不可变内容。Stem 原生 JSON 永生对象也完成了同一路径，Stem 和原版 CKB 合约分别以 117 和 65 拒绝持有人销毁。[永生对象往返](evidence/2026-11-27-native-immortal-json-spore.json.xz)已有 Cluster 永生对象及审批复合对象路径分别复跑通过。可销毁的原生 multipart 对象也已通过四副本和原版 CKB 合约往返。第二次导出后，持有人在 CKB 销毁了原件，Stem 托管输出仍可证明。[可销毁对象实测](evidence/2026-11-27-native-multipart-spore.json.xz) 可执行扩展与额外约束的等价映射仍有剩余范围。[四副本与 CKB 报告](evidence/2026-11-27-native-standard-spore.json.xz)
 
 第 16 项已走通基金收入至 L1 运营支出对账。四副本费用分配后，Ecosystem Fund 从 CKB 金库收到 800 CKB，收款人对一笔 Live Cell 请求的实际矿工费做逐笔授权。CKB 合约重算并报销 0.01 CKB，消费唯一找零实现去重，结算另付 0.01 CKB。重复授权可退回。此机制由既有基金收款方主动选用；PoW 检查点专用 Lock 的支出范围仍由其原脚本约束。服务报酬或通用运营预算属后续政策选择。[四副本与 CKB 凭证](evidence/2026-11-27-operating-grant.json.xz)
 

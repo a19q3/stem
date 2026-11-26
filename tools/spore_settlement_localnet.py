@@ -56,7 +56,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     buyer = script(native_lock_code, fixture.key(fixture.friend)["blake160"], "data")
     mailbox_code, escrow_code = [ckb_hash(program) for program in (mailbox_bin, ckb_lock_bin)]
     secp = vault["secp"]
-    spore_cap, mailbox_cap, relay_funds = 360 * CKB, 1000 * CKB, 1800 * CKB
+    spore_cap = (480 if args.native_spore_multipart else 360) * CKB
+    mailbox_cap, relay_funds = 1000 * CKB, 1800 * CKB
     codes = [code, mailbox_bin, ckb_lock_bin]
     cluster_code = args.spore_cluster_v2.read_bytes() if args.spore_cluster_v2 else None
     cluster_cap, proxy_cap = 300 * CKB, 120 * CKB if cluster_code else 0
@@ -129,6 +130,9 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         mapped_type = script(stem_spore_code, hex_bytes(native_id + counterpart), "data")
         original = script_hash(mapped_type)
         mime, content = (b"application/json", b'{"origin":"Stem"}') if args.native_spore_json else (b"text/plain", b"Issued on Stem")
+        if args.native_spore_multipart:
+            mime = b"multipart/mixed;boundary=stem-boundary"
+            content = b"--stem-boundary\r\nContent-Type: text/plain\r\n\r\nStem\r\n--stem-boundary--\r\n"
         data = table(molecule_bytes(mime + (b";immortal=true" if args.spore_immortal else b"")), molecule_bytes(content), b"")
         endpoint = script(stem_spore_code, hex_bytes(b"\x01" + original + binary(genesis) + mailbox_code
             + sequencer_id + escrow_code + checkpoint_code + checkpoint_id + counterpart), "data")
@@ -289,7 +293,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         return checkpoint, encoded
 
     def export_native():
-        bond_cap, object_cap = (120 * CKB, 240 * CKB)
+        bond_cap = 120 * CKB
+        object_cap = (360 if args.native_spore_multipart else 240) * CKB
         remaining = mint["payment_capacity"] - bond_cap - object_cap - FEE
         empty_root = bytes(32)
         rejected = {}
@@ -301,6 +306,11 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         additional = dict(mapped_type, args=mapped_type["args"][:66] + "bb" * 32)
         rejected["attached_second_type"] = stem_reject(stem_signed("composite-native", mint["payment"],
             [cell(object_cap, owner, data, [mapped_type, additional]), *issued_outputs[1:]]), "exited with 117")
+        if args.native_spore_multipart:
+            broken = data.replace(b"\r\n--stem-boundary--", b"\r\n--stem-xxxxxxxx--")
+            assert len(broken) == len(data) and broken != data
+            rejected["invalid_native_boundary"] = stem_reject(stem_signed("bad-boundary", mint["payment"],
+                [cell(object_cap, owner, broken, [mapped_type]), *issued_outputs[1:]]), "exited with 117")
         issued = commit(stem_signed("issue-native", mint["payment"], issued_outputs))
         original_point, bond_point, fee_point = [at(issued, i) for i in range(3)]
 
@@ -346,7 +356,9 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         rejected["seed_without_mailbox"] = ckb_reject(mint_standard("seed-only", use_mailbox=False), 114)
         rejected["mint_without_checkpoint"] = ckb_reject(mint_standard("no-checkpoint", include_checkpoint=False), 84)
         rejected["wrong_mint_owner"] = ckb_reject(mint_standard("different-owner", recipient=fixture.friend_lock), 113)
-        rejected["changed_export_data"] = ckb_reject(mint_standard("changed-data", content=data[:-1]+b"?"), 113)
+        changed_content = data.replace(b"Stem", b"STEM", 1)
+        assert changed_content != data
+        rejected["changed_export_data"] = ckb_reject(mint_standard("changed-data", content=changed_content), 113)
         rejected["missing_standard_mint_action"] = ckb_reject(mint_standard("no-cobuild", valid_witness=False))
         assert SPORE_CODE.hex() in rejected["missing_standard_mint_action"]
         standard = submit_ckb(mint_standard("standard-spore"))
@@ -399,13 +411,23 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         released = submit_ckb(fixture.sign("release-existing", release, [wallet_group(2, [fixture.faucet])]))
         final = l1.call("get_live_cell", point(released["hash"], 1), True)["cell"]
         assert final["output"] == actual["output"] and final["data"] == actual["data"]
+        melt_result = None
+        if not args.spore_immortal:
+            last = point(released["hash"], 1)
+            melt = transaction([last], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"], deps[:2])
+            melt["witnesses"] = ["0x", cobuild(object_type, object_id, fixture.owner_lock, None)]
+            melted = submit_ckb(fixture.sign("standard-melt", melt, [wallet_group(0, [fixture.owner])]))
+            assert l1.call("get_live_cell", last, True)["status"] != "live"
+            held_native = cell_proof(at(relocked, 1))
+            assert signing_cell(client, at(relocked, 1))["cell"] == cell(object_cap, endpoint, data, [mapped_type])
+            melt_result = {"transaction": melted, "native_custody": held_native}
         return {"origin": "stem", "immortal": args.spore_immortal, "spore_id": hex_bytes(object_id), "spore_type": object_type,
                 "native_type": mapped_type, "native_content": hex_bytes(data), "mailbox": mailbox, "endpoint": endpoint,
                 "reservation": object_point, "issued": issued, "locked": locked, "native_custody": custody,
                 "minted": standard, "ckb_wallet_transfer": moved, "deposited": held, "return_anchor": anchor,
                 "restored": restored, "restored_cell": restored_cell, "relocked": relocked,
                 "released_same_spore": released, "original_ckb_cell": actual, "final_ckb_cell": final,
-                "rejections": rejected}
+                "standard_melt": melt_result, "rejections": rejected}
 
     if native_origin:
         return export_native()

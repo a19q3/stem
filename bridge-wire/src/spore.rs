@@ -86,6 +86,43 @@ fn portable_mime(mime: &[u8]) -> bool {
     !top.eq_ignore_ascii_case(b"multipart") && token(top) && token(&mime[slash + 1..])
 }
 
+fn portable_content(mime: &[u8], content: &[u8]) -> bool {
+    if content.is_empty() {
+        return false;
+    }
+    let Some(rest) = mime.strip_prefix(b"multipart/") else {
+        return portable_mime(mime);
+    };
+    let Some(separator) = rest.iter().position(|b| *b == b';') else {
+        return false;
+    };
+    let Some(boundary) = rest[separator..].strip_prefix(b";boundary=") else {
+        return false;
+    };
+    let token = |b: &u8| b.is_ascii_alphanumeric() || b"._-".contains(b);
+    if separator == 0
+        || !rest[..separator].iter().all(token)
+        || !(1..=70).contains(&boundary.len())
+        || !boundary.iter().all(token)
+    {
+        return false;
+    }
+    // Canonical multipart bodies in this profile have opening and closing
+    // delimiter lines and retain the complete original bytes on both chains.
+    let Some(first) = content
+        .strip_prefix(b"--")
+        .and_then(|s| s.strip_prefix(boundary))
+        .and_then(|s| s.strip_prefix(b"\r\n"))
+    else {
+        return false;
+    };
+    first
+        .strip_suffix(b"--\r\n")
+        .and_then(|s| s.strip_suffix(boundary))
+        .and_then(|s| s.strip_suffix(b"\r\n--"))
+        .is_some_and(|body| !body.is_empty())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SporeData<'a> {
     pub content_type: &'a [u8],
@@ -136,7 +173,7 @@ impl<'a> SporeData<'a> {
         let mime = content_type
             .strip_suffix(b";immortal=true")
             .unwrap_or(content_type);
-        (portable_mime(mime) && !content.is_empty()).then_some(Self {
+        portable_content(mime, content).then_some(Self {
             content_type,
             content,
             cluster_id,
@@ -152,6 +189,19 @@ fn molecule_bytes(raw: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multipart_profile_checks_the_full_boundary_and_refuses_unknown_parameters() {
+        let mime = b"multipart/mixed;boundary=b1";
+        assert!(portable_content(mime, b"--b1\r\nabc\r\n--b1--\r\n"));
+        assert!(!portable_content(mime, b"--b1\r\nabc\r\n--b2--\r\n"));
+        assert!(!portable_content(mime, b"--b12\r\nabc\r\n--b1--\r\n"));
+        assert!(!portable_content(
+            b"multipart/mixed;boundary=b1;mutant[]=x",
+            b"x"
+        ));
+        assert!(!portable_content(b"multipart/mixed;boundary=", b"----\r\n"));
+    }
 
     #[test]
     fn portable_mime_accepts_parameter_free_types_with_one_slash() {
