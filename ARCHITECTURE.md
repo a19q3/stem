@@ -298,6 +298,19 @@ The CKB representation pins the full Mailbox Type Script, its authorized Lock, a
 
 Release restores the original Stem Cell data, both complete Type Scripts and the original capacity from escrow. Stem validators authenticate the CKB burn through the existing observation path. A later CKB reissue has to come from a newly authenticated export. The original CKB Spore V2 path retains its own canonical Type and lifecycle.
 
+### Metatype on CKB
+
+One Data2 Type Script owns a Metatype deployment. Its args pin an
+immutable adapter table. Distinct manifests live in Cell Data under
+the same physical Type identity. The dispatcher derives a union of
+logical Scripts and absolute input and output indices from the
+actual transaction, and spawns each pinned RISC-V adapter once for
+its complete group. The existing CKB Locks authorize consumption.
+The standalone implementation validates UDT conservation and an
+independent transfer policy over the same amount state. See the
+[Metatype specification and threat model](METATYPE.md) for the
+portable ABI and the cross-chain acceptance conditions.
+
 ## Historical proofs and CKB checkpoints
 
 Archive replicas preserve committed Headers. The proof index follows those records in a separate RocksDB database and checks the predecessor ID and MMR root before advancing. It persists only derived history nodes and progress. Each index update is independent of the application's commit. An archive reader can generate inclusion and append-only proofs at earlier retained heights.

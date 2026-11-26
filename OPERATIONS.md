@@ -1230,3 +1230,36 @@ arguments for off-chain verification. The actual publication places the direct
 proof in `WitnessArgs.input_type` and the verified tip in the unique Cell.
 The test output directory retains the individual bundles, estimated cycles
 and L1 transaction-and-witness inclusion proofs.
+
+## Exercise standalone CKB Metatype
+
+Build the dispatcher and the two independently deployed adapters:
+
+```sh
+CARGO_TARGET_DIR=target/stem-metatype \
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf \
+  --bin metatype --bin metatype-udt --bin metatype-transfer-policy
+```
+
+Then use a CKB IntegrationTest binary and a fresh output directory:
+
+```sh
+contract_dir=target/stem-metatype/riscv64imac-unknown-none-elf/release
+python3 tools/metatype_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb \
+  --dispatcher "$contract_dir/metatype" \
+  --udt "$contract_dir/metatype-udt" \
+  --policy "$contract_dir/metatype-transfer-policy" \
+  --l1-port 30420 --output /tmp/stem-metatype-ckb
+```
+
+The fixture deploys three RISC-V ELFs and an immutable adapter table.
+It checks issuance, transfers under heterogeneous manifests, multiple
+assets in one output, and contract error codes for rejected
+transitions. The report includes CKB inclusion proofs, cycles,
+transaction bytes, witness payload sizes, actual occupied Capacity
+and local submission-to-mining timing. The current fixture uses a
+standalone CKB deployment. See the [Metatype specification](METATYPE.md)
+for limits, adapter review and the cross-chain requirements.

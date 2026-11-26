@@ -1,6 +1,8 @@
 //! Shared CKB syscalls for authenticating a direct checkpoint dependency.
 #![no_std]
 
+pub mod metatype;
+
 use ckb_std::{
     ckb_constants::Source,
     ckb_types::{core::ScriptHashType, prelude::*},
