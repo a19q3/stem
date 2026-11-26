@@ -26,7 +26,9 @@ def main():
     prepare.add_argument("--rate", type=int, required=True)
     prepare.add_argument("--seconds", type=int, required=True)
     prepare.add_argument("--senders", type=int, default=64)
-    prepare.add_argument("--shard-senders", action="store_true", help="reserve an equal sender pool and queue per endpoint")
+    routing = prepare.add_mutually_exclusive_group()
+    routing.add_argument("--shard-senders", action="store_true", help="reserve an equal sender pool and queue per endpoint")
+    routing.add_argument("--ready-senders", action="store_true", help="reserve equal senders per endpoint pulling from one shared queue")
     prepare.add_argument("--drain", type=int, default=15)
     prepare.add_argument("--data-bytes", type=int, default=0)
     prepare.add_argument("--block-transactions", type=int, default=1024)
@@ -52,7 +54,8 @@ def main():
                     "PAYMENT_DATA_BYTES": args.data_bytes, "COMPLETE_VOLUME": int(args.complete_volume),
                     "REPLICAS": len(config["peers"]), "PREFUND_PAYMENTS": 1,
                     "REUSE_SUBMISSIONS": int(args.reuse_submissions),
-                    "SHARD_SENDERS": int(args.shard_senders), "BLOCK_TRANSACTIONS": args.block_transactions, "BLOCK_CYCLES": args.block_cycles}
+                    "SHARD_SENDERS": int(args.shard_senders), "READY_SENDERS": int(args.ready_senders),
+                    "BLOCK_TRANSACTIONS": args.block_transactions, "BLOCK_CYCLES": args.block_cycles}
         plan = {"storage_settings": settings, "harness_sha256": harness_hash, "lock_sha256": lock_hash,
                 "topology_sha256": digest(topology)}
     else:

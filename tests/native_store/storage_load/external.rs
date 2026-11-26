@@ -285,12 +285,14 @@ struct Delivery {
     id: String,
     offered_us: Option<u64>,
     acknowledged_us: Option<u64>,
+    endpoint: Option<usize>,
 }
 
 #[derive(Deserialize)]
 struct Evidence {
     deliveries: Option<Vec<Delivery>>,
     delivery_times: Option<Vec<[Option<u64>; 2]>>,
+    delivery_routes: Option<Vec<Option<usize>>>,
     before: Snapshot,
     samples: Vec<Snapshot>,
     blocks: Vec<Block>,
@@ -381,18 +383,46 @@ pub(super) fn verify_report(
         seen.len() == report.summary.visible && window == report.summary.visible_during_offer,
         "reported confirmation counts differ from observed blocks"
     );
+    let check_route = |endpoint: Option<usize>, write: Option<u64>| {
+        ensure!(
+            endpoint.is_some() == (load.ready_senders && write.is_some())
+                && endpoint.is_none_or(|node| node < load.replicas),
+            "missing or invalid payment endpoint"
+        );
+        Ok(())
+    };
     let times: Vec<_> = match (report.deliveries, report.delivery_times) {
         (Some(rows), None) => {
+            ensure!(
+                report.delivery_routes.is_none(),
+                "duplicate payment endpoint trace"
+            );
             ensure!(rows.len() == jobs.len(), "incomplete dispatch trace");
             rows.into_iter()
                 .zip(jobs)
                 .map(|(r, (id, _))| {
                     ensure!(&r.id == id, "dispatch order differs from signed workload");
+                    check_route(r.endpoint, r.offered_us)?;
                     Ok([r.offered_us, r.acknowledged_us])
                 })
                 .collect::<Result<_>>()?
         }
-        (None, Some(times)) => times,
+        (None, Some(times)) => {
+            ensure!(
+                report.delivery_routes.is_some() == load.ready_senders,
+                "wrong endpoint trace for dispatch mode"
+            );
+            if let Some(routes) = report.delivery_routes {
+                ensure!(
+                    routes.len() == times.len(),
+                    "incomplete payment endpoint trace"
+                );
+                for (endpoint, [write, _]) in routes.into_iter().zip(&times) {
+                    check_route(endpoint, *write)?;
+                }
+            }
+            times
+        }
         _ => anyhow::bail!("expected one dispatch trace"),
     };
     ensure!(

@@ -38,6 +38,14 @@ def pack(report, receipt_sample=None):
                     samples=[{"at_us": s["at_us"], **heights(s)} for s in report["samples"]])
     if "driver_clock" in report:
         evidence["driver_clock"] = report["driver_clock"]
+    if report["load"].get("ready_senders", False):
+        evidence["delivery_routes"] = [row.get("endpoint") for row in report["deliveries"]]
+    if any("queue_full_us" in row for row in report["deliveries"]):
+        evidence["queue_full_us"] = [row.get("queue_full_us") for row in report["deliveries"]]
+    replies = [[i, row["response_us"]] for i, row in enumerate(report["deliveries"])
+               if row["acknowledged_us"] is None and row["response_us"] is not None]
+    if replies:
+        evidence["unacknowledged_responses"] = replies
     return evidence
 
 

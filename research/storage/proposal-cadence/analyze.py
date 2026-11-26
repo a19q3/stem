@@ -34,9 +34,13 @@ def analyze(trial, legacy_start_us=None):
     limit = trial["load"]["seconds"] * 1_000_000
     minutes = [0] * ((limit + 59_999_999) // 60_000_000)
     endpoints = [{"written": 0, "acknowledged": 0, "in_window": 0, "confirmed": 0} for _ in trial["external_endpoints"]]
+    routes = trial["delivery_routes"] if trial["load"].get("ready_senders", False) else None
     for index, (write, ack) in enumerate(trial["delivery_times"]):
-        counts = endpoints[index % len(endpoints)]
-        counts["written"] += int(write is not None)
+        if write is None:
+            assert ack is None
+            continue
+        counts = endpoints[routes[index] if routes is not None else index % len(endpoints)]
+        counts["written"] += 1
         counts["acknowledged"] += int(ack is not None)
     window, drain, visible_latencies = [], [], []
     block_sizes, header_times = [], []
@@ -59,7 +63,7 @@ def analyze(trial, legacy_start_us=None):
                 empty_blocks += 1
         rows = window if common <= limit else drain
         for index in block["positions"]:
-            counts = endpoints[index % len(endpoints)]
+            counts = endpoints[routes[index] if routes is not None else index % len(endpoints)]
             counts["confirmed"] += 1
             counts["in_window"] += int(common <= limit)
             write, ack = trial["delivery_times"][index]
@@ -79,6 +83,7 @@ def analyze(trial, legacy_start_us=None):
         "workload_id": trial["workload_id"], "certified_height": trial["agreed_height"],
         "cadence_ms": load["cadence_ms"], "block_transactions": count_limit, "block_cycles": load["block_cycles"],
         "senders": load["senders"], "per_endpoint_pools": load.get("shard_senders", False),
+        **({"ready_senders": load["ready_senders"]} if "ready_senders" in load else {}),
         "scheduled": summary["planned"], "written": summary["offered"], "acknowledged": summary["admitted"],
         "dropped_before_write": summary["client_drops"], "in_window": summary["visible_during_offer"],
         "confirmed": summary["visible"], "window_tps": summary["visibility_tps"], "in_window_by_minute": minutes,

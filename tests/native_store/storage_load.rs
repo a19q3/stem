@@ -37,6 +37,7 @@ struct Load {
     drain: u64,
     senders: usize,
     shard_senders: bool,
+    ready_senders: bool,
     cadence_ms: u64,
     vm_workers: usize,
     block_cycles: u64,
@@ -66,6 +67,7 @@ impl Load {
             drain: read("STEM_STORAGE_DRAIN", 12)?,
             senders: read("STEM_STORAGE_SENDERS", 24)?.try_into()?,
             shard_senders: read("STEM_STORAGE_SHARD_SENDERS", 0)? != 0,
+            ready_senders: read("STEM_STORAGE_READY_SENDERS", 0)? != 0,
             cadence_ms: read("STEM_STORAGE_CADENCE", 250)?,
             vm_workers: read("STEM_STORAGE_VM_WORKERS", 2)?.try_into()?,
             block_cycles: read("STEM_STORAGE_BLOCK_CYCLES", 2_000_000_000)?,
@@ -84,7 +86,9 @@ impl Load {
                 && (1..=3600).contains(&load.seconds)
                 && (2..=45).contains(&load.drain)
                 && (1..=if load.prefund_payments { 256 } else { 64 }).contains(&load.senders)
-                && (!load.shard_senders || load.senders.is_multiple_of(load.replicas))
+                && !(load.shard_senders && load.ready_senders)
+                && (!(load.shard_senders || load.ready_senders)
+                    || load.senders.is_multiple_of(load.replicas))
                 && (50..=1000).contains(&load.cadence_ms)
                 && (1..=16).contains(&load.vm_workers)
                 && (32..=512).contains(&load.retention)
@@ -113,10 +117,14 @@ struct Delivery {
     id: String,
     planned_us: u64,
     queued_us: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queue_full_us: Option<u64>,
     started_us: Option<u64>,
     connected_us: Option<u64>,
     reused_connection: bool,
     offered_us: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint: Option<usize>,
     response_us: Option<u64>,
     acknowledged_us: Option<u64>,
     error: Option<String>,
@@ -423,13 +431,19 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
                         let Ok((index, mut row)) = request else {
                             break;
                         };
+                        // Fixed pools pull from one shared queue when a sender is ready.
+                        let route = if load.ready_senders { worker } else { index };
+                        let endpoint = route % clients.len();
                         row.submit(
-                            &clients[index % clients.len()],
+                            &clients[endpoint],
                             &jobs[index].1,
                             start,
                             dispatch_deadline,
                             load.complete_volume,
                         );
+                        if load.ready_senders && row.offered_us.is_some() {
+                            row.endpoint = Some(endpoint);
+                        }
                         rows.push(row);
                     }
                     rows
@@ -461,6 +475,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
                     Ok(()) => {}
                     Err(mpsc::TrySendError::Full((_, mut row))) => {
                         row.queued_us = None;
+                        row.queue_full_us = Some(micros(start));
                         row.error = Some("dispatch queue full".into());
                         rows.push(row);
                     }
