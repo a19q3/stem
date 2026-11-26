@@ -103,5 +103,6 @@ available. Published network evidence contains public genesis and proof data.
 | Live Cell reuse across candidate branches | [Report](../BENCHMARKS.md#live-cell-reuse-across-candidate-branches), [matched payments, AMM replay and recovery evidence](2026-11-26-stem-live-cell-reuse.json.xz) |
 | Deferred Live Cell record encoding | [Report](../BENCHMARKS.md#deferred-live-cell-record-encoding), [paired loads, write-order control and CKB proofs](2026-11-26-stem-live-cell-finality.json.xz) |
 | Fixed-buffer Patricia reads | [Report](../BENCHMARKS.md#fixed-buffer-patricia-reads), [editor timings, signed loads and CKB proofs](2026-11-26-stem-patricia-inline-read.json.xz) |
+| Reused RocksDB point-read options | [Report](../BENCHMARKS.md#reusing-rocksdb-point-read-options), [storage probes, signed loads and CKB proofs](2026-11-26-stem-patricia-point-reads.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

@@ -948,6 +948,16 @@ Compare the compact samples by edit duration, canonical reconstruction
 time, node bytes and resulting root. The archived commands also run
 the same signed payment workload on four Jolteon replicas per version.
 
+The RocksDB point-read experiment compares default options, reused
+options and pinned values on the same native Patricia edit. It repeats
+the reads after a synchronous flush to a warmed SST.
+
+```sh
+STEM_PATRICIA_READ_REPORT=/tmp/stem-patricia-point-reads.json \
+cargo test --locked --release --lib measure_patricia_point_reads \
+  -- --ignored --nocapture
+```
+
 ### Measure sustained Lineage commands
 
 Run the native load fixture with real Lineage registration, signed fee

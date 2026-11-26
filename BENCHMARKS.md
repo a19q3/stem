@@ -4370,3 +4370,86 @@ Metatype custody round trip with a signed Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw editor samples, signed workloads, build fingerprints and CKB evidence](benchmarks/2026-11-26-stem-patricia-inline-read.json.xz).
+
+## Reusing RocksDB point-read options
+
+Revision `9c04e95` shares one immutable default `ReadOptions`
+between the committed Store and its candidate views. The default
+point-read path at `186707f` constructs an options handle for each
+committed lookup. Both revisions check candidate batches before
+consulting RocksDB.
+
+The editor fixture starts with 8,192 records and replaces 512 per
+trial. Each trial reads 4,120 nodes and 277,207 stored bytes. It
+checks the resulting root and every write against an in-memory
+edit. The timings below combine 42 retained samples per method
+and storage state from the two final invocations. Each invocation
+rotates the three read methods, discards three warm-up rounds and
+flushes the same database before measuring its warmed SST.
+
+| Storage | Read method | Point reads per edit, median | Full edit, median |
+| --- | --- | ---: | ---: |
+| Memtable | Default `get` | 1.916 ms | 5.530 ms |
+| Memtable | Reused options `get_opt` | 1.892 ms | 5.510 ms |
+| Memtable | Pinned values `get_pinned_opt` | 1.831 ms | 5.486 ms |
+| Warm SST | Default `get` | 3.370 ms | 7.113 ms |
+| Warm SST | Reused options `get_opt` | 3.374 ms | 7.054 ms |
+| Warm SST | Pinned values `get_pinned_opt` | 2.892 ms | 6.775 ms |
+
+Sharing the default options removes one options allocation per
+committed lookup. The median full edit improved by 0.4% in the
+memtable probe and by 0.8% in the warm SST probe. The warm SST
+full-edit medians for pinned values were 7.192 and 7.187 ms for
+pinned and default reads in the exploratory invocation, versus
+6.775 and 7.113 ms in the two final runs. The node comparison keeps
+owned results and measures the options change alone. All three
+probe invocations are archived.
+
+The network comparison ran four local Jolteon replicas with
+64 senders, two VM workers per replica, a 250 ms proposal
+interval and a two-billion-cycle block budget. The 1,000 TPS
+workload used fresh connections for a 22-second offer window
+and a 12-second drain limit. The 2,600 TPS workload reused
+connections for 32 seconds with an 18-second drain limit. Each
+pair matched the signed workload, genesis and resource limits.
+
+| Offer target and revision | Written / admitted / common-visible TPS in offer | Finalized TPS with drain | Confirmed / client drops | p50 / p95 / p99 | Replica CPU | Peak aggregate RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 baseline | 1,000.00 / 1,000.00 / 970.86 | 981.83 | 22,000 / 0 | 0.640 / 0.807 / 0.853 s | 36.79 s | 579.6 MiB |
+| 1,000 reused | 1,000.00 / 1,000.00 / 972.86 | 979.46 | 22,000 / 0 | 0.642 / 0.810 / 0.846 s | 37.31 s | 577.4 MiB |
+| 2,600 baseline | 1,750.97 / 1,748.97 / 1,654.41 | 1,669.39 | 56,031 / 27,169 | 1.270 / 1.759 / 5.547 s | 108.89 s | 956.4 MiB |
+| 2,600 reused | 1,879.50 / 1,878.59 / 1,817.56 | 1,805.15 | 60,144 / 23,056 | 1.170 / 1.622 / 3.118 s | 102.40 s | 958.1 MiB |
+| 2,600 reused, reverse pair | 906.81 / 904.81 / 853.28 | 883.75 | 29,018 / 54,182 | 1.763 / 2.286 / 2.444 s | 117.33 s | 902.8 MiB |
+| 2,600 baseline, reverse pair | 1,580.88 / 1,579.28 / 1,499.84 | 1,550.75 | 50,588 / 32,612 | 1.355 / 1.811 / 3.301 s | 112.61 s | 940.0 MiB |
+
+All written transactions confirmed within the observed drain.
+In the first 2,600 TPS pair, the baseline and candidate ended
+the offer window with 3,090 and 1,982 written transactions
+awaiting common visibility. Their aggregate process writes
+were 991.06 and 1,028.42 MB. RocksDB counted 536.01 and
+574.09 MB of WAL activity. Peer sends were 104.10 and 112.15 MB.
+The 1,000 TPS pair wrote 374.62 and 368.58 MB and sent 27.44
+and 27.25 MB to peers.
+
+A separate test process started before the reverse pair and
+used roughly eight to nine cores' worth of CPU when sampled
+during the pair. The archive retains both samples, the host
+process snapshot, and cumulative offer, admission and visibility
+counts at each eight-second boundary. Across both pairs,
+roughly 99.8% or more of written transactions were admitted
+within the offer window. Lower achieved submission rates and
+host contention limit any attribution of throughput or p99
+differences to the read options. The matching 1,000 TPS pair
+shows essentially unchanged throughput.
+
+The release workspace passed 480 tests with 20 ignored. Go
+proof tests and the frozen CometBFT feature check passed. A
+mixed four-replica Jolteon network confirmed 96 payments with
+one validator offline and agreed on the recovered Header.
+Real CKB devnets verified a funded committee handoff and
+historical Intercell delivery, historical and live-at-anchor
+Cell references, and a revisable Metatype return with a signed
+Capacity top-up.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw point reads, signed loads, contention evidence and CKB proofs](benchmarks/2026-11-26-stem-patricia-point-reads.json.xz).
