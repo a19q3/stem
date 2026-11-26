@@ -1,4 +1,5 @@
 //! Shared identity and state rules for objects first issued on Stem.
+pub mod permit;
 
 use crate::{
     hash,

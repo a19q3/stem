@@ -588,6 +588,10 @@ def main():
                         help="issue an unrestricted immutable object on Stem and export to standard Spore V2")
     parser.add_argument("--native-spore-approval", type=lambda path: Path(path).resolve(),
                         help="deploy the native approval Type and carry its policy in a CKB Spore holder Lock")
+    parser.add_argument("--ckb-spore-permit", type=lambda path: Path(path).resolve(),
+                        help="use a two-signer CKB receipt issuer with the stem-object-permit native policy")
+    parser.add_argument("--separate-return-permit", action="store_true",
+                        help="measure a separately funded permit after the CKB return deposit")
     parser.add_argument("--spore-type-history", action="store_true",
                         help="collect and independently verify every CKB Spore ownership transition")
     parser.add_argument("--spore-content-bytes", type=int, default=0,
@@ -659,6 +663,10 @@ def main():
         parser.error("the native media fixtures require --native-spore-origin")
     if args.native_spore_sync_melt and (not args.native_spore_origin or args.native_spore_approval or args.spore_immortal):
         parser.error("synchronized melt requires a meltable, unrestricted native-origin Spore")
+    if args.separate_return_permit and not args.ckb_spore_permit:
+        parser.error("--separate-return-permit needs --ckb-spore-permit")
+    if args.ckb_spore_permit and not args.native_spore_approval:
+        parser.error("--ckb-spore-permit requires the native permit policy in --native-spore-approval")
     if args.native_spore_approval and (not args.native_spore_origin or args.native_spore_json
             or args.native_spore_multipart or args.spore_immortal):
         parser.error("the approved native identity uses the immutable plain Spore content profile")

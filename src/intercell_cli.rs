@@ -21,6 +21,14 @@ use crate::bridge_cli::{print_json, read_json_limited};
 
 #[derive(Subcommand)]
 pub enum Intercell {
+    /// Encode a CKB issuer's authorization for a complete native output Cell.
+    SporePermit {
+        #[arg(long)]
+        request: PathBuf,
+        /// Authorize creation from the first input. The default authorizes transfer from the object input.
+        #[arg(long)]
+        create: bool,
+    },
     /// Build the settlement payload from a complete binary Molecule SporeData file.
     SporePayload {
         #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
@@ -67,6 +75,15 @@ struct Request {
     receiver: H256,
     nonce: u64,
     payload: JsonBytes,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PermitRequest {
+    network: H256,
+    object: H256,
+    source: ckb_jsonrpc_types::OutPoint,
+    output: JsonBytes,
 }
 
 #[derive(Deserialize)]
@@ -131,6 +148,33 @@ fn historical_evidence(path: PathBuf, network: &[u8; 32]) -> Result<Vec<u8>> {
 impl Intercell {
     pub fn run(self) -> Result<()> {
         match self {
+            Self::SporePermit { request, create } => {
+                use stem_bridge_wire::object::permit::{Action, Permit};
+                let request: PermitRequest =
+                    read_json_limited(&request, 2 * stem_ledger::MAX_TRANSACTION_BYTES + 1024)?;
+                let output = stem_ledger::Cell::from_slice(request.output.as_bytes())?;
+                ensure!(
+                    output
+                        .type_scripts()
+                        .any(|ty| ty.calc_script_hash().as_slice() == request.object.as_bytes()),
+                    "output does not contain the named native object"
+                );
+                let source = ckb_types::packed::OutPoint::from(request.source);
+                let permit = Permit {
+                    action: if create {
+                        Action::Create
+                    } else {
+                        Action::Transfer
+                    },
+                    network: request.network.into(),
+                    object: request.object.into(),
+                    source: source.as_slice().try_into()?,
+                    output_hash: output.content_hash().as_slice().try_into()?,
+                };
+                let bytes = permit.encode();
+                Permit::decode(&bytes).context("invalid object permit")?;
+                print_json(&json!({"record": JsonBytes::from_vec(bytes.to_vec())}))
+            }
             Self::SporePayload {
                 original_type,
                 recipient,

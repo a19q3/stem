@@ -944,6 +944,15 @@ CKB keeps the published Spore V2 Type and carries approval in the holder Lock. I
 
 Four validators and a CKB devnet exercised native issuance, an approved native transfer, standard mint, a CKB wallet transfer, return and re-export of the same Spore. The 16 rejection cases include missing owner or approver, naked ownership, changed authority or mailbox, and melt. [Approved route and three compatibility runs](evidence/2026-11-27-approved-standard-spore.json.xz)
 
+#### CKB-issued native transfer permits
+
+Use the standard native-origin Spore fixture with `--native-spore-approval <contracts>/stem-object-permit --ckb-spore-permit <contracts>/ckb-object-permit`. The holder Lock still enforces the CKB holder and configured approver. On Stem, the identity pins the receipt issuer's full Type hash as its native authority. The example issuer uses Data2 with two distinct nonzero CKB input Lock hashes in ascending byte order as its 64-byte args.
+
+Pass `stem intercell spore-permit --request request.json` a JSON object containing the 32-byte `network` and native identity Type hash `object`, the native `source` OutPoint in CKB JSON format, and the hex-encoded canonical native output Cell in `output`. Add `--create` for issuance and use the first native transaction input as its source. On transfer use the actual object input, which may follow other fee inputs. The wallet returns `record` for a CKB output under the pinned issuer Type. Its 137 bytes contain ASCII `SOP1`, one action byte (0 for creation or 1 for transfer), network, object Type hash, 36-byte source OutPoint and the CKB-personalized BLAKE2b-256 digest of the entire native output Cell. This commits the destination Lock, capacity, full Type list and data. The native identity checks the creation index.
+
+After the receipt confirms, advance the Stem CKB anchor and attach a guardian-certified `LiveAtAnchor` reference to the receipt before the native owner signs. A return can issue the receipt in the CKB mailbox deposit. Attach both the historical mailbox output and the live receipt at the same anchor. The standalone comparison uses `--separate-return-permit`. [Paired CKB costs, controls and trust assumptions](research/spore-permit/README.md)
+
+
 ### Exercise Stem native object settlement
 
 Build the contracts and use the [Intercell runner](#exercise-intercell-messaging) with
