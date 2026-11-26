@@ -571,6 +571,7 @@ def main():
     parser.add_argument("--metatype-shared-manifest", action="store_true")
     parser.add_argument("--metatype-revisable-object", action="store_true")
     parser.add_argument("--metatype-revision-topup", action="store_true")
+    parser.add_argument("--metatype-workflow-early-return", action="store_true")
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--finish-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
@@ -616,6 +617,8 @@ def main():
     if any(workflow) and (not all((*workflow, metatype_object, args.metatype_revisable_object))
                          or any((*state_limit, *append_only, args.metatype_revision_topup))):
         parser.error("The workflow fixture requires both binaries and its own revisable Metatype profile")
+    if args.metatype_workflow_early_return and not all(workflow):
+        parser.error("An early workflow return requires both workflow binaries")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

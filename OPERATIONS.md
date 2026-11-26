@@ -1533,9 +1533,33 @@ object data and is run separately from the length and append-only
 fixtures. Run it with and without `--metatype-shared-manifest`.
 The report records the request at revision 1, separately confirmed
 CKB revisions 2 and 3, and the two signatures attached to the Stem
-return witness. In application deployments relayers and owners can
-retain those step signatures from CKB witnesses before submitting
-the return.
+return witness. `--metatype-workflow-early-return` returns at revision
+2. Both variants perform an ownership transfer with unchanged state.
+
+Use an archival CKB RPC to recover Proof Data after restart.
+
+```sh
+stem ckb-wallet recover-metatype-workflow \
+  --request workflow-recovery.json --l1-rpc "$CKB_RPC"
+```
+
+The request has `escrow_cell`, `workflow_script_hash`, `import`,
+`burn` and `anchor` fields. Use the canonical Stem Cell bytes
+from an authenticated escrow record, as in a wallet signing
+context. `import` is the original CKB object output and `burn`
+is the CKB mailbox successor, both as CKB JSON OutPoints. The
+anchor is an independently trusted CKB block hash at or after
+the burn. The tool checks that the RPC still serves this anchor
+on its canonical chain before and after recovery.
+
+The output includes the exact Intercell `record`, chronological
+OutPoint trace, return state and `proof_data`. Place those proof
+bytes in the workflow Type Group's wallet build request, and attach
+the normal guardian certificate and required Lock signatures for
+the return. Recovery reads up to 64 custody transactions and
+4,096 parent Headers, with at most 512 fetched transactions and
+32 MiB of packed CKB data. Large or pruned histories require
+retained CKB data and the original bounded workflow signatures.
 
 ### Exercise cap-bound Metatype fungible custody
 

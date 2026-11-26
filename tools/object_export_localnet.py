@@ -33,6 +33,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     live_rule = args.metatype_rule_registry is not None
     append_only = args.native_object_append_only is not None
     use_workflow = args.native_object_workflow is not None
+    early_return = args.metatype_workflow_early_return
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
     next_limit = 200 if live_rule else state_limit
@@ -566,9 +567,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     mailbox_cap = funded_mailbox_cap
 
     def transfer(label, authority_consent=True, include_policy=True, contents=data,
-                 from_key=fixture.owner, *, selected=None, deps=None, workflow_proof=b""):
+                 from_key=fixture.owner, *, selected=None, deps=None, workflow_proof=b"", recipient=None):
         inputs = [wrapped_point]
-        outputs = [output(token_cap - (0 if authority_consent else FEE), fixture.friend_lock, wrapper)]
+        outputs = [output(token_cap - (0 if authority_consent else FEE),
+                          recipient or fixture.friend_lock, wrapper)]
         keys = [wallet_group(0, [from_key])]
         body = [hex_bytes(projected(contents, selected if include_policy else [identity]))]
         if authority_consent:
@@ -634,6 +636,13 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         transferred = ckb_submit(transfer("transfer"))
     wrapped_point, authority_point = [point(transferred["hash"], i) for i in range(2)]
     authority_funds -= FEE
+    return_owner, return_lock = fixture.friend, fixture.friend_lock
+    if use_workflow:
+        ownership_only = ckb_submit(transfer("workflow-ownership-only", contents=ckb_update,
+            from_key=fixture.friend, recipient=fixture.owner_lock))
+        wrapped_point, authority_point = [point(ownership_only["hash"], i) for i in range(2)]
+        authority_funds -= FEE
+        return_owner, return_lock = fixture.owner, fixture.owner_lock
 
     rule_evidence = None
     if state_limit:
@@ -676,20 +685,22 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     if revisable:
         rejected["ckb_revision_rollback"] = reject_ckb(
-            transfer("revision-rollback", contents=data, from_key=fixture.friend), 48)
+            transfer("revision-rollback", contents=data, from_key=return_owner), 48)
         content = ckb_content + b"; return"
         if state_limit:
             content = content.ljust(next_limit - len(object_data(b"", 4)), b".")
         elif topup:
             content = content.ljust(630, b".")
-        return_state = workflow_states[3] if use_workflow else object_data(content, 4)
+        return_state = workflow_states[2 if early_return else 3] if use_workflow else object_data(content, 4)
         if state_limit:
             assert len(return_state) == next_limit
-        updated = ckb_submit(transfer("revise-on-ckb", contents=return_state, from_key=fixture.friend,
-                                      workflow_proof=workflow_proofs[2] if use_workflow else b""))
-        revisions["ckb"] = updated
-        wrapped_point, authority_point = [point(updated["hash"], i) for i in range(2)]
-        authority_funds -= FEE
+        if not early_return:
+            updated = ckb_submit(transfer("revise-on-ckb", contents=return_state, from_key=return_owner,
+                                          workflow_proof=workflow_proofs[2] if use_workflow else b""))
+            revisions["ckb"] = updated
+            wrapped_point, authority_point = [point(updated["hash"], i) for i in range(2)]
+            authority_funds -= FEE
+            return_owner, return_lock = fixture.friend, fixture.friend_lock
 
     inbound = packet("return", False, script_hash(buyer), 0, content=return_state)
     def return_ckb(label, *, consume=True, message=inbound, approve=True, deps=None):
@@ -699,9 +710,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         keys = []
         if consume:
             inputs.append(wrapped_point)
-            outputs.append(output(token_cap - (0 if approve else FEE), fixture.friend_lock))
+            outputs.append(output(token_cap - (0 if approve else FEE), return_lock))
             data_items.append("0x")
-            keys.append(wallet_group(1, [fixture.friend]))
+            keys.append(wallet_group(1, [return_owner]))
         if approve:
             keys.append(wallet_group(len(inputs), [authority_key]))
             inputs.append(authority_point)
@@ -748,7 +759,45 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     release_inputs = [(bond, endpoint, None), (original, endpoint, None)]
     release = [cell(bond_cap, endpoint), cell(object_cap + return_topup, buyer, return_state, types)]
     with_approval = release_inputs + [(native_authority, authority, authority_key)]
-    return_proof = b"".join(workflow_proofs[1:]) if use_workflow else b""
+    return_proof = b""
+    if use_workflow:
+        request = {"escrow_cell": signing_cell(client, original)["cell"], "workflow_script_hash": hex_bytes(workflow_id),
+                   "import": point(ckb_minted["hash"], 1), "burn": live_mailbox, "anchor": anchor["hash"]}
+
+        def recover(label, params):
+            path = args.output / f"object-workflow-recovery-{label}-request.json"
+            write_json(path, params)
+            command = [args.binary, "ckb-wallet", "recover-metatype-workflow",
+                       "--request", path, "--l1-rpc", l1.url]
+            start = time.monotonic()
+            finished = subprocess.run(command, capture_output=True, text=True)
+            return finished, 1000 * (time.monotonic() - start)
+
+        first, first_ms = recover("first", request)
+        restarted, restart_ms = recover("restart", request)
+        assert first.returncode == restarted.returncode == 0, (first.stderr, restarted.stderr)
+        recovered = json.loads(restarted.stdout)
+        assert recovered == json.loads(first.stdout), recovered
+        assert recovered["record"] == inbound["record"] and binary(recovered["state"]) == return_state
+        assert recovered["recipient"] == hex_bytes(script_hash(buyer))
+        assert recovered["message_id"] == inbound["id"]
+        assert [entry["step"] for entry in recovered["trace"]] == ([False, True, False]
+            if early_return else [False, True, False, True]), recovered
+        return_proof = binary(recovered["proof_data"])
+        assert return_proof == b"".join(workflow_proofs[1:2 if early_return else 3])
+        for label, params, error in (
+            ("stale-anchor", dict(request, anchor=transferred["proof"]["header"]["hash"]),
+             "after the trusted anchor"),
+            ("wrong-import", dict(request, **{"import": point(transferred["hash"], 0)}),
+             "does not introduce the pinned object"),
+            ("wrong-burn-output", dict(request, burn=point(burned["hash"], 1)),
+             "outside the pinned mailbox"),
+        ):
+            failed, _ = recover(label, params)
+            assert failed.returncode and error in failed.stderr, failed
+            rejected[f"ckb_workflow_recovery_{label}"] = failed.stderr
+        recovery = {"result": recovered, "first_ms": first_ms, "restart_ms": restart_ms,
+                    "ownership_only": ownership_only}
     rejected["stem_return_without_policy_approval"] = reject_stem(native_sign("return-no-consent",
         release_inputs + [(native_fee, owner, owner_key)], release + [cell(remainder - FEE - return_topup, owner)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified, workflow_proof=return_proof),
@@ -785,9 +834,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
     restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)]
     if use_workflow:
-        for label, evidence in (("omitted", b""), ("incomplete", workflow_proofs[2]),
-                                ("reordered", b"".join(reversed(workflow_proofs[1:]))),
-                                ("tampered", bytes([return_proof[0] ^ 1]) + return_proof[1:])):
+        invalid_proofs = [("omitted", b""), ("tampered", bytes([return_proof[0] ^ 1]) + return_proof[1:])]
+        if not early_return:
+            invalid_proofs += [("incomplete", return_proof[64:]), ("reordered", return_proof[64:] + return_proof[:64])]
+        for label, evidence in invalid_proofs:
             rejected[f"stem_workflow_return_{label}"] = reject_stem(native_sign(f"workflow-return-{label}",
                 with_approval, restored_outputs, endpoint=endpoint, message=inbound, receive=True,
                 votes=certified, workflow_proof=evidence), "exited with 59")
@@ -810,6 +860,16 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             [cell(object_cap + return_topup, buyer, rewritten, types),
              cell(native_auth_capacity - 3 * FEE - return_topup, authority)], votes=certified),
             "exited with 58")
+    if early_return:
+        l1.call("truncate", anchor["parent_hash"])
+        l1.mine(spec["bridge"]["confirmations"] + 2)
+        replacement = l1.call("get_block_hash", anchor["number"])
+        assert replacement != anchor["hash"]
+        failed, _ = recover("orphaned-anchor", request)
+        assert failed.returncode and any(reason in failed.stderr for reason in (
+            "CKB RPC chain diverges at the trusted anchor", "CKB ancestor Header is unavailable")), failed
+        rejected["ckb_workflow_recovery_orphaned_anchor"] = failed.stderr
+        recovery["reorg"] = {"orphaned": anchor["hash"], "replacement": replacement}
 
     def execution(committed):
         location = client.locations[committed["hash"]]
@@ -825,7 +885,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                              "rejected_outputs": {name: hex_bytes(raw) for name, raw in append_probes.items()}}
                             if append_only else None),
             "workflow": ({"type": workflow_type, "states": list(map(hex_bytes, workflow_states)),
-                          "step_proofs": list(map(hex_bytes, workflow_proofs))} if use_workflow else None),
+                          "step_proofs": list(map(hex_bytes, workflow_proofs[:2 if early_return else 3])),
+                          "recovery": recovery} if use_workflow else None),
             "revisions": ({**revisions, "exported": hex_bytes(data), "returned": hex_bytes(return_state),
                            "topup_capacity": return_topup,
                            "native_execution": execution(revisions["native"])} if revisable else None),

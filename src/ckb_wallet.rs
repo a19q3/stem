@@ -24,6 +24,8 @@ use serde_json::json;
 
 use crate::bridge_cli::{parse_hash, print_json, read_json_limited, read_key};
 
+mod workflow;
+
 #[derive(Subcommand)]
 pub enum CkbWallet {
     /// Derive the lock argument for a CKB secp256k1 key or an Ed25519 public key.
@@ -54,6 +56,13 @@ pub enum CkbWallet {
         tx_hash: ckb_types::H256,
         #[arg(long)]
         output_index: u32,
+    },
+    /// Recover a Metatype workflow return from witnessed CKB custody history.
+    RecoverMetatypeWorkflow {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        l1_rpc: String,
     },
 }
 
@@ -129,6 +138,9 @@ impl CkbWallet {
                     "output": ckb_jsonrpc_types::CellOutput::from(output),
                     "data": JsonBytes::from_bytes(data),
                 }))
+            }
+            Self::RecoverMetatypeWorkflow { request, l1_rpc } => {
+                workflow::recover(&request, &l1_rpc)
             }
         }
     }

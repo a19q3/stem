@@ -2,10 +2,28 @@
 
 use crate::{hash, intercell::Identity, object::revision_fields};
 
+use super::witness::GroupWitness;
+
 pub const STEPS: usize = 3;
 pub const SIGNATURE_SIZE: usize = 64;
 pub const MAX_PROOF: usize = STEPS * SIGNATURE_SIZE;
 pub const ACTION: u16 = 1;
+
+/// The CKB group row carries only the next step signature.
+pub fn witness_proof(row: Option<GroupWitness<'_>>) -> Option<&[u8]> {
+    match row {
+        None => Some(&[]),
+        Some(row)
+            if row.action == ACTION
+                && row.message.is_empty()
+                && row.seal.is_empty()
+                && row.proof.len() == SIGNATURE_SIZE =>
+        {
+            Some(row.proof)
+        }
+        _ => None,
+    }
+}
 
 pub struct Workflow<'a> {
     pub network: &'a Identity,

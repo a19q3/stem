@@ -388,6 +388,11 @@ or completion commits the preceding head and needs its own key.
 CKB validates each step before changing the object. Stem replays
 the ordered signatures from the escrowed head using its existing
 Proof Data and verifies the resulting authenticated return state.
+The recovery CLI uses an authenticated CKB anchor and the original
+Stem escrow Cell supplied by the caller. It verifies CKB transaction
+and witness proofs against parent Header hashes, follows actual
+OutPoints, and prepares the proof for that same native Type Group.
+This runs off chain using read-only CKB RPC.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and

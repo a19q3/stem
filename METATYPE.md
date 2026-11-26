@@ -489,9 +489,16 @@ obligations for each step. It authenticates the authorization chain
 and the burned CKB state. Applications that also need exact CKB
 heights or witness inclusion outside the normal CKB validation
 assumption can verify the individual transaction and witness proofs
-against authenticated CKB headers. Relayers and owners must retain
-the CKB step witnesses until return. Additional workflow cycles and
-proof bytes enter the ordinary Stem resource budget.
+against authenticated CKB headers. The recovery command follows
+the actual CKB OutPoint chain from burn to import, checks each
+transaction and its witnesses against the supplied trusted CKB
+anchor ancestry, and resolves shared definitions from the
+transaction's actual dependencies. It checks the full original
+Manifest and pinned mailbox as well as the signed path. A transfer
+that preserves the state contributes no signature to Stem Proof
+Data. The CLI requires retained CKB transactions and witnesses.
+Additional workflow cycles and proof bytes enter the ordinary
+Stem resource budget.
 
 ### Cap-bound fungible UDT
 

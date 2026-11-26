@@ -6,7 +6,7 @@
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
 use stem_bridge_wire::metatype::{
     custody::Boundary,
-    workflow::{ACTION, State, Workflow},
+    workflow::{State, Workflow, witness_proof},
 };
 use stem_contracts::metatype::{verify_workflow_signature, with_invocation};
 
@@ -36,18 +36,7 @@ fn main() -> i8 {
         };
         let before = read(group.input_indices.as_slice(), Source::Input)?;
         let after = read(group.output_indices.as_slice(), Source::Output)?;
-        let proof = match invocation.witness {
-            None => &[][..],
-            Some(row)
-                if row.action == ACTION
-                    && row.message.is_empty()
-                    && row.seal.is_empty()
-                    && !row.proof.is_empty() =>
-            {
-                row.proof
-            }
-            _ => return None,
-        };
+        let proof = witness_proof(invocation.witness)?;
         match (invocation.boundary, before, after) {
             (Boundary::Transfer, Some(before), Some(after)) => workflow
                 .verify_successor(&id, before, after, proof, 1, verify_workflow_signature)

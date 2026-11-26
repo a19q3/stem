@@ -12,6 +12,8 @@ Stem 是一条以 CKB 计价、由加权 Jolteon 最终确认的 Cell 网络。S
 
 授权链工作流用于需要核验中间步骤的对象。请求、审核与完成分别由独立密钥签署，签名承诺网络、完整约束 Script、前一状态承诺、主题和步骤。CKB 对每次修改执行一步验证，Stem 返程从托管态重放有序证明，并核对认证销毁状态。工作流沿用组级 Proof Data 和既有跨链消息认证。
 
+重建工具按实际 OutPoint 从 CKB 销毁回溯到导入，使用调用方认证的锚点核验区块祖先及交易和见证包含证明。恢复钱包可从 CKB 链上见证重建 Proof Data。仅变更归属的交易保留在可核验路径中，返程证明只包含实际完成的授权步骤。
+
 每个网络用全新的 genesis、数据库、签名域和桥实例启动。网络身份由 canonical network spec 和一次性网络盐导出。该预部署 spec 包含 CKB genesis、初始权限与经济配置，排除依赖网络身份才能部署的 Registry Type ID、金库 Type ID、Checkpoint Type ID 及初始化签名。部署完成后，Stem genesis 再固定这些 L1 合约身份和第一份已认证的完整质押快照。CKB Checkpoint Cell 的身份与初始认证方也由 genesis 固定。链身份与创世 Header 承诺进入 Jolteon 签名域。所有交易、证明和链间认证都明确绑定该网络。
 
 | 组件 | 权责 |
