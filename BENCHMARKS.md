@@ -4864,3 +4864,44 @@ funded Jolteon handoff with historical Intercell delivery. The Go
 proof suite and CometBFT build check passed.
 
 [Signed cases, proof traces, build fingerprints, measurements and commands](benchmarks/2026-11-26-stem-metatype-live-rule.json.xz).
+
+## CKB reference-set certificates
+
+The transaction now carries one certificate over one to four records
+at the same CKB genesis and anchor. Each guardian checks the individual
+proofs under a stable tip, then signs the complete OutPoint-ordered
+set. The verifier checks one weighted quorum. Record count and bytes
+still enter the logical read budget individually. The Type and Lock
+Scripts receive the same individual records through syscall 2130.
+
+These paired local devnets use four Jolteon replicas and the same
+RISC-V contracts and workload on either side. The Metatype fixture
+restores a 200-byte revision using a historical mailbox output and
+the live rule registry. The Intercell fixture receives a 4,096-byte
+message with three references. Bytes are the complete signed Stem
+transaction and cycles come from the finalized execution receipt.
+
+| Workload | References | Separate certificates bytes / cycles | Reference set bytes / cycles | Cycle reduction |
+| --- | ---: | ---: | ---: | ---: |
+| Metatype live rule return | 2 | 3,747 / 26,153,686 | 3,541 / 14,153,635 | 45.9% |
+| Intercell receive | 3 | 19,337 / 37,925,251 | 18,925 / 13,925,148 | 63.3% |
+
+Each quorum used three signatures at four million cycles per
+signature. The two workloads save one and two quorum checks
+respectively. Both passed again with the fixture's ordinary
+20-million-cycle transaction limit. A rebuilt WASM SDK independently
+verified the corresponding finalized receipts and the restored
+three-Script Metatype Cell.
+
+The controls rejected duplicate OutPoints, mixed sets from different
+signers, a removed record under the original signatures, signature
+tampering, an old anchor, and a historical rule substituted for a
+live one. Reordering the requested OutPoints produced identical
+guardian votes. Intercell covered destination binding, replay after
+restart and the CKB reorganization case. The workspace passed 486
+tests with 22 ignored. The CKB and xUDT bridge, paid security-domain
+receipt, capped Metatype UDT, Spore, funded handoff, and individual
+L1 Cell Reference regressions passed. Earlier build failures and the
+security fixture's missing argument are in the archive.
+
+[Signed transactions, measurements, proof traces and reproduction commands](benchmarks/2026-11-26-stem-reference-set.json.xz).
