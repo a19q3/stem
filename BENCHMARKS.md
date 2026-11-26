@@ -4689,3 +4689,71 @@ successful retry.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw traces, signed workloads, logs and CKB proofs](benchmarks/2026-11-26-stem-framed-writes.json.xz).
+
+## Borrowed transaction output validation
+
+Revision `430306a` validates output Scripts in the verified Strand
+byte ranges. It avoids constructing temporary `Cell` and packed
+`Script` objects during transaction decoding. For one input or Cell
+Dep it still validates the entry and skips the uniqueness table.
+Duplicate checks apply whenever a collection has multiple entries.
+The encoded limits, signatures, Script Groups, execution and resource
+accounting retain their existing rules.
+
+The decoder probe ran `Transaction::from_slice` over the same 512
+signed payments and 512 signed Lineage commands used in earlier
+network experiments. Each variant ran 15 samples of 65,536 complete
+decodes pinned to CPU 4. The table reports median calling-thread CPU
+time and separately counted heap allocations, including reallocations.
+A concurrent job affected wall-clock timing. The archive includes the
+wall-clock controls, both library build fingerprints and fixture IDs.
+
+| Signed fixture | Base `928c0bf` CPU per decode | `430306a` CPU per decode | Heap allocations per decode |
+| --- | ---: | ---: | ---: |
+| Ordinary payment | 3.506 µs | 2.695 µs | 17 → 9 |
+| Lineage command | 11.311 µs | 11.606 µs | 16 → 14 |
+
+The median CPU cost for payment decoding fell 23.1%. The Lineage
+command has no outputs and showed a 2.6% higher median CPU time in
+this probe. Two fewer allocations did not produce a measured CPU
+improvement for that fixture.
+
+The four-replica trials used the same signed workload and genesis
+within each rate, a 24-second offer window, two VM workers per node,
+a 250 ms cadence, 2 billion block cycles and persistent submission
+connections. All transactions written by the client were eventually
+confirmed in every run. Replica CPU and output bytes were counted
+through drain.
+
+| Pair and build | Planned TPS | Written / admitted / all-replica visible TPS during offer | Confirmed incl. drain | p99 | Replica CPU s | Process writes MB |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| Initial base | 1,000 | 428.71 / 426.04 / 379.88 | 10,289 | 5.370 s | 49.52 | 154.67 |
+| Initial candidate | 1,000 | 387.17 / 384.50 / 343.29 | 9,292 | 5.038 s | 46.34 | 150.18 |
+| Initial base | 2,000 | 1,393.71 / 1,391.46 / 1,303.71 | 33,449 | 1.746 s | 84.22 | 466.25 |
+| Initial candidate | 2,000 | 1,108.50 / 1,105.83 / 1,027.21 | 26,604 | 2.388 s | 88.27 | 420.56 |
+| Reverse-order base | 1,000 | 1,000.00 / 1,000.00 / 970.38 | 24,000 | 0.961 s | 46.53 | 403.01 |
+| Reverse-order candidate | 1,000 | 1,000.00 / 1,000.00 / 963.08 | 24,000 | 0.927 s | 45.30 | 407.43 |
+| Reverse-order base | 2,000 | 1,650.88 / 1,648.21 / 1,573.17 | 39,621 | 1.425 s | 70.76 | 633.87 |
+| Reverse-order candidate | 2,000 | 1,625.38 / 1,622.71 / 1,543.38 | 39,009 | 1.542 s | 73.38 | 629.23 |
+
+The first four runs overlapped with a separate CPU-intensive job.
+Its worker count fell from 21 to seven by the start of the initial
+2,000 TPS base run, then to two or three in the reverse-order runs.
+The quieter 1,000 TPS pair executed the same 24,000 payments and
+recorded 2.6% lower replica CPU on the candidate. At the 2,000 TPS
+repeat the candidate confirmed 1.9% fewer transactions per second in
+the offer window while the client wrote 1.5% fewer. The retained
+optimization reduces the cost of decoding ordinary payments. The
+network trials establish no throughput gain.
+
+The release workspace passed 483 tests with 22 ignored. Regression
+tests cover accepted Scripts at the exact size limit, rejected
+oversized Lock and Type Scripts and duplicate Cell references.
+A mixed-build four-node run confirmed 96 payments with one validator
+offline and recovered to a common state. Real CKB devnets verified a
+funded committee handoff and historical Intercell delivery, both L1
+Cell Reference modes, and revisable Metatype custody including a 5 CKB
+top-up and proofs of the restored object. The Go proof suite and
+frozen CometBFT build check passed.
+
+[Raw results, build fingerprints, proofs and reproduction commands](benchmarks/2026-11-26-stem-transaction-decode.json.xz).
