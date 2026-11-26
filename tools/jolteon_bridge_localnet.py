@@ -610,6 +610,10 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--spore-mutant-program", type=lambda path: Path(path).resolve(), action="append",
                         help="register this Lua source and include its ID in the Spore, in argument order")
+    parser.add_argument("--spore-handoff", action="store_true",
+                        help="authorize two direct native title transfers using the original CKB Spore")
+    parser.add_argument("--spore-handoff-stale-source", action="store_true",
+                        help="also commit a CKB receipt naming a spent native input and exercise redemption")
     parser.add_argument("--spore-cluster-v2", type=lambda path: Path(path).resolve(),
                         help="mint the fixture in a Cluster using its published CKB ELF")
     for name in ("stem-native-object", "object-policy", "ckb-stem-object",
@@ -670,6 +674,10 @@ def main():
         parser.error("the native media fixtures require --native-spore-origin")
     if args.native_spore_sync_melt and (not args.native_spore_origin or args.native_spore_approval or args.spore_immortal):
         parser.error("synchronized melt requires a meltable, unrestricted native-origin Spore")
+    if args.spore_handoff and not (args.native_spore_origin and args.spore_mutant_lua):
+        parser.error("the handoff fixture requires a native-origin beta.2 registered Spore")
+    if args.spore_handoff_stale_source and not args.spore_handoff:
+        parser.error("the stale source control needs --spore-handoff")
     if args.separate_return_permit and not args.ckb_spore_permit:
         parser.error("--separate-return-permit needs --ckb-spore-permit")
     if args.ckb_spore_permit and not args.native_spore_approval:

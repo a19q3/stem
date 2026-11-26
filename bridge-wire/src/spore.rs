@@ -24,6 +24,73 @@ pub const MAX_CELL_SPORE_DATA: usize = 512 * 1024;
 pub const CONTENT_COMMITMENT_TAG: &[u8; 4] = b"SPH1";
 pub const MELT_TAG: &[u8; 4] = b"SPB1";
 
+/// A CKB custody transfer authorizing one signed native spend.
+pub struct Handoff<'a> {
+    pub transfer: CellTransfer<'a>,
+    pub previous: &'a Identity,
+    pub source: &'a [u8; 36],
+    pub output_hash: &'a Identity,
+}
+
+impl<'a> Handoff<'a> {
+    pub fn decode(raw: &'a [u8]) -> Option<Self> {
+        if raw.len() != 204 || raw.get(64..68)? != b"SPT1" {
+            return None;
+        }
+        let original_type = raw[..32].try_into().ok()?;
+        let recipient = raw[32..64].try_into().ok()?;
+        let previous = raw[68..100].try_into().ok()?;
+        let source: &[u8; 36] = raw[100..136].try_into().ok()?;
+        let output_hash = raw[136..168].try_into().ok()?;
+        let length = u32::from_le_bytes(raw[168..172].try_into().ok()?) as usize;
+        if original_type == [0; 32]
+            || recipient == [0; 32]
+            || previous == &[0; 32]
+            || previous == &recipient
+            || source[..32] == [0; 32]
+            || output_hash == &[0; 32]
+            || !(1..=MAX_CELL_SPORE_DATA).contains(&length)
+        {
+            return None;
+        }
+        Some(Self {
+            previous,
+            source,
+            output_hash,
+            transfer: CellTransfer {
+                original_type,
+                recipient,
+                content: TransferContent::Committed {
+                    length,
+                    digest: raw[172..].try_into().ok()?,
+                },
+            },
+        })
+    }
+
+    pub fn encode(
+        original: &Identity,
+        recipient: &Identity,
+        previous: &Identity,
+        source: &[u8; 36],
+        output_hash: &Identity,
+        data: &[u8],
+    ) -> Option<[u8; 204]> {
+        SporeData::custody_mutant(data)?;
+        let mut raw = [0; 204];
+        raw[..32].copy_from_slice(original);
+        raw[32..64].copy_from_slice(recipient);
+        raw[64..68].copy_from_slice(b"SPT1");
+        raw[68..100].copy_from_slice(previous);
+        raw[100..136].copy_from_slice(source);
+        raw[136..168].copy_from_slice(output_hash);
+        raw[168..172].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        raw[172..].copy_from_slice(&hash(b"", &[data]));
+        Handoff::decode(&raw)?;
+        Some(raw)
+    }
+}
+
 /// A holder can certify a CKB melt and name the recipient of the native collateral.
 /// This receipt is disjoint from an ordinary return, including for small Cells.
 pub struct MeltReceipt;
@@ -495,6 +562,31 @@ mod tests {
             TransferContent::Inline(&member)
         );
         assert!(CellTransfer::decode(payload).is_none());
+        let grant =
+            Handoff::encode(&[1; 32], &[2; 32], &[3; 32], &[4; 36], &[5; 32], &member).unwrap();
+        let handoff = Handoff::decode(&grant).unwrap();
+        assert_eq!(handoff.transfer.original_type, [1; 32]);
+        assert_eq!(handoff.transfer.recipient, [2; 32]);
+        assert_eq!(handoff.previous, &[3; 32]);
+        assert_eq!(handoff.source, &[4; 36]);
+        assert_eq!(handoff.output_hash, &[5; 32]);
+        assert!(
+            handoff
+                .transfer
+                .content
+                .matches(&member, || Some(hash(b"", &[&member])))
+        );
+        assert!(MeltReceipt::decode(&grant).is_none());
+        assert!(CellTransfer::decode_custody(&grant).is_none());
+        assert!(Handoff::decode(&grant[..203]).is_none());
+        assert!(
+            Handoff::encode(&[1; 32], &[2; 32], &[2; 32], &[4; 36], &[5; 32], &member).is_none()
+        );
+        for range in [0..32, 32..64, 64..68, 68..100, 100..132, 136..168, 168..172] {
+            let mut invalid = grant;
+            invalid[range].fill(0);
+            assert!(Handoff::decode(&invalid).is_none());
+        }
         member[total as usize + 4..].fill(0);
         assert!(SporeData::custody_mutant(&member).is_none());
         let comma = 20 + b"text/plain;mutant[]=".len() + 64;

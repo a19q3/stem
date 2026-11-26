@@ -9,7 +9,7 @@ use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
 use stem_bridge_wire::intercell::{Delivery, MAX_PAYLOAD, Message, record_key};
-use stem_bridge_wire::spore::{CellTransfer, MAX_CELL_SPORE_DATA, MeltReceipt};
+use stem_bridge_wire::spore::{CellTransfer, Handoff, MAX_CELL_SPORE_DATA, MeltReceipt};
 use stem_ledger::block::Header;
 use stem_stake::{
     finality::NATIVE_HEADER_BYTES,
@@ -21,6 +21,11 @@ use crate::bridge_cli::{print_json, read_json_limited};
 
 #[derive(Subcommand)]
 pub enum Intercell {
+    /// Bind a CKB custody handoff to the spent native title and its complete successor.
+    SporeHandoff {
+        #[arg(long)]
+        request: PathBuf,
+    },
     /// Encode a CKB issuer's authorization for a complete native output Cell.
     SporePermit {
         #[arg(long)]
@@ -88,6 +93,15 @@ struct PermitRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct HandoffRequest {
+    object: H256,
+    previous_owner: H256,
+    source: ckb_jsonrpc_types::OutPoint,
+    output: JsonBytes,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DeliveryRequest {
     record: JsonBytes,
     proof: JsonBytes,
@@ -148,6 +162,35 @@ fn historical_evidence(path: PathBuf, network: &[u8; 32]) -> Result<Vec<u8>> {
 impl Intercell {
     pub fn run(self) -> Result<()> {
         match self {
+            Self::SporeHandoff { request } => {
+                let request: HandoffRequest =
+                    read_json_limited(&request, 2 * stem_ledger::MAX_TRANSACTION_BYTES + 1024)?;
+                let output = stem_ledger::Cell::from_slice(request.output.as_bytes())?;
+                let owner = output.lock();
+                ensure!(
+                    u8::from(owner.hash_type()) == ckb_types::core::ScriptHashType::Data as u8
+                        && owner.args().raw_data().len() == 20,
+                    "the handoff holder needs a native Data lock with a 20-byte key argument"
+                );
+                let mut types = output.type_scripts();
+                ensure!(
+                    types.next().is_some_and(
+                        |ty| ty.calc_script_hash().as_slice() == request.object.as_bytes()
+                    ) && types.next().is_none(),
+                    "handoff output must contain only the named title"
+                );
+                let source = ckb_types::packed::OutPoint::from(request.source);
+                let bytes = Handoff::encode(
+                    &request.object.into(),
+                    &owner.calc_script_hash().unpack(),
+                    &request.previous_owner.into(),
+                    source.as_slice().try_into()?,
+                    output.content_hash().as_slice().try_into()?,
+                    &output.data(),
+                )
+                .context("invalid registered Spore handoff")?;
+                print_json(&json!({"payload": JsonBytes::from_vec(bytes.to_vec())}))
+            }
             Self::SporePermit { request, create } => {
                 use stem_bridge_wire::object::permit::{Action, Permit};
                 let request: PermitRequest =

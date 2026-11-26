@@ -20,8 +20,8 @@ use stem_bridge_wire::{
     metatype::MAX_STATE_BYTES,
     object::{ObjectArgs, creation_id, revision},
     spore::{
-        CellTransfer, MAX_CELL_SPORE_DATA, MAX_SPORE_DATA, MELT_TAG, MeltReceipt, SporeData,
-        SporeTransfer, TransferContent, return_nonce,
+        CellTransfer, Handoff, MAX_CELL_SPORE_DATA, MAX_SPORE_DATA, MELT_TAG, MeltReceipt,
+        SporeData, SporeTransfer, TransferContent, return_nonce,
     },
 };
 
@@ -218,8 +218,8 @@ fn mutant_identity(
         _ => Err(117),
     };
     let object = script.calc_script_hash();
-    let gate = |source| -> Result<Option<Identity>, i8> {
-        let lock = load_cell_lock(0, source).map_err(|_| 117)?;
+    let gate = |source, index| -> Result<Option<Identity>, i8> {
+        let lock = load_cell_lock(index, source).map_err(|_| 117)?;
         let args = lock.args().raw_data();
         Ok((lock.code_hash() == script.code_hash()
             && lock.hash_type() == script.hash_type()
@@ -233,7 +233,7 @@ fn mutant_identity(
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
         (None, Some(_)) => verify_creation(network, id),
         (Some(before), Some(after)) if stem_contracts::spore::same_content(&before, &after) => {
-            match (gate(Source::GroupInput)?, gate(Source::GroupOutput)?) {
+            match (gate(Source::GroupInput, 0)?, gate(Source::GroupOutput, 0)?) {
                 (Some(_), None) => Ok(()), // The spending endpoint Lock executes the authenticated return.
                 (None, Some(endpoint)) => {
                     // Export must also consume the endpoint bond and execute its outbox rule.
@@ -244,10 +244,19 @@ fn mutant_identity(
                     }
                     unreachable!()
                 }
+                (None, None) => {
+                    // The endpoint bond verifies the CKB receipt and this exact successor.
+                    for index in 0.. {
+                        if gate(Source::Input, index)?.is_some() {
+                            return Ok(());
+                        }
+                    }
+                    unreachable!()
+                }
                 _ => Err(117),
             }
         }
-        (Some(_), None) if gate(Source::GroupInput)?.is_some() => Ok(()),
+        (Some(_), None) if gate(Source::GroupInput, 0)?.is_some() => Ok(()),
         _ => Err(117),
     }
 }
@@ -334,12 +343,19 @@ fn escrow(
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..len]).ok_or(118)?;
+    let handoff = Handoff::decode(message.payload);
     let melt = MeltReceipt::decode(message.payload);
     let terminal = melt.is_some();
     if terminal && !(kind == RECEIVE_ACTION && matches!(route, Route::Standard | Route::Mutant)) {
         return Err(118);
     }
-    let transfer = melt
+    if handoff.is_some() && !(kind == RECEIVE_ACTION && matches!(route, Route::Mutant)) {
+        return Err(118);
+    }
+    let transfer = handoff
+        .as_ref()
+        .map(|h| h.transfer)
+        .or(melt)
         .or_else(|| {
             if matches!(route, Route::Mutant) {
                 CellTransfer::decode_custody(message.payload)
@@ -400,7 +416,7 @@ fn escrow(
         route,
     )?;
     if terminal {
-        let ((Some(bond), Some((capacity, holder))), (Some(next_bond), None)) = (left, right)
+        let ((Some(bond), Some((capacity, holder, _))), (Some(next_bond), None)) = (left, right)
         else {
             return Err(119);
         };
@@ -412,15 +428,35 @@ fn escrow(
         return melt_refund(object, &transfer.recipient, capacity);
     }
     let (
-        (Some(before_bond), Some((before, input_lock))),
-        (Some(after_bond), Some((after, output_lock))),
+        (Some(before_bond), Some((before, input_lock, input_index))),
+        (Some(after_bond), Some((after, output_lock, output_index))),
     ) = (left, right)
     else {
         return Err(119);
     };
-    if before_bond != after_bond
-        || before != after
-        || (exporting && (input_lock == lock || output_lock != lock))
+    if before_bond != after_bond || before != after {
+        return Err(119);
+    }
+    if let Some(grant) = handoff {
+        let source = load_input_out_point(input_index, Source::Input).map_err(|_| 119)?;
+        let mut digest = [0; 32];
+        let field = load(
+            ckb_std::ckb_constants::SYS_LOAD_CELL_BY_FIELD,
+            Source::Output as u64,
+            output_index,
+            7,
+            &mut digest,
+        );
+        return (input_lock != lock
+            && &input_lock == grant.previous
+            && output_lock == transfer.recipient
+            && source.as_slice() == grant.source
+            && field == (0, 32)
+            && &digest == grant.output_hash)
+            .then_some(())
+            .ok_or(119);
+    }
+    if (exporting && (input_lock == lock || output_lock != lock))
         || (!exporting && (input_lock != lock || output_lock != transfer.recipient))
     {
         return Err(119);
@@ -428,7 +464,7 @@ fn escrow(
     Ok(())
 }
 
-type Assets = (Option<u64>, Option<(u64, Identity)>);
+type Assets = (Option<u64>, Option<(u64, Identity, usize)>);
 
 fn melt_refund(object: &Identity, recipient: &Identity, capacity: u64) -> Result<(), i8> {
     let tag = [MELT_TAG.as_slice(), object].concat();
@@ -499,7 +535,11 @@ fn inspect(
                     || !stem_contracts::spore::matches_content(index, source, content)
                         .map_err(|_| 119)?
                     || asset
-                        .replace((load_cell_capacity(index, source).map_err(|_| 119)?, lock))
+                        .replace((
+                            load_cell_capacity(index, source).map_err(|_| 119)?,
+                            lock,
+                            index,
+                        ))
                         .is_some()
                 {
                     return Err(119);

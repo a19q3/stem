@@ -6,6 +6,8 @@ Stem measurements record the executable, workload, configured limits, offered an
 
 The three-minute signed payment study compares two proposal intervals, two block capacity profiles and sender allocation on four local validators. Its archives replay to a certified Header and include sampled execution receipts. Four additional CKB and Stem devnets settled ordinary Cluster members carrying one or two published-interpreter registrations from both asset origins. The wallet verified the collection and the member at the same CKB anchor. [Payment experiments](research/storage/proposal-cadence/README.md) · [On-disk cadence comparison](research/storage/proposal-cadence/nvme/README.md) · [Payment dispatch, capacity and VM concurrency](research/storage/dispatch/README.md) · [Mutant lifecycle and proofs](research/spore-permit/upstream/beta2/README.md)
 
+Three four-replica trials directly transferred a Stem-issued title twice with CKB Spore authorization. The 496 KiB member used 16,523,608 Stem cycles per handoff. [Transactions, CKB costs and custody recovery](research/spore-permit/upstream/beta2/handoff.md)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two

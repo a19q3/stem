@@ -17,7 +17,7 @@ use ckb_std::{
 use stem_bridge_wire::{
     intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
     spore::{
-        CKB_SPORE_CODE, CellTransfer, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData,
+        CKB_SPORE_CODE, CellTransfer, Handoff, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData,
         TESTNET_SPORE_BETA2,
     },
 };
@@ -33,6 +33,17 @@ fn main() -> i8 {
 fn verify() -> Result<(), i8> {
     let script = load_script().map_err(|_| 110)?;
     let args = script.args().raw_data();
+    if args.len() == 117 && args[0] == 5 {
+        let gate = args[1..33].try_into().map_err(|_| 115)?;
+        let spore = args[33..65].try_into().map_err(|_| 115)?;
+        if u8::from(script.hash_type()) != ScriptHashType::Data2 as u8
+            || load_cell_type_hash(0, Source::GroupInput).map_err(|_| 115)? != Some(spore)
+            || load_cell_capacity(1, Source::GroupInput) != Err(SysError::IndexOutOfBound)
+        {
+            return Err(115);
+        }
+        return require_input_lock(gate);
+    }
     if args.len() == 129 && args[0] == 1 {
         let [spore, authority, gate, holder] = args[1..].as_chunks::<32>().0 else {
             return Err(115);
@@ -82,6 +93,8 @@ fn verify() -> Result<(), i8> {
             || load_cell_type_hash(0, Source::GroupInput).map_err(|_| 110)? != Some(mailbox)
             || load_cell_capacity(1, Source::GroupInput) != Err(SysError::IndexOutOfBound)
             || load_cell_lock_hash(input, Source::Input).map_err(|_| 110)? == owner
+            || (mutant_origin
+                && custody_holder(&script, input, Source::Input, &owner, original)?.is_some())
         {
             return Err(111);
         }
@@ -119,6 +132,16 @@ fn verify() -> Result<(), i8> {
     };
     let first_export = spore_input.is_none() && counterpart.is_some();
     let input_index = spore_input.unwrap_or(0);
+    let previous = if mutant_origin && !first_export {
+        custody_holder(&script, input_index, Source::Input, &owner, original)?
+    } else {
+        None
+    };
+    let following = if mutant_origin {
+        custody_holder(&script, spore_output, Source::Output, &owner, original)?
+    } else {
+        None
+    };
     let held_before = if first_export {
         let expected = Script::new_builder()
             .code_hash(script.code_hash())
@@ -139,11 +162,13 @@ fn verify() -> Result<(), i8> {
         }
         true
     } else {
-        load_cell_lock_hash(spore_input.ok_or(111)?, Source::Input).map_err(|_| 110)? == owner
+        previous.is_some()
+            || load_cell_lock_hash(spore_input.ok_or(111)?, Source::Input).map_err(|_| 110)?
+                == owner
     };
     let after = load_cell_lock_hash(spore_output, Source::Output).map_err(|_| 110)?;
-    let held_after = after == owner;
-    if held_before == held_after {
+    let held_after = following.is_some() || after == owner;
+    if held_before == held_after && !(previous.is_some() && following.is_some()) {
         return Err(111);
     }
     // Restrict this permissionless Lock to its unique mailbox and actual Spore.
@@ -183,6 +208,22 @@ fn verify() -> Result<(), i8> {
     {
         return Err(112);
     }
+    if let (Some(from), Some(to)) = (&previous, &following) {
+        let message = Message::decode(next.outgoing).ok_or(113)?;
+        let grant = Handoff::decode(message.payload).ok_or(113)?;
+        if message.receiver != *endpoint
+            || grant.transfer.original_type != *origin
+            || *grant.previous != from.native
+            || grant.transfer.recipient != to.native
+            || from.native_code != to.native_code
+            || !grant.transfer.content.matches(&output, || {
+                load_cell_data_hash(spore_output, Source::Output).ok()
+            })
+        {
+            return Err(113);
+        }
+        return require_input_lock(&from.ckb);
+    }
     if held_after {
         let message = Message::decode(next.outgoing).ok_or(113)?;
         if message.receiver != *endpoint {
@@ -193,7 +234,7 @@ fn verify() -> Result<(), i8> {
             origin,
             spore_output,
             &output,
-            None,
+            following.as_ref().map(|holder| &holder.native),
             endpoint,
         )?;
     } else {
@@ -224,6 +265,57 @@ fn verify() -> Result<(), i8> {
         )?;
     }
     Ok(())
+}
+
+struct CustodyHolder {
+    native_code: Identity,
+    native: Identity,
+    ckb: Identity,
+}
+
+fn custody_holder(
+    program: &Script,
+    index: usize,
+    source: Source,
+    gate: &Identity,
+    spore: &Identity,
+) -> Result<Option<CustodyHolder>, i8> {
+    let lock = load_cell_lock(index, source).map_err(|_| 110)?;
+    let args = lock.args().raw_data();
+    if lock.code_hash() != program.code_hash()
+        || lock.hash_type() != program.hash_type()
+        || args.len() != 117
+        || args[0] != 5
+        || &args[1..33] != gate
+        || &args[33..65] != spore
+    {
+        return Ok(None);
+    }
+    let native_code: Identity = args[65..97].try_into().map_err(|_| 115)?;
+    let key = &args[97..];
+    if native_code == [0; 32] || key == [0; 20] {
+        return Err(115);
+    }
+    let account = |code: &Identity, kind: ScriptHashType| -> Identity {
+        Script::new_builder()
+            .code_hash(code.pack())
+            .hash_type(kind)
+            .args(key.pack())
+            .build()
+            .calc_script_hash()
+            .unpack()
+    };
+    // CKB's standard secp256k1_blake160_sighash_all Type hash.
+    let secp = [
+        0x9b, 0xd7, 0xe0, 0x6f, 0x3e, 0xcf, 0x4b, 0xe0, 0xf2, 0xfc, 0xd2, 0x18, 0x8b, 0x23, 0xf1,
+        0xb9, 0xfc, 0xc8, 0x8e, 0x5d, 0x4b, 0x65, 0xa8, 0x63, 0x7b, 0x17, 0x72, 0x3b, 0xbd, 0xa3,
+        0xcc, 0xe8,
+    ];
+    Ok(Some(CustodyHolder {
+        native_code,
+        native: account(&native_code, ScriptHashType::Data),
+        ckb: account(&secp, ScriptHashType::Type),
+    }))
 }
 
 fn require_input_lock(required: &Identity) -> Result<(), i8> {

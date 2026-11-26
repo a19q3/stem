@@ -9,7 +9,7 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[3] / "tools"))
-from bridge_localnet import binary, ckb_hash, hex_bytes, script_hash
+from bridge_localnet import binary, ckb_hash, hex_bytes, script, script_hash
 from cluster_index import DATA as CLUSTER_DATA_HASH, classify
 
 
@@ -39,11 +39,17 @@ def verify(stem, root, record, request):
                            "--proof", proof], text=True, capture_output=True)
 
 
+def field(raw, index):
+    # The Rust wallet has already validated these canonical Molecule bytes.
+    header = int.from_bytes(raw[4:8], "little")
+    pos = 4 + 4 * index
+    assert pos < header
+    start = int.from_bytes(raw[pos:pos + 4], "little")
+    end = int.from_bytes(raw[pos + 4:pos + 8], "little") if pos + 4 < header else len(raw)
+    return raw[start:end]
+
+
 def direct_dependencies(step):
-    # The Rust wallet has already validated the canonical CKB Transaction bytes.
-    def field(raw, index):
-        offsets = [int.from_bytes(raw[pos:pos + 4], "little") for pos in (4 + 4 * index, 8 + 4 * index)]
-        return raw[offsets[0]:offsets[1]]
     packed = field(field(binary(step["transaction"]), 0), 1)
     count = int.from_bytes(packed[:4], "little")
     assert len(packed) == 4 + count * 37
@@ -88,6 +94,52 @@ def check_member_history(stem, root, record):
     print("  collection", len(steps), "CKB transitions at the member anchor")
 
 
+def check_handoffs(record):
+    settlement = record["settlement"]
+    terms = settlement["handoffs"]
+    native_type = script_hash(settlement["native_type"])
+    spore = script_hash(settlement["spore_type"])
+    original_data = binary(settlement["native_content"])
+    mailbox = settlement["mailbox"]
+    policy = binary(mailbox["args"])
+    endpoint = script_hash(settlement["endpoint"])
+    previous_native = settlement["restored"]
+    verified = record["verified"]["transitions"]
+    changes = terms + ([settlement["stale_handoff"]] if "stale_handoff" in settlement else [])
+    for handoff in changes:
+        pos = next(j for j, tx in enumerate(verified) if tx["transaction"] == handoff["ckb"]["hash"])
+        raw_tx = field(binary(record["proof"]["steps"][pos]["transaction"]), 0)
+        mailbox_data = field(field(raw_tx, 5), 0)
+        assert int.from_bytes(mailbox_data[:4], "little") == len(mailbox_data) - 4
+        message = mailbox_data[44:]
+        assert message == binary(handoff["message"]["record"])
+        assert message[:128] == policy[32:96] + script_hash(mailbox) + endpoint
+        assert int.from_bytes(message[128:136], "little") + 1 == int.from_bytes(mailbox_data[4:12], "little")
+        payload = message[136:]
+        assert len(payload) == 204 and payload[:32] == native_type and payload[64:68] == b"SPT1"
+        for lock, owner, state in [(handoff["previous_custody"], payload[68:100], verified[pos-1]),
+                                   (handoff["next_custody"], payload[32:64], verified[pos])]:
+            args = binary(lock["args"])
+            assert lock["hash_type"] == "data2" and len(args) == 117 and args[0] == 5
+            assert args[1:65] == policy[96:128] + spore
+            assert state["output"]["lock_hash"] == hex_bytes(script_hash(lock))
+            assert owner == script_hash(script(hex_bytes(args[65:97]), hex_bytes(args[97:]), "data"))
+        source = handoff["source"]
+        assert payload[100:136] == binary(source["tx_hash"]) + int(source["index"], 16).to_bytes(4, "little")
+        assert payload[136:168] == ckb_hash(binary(handoff["successor"]))
+        assert int.from_bytes(payload[168:172], "little") == len(original_data)
+        assert payload[172:] == ckb_hash(original_data)
+        expected = {"tx_hash": "0x" + previous_native["hash"], "index": "0x1"}
+        if "native" in handoff:
+            assert expected == source
+            previous_native = handoff["native"]
+        else:
+            assert expected != source and expected == handoff["unspent_native_source"]
+            assert "spent_handoff_source" in settlement["rejections"]
+        assert len({payload[32:64], payload[68:100]}) == 2
+    print("  verified", len(terms), "CKB authorizations for direct native spends")
+
+
 def check_public_collection(stem, root):
     with lzma.open(HERE / "public-collection.json.xz", "rt") as source:
         record = json.load(source)
@@ -116,7 +168,8 @@ def main():
     parser.add_argument("--stem", type=Path, required=True)
     args = parser.parse_args()
     records = {}
-    for filename in ("histories.json.xz", "two-registrations.json.xz", "cluster-controls.json.xz", "cluster-settlement.json.xz"):
+    for filename in ("histories.json.xz", "two-registrations.json.xz", "cluster-controls.json.xz", "cluster-settlement.json.xz",
+                     "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz"):
         with lzma.open(HERE / filename, "rt") as source:
             records.update(json.load(source))
     with tempfile.TemporaryDirectory() as scratch:
@@ -136,6 +189,8 @@ def main():
                 assert checked["ended_in_burn"] == bool(settlement.get("standard_melt"))
                 if "collection" in record:
                     check_member_history(args.stem.resolve(), root, record)
+                if "handoffs" in settlement:
+                    check_handoffs(record)
             print(name, len(checked["transitions"]), "CKB transitions")
         collection, member = records["collection"], records["cluster-member"]
         cluster_data = binary(collection["operations"]["mint"]["signed"]["json"]["outputs_data"][0])

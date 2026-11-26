@@ -88,7 +88,7 @@
 
 实测档案中，四副本短窗口的一轮支付达到 1,757.58 全副本可见 TPS。60 秒的等量对照确认全部 60,000 笔，候选窗口内全副本可见 984.60 TPS，含排空 990.22 TPS，p99 为 947 ms。上述 3,000 至 10,000 TPS 是目标。可先冻结测试网创世与协议版本，邀请独立运营者演练部署、重启、快照恢复和升级，同时公布 guardian 假设与基准口径。[历史支付对照](BENCHMARKS.md#vm-verification-reuse-across-parent-changes)
 
-[14 项独立实验索引](research/README.md)给出了候选实现与原始记录。其中 #5 的独立验证调度、#7 的证书复用适合进入真实区块或异地混合版本对照。#9/#10 的稀疏拓扑应先测独立主机出口、重复字节和补传时间。#11 的局部纠删码与 #13 的同步广播保留各自的研究边界。Strand 和密码学 syscall 的兼容性证据已归入[原始计划验收索引](research/original-21.md)。钱包已实测任意指定的中间 Lock／数据哈希按序出现，完整见证可离线复验；四副本已验证由 CKB 为每次原生对象转移签发凭证，并将返程凭证签发合并到 CKB 入库交易。beta.2 测试网发布的 Spore 和 Lua 程序已完成单 Mutant 资产的双向托管。Stem 首发路径也已实测 CKB 钱包换手、返程、再导出与同步销毁退款。扩展所有者变更目前经过真实 CKB 交易，直接原生换手仍待解决。[双向生命周期和离线复验](research/spore-permit/upstream/beta2/README.md)[通用历史见证](research/type-history/README.md) · [逐笔凭证和实测成本](research/spore-permit/README.md)
+[14 项独立实验索引](research/README.md)给出了候选实现与原始记录。其中 #5 的独立验证调度、#7 的证书复用适合进入真实区块或异地混合版本对照。#9/#10 的稀疏拓扑应先测独立主机出口、重复字节和补传时间。#11 的局部纠删码与 #13 的同步广播保留各自的研究边界。Strand 和密码学 syscall 的兼容性证据已归入[原始计划验收索引](research/original-21.md)。钱包已实测任意指定的中间 Lock／数据哈希按序出现，完整见证可离线复验；四副本已验证由 CKB 为每次原生对象转移签发凭证，并将返程凭证签发合并到 CKB 入库交易。beta.2 测试网发布的 Spore 和 Lua 程序已完成单 Mutant 资产的双向托管。Stem 首发路径也已实测 CKB 钱包换手、返程、再导出与同步销毁退款。Stem 首发的注册 Spore 已实测用真实 CKB 托管换锁交易授权原生钱包直接花费，覆盖 496 KiB 内容和旧输入凭证恢复。其他 Lua 策略仍待实证。[直接换手与费用](research/spore-permit/upstream/beta2/handoff.md)[双向生命周期和离线复验](research/spore-permit/upstream/beta2/README.md)[通用历史见证](research/type-history/README.md) · [逐笔凭证和实测成本](research/spore-permit/README.md)
 
 第 10 项现已支持在独立压测机上连接预先启动的验证者。单机演练在 180 秒内共同确认 309,720 笔，停机后离线重建了签名交易根和最终性证书。下一次验收需在不同物理主机上使用同一口径。[跨主机压测流程与实测](research/storage/external/README.md)
 

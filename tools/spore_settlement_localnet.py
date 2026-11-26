@@ -62,9 +62,14 @@ def wallet_history(binary_path, directory, l1_port, name, request):
 
 def verify_spore_history(binary_path, directory, l1_port, report):
     native = report.get("origin") == "stem"
+    custody_changes = report.get("handoffs", [])
+    if report.get("stale_handoff"):
+        custody_changes = [*custody_changes, report["stale_handoff"]]
     if native:
         object_type = report["spore_type"]
-        events = [report[k] for k in ("minted", "ckb_wallet_transfer", "deposited", "released_same_spore")]
+        events = [report[k] for k in ("minted", "ckb_wallet_transfer", "deposited")]
+        events.extend(step["ckb"] for step in custody_changes)
+        events.append(report["released_same_spore"])
         if report["standard_melt"]:
             events.append(report["standard_melt"]["transaction"])
     else:
@@ -91,10 +96,14 @@ def verify_spore_history(binary_path, directory, l1_port, report):
         "lock_hash": hex_bytes(script_hash(deposit["outputs"][index]["lock"])),
         "data_hash": hex_bytes(ckb_hash(binary(deposit["outputs_data"][index]))),
     }]
+    for grant in custody_changes:
+        request["required_states"].append({"lock_hash": hex_bytes(script_hash(grant["next_custody"])),
+                                           "data_hash": request["required_states"][0]["data_hash"]})
     history = wallet_history(binary_path, directory, l1_port, "spore", request)
     result = history["verified"]
     assert [r["transaction"] for r in result["transitions"]] == [e["hash"] for e in events]
-    assert result["matched_states"] == [point(report["deposited" if native else "held"]["hash"], index)]
+    assert result["matched_states"] == [point(report["deposited" if native else "held"]["hash"], index),
+                                       *[point(step["ckb"]["hash"], 1) for step in custody_changes]]
     assert result["ended_in_burn"] == bool(report.get("standard_melt"))
     if "mutant_registration" in report and report.get("cluster"):
         cluster = report["cluster"]
@@ -174,6 +183,9 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     if mutant:
         registration_index = len(codes) + len(funds)
         funds.extend(((200 + len(program)) * CKB + FEE, fixture.standard) for program in programs)
+    if args.spore_handoff:
+        holder_fund_index = len(codes) + len(funds)
+        funds.extend((150 * CKB, lock) for lock in (fixture.owner_lock, fixture.friend_lock))
     if approved_origin:
         funds += [(150 * CKB, fixture.owner_lock), (150 * CKB, fixture.friend_lock)]
     if issuer:
@@ -463,6 +475,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
 
 
     def export_native():
+        nonlocal fee_capacity
         bond_cap = 120 * CKB
         object_cap = ((800 if approved_origin else 360 if args.native_spore_multipart else 240)
                       + (args.spore_content_bytes+99)//100) * CKB
@@ -712,8 +725,13 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         spore, fees = [point(moved["hash"], i) for i in range(2)]
 
         inbound = packet("return-native", False, script_hash(owner), 0)
+        def custody_wallet(wallet):
+            fields = b"\x05" + script_hash(ckb_escrow) + counterpart + binary(native_lock_code) + binary(wallet["args"])
+            return script(hex_bytes(escrow_code), hex_bytes(fields), "data2")
+
+        return_lock = custody_wallet(fixture.owner_lock) if args.spore_handoff else ckb_escrow
         deposit_inputs = [sequencer, spore, fees]
-        deposit_outputs = [output(mailbox_cap, ckb_escrow, mailbox), output(spore_cap, ckb_escrow, object_type),
+        deposit_outputs = [output(mailbox_cap, ckb_escrow, mailbox), output(spore_cap, return_lock, object_type),
                            output(fee_capacity-3*FEE, fixture.standard)]
         deposit_data = [hex_bytes(le(1, 8) + binary(encoded["successor_root"]) + binary(inbound["record"])),
                         hex_bytes(data), "0x"]
@@ -727,7 +745,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             deposit_signers.insert(0, wallet_group(1, [fixture.friend]))
         def signed_deposit(name, tx_deps):
             tx = transaction(deposit_inputs, deposit_outputs, deposit_data, tx_deps)
-            tx["witnesses"] = ["0x"]*len(deposit_inputs) + [cobuild(object_type, object_id, friend_holder, ckb_escrow)]
+            tx["witnesses"] = ["0x"]*len(deposit_inputs) + [cobuild(object_type, object_id, friend_holder, return_lock)]
             return fixture.sign(name, tx, deposit_signers)
 
         return_deps = deps
@@ -770,19 +788,83 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         restored_cell = cell_proof(at(restored, 1))
         assert signing_cell(client, at(restored, 1))["cell"] == native_cell
 
-        second = outbound("repeat-export", at(restored, 0))
-        _, votes = authorize("reexport", at(restored, 1), escrowed_cell)
-        relocked = commit(lock_asset("repeat-lock", at(restored, 1), at(restored, 0),
-                                      at(restored, 2), remaining-2*FEE, second, votes))
+        current, last_ckb, nonce = restored, held, 1
+        handoffs = []
+        stale_handoff = None
+        if args.spore_handoff:
+            parties = [(owner, fixture.owner_lock, fixture.owner), (buyer, fixture.friend_lock, fixture.friend)]
+            authorizers = [point(funded, holder_fund_index+i) for i in range(2)]
+            for i in range(2 + int(args.spore_handoff_stale_source)):
+                person = i % 2
+                previous, wallet, secret = parties[person]
+                following, next_wallet, _ = parties[1-person]
+                label = f"handoff-{i+1}"
+                source = at(current, 1)
+                grant_source = at(restored, 1) if i == 2 else source
+                next_cell = cell(object_cap, following, data, asset_types)
+                req = args.output / f"{label}-request.json"
+                write_json(req, {"object": hex_bytes(original), "previous_owner": hex_bytes(script_hash(previous)),
+                                 "source": grant_source, "output": next_cell})
+                payload = binary(json.loads(run(args.binary, "intercell", "spore-handoff", "--request", req))["payload"])
+                assert payload[:64] == original + script_hash(following)
+                grant = packet(label, False, script_hash(following), nonce, wire_content=payload[64:])
+                next_custody = custody_wallet(next_wallet)
+                inputs = [point(last_ckb["hash"], k) for k in range(3)]
+                inputs.append(authorizers[person])
+                outputs = [output(mailbox_cap, ckb_escrow, mailbox), output(spore_cap, next_custody, object_type),
+                           output(fee_capacity-4*FEE, fixture.standard), output(150*CKB, wallet)]
+                def rotation(name, msg, require_holder=True):
+                    n = 4 if require_holder else 3
+                    state = le(nonce+1, 8) + binary(encoded["successor_root"]) + binary(msg["record"])
+                    values = [hex_bytes(state), hex_bytes(data), "0x", "0x"]
+                    tx = transaction(inputs[:n], outputs[:n], values[:n], deps)
+                    tx["witnesses"] = ["0x"]*n + [cobuild(object_type, object_id, return_lock, next_custody)]
+                    groups = [wallet_group(2, [fixture.faucet])]
+                    if require_holder:
+                        groups.append(wallet_group(3, [secret]))
+                    return fixture.sign(name, tx, groups)
+                rejected[label + "_missing_ckb_owner"] = ckb_reject(rotation(label+"-no-owner", grant, False), 115)
+                other = packet(label+"-other-owner", False, script_hash(fixture.standard), nonce, wire_content=payload[64:])
+                rejected[label + "_ckb_recipient"] = ckb_reject(rotation(label+"-wrong-recipient", other), 113)
+                evidence = submit_ckb(rotation(label, grant))
+                authorizers[person] = point(evidence["hash"], 3)
+                advance, votes = observe_deposit(label, evidence)
+                def native_transfer(name, successor, change):
+                    return stem_signed(name, at(current, 2), [cell(bond_cap, endpoint), successor, change],
+                        actor=previous, key=secret, bond=at(current, 0), extra_points=[source],
+                        message=grant, receive=True, observations=votes)
+                change = cell(remaining-3*FEE, following)
+                observation = {"ckb": evidence, "anchor": advance, "message": grant, "source": grant_source,
+                               "successor": next_cell, "previous_custody": return_lock, "next_custody": next_custody}
+                last_ckb, return_lock = evidence, next_custody
+                nonce += 1
+                fee_capacity -= FEE
+                if i == 2:
+                    assert source != grant_source
+                    rejected["spent_handoff_source"] = stem_reject(native_transfer(label+"-old-source", next_cell, change),
+                                                                   "exited with 119")
+                    stale_handoff = {**observation, "unspent_native_source": source}
+                    break
+                rejected[label + "_different_capacity"] = stem_reject(native_transfer(label+"-reduced",
+                    cell(object_cap-1, following, data, asset_types), change), "exited with 119")
+                committed = commit(native_transfer(label+"-accept", next_cell, change))
+                assert signing_cell(client, at(committed, 1))["cell"] == next_cell
+                handoffs.append({**observation, "native": committed})
+                current = committed
+                remaining -= FEE
+        second = outbound("repeat-export", at(current, 0))
+        _, votes = authorize("reexport", at(current, 1), escrowed_cell)
+        relocked = commit(lock_asset("repeat-lock", at(current, 1), at(current, 0),
+                                      at(current, 2), remaining-2*FEE, second, votes))
         next_checkpoint, next_encoded = delivery("repeat-export", second, [send["id"]], binary(encoded["successor_root"]))
-        sequencer, spore, fees = [point(held["hash"], i) for i in range(3)]
+        sequencer, spore, fees = [point(last_ckb["hash"], i) for i in range(3)]
         release = transaction([sequencer, spore, fees],
             [output(mailbox_cap, ckb_escrow, mailbox), output(spore_cap, owner_holder, object_type),
              output(fee_capacity-4*FEE, fixture.standard)],
-            [hex_bytes(le(1, 8) + binary(next_encoded["successor_root"])), hex_bytes(data), "0x"],
+            [hex_bytes(le(nonce, 8) + binary(next_encoded["successor_root"])), hex_bytes(data), "0x"],
             deps + [next_checkpoint])
         release["witnesses"] = [witness(binary(next_encoded["input_type"])), "0x", "0x",
-                               cobuild(object_type, object_id, ckb_escrow, owner_holder)]
+                               cobuild(object_type, object_id, return_lock, owner_holder)]
         released = submit_ckb(fixture.sign("release-existing", release, [wallet_group(2, [fixture.faucet])]))
         final = l1.call("get_live_cell", point(released["hash"], 1), True)["cell"]
         assert final["output"] == actual["output"] and final["data"] == actual["data"]
@@ -791,24 +873,24 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             carried, last, fees = [point(released["hash"], i) for i in range(3)]
             refund_lock = script_hash(buyer)
             terminal = b"SPB1" + le(len(data), 4) + ckb_hash(data)
-            notice = packet("synchronized-melt", False, refund_lock, 1, wire_content=terminal)
+            notice = packet("synchronized-melt", False, refund_lock, nonce, wire_content=terminal)
 
             def certified_melt(label, msg, *, burn=True):
                 inputs = [carried, last, fees]
                 outputs = [output(mailbox_cap, ckb_escrow, mailbox),
                            output(spore_cap, fixture.owner_lock, None if burn else object_type),
                            output(fee_capacity-5*FEE, fixture.standard)]
-                values = [hex_bytes(le(2, 8) + binary(next_encoded["successor_root"]) + binary(msg["record"])),
+                values = [hex_bytes(le(nonce+1, 8) + binary(next_encoded["successor_root"]) + binary(msg["record"])),
                           "0x" if burn else hex_bytes(data), "0x"]
                 tx = transaction(inputs, outputs, values, deps)
                 tx["witnesses"] = ["0x"]*3 + [cobuild(object_type, object_id, fixture.owner_lock,
                     None if burn else fixture.owner_lock)]
                 return fixture.sign(label, tx, [wallet_group(1, [fixture.owner]), wallet_group(2, [fixture.faucet])])
 
-            bad = packet("wrong-melt-hash", False, refund_lock, 1, wire_content=terminal[:-1] + bytes([terminal[-1] ^ 1]))
+            bad = packet("wrong-melt-hash", False, refund_lock, nonce, wire_content=terminal[:-1] + bytes([terminal[-1] ^ 1]))
             rejected["wrong_melt_content"] = ckb_reject(certified_melt("wrong-melt-hash", bad), 113)
             rejected["melt_receipt_with_live_spore"] = ckb_reject(certified_melt("still-live", notice, burn=False), 111)
-            normal = packet("return-without-custody", False, refund_lock, 1)
+            normal = packet("return-without-custody", False, refund_lock, nonce)
             rejected["melt_with_ordinary_return"] = ckb_reject(certified_melt("wrong-return", normal), 113)
             melted = submit_ckb(certified_melt("certified-melt", notice))
             assert l1.call("get_live_cell", last, True)["status"] != "live"
@@ -846,11 +928,14 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             assert signing_cell(client, at(relocked, 1))["cell"] == cell(object_cap, endpoint, data, asset_types)
             melt_result = {"transaction": melted, "native_custody": held_native}
         steps = {"issue": issued, "lock": locked, "restore": restored, "relock": relocked}
+        steps.update({f"handoff-{i+1}": step["native"] for i, step in enumerate(handoffs)})
         if args.native_spore_sync_melt:
             steps["retire"] = retired
         if approved_origin:
             steps.update(zip(("gift", "return-gift"), native_transfers))
         return {**({"permits": permits} if issuer else {}), **({"mutant_registration": mutant_registration} if mutant else {}),
+                **({"handoffs": handoffs} if handoffs else {}),
+                **({"stale_handoff": stale_handoff} if stale_handoff else {}),
                 **({"cluster": cluster} if cluster else {}),
                 "execution": {label: execution(tx) for label, tx in steps.items()},
                 "origin": "stem", "immortal": args.spore_immortal, "spore_id": hex_bytes(object_id), "spore_type": object_type,
