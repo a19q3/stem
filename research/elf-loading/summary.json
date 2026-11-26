@@ -1,0 +1,327 @@
+{
+  "network": [
+    {
+      "file": "0-reference-100.json.xz",
+      "replicas": 16,
+      "seconds": 60,
+      "planned": 6000,
+      "written": 6000,
+      "admitted": 6000,
+      "visible": 6000,
+      "drops": 0,
+      "visible_tps": 99.21666666666667,
+      "p99_common_us": 734552,
+      "p99_client_queue_us": 15,
+      "p99_client_response_us": 25860,
+      "cpu_seconds": 116.84,
+      "peak_sampled_node_rss_kib": 99992,
+      "process_write_B_per_confirmed_replica": 0.0,
+      "wal_bytes": 593750803,
+      "compaction_jobs_creating_files": 0,
+      "sst": {
+        "flush": {
+          "files": 0,
+          "bytes": 0
+        },
+        "compaction": {
+          "files": 0,
+          "bytes": 0
+        },
+        "recovery": {
+          "files": 1,
+          "bytes": 11533855
+        },
+        "other": {
+          "files": 0,
+          "bytes": 0
+        }
+      },
+      "batch": {
+        "finality_serialized": 524286621,
+        "finality_sync_microseconds": 7280284,
+        "finality_writes": 5296,
+        "journal_serialized": 69464182,
+        "journal_sync_microseconds": 205651,
+        "journal_writes": 9998
+      },
+      "agreed_height": 335,
+      "workload_sha256": "5b6716cefca22062aec03df735c45b918df25870b236b3ccbdce60d04523f9b0",
+      "genesis_sha256": "02a8debe915fda5b7e0136c247359e88f7071cadde65f974f237584a6d604d26",
+      "observer_errors": 0,
+      "candidate_verify_mean_us": 15946.26787512588,
+      "proposal_mean_us": 10908.277945619335,
+      "commit_mean_us": 1538.172583081571,
+      "lineage": {
+        "applied": 6000,
+        "cycles": 23533266384,
+        "fee": 12000000,
+        "head_updates": 12000,
+        "serial_replay_us": 4571413
+      },
+      "signed_set_sha256": "26ba497aebeb40ed3b936a6a9c9abbc8e1105bc6ce921a96e0fbdbdfe2fe4b60"
+    },
+    {
+      "file": "1-reuse-100.json.xz",
+      "replicas": 16,
+      "seconds": 60,
+      "planned": 6000,
+      "written": 6000,
+      "admitted": 6000,
+      "visible": 6000,
+      "drops": 0,
+      "visible_tps": 98.81666666666666,
+      "p99_common_us": 733858,
+      "p99_client_queue_us": 16,
+      "p99_client_response_us": 26268,
+      "cpu_seconds": 117.27,
+      "peak_sampled_node_rss_kib": 100500,
+      "process_write_B_per_confirmed_replica": 0.0,
+      "wal_bytes": 593881660,
+      "compaction_jobs_creating_files": 0,
+      "sst": {
+        "flush": {
+          "files": 0,
+          "bytes": 0
+        },
+        "compaction": {
+          "files": 0,
+          "bytes": 0
+        },
+        "recovery": {
+          "files": 1,
+          "bytes": 11530214
+        },
+        "other": {
+          "files": 0,
+          "bytes": 0
+        }
+      },
+      "batch": {
+        "finality_serialized": 524337771,
+        "finality_sync_microseconds": 7208142,
+        "finality_writes": 5296,
+        "journal_serialized": 69543889,
+        "journal_sync_microseconds": 207291,
+        "journal_writes": 10037
+      },
+      "agreed_height": 336,
+      "workload_sha256": "5b6716cefca22062aec03df735c45b918df25870b236b3ccbdce60d04523f9b0",
+      "genesis_sha256": "02a8debe915fda5b7e0136c247359e88f7071cadde65f974f237584a6d604d26",
+      "observer_errors": 0,
+      "candidate_verify_mean_us": 16027.920040281973,
+      "proposal_mean_us": 10983.480362537764,
+      "commit_mean_us": 1524.2773791540785,
+      "lineage": {
+        "applied": 6000,
+        "cycles": 23533266384,
+        "fee": 12000000,
+        "head_updates": 12000,
+        "serial_replay_us": 4560285
+      },
+      "signed_set_sha256": "26ba497aebeb40ed3b936a6a9c9abbc8e1105bc6ce921a96e0fbdbdfe2fe4b60"
+    },
+    {
+      "file": "2-reuse-200.json.xz",
+      "replicas": 16,
+      "seconds": 60,
+      "planned": 12000,
+      "written": 12000,
+      "admitted": 12000,
+      "visible": 12000,
+      "drops": 0,
+      "visible_tps": 198.0,
+      "p99_common_us": 1058442,
+      "p99_client_queue_us": 16,
+      "p99_client_response_us": 69995,
+      "cpu_seconds": 214.13,
+      "peak_sampled_node_rss_kib": 138896,
+      "process_write_B_per_confirmed_replica": 0.0,
+      "wal_bytes": 869016735,
+      "compaction_jobs_creating_files": 0,
+      "sst": {
+        "flush": {
+          "files": 16,
+          "bytes": 232810059
+        },
+        "compaction": {
+          "files": 0,
+          "bytes": 0
+        },
+        "recovery": {
+          "files": 1,
+          "bytes": 2642459
+        },
+        "other": {
+          "files": 0,
+          "bytes": 0
+        }
+      },
+      "batch": {
+        "finality_serialized": 745974030,
+        "finality_sync_microseconds": 9783289,
+        "finality_writes": 4768,
+        "journal_serialized": 123042705,
+        "journal_sync_microseconds": 600408,
+        "journal_writes": 9061
+      },
+      "agreed_height": 302,
+      "workload_sha256": "0a7224bd82a26d3cb320c50ee5b197dcff8ee73396ac5aefb5ab0f2f76844906",
+      "genesis_sha256": "1894997669881b60a6cd276e4f804d4cbf7a7f4874b8c79783b9b1f491e6ed81",
+      "observer_errors": 0,
+      "candidate_verify_mean_us": 34469.85436241611,
+      "proposal_mean_us": 23809.31879194631,
+      "commit_mean_us": 2350.669672818792,
+      "lineage": {
+        "applied": 12000,
+        "cycles": 47066533125,
+        "fee": 24000000,
+        "head_updates": 24000,
+        "serial_replay_us": 8402624
+      },
+      "signed_set_sha256": "86c936d44efc2dda3f1df1e89e6bccef405d96886dc985dd3386ad14e0820d0c"
+    },
+    {
+      "file": "3-reference-200.json.xz",
+      "replicas": 16,
+      "seconds": 60,
+      "planned": 12000,
+      "written": 12000,
+      "admitted": 12000,
+      "visible": 12000,
+      "drops": 0,
+      "visible_tps": 198.13333333333333,
+      "p99_common_us": 918556,
+      "p99_client_queue_us": 15,
+      "p99_client_response_us": 58437,
+      "cpu_seconds": 206.03,
+      "peak_sampled_node_rss_kib": 138352,
+      "process_write_B_per_confirmed_replica": 0.0,
+      "wal_bytes": 875205407,
+      "compaction_jobs_creating_files": 0,
+      "sst": {
+        "flush": {
+          "files": 16,
+          "bytes": 232064118
+        },
+        "compaction": {
+          "files": 0,
+          "bytes": 0
+        },
+        "recovery": {
+          "files": 1,
+          "bytes": 2853841
+        },
+        "other": {
+          "files": 0,
+          "bytes": 0
+        }
+      },
+      "batch": {
+        "finality_serialized": 752119315,
+        "finality_sync_microseconds": 9432172,
+        "finality_writes": 4816,
+        "journal_serialized": 123086092,
+        "journal_sync_microseconds": 629965,
+        "journal_writes": 9108
+      },
+      "agreed_height": 306,
+      "workload_sha256": "0a7224bd82a26d3cb320c50ee5b197dcff8ee73396ac5aefb5ab0f2f76844906",
+      "genesis_sha256": "1894997669881b60a6cd276e4f804d4cbf7a7f4874b8c79783b9b1f491e6ed81",
+      "observer_errors": 0,
+      "candidate_verify_mean_us": 32366.742414174973,
+      "proposal_mean_us": 22854.481727574752,
+      "commit_mean_us": 2233.501245847176,
+      "lineage": {
+        "applied": 12000,
+        "cycles": 47066533125,
+        "fee": 24000000,
+        "head_updates": 24000,
+        "serial_replay_us": 8499123
+      },
+      "signed_set_sha256": "86c936d44efc2dda3f1df1e89e6bccef405d96886dc985dd3386ad14e0820d0c"
+    }
+  ],
+  "parser": {
+    "0-reference-timing": [
+      118.42,
+      114.308,
+      106.65,
+      105.743,
+      104.432,
+      105.092,
+      107.815,
+      104.728,
+      106.047,
+      108.211,
+      105.303,
+      106.176,
+      105.485,
+      105.442,
+      106.979,
+      105.721,
+      106.78
+    ],
+    "1-reuse-timing": [
+      23.588,
+      22.996,
+      22.98,
+      23.134,
+      22.89,
+      22.874,
+      22.375,
+      22.62,
+      22.578,
+      22.506,
+      22.48,
+      22.539,
+      22.568,
+      22.568,
+      22.478,
+      22.501,
+      22.534
+    ],
+    "2-reuse-timing": [
+      22.619,
+      22.761,
+      22.598,
+      23.931,
+      22.275,
+      22.431,
+      22.35,
+      22.301,
+      22.254,
+      22.358,
+      22.406,
+      22.46,
+      22.25,
+      22.441,
+      22.304,
+      22.219,
+      22.363
+    ],
+    "3-reference-timing": [
+      108.713,
+      107.009,
+      105.451,
+      104.961,
+      105.039,
+      105.034,
+      106.413,
+      105.069,
+      104.912,
+      107.407,
+      104.96,
+      104.701,
+      105.123,
+      105.23,
+      104.603,
+      104.905,
+      104.901
+    ]
+  },
+  "guest": {
+    "reference-test": "\nrunning 2 tests\ntest repeated_contract_parser_timing ... ignored, pinned CPU parser timing for four real Stem contracts\ntest repeated_headers_load_current_bytes_and_keep_parse_results ... ELF differential digest d544836c2a4efef2bfa9cf304c25062ff3d5234d7cde97dc9210eab70e0d9f0f\nok\n\ntest result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+    "reuse-test": "\nrunning 2 tests\ntest repeated_contract_parser_timing ... ignored, pinned CPU parser timing for four real Stem contracts\ntest repeated_headers_load_current_bytes_and_keep_parse_results ... ELF differential digest d544836c2a4efef2bfa9cf304c25062ff3d5234d7cde97dc9210eab70e0d9f0f\nok\n\ntest result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+  },
+  "test_log": "   Compiling subtle v2.6.1\n   Compiling const-oid v0.9.6\n   Compiling generic-array v0.14.7\n   Compiling ckb-vm v0.24.15 (/home/arthur/a19q3/stem/vendor/ckb-vm)\n   Compiling base16ct v0.2.0\n   Compiling der v0.7.10\n   Compiling ff v0.13.1\n   Compiling group v0.13.0\n   Compiling block-buffer v0.10.4\n   Compiling crypto-common v0.1.7\n   Compiling sec1 v0.7.3\n   Compiling crypto-bigint v0.5.5\n   Compiling digest v0.10.7\n   Compiling sha2 v0.10.9\n   Compiling signature v2.2.0\n   Compiling sha-1 v0.10.1\n   Compiling sha1 v0.10.6\n   Compiling curve25519-dalek v4.1.3\n   Compiling hmac v0.12.1\n   Compiling elliptic-curve v0.13.8\n   Compiling ed25519 v2.2.3\n   Compiling rfc6979 v0.4.0\n   Compiling ssri v9.2.0\n   Compiling tentacle-multiaddr v0.3.7\n   Compiling ecdsa v0.16.9\n   Compiling cacache v13.1.0\n   Compiling k256 v0.13.4\n   Compiling ed25519-dalek v2.2.0\n   Compiling ckb-chain-spec v1.1.3 (https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3#119598b0)\n   Compiling stem-stake v0.1.0 (/home/arthur/a19q3/stem/stake)\n   Compiling stem-ledger v0.1.0 (/home/arthur/a19q3/stem/ledger)\n   Compiling ckb-app-config v1.3.1 (https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3#119598b0)\n   Compiling ckb-db v1.1.2 (https://github.com/nervosnetwork/ckb?rev=119598b0a1146a569068ac80bdba7eb5f6292fd3#119598b0)\n   Compiling ckb-script v1.2.1 (/home/arthur/a19q3/stem/vendor/ckb-script)\n   Compiling stem-vm v0.1.0 (/home/arthur/a19q3/stem/vm)\n   Compiling stem v0.1.0 (/home/arthur/a19q3/stem)\n    Finished `release` profile [optimized] target(s) in 15.90s\n     Running tests/native_store.rs (target/release/deps/native_store-0493adf3c4174b6a)\n\nrunning 43 tests\ntest comet::four_node_native_finality_restart_and_app_hash ... ignored, runs four real CometBFT binaries; set STEM_TEST_COMET\ntest jolteon::native_default_preserves_polytype_intent_lineage_and_keeper ... ignored, runs four native Stem processes and real RISC-V contracts\ntest jolteon::ordinary_jolteon_databases_drop_expired_proposals_and_certificates ... ignored, inspect a stopped four-replica run produced by --check-pruning\ntest keeper::measure_keeper_slots ... ignored, matched local measurement of a configured idle Keeper and four due commands\ntest keeper::measure_keeper_time_agenda ... ignored, matched local measurement of a full sleeping agenda and a timed burst\ntest keeper_load::sustained_keeper_load ... ignored, sustained real native Jolteon load with Keeper and ordinary payments\ntest lineage::measure_dynamic_lineage_updates ... ignored, matched local Store benchmark using signed Lineage commands and native RISC-V\ntest lineage::measure_explicit_lineage_updates ... ignored, matched local signed Lineage lifecycle workload\ntest lineage::measure_lineage_hotspot_amm ... ignored, matched local Store benchmark of one shared AMM reserve\ntest lineage_load::measure_lineage_admission_groups ... ignored, matched admission checks over signed AMM commands and a fixed finalized tip\ntest lineage_selection::measure_exhausted_lineage_selection ... ignored, paired proposer selection measurement with a full logical read budget\ntest measure_commit_with_fixed_changes_and_varying_state_and_history ... ignored, local RocksDB commit performance comparison\ntest sponsored_lineage::measure_sponsored_lineage_settlement ... ignored, local bilateral settlement measurement\ntest staking::opens_native_genesis_from_ckb_guardian_observations ... ignored, uses actual CKB observations from tools/native_stake_localnet.py\ntest storage_load::sustained_lineage_load ... ignored, sustained real native Jolteon Lineage commands\ntest storage_load::sustained_payment_storage ... ignored, locally replicated sustained payment and storage experiment\ntest lineage::proposal_read_prefilter_preserves_a_fee_only_lineage_result ... ok\ntest rejects_expiry_same_block_relative_locks_and_unfunded_outputs ... ok\ntest resource_fees_bound_cycles_in_parallel_and_cached_execution ... ok\ntest lineage::lineage_amm_enforces_slippage_payer_and_two_asset_groups ... ok\ntest sponsored_lineage::bilateral_lineage_actors_and_sponsor_are_independent_and_cannot_replay ... ok\ntest keeper::paired_signature_cannot_authorize_a_keeper_action ... ok\ntest candidate_branch_executes_outputs_without_mutating_the_finalized_store ... ok\ntest lineage::wallet_builds_and_seals_the_native_lineage_command ... ok\ntest sponsored_lineage::wallet_collects_business_seals_before_binding_and_signing_the_fee ... ok\ntest lineage_batch::a_child_type_script_vetoes_the_entire_lineage_batch ... ok\ntest wallet_finds_cells_by_complete_script_identity ... ok\ntest lineage_batch::keeper_retry_is_prepaid_bounded_and_persists_its_next_height ... ok\ntest lineage::lineage_commands_resolve_latest_heads_and_commit_atomically ... ok\ntest keeper::keeper_automatically_executes_committed_commands_after_restore ... ok\ntest lineage::lineage_registry_orders_versions_authenticates_heads_and_excludes_recycling ... ok\ntest storage_load::storage_metrics_partition_committed_batches_and_snapshot_restore ... ok\ntest vm_crypto_activation_changes_genesis_and_reopen_checks_it ... ok\ntest bridge::bridge_mint_burn_and_payout_commit_backing_and_replay_state ... ok\ntest staking::snapshot_replay_and_deferred_committee_update_survive_restart ... ok\ntest parallel_waves_preserve_receipts_conflicts_and_block_cycles ... ok\ntest keeper::keeper_time_uses_parent_header_and_bounded_slots_after_restore ... ok\ntest lineage_batch::keeper_batches_recover_and_release_all_sponsor_reservations ... ok\ntest sync_commit_reopen_and_prove_the_native_execution ... ok\ntest intent::signed_asset_pairs_and_fee_sponsorship_enforce_execution_scope ... ok\ntest intent::independently_signed_actions_follow_script_identity_after_pair_reordering ... ok\ntest lineage_batch::batch_recombination_authenticates_order_and_rolls_back_a_late_failure ... ok\ntest jolteon::concurrent_admission_checks_each_signed_wire_identity ... ok\n\ntest result: ok. 27 passed; 0 failed; 16 ignored; 0 measured; 0 filtered out; finished in 1.81s\n\n     Running tests/native.rs (target/release/deps/native-f01feff67852ba14)\n\nrunning 12 tests\ntest resolved_job_scheduling::measure_resolved_job_schedules ... ignored, matched independent verification scheduling experiment\ntest payment_verification_reuses_cycles_after_the_parent_changes ... ok\ntest complete_authorization_binds_input_data_and_dep_group_members ... ok\ntest separate_lock_groups_collect_seals_independently ... ok\ntest crypto_v1_guest_uses_genesis_rules_and_fixed_cycle_limits ... ok\ntest multi_asset_settlement_runs_every_group_with_real_signature ... ok\ntest identity_lifecycle_and_single_type_asset_are_executed ... ok\ntest native_group_message_is_signed_and_owned_by_a_derived_group ... ok\ntest spawn_and_exec_read_the_same_native_script_group ... ok\ntest native_witness_proofs_and_seals_are_bound_to_the_resolved_groups ... ok\ntest measure_type_groups_with_matched_payment_fixture ... ok\ntest block_context_uses_committed_parent_time_and_partitions_cache ... ok\n\ntest result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.55s\n\n"
+}

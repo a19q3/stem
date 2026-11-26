@@ -1,0 +1,115 @@
+diff --git a/vendor/ckb-vm/Cargo.toml b/vendor/ckb-vm/Cargo.toml
+index 4aea629..59956f3 100644
+--- a/vendor/ckb-vm/Cargo.toml
++++ b/vendor/ckb-vm/Cargo.toml
+@@ -13,6 +13,7 @@ repository = "https://github.com/nervosnetwork/ckb-vm"
+
+ [features]
+ default = []
++elf-plan-reuse = []
+ # Require asm feature, generates an error if asm cannot be enabled.
+ asm = []
+ # Detect if requirements are met, and enable asm feature when we can.
+diff --git a/vendor/ckb-vm/src/elf.rs b/vendor/ckb-vm/src/elf.rs
+index c136302..f634e9f 100644
+--- a/vendor/ckb-vm/src/elf.rs
++++ b/vendor/ckb-vm/src/elf.rs
+@@ -132,7 +132,84 @@ pub struct ProgramMetadata {
+     pub entry: u64,
+ }
+
++#[cfg(feature = "elf-plan-reuse")]
++mod reuse {
++    use super::*;
++    use std::cell::RefCell;
++    use std::collections::VecDeque;
++
++    struct Entry {
++        version: u32,
++        length: usize,
++        header_table: Box<[u8]>,
++        metadata: ProgramMetadata,
++    }
++
++    thread_local! {
++        static CACHE: RefCell<VecDeque<Entry>> = const { RefCell::new(VecDeque::new()) };
++    }
++
++    // Only cache canonical little-endian ELF64 layouts with a contiguous, short
++    // program-header table. All bytes read by the parser lie in this prefix.
++    // Segment payload and memory are always loaded from the current program.
++    fn prefix<R: Register>(program: &[u8], version: u32) -> Option<&[u8]> {
++        if R::BITS != 64
++            || version < VERSION1
++            || program.get(..7)? != b"\x7fELF\x02\x01\x01"
++            || program.get(32..40)? != 64u64.to_le_bytes()
++            || program.get(52..56)? != [64, 0, 56, 0]
++        {
++            return None;
++        }
++        let count = usize::from(u16::from_le_bytes(program.get(56..58)?.try_into().ok()?));
++        if !(1..=8).contains(&count) {
++            return None;
++        }
++        program.get(..64 + 56 * count)
++    }
++
++    pub(super) fn parse<R: Register>(
++        program: &Bytes,
++        version: u32,
++    ) -> Result<ProgramMetadata, Error> {
++        let Some(prefix) = prefix::<R>(program, version) else {
++            return parse_uncached::<R>(program, version);
++        };
++        CACHE.with_borrow_mut(|cache| {
++            if let Some(entry) = cache.iter().find(|entry| {
++                entry.version == version
++                    && entry.length == program.len()
++                    && entry.header_table.as_ref() == prefix
++            }) {
++                return Ok(entry.metadata.clone());
++            }
++            let metadata = parse_uncached::<R>(program, version)?;
++            if cache.len() == 8 {
++                cache.pop_back();
++            }
++            cache.push_front(Entry {
++                version,
++                length: program.len(),
++                header_table: prefix.into(),
++                metadata: metadata.clone(),
++            });
++            Ok(metadata)
++        })
++    }
++}
++
+ pub fn parse_elf<R: Register>(program: &Bytes, version: u32) -> Result<ProgramMetadata, Error> {
++    #[cfg(feature = "elf-plan-reuse")]
++    {
++        reuse::parse::<R>(program, version)
++    }
++    #[cfg(not(feature = "elf-plan-reuse"))]
++    {
++        parse_uncached::<R>(program, version)
++    }
++}
++
++fn parse_uncached<R: Register>(program: &Bytes, version: u32) -> Result<ProgramMetadata, Error> {
+     // We did not use Elf::parse here to avoid triggering potential bugs in goblin.
+     // * https://github.com/nervosnetwork/ckb-vm/issues/143
+     let (entry, program_headers): (u64, Vec<ProgramHeader>) = if version < VERSION1 {
+diff --git a/vm/Cargo.toml b/vm/Cargo.toml
+index 942a887..b512436 100644
+--- a/vm/Cargo.toml
++++ b/vm/Cargo.toml
+@@ -6,6 +6,9 @@ rust-version = "1.95.0"
+ license = "MIT"
+ publish = false
+
++[features]
++elf-plan-reuse = ["ckb-vm/elf-plan-reuse"]
++
+ [dependencies]
+ anyhow.workspace = true
+ ckb-script = { workspace = true, default-features = false, features = ["detect-asm", "vm-reuse"] }
