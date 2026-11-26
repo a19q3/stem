@@ -122,6 +122,7 @@ available. Published network evidence contains public genesis and proof data.
 | Metatype object royalties | [Report](../BENCHMARKS.md#metatype-object-royalties), [signed payments, paired controls and rejection logs](2026-11-26-stem-metatype-royalty.json.xz) |
 | Metatype approval key rotation | [Report](../BENCHMARKS.md#metatype-approval-key-rotation), [registry records, signatures, proofs and failed rounds](2026-11-26-stem-metatype-rotation.json.xz) |
 | Metatype freeze and thaw | [Report](../BENCHMARKS.md#metatype-freeze-and-thaw), [registry updates, pending-return and thaw proofs, failed rounds](2026-11-26-stem-metatype-freeze.json.xz) |
+| Metatype quorum approval | [Report](../BENCHMARKS.md#metatype-quorum-approval), [signed round trips, independent proof checks, resource-limit failures and regressions](2026-11-26-stem-metatype-quorum.json.xz) |
 | Metatype ceiling decreases | [Report](../BENCHMARKS.md#metatype-ceiling-decreases), [oversized import and return proofs, repaired states and failures](2026-11-26-stem-metatype-ceiling.json.xz) |
 | Recovering Metatype ceiling proofs from CKB | [Report](../BENCHMARKS.md#recovering-metatype-ceiling-proofs-from-ckb), [recovery requests, restarts, reorg and finalized proofs](2026-11-26-stem-metatype-ceiling-recovery.json.xz) |
 | On-demand VM code dependency indexing | [Report](../BENCHMARKS.md#on-demand-vm-code-dependency-indexing), [resolver samples, signed workloads, Jolteon and CKB runs](2026-11-26-stem-program-resolution.json.xz) |

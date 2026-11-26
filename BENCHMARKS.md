@@ -5433,6 +5433,72 @@ public-key decoder.
 
 [Registry changes, signed tests, pending and released proofs, measurements and failed runs](benchmarks/2026-11-26-stem-metatype-freeze.json.xz).
 
+## Metatype quorum approval
+
+Five rounds on four Jolteon replicas and a real CKB devnet
+issued, exported, transferred, burned and recovered the same
+object within each round. The inline pair used the same immutable
+profile for single- and double-signature approval. The shared
+Manifest rounds used a revisable object with a live CKB size rule.
+Each round rotated the roster while the object was on CKB and
+froze the object before burn and again before the pending Stem
+release. All five returned the original constraints to Stem and
+consumed the same pending Inbox message after thaw.
+
+| Manifest and quorum | CKB import bytes / cycles | CKB transfer bytes / cycles | CKB burn bytes / cycles | Stem export bytes / cycles | Stem release bytes / cycles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Inline, 1 of 1 | 3,205 / 7,605,250 | 1,773 / 6,700,042 | 2,015 / 6,777,867 | 2,612 / 18,217,493 | 3,249 / 16,297,491 |
+| Inline, 2 of 3 | 3,167 / 9,746,034 | 1,837 / 8,814,415 | 2,079 / 8,866,662 | 2,740 / 20,337,838 | 3,377 / 18,413,801 |
+| Shared, 2 of 3 | 2,936 / 10,290,004 | 1,622 / 9,357,049 | 2,361 / 9,444,274 | 3,261 / 20,363,224 | 4,292 / 18,456,744 |
+| Shared, 3 of 5 | 3,102 / 12,443,734 | 1,686 / 11,528,899 | 2,425 / 11,555,685 | 3,389 / 22,490,757 | 4,420 / 20,521,177 |
+| Shared, 8 of 8 | 3,320 / 23,160,153 | 2,006 / 22,299,818 | 2,745 / 22,342,342 | 3,805 / 32,960,279 | 4,836 / 31,050,991 |
+
+CKB import sizes include the variable Jolteon checkpoint witness.
+The quorum proof itself occupied 65, 129, 193 and 513 bytes for
+one, two, three and eight signatures. CKB approval registry data
+occupied 42, 106, 170 and 266 bytes for the corresponding rosters.
+The mapped object occupied 684 CKB in both inline rounds and
+301 CKB in the shared revisable profile. The paired inline release
+added 2,116,310 cycles and 128 transaction bytes for two signers.
+The increment consists of one 64-byte signature in the group
+Proof Data and two additional 32-byte keys in the authenticated
+L1 registry record.
+See the raw receipts and witnesses for the individual sizes.
+
+The first 20-million-cycle development runs stopped at native
+validation, and the explicit default-limit rerun reproduced the
+cycle-exhaustion result. The 1-of-1, 2-of-3 and 3-of-5 comparison
+used the same 28-million-cycle fixture limit. The 8-of-8 round
+used 40 million cycles. The fixture's default remains 20 million.
+The cycle bounds and transaction fees applied to every committed
+transaction. These runs measured individual operations, with raw
+CKB submit-through-local-mining timings in the archive.
+
+Both hosts rejected underfilled, duplicated, out-of-order and
+foreign-network signatures for applicable roster sizes. They
+rejected an out-of-roster bitmap when the roster used fewer than
+eight positions. The CKB registry rejected malformed keys,
+thresholds, generations and unauthorized controller changes.
+Stem rejected historical inclusion as a substitute for a live
+record. CKB rejected a consumed registry Cell Dep. The offline
+checker independently verified the selected signatures, including
+valid quorums that the two chains rejected while frozen, and 45
+CKB transaction and witness inclusion proofs. The WASM verifier
+checked Jolteon finality, executions, continued escrow and the Inbox
+proofs before and after release. The 2-of-3 runs accepted all
+three signer subsets across the verified successful operations.
+
+The release workspace passed 494 tests. The Go proof suite and
+the frozen CometBFT build check also passed. The CKB and Stem
+network regressions covered workflow proofs, selective multiasset
+returns, Intercell, xUDT, fee payouts, funded committee handoff,
+Spore Cluster preservation, royalties and ceiling-proof recovery.
+
+Reproduce with the rotating approval fixture in [OPERATIONS.md](OPERATIONS.md).
+The archive contains exact commands, build fingerprints, signed
+transactions, fixtures, verification scripts and unsuccessful
+attempts. [Quorum experimental records](benchmarks/2026-11-26-stem-metatype-quorum.json.xz).
+
 ## Metatype ceiling decreases
 
 Four Jolteon replicas and a real CKB devnet ran two revisable objects
