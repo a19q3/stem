@@ -992,6 +992,15 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                                       ("ckb_wrong_content_length", len(data)-1, ckb_hash(data))]:
             msg = packet(label, False, script_hash(owner), 0, wire_content=b"SPH1"+le(length, 4)+digest)
             rejected[label] = ckb_reject(deposit(label, policy=msg), 113)
+    if args.spore_handoff:
+        mime, body, cluster_field = [int.from_bytes(data[i:i+4], "little") for i in (4, 8, 12)]
+        content = data[body+4:cluster_field]
+        for label, alternative in (("changed_content_byte", bytes([content[0] ^ 1]) + content[1:]),
+                                   ("shortened_content", content[:-1])):
+            changed = table(data[mime:body], molecule_bytes(alternative), data[cluster_field:])
+            advertised = packet(label, False, script_hash(owner), 0, changed)
+            rejected[label] = ckb_reject(deposit(label, content=changed, policy=advertised), 112)
+            assert escrow_code.hex() in rejected[label], rejected[label]
     held_signed = deposit("deposit")
     held_cycles = estimate(held_signed)
     rejected["ckb_deposit_without_original"] = ckb_reject(deposit("fake-deposit", move=False), 111)

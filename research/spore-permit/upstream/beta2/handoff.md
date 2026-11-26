@@ -13,6 +13,8 @@ A native wallet spent its existing Stem-issued title directly to a second wallet
 
 Three further devnets began with a CKB-issued Spore. Wallet A imported its representation, signed it over to wallet B and received it back under a second grant. A then retired the representation, redeemed the original on CKB and sent it to B. B deposited the Spore and received a new native representation. In both Cluster trials the collection changed owners between the final custody rotation and redemption. The member's next CKB transaction used the successor collection Cell. All four replicas agreed at heights 47, 58 and 49 in table order. [Compact import](handoff-import-compact.json.xz) · [Cluster import with stale grant](handoff-import-cluster.json.xz) · [496 KiB import](handoff-import-large.json.xz)
 
+The six rows measure the original handoff escrow. A subsequent ten-devnet comparison reduced the CKB cost of the 496 KiB route by about 36% on both origins. [Comparison and selected contract](cost/README.md)
+
 The measured CKB cost covers the signed transaction estimated by the devnet node and subsequently committed. Stem cycles come from the certified execution receipt. All four validators agreed in each local devnet. All four clustered cases also produced a separate verified collection history at the final member anchor. These runs used the published testnet Spore, interpreter and ordinary Cluster binaries and the logging programs documented in the original custody experiments. [Release identities and registration programs](README.md)
 
 ```mermaid

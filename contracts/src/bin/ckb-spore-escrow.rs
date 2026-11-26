@@ -203,9 +203,11 @@ fn verify() -> Result<(), i8> {
             && code.as_slice() == TESTNET_SPORE_BETA2
             && SporeData::custody_mutant(&output).is_some());
     if (!first_export
-        && stem_contracts::metatype::bounded_data(input_index, Source::Input, MAX_CELL_SPORE_DATA)
+        && (stem_contracts::metatype::cell_data_length(input_index, Source::Input)
             .map_err(|_| 110)?
-            != output)
+            != output.len()
+            || load_cell_data_hash(input_index, Source::Input).map_err(|_| 110)?
+                != load_cell_data_hash(spore_output, Source::Output).map_err(|_| 110)?))
         || !supported
         || load_cell_capacity(input_index, Source::Input).map_err(|_| 110)?
             != load_cell_capacity(spore_output, Source::Output).map_err(|_| 110)?
