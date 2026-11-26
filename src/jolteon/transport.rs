@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
+use bytes::Buf;
 use prost::Message;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -321,9 +322,9 @@ async fn read(stream: &mut TcpStream) -> Result<Vec<u8>> {
 
 async fn write(stream: &mut TcpStream, bytes: &[u8]) -> Result<()> {
     ensure!(bytes.len() <= wire::MAX_FRAME, "oversize consensus frame");
-    stream.write_u32(bytes.len() as u32).await?;
+    let prefix = (bytes.len() as u32).to_be_bytes();
     stream
-        .write_all(bytes)
+        .write_all_buf(&mut Buf::chain(prefix.as_slice(), bytes))
         .await
         .context("write consensus frame")
 }
@@ -441,6 +442,25 @@ mod tests {
             (frame.sender, frame.epoch, frame.kind, frame.body),
             (0, 3, wire::QUORUM, vec![2, 3])
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn large_frame_preserves_following_frame() -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let mut client = TcpStream::connect(listener.local_addr()?).await?;
+        let (mut server, _) = listener.accept().await?;
+        let payload = vec![0xa5; 4 * 1024 * 1024];
+        let send = async {
+            write(&mut server, &payload).await?;
+            write(&mut server, b"next").await
+        };
+        let receive = async {
+            assert_eq!(read(&mut client).await?, payload);
+            assert_eq!(read(&mut client).await?, b"next");
+            Ok::<_, anyhow::Error>(())
+        };
+        timeout(IO_TIMEOUT, async { tokio::try_join!(send, receive) }).await??;
         Ok(())
     }
 }

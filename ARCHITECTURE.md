@@ -194,6 +194,9 @@ replies before reading the next request and retires the connection
 after 256 submissions or one second without a complete next frame.
 Submission connections use the existing connection limit and the
 application queue. Query and peer paths use their existing streams.
+Every frame uses a four-byte big-endian length. Replica writes send
+the prefix and body together with vectored I/O. The Rust client
+encodes each request directly into a prefixed packet.
 
 Admission checks individual transactions against the finalized tip
 on the replica thread. Parallel block execution uses the VM pool.

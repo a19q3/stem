@@ -235,9 +235,12 @@ impl Client {
             kind,
             body,
             epoch: 0,
-        }
-        .encode_to_vec();
-        ensure!(frame.len() <= wire::MAX_FRAME, "oversized request");
+        };
+        let length = frame.encoded_len();
+        ensure!(length <= wire::MAX_FRAME, "oversized request");
+        let mut packet = Vec::with_capacity(4 + length);
+        packet.extend_from_slice(&(length as u32).to_be_bytes());
+        frame.encode(&mut packet)?;
         let pool = self.submissions.as_ref().filter(|_| kind == wire::SUBMIT);
         let previous = pool.and_then(|pool| {
             let mut idle = pool.lock().expect("submission pool");
@@ -260,7 +263,7 @@ impl Client {
             progress.connected_at = Some(Instant::now());
             progress.reused_connection = sent != 0;
         }
-        let response = exchange(&mut socket, &frame, progress)?;
+        let response = exchange(&mut socket, &packet, progress)?;
         if let Some(pool) = pool
             && sent + 1 < wire::SUBMIT_SESSION_REQUESTS
         {
@@ -282,11 +285,10 @@ impl Client {
 
 fn exchange<T: DeserializeOwned>(
     socket: &mut TcpStream,
-    frame: &[u8],
+    packet: &[u8],
     mut progress: Option<&mut SubmissionProgress>,
 ) -> Result<Response<T>> {
-    socket.write_all(&(frame.len() as u32).to_be_bytes())?;
-    socket.write_all(frame)?;
+    socket.write_all(packet)?;
     if let Some(progress) = progress.as_deref_mut() {
         progress.frame_written_at = Some(Instant::now());
     }
