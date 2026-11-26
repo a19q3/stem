@@ -21,9 +21,12 @@ def assets(args, l1, registration, wallet):
     available = int(funding["json"]["outputs"][3]["capacity"], 16)
     budget = 1000 * CKB
     occupied = (len(code) + 200) * CKB
-    amounts = [occupied, budget, budget, available - occupied - 2 * budget - FEE]
+    amounts = [occupied, budget, budget]
+    if args.second_mutant:
+        amounts += [budget, budget]
+    amounts.append(available - sum(amounts) - FEE)
     tx = transaction([point(funding["hash"], 3)], [output(n, wallet.standard) for n in amounts],
-                     [hex_bytes(code), "0x", "0x", "0x"], [secp])
+                     [hex_bytes(code)] + ["0x"] * (len(amounts) - 1), [secp])
     deployed = l1.send(wallet.sign("deploy-spore", tx, [wallet_group(0, [wallet.faucet])]))
     deps = [secp, dependency(point(deployed, 0))]
     registered = [dependency(point(funding["hash"], i)) for i in (0, 1)]
@@ -36,14 +39,27 @@ def assets(args, l1, registration, wallet):
         return {"hash": tx_hash, "cycles": cycles, "inclusion": l1.prove_committed(tx_hash),
                 "signed": signed}
 
-    for i, label in [(1, "plain"), (2, "mutant")]:
+    programs = [(registration["type"], b"print('hello world')")]
+    cases = [(1, "plain", 0), (2, "mutant", 1)]
+    if args.second_mutant:
+        index = 4
+        registry_id = ckb_hash(le(0, 8) + binary(deployed) + le(index, 4) + le(0, 8))
+        second = script("0x" + ISSUER, hex_bytes(registry_id), "data1")
+        source = b"print('second registration')"
+        creation = transaction([point(deployed, index)], [output(budget - FEE, wallet.owner_lock, second)],
+                               [hex_bytes(source)], [secp, *registered[:2]])
+        created = commit("second-registration", creation, wallet.faucet)
+        programs.append((second, source))
+        registered.append(dependency(point(created["hash"], 0)))
+        cases.append((3, "two-mutants", 2))
+    for i, label, count in cases:
         asset_id = ckb_hash(le(0, 8) + binary(deployed) + le(i, 4) + le(0, 8))
         ty = script("0x" + SPORE, hex_bytes(asset_id), "data1")
         mime = b"plain/test"
         asset_deps = deps
-        if label == "mutant":
-            mime += b";mutant[]=" + registration["type"]["args"][2:].encode()
-            asset_deps = deps + registered
+        if count:
+            mime += b";mutant[]=" + b",".join(r["args"][2:].encode() for r, _ in programs[:count])
+            asset_deps = deps + registered[:2 + count]
         data = table(molecule_bytes(mime), molecule_bytes(b"mutant spore"), b"")
         mint = transaction([point(deployed, i)], [output(budget-FEE, wallet.owner_lock, ty)],
                            [hex_bytes(data)], asset_deps)
@@ -62,11 +78,11 @@ def assets(args, l1, registration, wallet):
                "required_states": [{"lock_hash": hex_bytes(script_hash(wallet.friend_lock)),
                                     "data_hash": hex_bytes(ckb_hash(data))}]}
         req["required_dependencies"] = [{"data_hash": "0x" + SPORE}]
-        if label == "mutant":
+        if count:
             req["required_dependencies"] += [
                 {"data_hash": "0x" + ISSUER}, {"data_hash": "0x" + LIB},
-                {"type_hash": hex_bytes(script_hash(registration["type"])),
-                 "data_hash": hex_bytes(ckb_hash(b"print('hello world')"))},
+                *[{"type_hash": hex_bytes(script_hash(r)), "data_hash": hex_bytes(ckb_hash(source))}
+                  for r, source in programs[:count]],
             ]
         req_path = args.output / (label + "-request.json")
         history = args.output / (label + "-history.json")
@@ -85,6 +101,7 @@ if __name__ == "__main__":
     for name in ["binary", "l1", "extension", "lua", "spore", "output"]:
         parser.add_argument("--" + name, type=lambda p: Path(p).resolve(), required=True)
     parser.add_argument("--l1-port", type=int, required=True)
+    parser.add_argument("--second-mutant", action="store_true", help="also exercise two registered programs on the same Spore")
     args = parser.parse_args()
     args.output.mkdir(mode=0o700)
     node = L1(args)

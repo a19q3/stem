@@ -606,8 +606,10 @@ def main():
                         help="use restricted checkpoint Lock for the PoW Security Fund")
     for name in ("export-udt", "asset-escrow", "ckb-stem-udt"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
-    for name in ("stem-spore", "ckb-spore-escrow", "spore-v2", "spore-mutant-lua", "ckb-lua-library", "spore-mutant-program"):
+    for name in ("stem-spore", "ckb-spore-escrow", "spore-v2", "spore-mutant-lua", "ckb-lua-library"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
+    parser.add_argument("--spore-mutant-program", type=lambda path: Path(path).resolve(), action="append",
+                        help="register this Lua source and include its ID in the Spore, in argument order")
     parser.add_argument("--spore-cluster-v2", type=lambda path: Path(path).resolve(),
                         help="mint the fixture in a Cluster using its published CKB ELF")
     for name in ("stem-native-object", "object-policy", "ckb-stem-object",

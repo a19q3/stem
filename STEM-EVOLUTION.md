@@ -123,4 +123,6 @@ Xuejie 的软件定义账户文章说明了如何在 UTXO 上构建可编程状�
 
 Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验证检查点 BLS 证明的思路。Stem 直接检查点从固定的创世委员承诺开始，逐块验证独立 Ed25519 签名及后继委员承诺。真实上链成本与百委员 VM 探针见[基准测试](BENCHMARKS.md#direct-ckb-finality)。Image Cell 的状态导入和只读访问用于比较接口。对 Stem 而言，未消费状态仍需证明锚点上的 Live Cell 状态。[Axon 质押与检查点](https://github.com/axonweb3/axon/discussions/898) [Axon Image Cell](https://github.com/axonweb3/axon/discussions/896)
 
+第 20 项已在 CKB 首发与 Stem 首发两条路径验证了同一原件引用两份独立 Lua 注册的情况。两轮各有五次 CKB 状态转换，离线复验逐次核对两份注册的 Type 和代码哈希。Stem 首发的原件已在 CKB 销毁并退还原生押金。任意脚本控制的直接原生换手与 Cluster 扩展仍待验收。[双注册实测与原始证明](research/spore-permit/upstream/beta2/README.md#two-registrations-on-one-spore)
+
 第 10 项用同一批 54 万笔签名支付复测了提议间隔。单机四副本、64 个发送线程、原区块上限下，两次 250 ms 的窗口吞吐为 1,720.67 和 1,698.24 TPS，两次 100 ms 为 2,079.95 和 2,099.64 TPS。后两次从套接字写入到全副本共同可见的 p99 为 1.32 和 1.25 秒。独立验证者主机仍需复测 3,000、5,000 和 10,000 TPS。[签名归档、计时分解与投递实验](research/storage/proposal-cadence/README.md)

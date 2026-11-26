@@ -929,7 +929,7 @@ An optional `required_dependencies` array on the Type history request pins a `da
 
 #### Published beta.2 Lua Mutant
 
-Use the beta.2 testnet Spore, Lua interpreter and library with the four-validator settlement command above. Add `--spore-mutant-lua "$interpreter" --ckb-lua-library "$library" --spore-type-history`. The CKB-origin fixture uses `--stem-spore`. The Stem-origin fixture uses `--native-spore-origin` and can add `--native-spore-sync-melt` for a program that permits destruction. The ordinary CKB wallet includes the live registration, interpreter and library as CellDeps. Multiple registrations and Cluster extension programs require separate profiles. [Expected hashes, lifecycle and verification commands](research/spore-permit/upstream/beta2/README.md)
+Use the beta.2 testnet Spore, Lua interpreter and library with the four-validator settlement command above. Add `--spore-mutant-lua "$interpreter" --ckb-lua-library "$library" --spore-type-history`. The CKB-origin fixture uses `--stem-spore`. The Stem-origin fixture uses `--native-spore-origin` and can add `--native-spore-sync-melt` for a program that permits destruction. The ordinary CKB wallet includes the live registration, interpreter and library as CellDeps. Repeat `--spore-mutant-program` for each Lua source to register, in the desired MIME order. The archived two-registration profile verifies both Type and program hashes at each CKB transition. Cluster extension programs require a separate profile. [Expected hashes, lifecycle and verification commands](research/spore-permit/upstream/beta2/README.md)
 
 #### Large-content execution cost
 

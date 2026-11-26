@@ -9,12 +9,15 @@ const sdk = await import(new URL("stem_wasm.js", folder));
 await sdk.default({ module_or_path: await readFile(new URL("stem_wasm_bg.wasm", folder)) });
 const bytes = (s) => Buffer.from(s.replace(/^0x/, ""), "hex");
 const trust = JSON.parse(await readFile(new URL("committee-trust.json", import.meta.url)));
-const archive = new URL("histories.json.xz", import.meta.url);
-const evidence = JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 32*1024*1024}));
+const evidence = {};
+for (const filename of ["histories.json.xz", "two-registrations.json.xz"]) {
+    const archive = new URL(filename, import.meta.url);
+    Object.assign(evidence, JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 32*1024*1024})));
+}
 for (const [name, root] of Object.entries(trust)) {
     const record = evidence[name].settlement;
     const verifier = new sdk.StemVerifier(bytes(root.network_id), bytes(root.genesis_id), bytes(root.initial_committee));
-    const transactions = name === "import"
+    const transactions = "imported" in record
         ? { imported: record.imported, burned: record.burned, reimported: record.reimported }
         : { issue: record.issued, lock: record.locked, restore: record.restored, relock: record.relocked,
             retire: record.standard_melt.retired };

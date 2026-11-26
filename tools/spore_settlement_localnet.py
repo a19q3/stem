@@ -119,7 +119,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         lua_code, lua_lib = args.spore_mutant_lua.read_bytes(), args.ckb_lua_library.read_bytes()
         assert ckb_hash(lua_code) == MUTANT_BETA2 and ckb_hash(lua_lib) == LUA_LIB
         codes.extend([lua_code, lua_lib])
-        program = args.spore_mutant_program.read_bytes() if args.spore_mutant_program else b"print('hello world')"
+        programs = [path.read_bytes() for path in args.spore_mutant_program or ()] or [b"print('hello world')"]
+        spore_cap += (len(programs) - 1) * 65 * CKB
     issuer = None
     if args.ckb_spore_permit:
         issuer_code = args.ckb_spore_permit.read_bytes()
@@ -134,8 +135,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         funds += [(cluster_cap + FEE, fixture.standard), (spore_cap + proxy_cap + FEE, fixture.owner_lock)]
     if mutant:
         registration_index = len(codes) + len(funds)
-        registration_capacity = (200 + len(program)) * CKB
-        funds.append((registration_capacity + FEE, fixture.standard))
+        funds.extend(((200 + len(program)) * CKB + FEE, fixture.standard) for program in programs)
     if approved_origin:
         funds += [(150 * CKB, fixture.owner_lock), (150 * CKB, fixture.friend_lock)]
     if issuer:
@@ -172,15 +172,22 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
 
     mutant_registration = None
     if mutant:
-        registry = script(hex_bytes(MUTANT_BETA2), hex_bytes(type_id(registration_index)), "data1")
         deps += [dependency(point(funded, i)) for i in (3, 4)]
-        create = transaction([point(funded, registration_index)], [output(registration_capacity, fixture.owner_lock, registry)],
-                             [hex_bytes(program)], deps)
-        registered = submit_ckb(fixture.sign("register-mutant", create, [wallet_group(0, [fixture.faucet])]))
-        deps.append(dependency(point(registered["hash"], 0)))
-        mutant_registration = {"type": registry, "program": program.decode(), "created": registered,
-                               "required_dependencies": [{"data_hash": hex_bytes(h)} for h in (spore_hash, MUTANT_BETA2, LUA_LIB)]
-                               + [{"data_hash": hex_bytes(ckb_hash(program)), "type_hash": hex_bytes(script_hash(registry))}]}
+        entries = []
+        required = [{"data_hash": hex_bytes(h)} for h in (spore_hash, MUTANT_BETA2, LUA_LIB)]
+        for offset, program in enumerate(programs):
+            index = registration_index + offset
+            registry = script(hex_bytes(MUTANT_BETA2), hex_bytes(type_id(index)), "data1")
+            capacity = funds[index - len(codes)][0] - FEE
+            create = transaction([point(funded, index)], [output(capacity, fixture.owner_lock, registry)],
+                                 [hex_bytes(program)], deps)
+            name = "register-mutant" if offset == 0 else f"register-mutant-{offset + 1}"
+            registered = submit_ckb(fixture.sign(name, create, [wallet_group(0, [fixture.faucet])]))
+            entries.append({"type": registry, "program": program.decode(), "created": registered})
+            required.append({"data_hash": hex_bytes(ckb_hash(program)), "type_hash": hex_bytes(script_hash(registry))})
+        deps.extend(dependency(point(entry["created"]["hash"], 0)) for entry in entries)
+        mutant_suffix = b";mutant[]=" + b",".join(entry["type"]["args"][2:].encode() for entry in entries)
+        mutant_registration = {**(entries[0] if len(entries) == 1 else {"entries": entries}), "required_dependencies": required}
     mint_source = len(codes)
     cluster_id, cluster = b"", None
     rejected = {}
@@ -230,7 +237,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             mime = b"multipart/mixed;boundary=stem-boundary"
             content = b"--stem-boundary\r\nContent-Type: text/plain\r\n\r\nStem\r\n--stem-boundary--\r\n"
         if mutant:
-            mime += b";mutant[]=" + registry["args"][2:].encode()
+            mime += mutant_suffix
         data = table(molecule_bytes(mime + (b";immortal=true" if args.spore_immortal else b"")), molecule_bytes(content), b"")
         endpoint = script(stem_spore_code, hex_bytes((b"\x03" if mutant else b"\x02" if approved_origin else b"\x01")
             + original + route_fields + counterpart + (authority if approved_origin else b"")), "data")
@@ -245,7 +252,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         def spore_data(id_):
             mime = b"text/plain;immortal=true" if args.spore_immortal else b"text/plain"
             if mutant:
-                mime += b";mutant[]=" + registry["args"][2:].encode()
+                mime += mutant_suffix
             content = b"One Spore across two networks".ljust(args.spore_content_bytes, b"x")
             return table(molecule_bytes(mime), molecule_bytes(content),
                          molecule_bytes(id_) if id_ else b"")

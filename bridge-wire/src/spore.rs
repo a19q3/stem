@@ -328,20 +328,20 @@ impl<'a> SporeData<'a> {
         portable_content(mime, spore.content).then_some(spore)
     }
 
-    /// One unclustered canonical Mutant reference. Its program executes on CKB at custody changes.
+    /// Unclustered canonical Mutant references for CKB-authorized custody changes.
     pub fn custody_mutant(data: &'a [u8]) -> Option<Self> {
         let spore = Self::fields(data)?;
         let (base, suffix) = spore
             .content_type
             .split_at(spore.content_type.iter().position(|b| *b == b';')?);
-        let id = suffix.strip_prefix(b";mutant[]=")?;
+        let ids = suffix.strip_prefix(b";mutant[]=")?;
         (spore.cluster_id.is_none()
             && !spore.content.is_empty()
             && portable_mime(base)
-            && id.len() == 64
-            && id
-                .iter()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b)))
+            && ids.split(|b| *b == b',').all(|id| {
+                id.len() == 64
+                    && id.iter().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+            }))
         .then_some(spore)
     }
 
@@ -463,6 +463,8 @@ mod tests {
     fn mutant_payloads_use_only_the_custody_decoder() {
         let mut mime = b"text/plain;mutant[]=".to_vec();
         mime.extend_from_slice(&[b'a'; 64]);
+        mime.push(b',');
+        mime.extend_from_slice(&[b'9'; 64]);
         let content = 20 + mime.len() as u32;
         let total = content + 5;
         let mut data = [total, 16, content, total, mime.len() as u32]
@@ -477,6 +479,10 @@ mod tests {
         assert!(CellTransfer::decode(payload).is_none());
         assert!(SporeData::from_cell(&data).is_none());
         assert!(MeltReceipt::encode(&[1; 32], &[2; 32], &data).is_some());
+        let comma = 20 + b"text/plain;mutant[]=".len() + 64;
+        data[comma] = b';';
+        assert!(SporeData::custody_mutant(&data).is_none());
+        data[comma] = b',';
         data[content as usize - 1] = b'G';
         assert!(SporeData::custody_mutant(&data).is_none());
     }
