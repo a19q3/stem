@@ -15,7 +15,7 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
-    spore::{CKB_SPORE_CODE, SporeTransfer, plain_spore},
+    spore::{CKB_SPORE_CODE, SporeData, SporeTransfer},
 };
 
 entry!(main);
@@ -106,7 +106,7 @@ fn verify() -> Result<(), i8> {
     }
     let output = load_cell_data(spore_output, Source::Output).map_err(|_| 110)?;
     if (!first_export && load_cell_data(input_index, Source::Input).map_err(|_| 110)? != output)
-        || (counterpart.is_some() && !plain_spore(&output))
+        || (counterpart.is_some() && SporeData::unclustered(&output).is_none())
         || load_cell_capacity(input_index, Source::Input).map_err(|_| 110)?
             != load_cell_capacity(spore_output, Source::Output).map_err(|_| 110)?
     {

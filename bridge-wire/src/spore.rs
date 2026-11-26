@@ -70,6 +70,22 @@ fn basic_content_type(mime: &[u8]) -> bool {
     matches!(mime, b"text/plain" | b"application/octet-stream")
 }
 
+// A canonical parameter-free media type, optionally followed by the supported
+// immortal flag. Multipart content and executable extensions have extra rules.
+fn portable_mime(mime: &[u8]) -> bool {
+    let Some(slash) = mime.iter().position(|byte| *byte == b'/') else {
+        return false;
+    };
+    let token = |name: &[u8]| {
+        name.first().is_some_and(u8::is_ascii_alphanumeric)
+            && name
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || b"!#$&-^_.+%'".contains(c))
+    };
+    let top = &mime[..slash];
+    !top.eq_ignore_ascii_case(b"multipart") && token(top) && token(&mime[slash + 1..])
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SporeData<'a> {
     pub content_type: &'a [u8],
@@ -78,6 +94,14 @@ pub struct SporeData<'a> {
 }
 
 impl<'a> SporeData<'a> {
+    pub fn unclustered(data: &'a [u8]) -> Option<Self> {
+        Self::decode(data).filter(|spore| spore.cluster_id.is_none())
+    }
+
+    pub fn immortal(&self) -> bool {
+        self.content_type.ends_with(b";immortal=true")
+    }
+
     fn is_plain(&self) -> bool {
         self.cluster_id.is_none() && basic_content_type(self.content_type)
     }
@@ -112,7 +136,7 @@ impl<'a> SporeData<'a> {
         let mime = content_type
             .strip_suffix(b";immortal=true")
             .unwrap_or(content_type);
-        (basic_content_type(mime) && !content.is_empty()).then_some(Self {
+        (portable_mime(mime) && !content.is_empty()).then_some(Self {
             content_type,
             content,
             cluster_id,
@@ -128,6 +152,29 @@ fn molecule_bytes(raw: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_mime_accepts_parameter_free_types_with_one_slash() {
+        for mime in [
+            b"image/svg+xml".as_slice(),
+            b"application/json",
+            b"image/png",
+        ] {
+            assert!(portable_mime(mime));
+        }
+        for mime in [
+            b"text".as_slice(),
+            b"/plain",
+            b"text/",
+            b"text//plain",
+            b"multipart/mixed",
+            b"Multipart/mixed",
+            b"text/plain;mutant[]=7",
+            b"image/ png",
+        ] {
+            assert!(!portable_mime(mime));
+        }
+    }
 
     #[test]
     fn immortal_custody_does_not_extend_the_plain_native_profile() {

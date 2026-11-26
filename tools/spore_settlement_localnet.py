@@ -128,7 +128,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                              + le(int(native_input["index"], 16), 4) + le(0, 4))
         mapped_type = script(stem_spore_code, hex_bytes(native_id + counterpart), "data")
         original = script_hash(mapped_type)
-        data = table(molecule_bytes(b"text/plain"), molecule_bytes(b"Issued on Stem"), b"")
+        mime, content = (b"application/json", b'{"origin":"Stem"}') if args.native_spore_json else (b"text/plain", b"Issued on Stem")
+        data = table(molecule_bytes(mime + (b";immortal=true" if args.spore_immortal else b"")), molecule_bytes(content), b"")
         endpoint = script(stem_spore_code, hex_bytes(b"\x01" + original + binary(genesis) + mailbox_code
             + sequencer_id + escrow_code + checkpoint_code + checkpoint_id + counterpart), "data")
         endpoint_id = script_hash(endpoint)
@@ -313,6 +314,10 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                 cell(object_cap, endpoint, data, [mapped_type]), cell(capacity - FEE, owner)],
                 bond=bond_location, extra_points=[location], message=msg)
 
+        if args.spore_immortal:
+            rejected["native_immortal_melt"] = stem_reject(stem_signed("native-immortal-melt", original_point,
+                [cell(object_cap - FEE, owner)]), "exited with 117")
+
         send = outbound("initial-export", bond_point)
         rejected["changed_native_content"] = stem_reject(stem_signed("edited-native", original_point,
             [cell(object_cap - FEE, owner, data[:-1] + b"?", [mapped_type])]), "exited with 117")
@@ -349,6 +354,12 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         actual = l1.call("get_live_cell", spore, True)["cell"]
         assert actual["output"] == output(spore_cap, fixture.owner_lock, object_type)
         assert actual["data"]["content"] == hex_bytes(data)
+        if args.spore_immortal:
+            melted = transaction([spore], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"], deps[:2])
+            melted["witnesses"] = ["0x", cobuild(object_type, object_id, fixture.owner_lock, None)]
+            rejected["standard_immortal_melt"] = ckb_reject(fixture.sign("standard-immortal-melt", melted,
+                [wallet_group(0, [fixture.owner])]), 65)
+            assert SPORE_CODE.hex() in rejected["standard_immortal_melt"]
         # An ordinary CKB wallet can transfer the asset using only Spore and its owner lock.
         moved = transaction([spore, fees], [output(spore_cap, fixture.friend_lock, object_type),
             output(fee_capacity-2*FEE, fixture.standard)], [hex_bytes(data), "0x"], deps[:2])
@@ -388,7 +399,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         released = submit_ckb(fixture.sign("release-existing", release, [wallet_group(2, [fixture.faucet])]))
         final = l1.call("get_live_cell", point(released["hash"], 1), True)["cell"]
         assert final["output"] == actual["output"] and final["data"] == actual["data"]
-        return {"origin": "stem", "spore_id": hex_bytes(object_id), "spore_type": object_type,
+        return {"origin": "stem", "immortal": args.spore_immortal, "spore_id": hex_bytes(object_id), "spore_type": object_type,
                 "native_type": mapped_type, "native_content": hex_bytes(data), "mailbox": mailbox, "endpoint": endpoint,
                 "reservation": object_point, "issued": issued, "locked": locked, "native_custody": custody,
                 "minted": standard, "ckb_wallet_transfer": moved, "deposited": held, "return_anchor": anchor,

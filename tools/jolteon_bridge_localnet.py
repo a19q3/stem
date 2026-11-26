@@ -583,6 +583,7 @@ def main():
 
     parser.add_argument("--native-spore-origin", type=lambda path: Path(path).resolve(),
                         help="issue an unrestricted immutable object on Stem and export to standard Spore V2")
+    parser.add_argument("--native-spore-json", action="store_true", help="use actual application/json data in the native asset fixture")
     parser.add_argument("--spore-immortal", action="store_true", help="use the published Spore V2 immortal lifecycle")
     parser.add_argument("--checkpoint-fee-fund", type=lambda path: Path(path).resolve(),
                         help="use restricted checkpoint Lock for the PoW Security Fund")
@@ -641,9 +642,11 @@ def main():
             not all((args.export_udt, args.intercell_mailbox))
             or not (all(portable_udt) or all((args.asset_escrow, args.ckb_stem_udt)))):
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
+    if args.native_spore_json and not args.native_spore_origin:
+        parser.error("--native-spore-json requires --native-spore-origin")
     if args.spore_immortal and not args.spore_v2:
         parser.error("--spore-immortal requires the original Spore V2 settlement fixture")
-    if args.native_spore_origin and any((args.stem_spore, args.spore_cluster_v2, args.spore_immortal, args.stem_native_object, args.export_udt)):
+    if args.native_spore_origin and any((args.stem_spore, args.spore_cluster_v2, args.stem_native_object, args.export_udt)):
         parser.error("native Spore export requires the unrestricted immutable profile")
     if any((args.native_spore_origin, args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.spore_cluster_v2)) and (
             not all((args.stem_spore or args.native_spore_origin, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))

@@ -19,7 +19,7 @@ use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
     metatype::MAX_STATE_BYTES,
     object::{ObjectArgs, creation_id, revision},
-    spore::{MAX_SPORE_DATA, SporeTransfer, plain_spore, return_nonce},
+    spore::{MAX_SPORE_DATA, SporeData, SporeTransfer, return_nonce},
 };
 
 use stem_contracts::metatype::bounded_data;
@@ -151,11 +151,11 @@ fn verify_creation(network: &Identity, id: &Identity) -> Result<(), i8> {
 fn plain_identity(id: &Identity, network: &Identity) -> Result<(), i8> {
     let read = |source| match bounded_data(0, source, MAX_SPORE_DATA) {
         Ok(data)
-            if plain_spore(&data)
-                && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
+            if load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
                 && load(LOAD_TYPE_HASH, source as u64, 0, 1, &mut []).0 == INDEX_OUT_OF_BOUND =>
         {
-            Ok(Some(data))
+            let immortal = SporeData::unclustered(&data).ok_or(117)?.immortal();
+            Ok(Some((data, immortal)))
         }
         Err(SysError::IndexOutOfBound) => Ok(None),
         _ => Err(117),
@@ -163,7 +163,7 @@ fn plain_identity(id: &Identity, network: &Identity) -> Result<(), i8> {
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
         (None, Some(_)) => verify_creation(network, id),
         (Some(input), Some(output)) if input == output => Ok(()),
-        (Some(_), None) => Ok(()),
+        (Some((_, false)), None) => Ok(()),
         _ => Err(117),
     }
 }
@@ -220,7 +220,12 @@ fn escrow(
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..len]).ok_or(118)?;
-    let transfer = SporeTransfer::decode_plain(message.payload).ok_or(118)?;
+    let transfer = if standard_route {
+        SporeTransfer::decode(message.payload).filter(|s| s.cluster_id.is_none())
+    } else {
+        SporeTransfer::decode_plain(message.payload)
+    }
+    .ok_or(118)?;
     if transfer.original_type != *object {
         return Err(118);
     }
