@@ -126,5 +126,6 @@ available. Published network evidence contains public genesis and proof data.
 | Recovering Metatype ceiling proofs from CKB | [Report](../BENCHMARKS.md#recovering-metatype-ceiling-proofs-from-ckb), [recovery requests, restarts, reorg and finalized proofs](2026-11-26-stem-metatype-ceiling-recovery.json.xz) |
 | On-demand VM code dependency indexing | [Report](../BENCHMARKS.md#on-demand-vm-code-dependency-indexing), [resolver samples, signed workloads, Jolteon and CKB runs](2026-11-26-stem-program-resolution.json.xz) |
 | CKB Spore V2 Cluster membership | [Report](../BENCHMARKS.md#ckb-spore-v2-with-cluster-membership), [signed round trips, rejected transactions and independently verified proofs](2026-11-26-stem-spore-cluster.json.xz) |
+| Shared block context and resolved transaction IDs | [Report](../BENCHMARKS.md#shared-block-context-and-resolved-transaction-ids), [resolver samples, sustained workloads and network regressions](2026-11-26-stem-block-context.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

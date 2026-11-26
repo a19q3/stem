@@ -5596,3 +5596,92 @@ fixture path and its failures are retained. `go -C tools/proof test
 -count=1 ./...` and the release `comet-benchmark` feature check passed.
 
 [Resolver samples, four-replica measurements and CKB devnet evidence](benchmarks/2026-11-26-stem-program-resolution.json.xz).
+
+## Shared block context and resolved transaction IDs
+
+Baseline `83402fa` and candidate `379bc89` used the same release profile,
+Rust 1.95.0, and identical RISC-V Lock code on the i9-13900H host.
+The candidate derives each execution context from the exact immutable
+parent and network once. Lock authorization, VM execution and output
+OutPoints share the transaction ID established during resolution.
+
+The pinned-core probe ran each binary seven times at 150,000 repetitions
+for each configuration. It took a signed payment and its funded input
+and Code dependency from the baseline network run. Each repetition
+resolves the transaction, obtains its output transaction ID and
+computes its VM cache key. Batch repetitions share one block context.
+Admission repetitions derive a new context for each transaction. The
+probe reads in-memory Cells and stops before RISC-V verification. All
+observations agreed on the transaction ID, parent ID, cache key, fee and
+Cell read count.
+
+| Resolver work | Baseline median | Candidate median | Reduction |
+| --- | ---: | ---: | ---: |
+| Per-transaction resolution in a shared candidate | 5.34 µs | 4.41 µs | 17.4% |
+| Resolution including a fresh admission context | 5.92 µs | 4.93 µs | 16.7% |
+
+The four-replica payment runs fixed 250 ms proposal cadence, a 2 billion
+cycle block limit, two VM workers per replica and 64 senders. Each
+comparison used identical genesis and signed inputs. At a planned
+2,000 TPS over 20 seconds with fresh connections, the adjacent reruns
+produced these results. The first baseline reached only 933.55 offered
+TPS and is retained in the archive with the other raw measurements.
+
+| Build | Offered TPS | Admitted TPS | All-replica visible TPS | With drain TPS | p50 / p95 / p99 | Client drops |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| Baseline | 1,583.80 | 1,582.45 | 1,494.65 | 1,521.80 | 1.106 / 1.481 / 1.588 s | 8,324 |
+| Candidate | 1,589.70 | 1,589.25 | 1,506.95 | 1,528.12 | 1.085 / 1.426 / 1.483 s | 8,206 |
+
+Two 60-second comparisons used persistent submission at a planned
+1,000 TPS. The first ran the candidate first. The second reversed
+that order. All offered payments finalized on all replicas.
+
+| Pair | Build | Offered / admitted TPS | All-replica visible / with drain TPS | Visible | p50 / p95 / p99 | Replica CPU seconds | Process writes | Network traffic |
+| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: |
+| First | Baseline | 1,000.00 / 999.98 | 985.88 / 991.55 | 60,000 | 0.739 / 0.962 / 1.060 s | 110.16 | 1,136.17 MB | 186.28 MB |
+| First | Candidate | 1,000.00 / 1,000.00 | 985.47 / 990.93 | 60,000 | 0.818 / 1.058 / 1.116 s | 129.67 | 1,109.98 MB | 209.23 MB |
+| Reversed | Baseline | 999.08 / 999.08 | 985.52 / 991.05 | 59,945 | 0.787 / 1.032 / 1.197 s | 121.21 | 1,135.03 MB | 198.22 MB |
+| Reversed | Candidate | 999.00 / 999.00 | 987.07 / 991.62 | 59,940 | 0.824 / 1.104 / 1.261 s | 130.52 | 1,144.12 MB | 207.05 MB |
+
+In the two unpinned sustained pairs, candidate CPU time was 17.7%
+and 7.7% higher. A separate 24-second test bound each replica to the
+same two logical siblings of a performance core and one efficiency
+core on both versions. The client used disjoint CPUs and persistent
+connections. The two pairs ran in opposite orders.
+
+| Pair | Build | Offered / admitted TPS | All-replica visible TPS | Visible | p99 | Replica CPU seconds |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| First | Baseline | 1,000.00 / 999.96 | 965.96 | 24,000 | 1.125 s | 57.18 |
+| First | Candidate | 987.00 / 986.96 | 959.62 | 23,688 | 1.534 s | 55.41 |
+| Reversed | Baseline | 1,000.00 / 1,000.00 | 963.62 | 24,000 | 0.876 s | 37.74 |
+| Reversed | Candidate | 1,000.00 / 1,000.00 | 970.83 | 24,000 | 0.995 s | 38.17 |
+
+The pinned changes in CPU time per finalized payment were −1.8% and
++1.1%. Candidate p99 remained higher in those two payment runs. The
+benchmarks establish the cheaper resolver path, with mixed throughput
+and tail latency at the network level. The affinity launcher looked
+for a validator key when the harness invoked its separate history index
+command. All four network reports had already been saved. Re-running
+that command directly against each finished archive generated all four
+history proofs. The archive retains the original failing exits.
+
+The distributed AMM test offered all 2,880 signed commands at 160 TPS.
+Both builds finalized the full workload. The replay checked 5,760
+Lineage head updates and identical final canonical Cells for 65 Lineages.
+Each build charged 11,295,925,110 VM cycles and 5,760,000 shannons.
+All-replica visible throughput was 151.39 and 152.44 TPS and p99 was
+1.260 and 0.998 seconds, baseline first.
+
+A mixed-version four-replica network finalized all 96 signed payments
+and agreed on the execution Header after a replica restarted. The
+four-replica composition fixture exercised Polytype, OTX, Lineage,
+height and time triggers, and a prepaid Keeper retry. A separate mixed
+load admitted all 150 Keeper bookings and verified 188 attempts, of
+which 112 applied. CKB devnet regressions passed for fee payouts, xUDT,
+funded committee handoff, Intercell, shared Metatype return and the
+Spore V2 Cluster route.
+
+The release workspace suite passed 494 tests with 22 ignored. The Go
+proof suite and frozen `comet-benchmark` build check passed.
+
+[Signed workloads, phase metrics, history proofs and build fingerprints](benchmarks/2026-11-26-stem-block-context.json.xz).
