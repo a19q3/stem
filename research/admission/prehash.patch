@@ -1,0 +1,103 @@
+diff --git a/src/jolteon.rs b/src/jolteon.rs
+index 1dca196..f9a1ba0 100644
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -1302,7 +1302,7 @@ impl Replica {
+                 started
+             });
+             let result = self
+-                .client(frame.kind, frame.body)
++                .client(frame.kind, frame.body, event.submission_id)
+                 .unwrap_or_else(|error| json!({"error": format!("{error:#}")}));
+             let bytes = serde_json::to_vec(&result)?;
+             if let Some(started) = started {
+@@ -1392,21 +1392,21 @@ impl Replica {
+                 }
+             }
+             wire::RELAY_TX => {
+-                self.insert_tx(&frame.body, false)?;
++                self.insert_tx(&frame.body, false, None)?;
+             }
+             _ => anyhow::bail!("unknown replica message"),
+         }
+         Ok(())
+     }
+ 
+-    fn insert_tx(&mut self, raw: &Bytes, client: bool) -> Result<Hash32> {
++    fn insert_tx(&mut self, raw: &Bytes, client: bool, received_id: Option<Hash32>) -> Result<Hash32> {
+         let requests = if client {
+             &mut self.admission.client_requests
+         } else {
+             &mut self.admission.relayed_requests
+         };
+         *requests = requests.saturating_add(1);
+-        let id = ckb_hash::blake2b_256(raw);
++        let id = received_id.unwrap_or_else(|| ckb_hash::blake2b_256(raw));
+         if self.mempool.contains(&id) {
+             return Ok(id);
+         }
+@@ -1429,7 +1429,7 @@ impl Replica {
+         Ok(id)
+     }
+ 
+-    fn client(&mut self, kind: u32, body: Bytes) -> Result<serde_json::Value> {
++    fn client(&mut self, kind: u32, body: Bytes, submission_id: Option<Hash32>) -> Result<serde_json::Value> {
+         let tip = self.store.tip();
+         match kind {
+             wire::STATUS => Ok(json!({
+@@ -1455,7 +1455,7 @@ impl Replica {
+                 "execution": self.execution,
+             })),
+             wire::SUBMIT => {
+-                let id = self.insert_tx(&body, true)?;
++                let id = self.insert_tx(&body, true, submission_id)?;
+                 if self
+                     .mempool
+                     .track_local(id, Instant::now(), self.committee.epoch())
+diff --git a/src/jolteon/transport.rs b/src/jolteon/transport.rs
+index aebc56a..551f1b0 100644
+--- a/src/jolteon/transport.rs
++++ b/src/jolteon/transport.rs
+@@ -26,6 +26,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(6);
+ 
+ pub struct Incoming {
+     pub frame: Frame,
++    pub submission_id: Option<[u8; 32]>,
+     pub reply: Option<oneshot::Sender<Vec<u8>>>,
+     pub submit_received_at: Option<Instant>,
+ }
+@@ -245,6 +246,10 @@ async fn receive(
+                 }
+                 submissions += 1;
+             }
++            // Move only a pure digest of the same immutable received bytes.
++            let submission_id = (submit_received_at.is_some()
++                && frame.body.len() <= stem_ledger::MAX_TRANSACTION_BYTES)
++                .then(|| ckb_hash::blake2b_256(&frame.body));
+             let (sender, receiver) = oneshot::channel();
+             incoming
+                 .application
+@@ -252,6 +257,7 @@ async fn receive(
+                     frame,
+                     reply: Some(sender),
+                     submit_received_at,
++                    submission_id,
+                 })
+                 .await?;
+             let response = timeout(IO_TIMEOUT, receiver).await??;
+@@ -275,6 +281,7 @@ async fn receive(
+                 frame,
+                 reply: None,
+                 submit_received_at: None,
++                submission_id: None,
+             })
+             .await?;
+     }
+@@ -349,6 +356,7 @@ mod tests {
+             },
+             reply: None,
+             submit_received_at: None,
++                submission_id: None,
+         };
+         app_tx.try_send(event(wire::RELAY_TX))?;
+         for _ in 0..=CONTROL_BURST {

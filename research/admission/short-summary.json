@@ -1,0 +1,238 @@
+[
+  {
+    "file": "ref-0.json.xz",
+    "replicas": 16,
+    "seconds": 60,
+    "planned": 7200,
+    "written": 7131,
+    "admitted": 7131,
+    "visible": 7131,
+    "drops": 69,
+    "visible_tps": 117.48333333333333,
+    "p99_common_us": 1866295,
+    "p99_client_queue_us": 13,
+    "p99_client_response_us": 86564,
+    "cpu_seconds": 135.59,
+    "peak_sampled_node_rss_kib": 104796,
+    "process_write_B_per_confirmed_replica": 9288.840274856262,
+    "wal_bytes": 604374139,
+    "compaction_jobs_creating_files": 0,
+    "sst": {
+      "flush": {
+        "files": 0,
+        "bytes": 0
+      },
+      "compaction": {
+        "files": 0,
+        "bytes": 0
+      },
+      "recovery": {
+        "files": 1,
+        "bytes": 12004444
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 528706212,
+      "finality_sync_microseconds": 43146648,
+      "finality_writes": 3520,
+      "journal_serialized": 75667927,
+      "journal_sync_microseconds": 52807442,
+      "journal_writes": 7011
+    },
+    "agreed_height": 225,
+    "workload_sha256": "715e3707c96d77b860d98eb7bfaea82595ab6d718fcb69a467b76987abe08185",
+    "genesis_sha256": "0e643ce6ffaa85ec96f497a4f7acedb0c4555c4a672c62932245080754678176",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 27812.16484848485,
+    "proposal_mean_us": 19505.054545454546,
+    "commit_mean_us": 12554.569602272728,
+    "lineage": {
+      "applied": 7131,
+      "cycles": 27969287224,
+      "fee": 14262000,
+      "head_updates": 14262,
+      "serial_replay_us": 7865595
+    }
+  },
+  {
+    "file": "prehash-1.json.xz",
+    "replicas": 16,
+    "seconds": 60,
+    "planned": 7200,
+    "written": 7012,
+    "admitted": 7012,
+    "visible": 7012,
+    "drops": 188,
+    "visible_tps": 115.23333333333333,
+    "p99_common_us": 2667172,
+    "p99_client_queue_us": 15,
+    "p99_client_response_us": 654146,
+    "cpu_seconds": 132.14,
+    "peak_sampled_node_rss_kib": 103644,
+    "process_write_B_per_confirmed_replica": 8927.762692527096,
+    "wal_bytes": 581662560,
+    "compaction_jobs_creating_files": 0,
+    "sst": {
+      "flush": {
+        "files": 0,
+        "bytes": 0
+      },
+      "compaction": {
+        "files": 0,
+        "bytes": 0
+      },
+      "recovery": {
+        "files": 1,
+        "bytes": 11654200
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 507584749,
+      "finality_sync_microseconds": 67423971,
+      "finality_writes": 3344,
+      "journal_serialized": 74077811,
+      "journal_sync_microseconds": 84933041,
+      "journal_writes": 6671
+    },
+    "agreed_height": 214,
+    "workload_sha256": "715e3707c96d77b860d98eb7bfaea82595ab6d718fcb69a467b76987abe08185",
+    "genesis_sha256": "0e643ce6ffaa85ec96f497a4f7acedb0c4555c4a672c62932245080754678176",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 28511.70909090909,
+    "proposal_mean_us": 20041.952153110047,
+    "commit_mean_us": 20475.938397129186,
+    "lineage": {
+      "applied": 7012,
+      "cycles": 27502544472,
+      "fee": 14024000,
+      "head_updates": 14024,
+      "serial_replay_us": 6502113
+    }
+  },
+  {
+    "file": "prehash-2.json.xz",
+    "replicas": 16,
+    "seconds": 60,
+    "planned": 7200,
+    "written": 7200,
+    "admitted": 7200,
+    "visible": 7200,
+    "drops": 0,
+    "visible_tps": 117.7,
+    "p99_common_us": 1668501,
+    "p99_client_queue_us": 19,
+    "p99_client_response_us": 75682,
+    "cpu_seconds": 141.69,
+    "peak_sampled_node_rss_kib": 105176,
+    "process_write_B_per_confirmed_replica": 9359.182222222222,
+    "wal_bytes": 614752241,
+    "compaction_jobs_creating_files": 0,
+    "sst": {
+      "flush": {
+        "files": 0,
+        "bytes": 0
+      },
+      "compaction": {
+        "files": 0,
+        "bytes": 0
+      },
+      "recovery": {
+        "files": 1,
+        "bytes": 12162984
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 538390783,
+      "finality_sync_microseconds": 39740027,
+      "finality_writes": 3536,
+      "journal_serialized": 76361458,
+      "journal_sync_microseconds": 54823436,
+      "journal_writes": 7050
+    },
+    "agreed_height": 226,
+    "workload_sha256": "715e3707c96d77b860d98eb7bfaea82595ab6d718fcb69a467b76987abe08185",
+    "genesis_sha256": "0e643ce6ffaa85ec96f497a4f7acedb0c4555c4a672c62932245080754678176",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 29161.856108597283,
+    "proposal_mean_us": 20269.212669683257,
+    "commit_mean_us": 11561.483597285069,
+    "lineage": {
+      "applied": 7200,
+      "cycles": 28239919875,
+      "fee": 14400000,
+      "head_updates": 14400,
+      "serial_replay_us": 7646936
+    }
+  },
+  {
+    "file": "ref-3.json.xz",
+    "replicas": 16,
+    "seconds": 60,
+    "planned": 7200,
+    "written": 7200,
+    "admitted": 7200,
+    "visible": 7200,
+    "drops": 0,
+    "visible_tps": 118.36666666666666,
+    "p99_common_us": 1780506,
+    "p99_client_queue_us": 12,
+    "p99_client_response_us": 98330,
+    "cpu_seconds": 136.08,
+    "peak_sampled_node_rss_kib": 103420,
+    "process_write_B_per_confirmed_replica": 9061.333333333334,
+    "wal_bytes": 602133417,
+    "compaction_jobs_creating_files": 0,
+    "sst": {
+      "flush": {
+        "files": 0,
+        "bytes": 0
+      },
+      "compaction": {
+        "files": 0,
+        "bytes": 0
+      },
+      "recovery": {
+        "files": 1,
+        "bytes": 11961703
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 526353339,
+      "finality_sync_microseconds": 62700003,
+      "finality_writes": 3344,
+      "journal_serialized": 75780078,
+      "journal_sync_microseconds": 78098893,
+      "journal_writes": 6662
+    },
+    "agreed_height": 213,
+    "workload_sha256": "715e3707c96d77b860d98eb7bfaea82595ab6d718fcb69a467b76987abe08185",
+    "genesis_sha256": "0e643ce6ffaa85ec96f497a4f7acedb0c4555c4a672c62932245080754678176",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 29721.900159489633,
+    "proposal_mean_us": 20161.66985645933,
+    "commit_mean_us": 19070.799940191388,
+    "lineage": {
+      "applied": 7200,
+      "cycles": 28239919875,
+      "fee": 14400000,
+      "head_updates": 14400,
+      "serial_replay_us": 7247632
+    }
+  }
+]
