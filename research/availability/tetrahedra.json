@@ -1,0 +1,94 @@
+{
+  "faces": 81,
+  "triangles": 108,
+  "single_corruption_failed_checks": 4,
+  "information": 16,
+  "nonzero_weights": {
+    "16": 81,
+    "24": 324,
+    "28": 1296,
+    "30": 648,
+    "32": 648,
+    "34": 3888,
+    "36": 6732,
+    "38": 7776,
+    "40": 9234,
+    "42": 14472,
+    "44": 12636,
+    "46": 5184,
+    "48": 1944,
+    "50": 648,
+    "54": 24
+  },
+  "box_failures": 81,
+  "rs_reconstructed_boxes": 81,
+  "shard_bytes": 4096,
+  "seed": 671,
+  "random_masks": [
+    {
+      "erased": 1,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 1024,
+      "local": 1024
+    },
+    {
+      "erased": 8,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 1024,
+      "local": 1024
+    },
+    {
+      "erased": 16,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 1024,
+      "local": 1024
+    },
+    {
+      "erased": 32,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 1024,
+      "local": 1024
+    },
+    {
+      "erased": 48,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 1018,
+      "local": 1018
+    },
+    {
+      "erased": 56,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 931,
+      "local": 931
+    },
+    {
+      "erased": 64,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 183,
+      "local": 183
+    },
+    {
+      "erased": 65,
+      "trials": 1024,
+      "rs_mds": 1024,
+      "unique": 52,
+      "local": 52
+    },
+    {
+      "erased": 66,
+      "trials": 1024,
+      "rs_mds": 0,
+      "unique": 0,
+      "local": 0
+    }
+  ],
+  "preprint_vertex_lower_bound_for_d3_m_at_least_2": 3337860107421875,
+  "three_random_checks_miss_one_corruption": 0.891984560826035
+}
