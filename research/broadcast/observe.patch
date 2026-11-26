@@ -1,0 +1,43 @@
+diff --git a/src/jolteon.rs b/src/jolteon.rs
+index 1dca196..68ef6dd 100644
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -567,6 +567,16 @@ impl Replica {
+         Ok(())
+     }
+ 
++    // Measurement-only build. One public fact per native GET decision.
++    fn record_get(&self, epoch: u64, action: &str, peer: Option<u16>, point: Point, bytes: usize) {
++        let at = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .unwrap_or_default()
++            .as_micros();
++        let peer = peer.map_or(-1, i32::from);
++        eprintln!("STEM_GET {at} {} {epoch} {action} {peer} {} {bytes}", self.directory.own, hex::encode(point.encode()));
++    }
++
+     fn request(&mut self, point: Point, peer: Option<u16>) {
+         if self
+             .requests
+@@ -580,8 +590,10 @@ impl Replica {
+         }
+         let repeated = self.requests.insert(point, Instant::now()).is_some();
+         if let Some(peer) = peer.filter(|&peer| peer != self.directory.own && !repeated) {
++            self.record_get(self.committee.epoch(), "direct", Some(peer), point, point.encode().len());
+             self.net.send(peer, wire::GET, point.encode().to_vec());
+         } else {
++            self.record_get(self.committee.epoch(), "broadcast", None, point, point.encode().len());
+             self.net.broadcast(wire::GET, point.encode().to_vec());
+         }
+     }
+@@ -1324,7 +1336,10 @@ impl Replica {
+                 .consensus_record(&proposal_key(frame.epoch, point))
+                 .context(StorageFault)?
+             {
++                self.record_get(frame.epoch, "hit", Some(peer), point, raw.len());
+                 self.net.send_at(frame.epoch, peer, wire::PROPOSAL, raw);
++            } else {
++                self.record_get(frame.epoch, "miss", Some(peer), point, 0);
+             }
+             return Ok(());
+         }

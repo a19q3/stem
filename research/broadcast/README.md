@@ -29,3 +29,20 @@ Run from the repository root using Python 3.10 or later.
 python3 research/broadcast/compare.py > /tmp/stem-broadcast.json
 xz -dc research/broadcast/results.json.xz | cmp - /tmp/stem-broadcast.json
 ```
+
+## Native GET observations during a 12-block rejoin
+
+A diagnostic build of the pinned reference recorded each payload GET routing decision and each holder's local lookup. The four-replica network stopped one node and confirmed 12 signed payments. The 16-replica network stopped two and confirmed 48. After a gap of at least 12 blocks, the nodes restarted and verified common finality. Only public point IDs and counters were archived.
+
+| Replicas | Directed request decisions | Broadcast decisions | Holder hits | Scheduled proposal reply bytes | Requester/point groups with repeated replies |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 13 | 0 | 13 | 10,931 | 0 |
+| 16 | 30 | 0 | 30 | 60,890 | 0 |
+
+The two captures exercised the existing directed path. Neither gave an observed duplicate reply to eliminate. Scheduled reply bytes exclude TCP framing, retransmission and other protocol messages. These short, healthy-link restarts do not estimate the probability of broadcast fallback during prolonged outages. Retain the existing fallback.
+
+Apply observe.patch to fefb8cc, build its release binary and run the following capture from this branch. Per-node temporary databases are removed after each archive write. The data file get-traces.json.xz includes every decision, reply size and verified localnet report.
+
+```sh
+python3 research/broadcast/capture_get.py --binary /path/to/instrumented-stem --lock /path/to/stem-lock --scratch /tmp/stem-get-db --output /tmp/stem-get-traces.json.xz
+```
