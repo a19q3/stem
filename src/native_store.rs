@@ -1190,14 +1190,15 @@ impl Store {
             total_bytes <= budget.bytes,
             "block transaction bytes exceeded"
         );
-        let context = HeaderContext::after(
+        let block = BlockContext::after(
             &self.network,
             &self.tip,
             timestamp_ms,
             Tree::transactions(self.network.clone(), execution)?.root(),
+            self.capacity,
         )?;
-        let origin = Origin::new(&self.network, &context);
-        let mut receipts = self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
+        let origin = Origin::new(&self.network, block.candidate());
+        let mut receipts = self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay)?;
         let mut fees = receipts
             .iter()
             .try_fold(0u64, |sum, receipt| sum.checked_add(receipt.fee))
@@ -1220,7 +1221,7 @@ impl Store {
                     && lineage::independent(self, wave, &overlay.lineages)?;
                 let mut commands = if parallel_commands {
                     wave.par_iter()
-                        .map(|tx| self.materialize_lineage(tx, &context, &overlay, budget))
+                        .map(|tx| self.materialize_lineage(tx, &block, &overlay, budget))
                         .collect::<Result<Vec<_>>>()?
                         .into_iter()
                 } else {
@@ -1231,7 +1232,7 @@ impl Store {
                     let position = receipts.len();
                     let receipt = self.stage(
                         tx,
-                        &context,
+                        &block,
                         &origin,
                         &mut budget,
                         &mut overlay,
@@ -1269,7 +1270,7 @@ impl Store {
             }
         }
         self.finish_block(
-            context,
+            block.into_candidate(),
             overlay,
             execution,
             receipts,
@@ -1480,11 +1481,16 @@ impl Store {
         let mut budget = Budget::new(self.limits);
         let mut overlay = self.overlay(self.stage_stake()?);
         let mut wire_bytes = max_bytes;
-        let context =
-            HeaderContext::after(&self.network, &self.tip, timestamp_ms, Byte32::default())?;
-        let origin = Origin::new(&self.network, &context);
-        let due = self.due(context.height, &mut budget)?;
-        let mut receipts = self.run_keeper(&due, &context, &origin, &mut budget, &mut overlay)?;
+        let block = BlockContext::after(
+            &self.network,
+            &self.tip,
+            timestamp_ms,
+            Byte32::default(),
+            self.capacity,
+        )?;
+        let origin = Origin::new(&self.network, block.candidate());
+        let due = self.due(block.candidate().height, &mut budget)?;
+        let mut receipts = self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay)?;
         let mut reusable = due.commands.is_empty();
         let mut selected = Vec::new();
         for item in transactions {
@@ -1514,7 +1520,7 @@ impl Store {
                 && tx.lineage_batch().is_none();
             match self.stage(
                 tx,
-                &context,
+                &block,
                 &origin,
                 &mut budget,
                 &mut overlay,
@@ -1532,7 +1538,7 @@ impl Store {
         }
         Ok(ProposalSelection {
             transactions: selected,
-            context,
+            context: block.into_candidate(),
             overlay,
             receipts,
             reusable,
@@ -1540,16 +1546,17 @@ impl Store {
     }
 
     pub fn check(&self, tx: &Transaction) -> Result<Receipt> {
-        let context = HeaderContext::after(
+        let block = BlockContext::after(
             &self.network,
             &self.tip,
             self.tip.context.timestamp_ms,
             Byte32::default(),
+            self.capacity,
         )?;
         self.stage(
             tx,
-            &context,
-            &Origin::new(&self.network, &context),
+            &block,
+            &Origin::new(&self.network, block.candidate()),
             &mut Budget::new(self.limits),
             &mut self.overlay(None),
             None,
@@ -1582,28 +1589,24 @@ impl Store {
     fn materialize_lineage(
         &self,
         tx: &Transaction,
-        context: &HeaderContext,
+        block: &BlockContext<'_>,
         overlay: &Overlay,
         budget: Budget,
     ) -> Result<Option<lineage::Materialized>> {
+        let height = block.candidate().height;
         ensure!(
             tx.keeper_schedule().is_none_or(|schedule| {
                 overlay.keeper.running
-                    && schedule.ready(context.height, self.tip.context.timestamp_ms)
+                    && schedule.ready(height, block.parent().context.timestamp_ms)
             }),
             "trigger-bound Lineage command requires its committed Keeper reservation"
         );
         tx.lineage_command()
             .map(|command| {
                 ensure!(
-                    context.height < tx.valid_before_height().expect("validated command expiry"),
+                    height < tx.valid_before_height().expect("validated command expiry"),
                     "Lineage command has expired"
                 );
-                let block = BlockContext {
-                    candidate: context,
-                    parent: &self.tip,
-                    capacity: self.capacity,
-                };
                 lineage::materialize(
                     self,
                     tx,
@@ -1620,7 +1623,7 @@ impl Store {
     fn stage(
         &self,
         tx: &Transaction,
-        context: &HeaderContext,
+        block: &BlockContext<'_>,
         origin: &Origin,
         budget: &mut Budget,
         overlay: &mut Overlay,
@@ -1629,7 +1632,7 @@ impl Store {
     ) -> Result<Receipt> {
         if let Some(members) = tx.lineage_batch() {
             Transaction::verify_lineage_batch_plan(&self.network, members)?;
-            return self.stage_atomic_lineage(tx, members, context, origin, budget, overlay);
+            return self.stage_atomic_lineage(tx, members, block, origin, budget, overlay);
         }
         ensure!(
             tx.lineage_intent()
@@ -1643,7 +1646,7 @@ impl Store {
             return self.stage_atomic_lineage(
                 tx,
                 std::slice::from_ref(tx),
-                context,
+                block,
                 origin,
                 budget,
                 overlay,
@@ -1651,7 +1654,7 @@ impl Store {
         }
         self.stage_transaction(
             tx,
-            context,
+            block,
             origin,
             budget,
             overlay,
@@ -1665,7 +1668,7 @@ impl Store {
         &self,
         tx: &Transaction,
         members: &[Transaction],
-        context: &HeaderContext,
+        block: &BlockContext<'_>,
         origin: &Origin,
         budget: &mut Budget,
         overlay: &mut Overlay,
@@ -1690,7 +1693,7 @@ impl Store {
                 let item = self
                     .stage_transaction(
                         member,
-                        context,
+                        block,
                         origin,
                         &mut next,
                         overlay,
@@ -1729,7 +1732,7 @@ impl Store {
     fn stage_transaction(
         &self,
         tx: &Transaction,
-        context: &HeaderContext,
+        block: &BlockContext<'_>,
         origin: &Origin,
         budget: &mut Budget,
         overlay: &mut Overlay,
@@ -1737,6 +1740,7 @@ impl Store {
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
         batch: Option<LineageBatchMember<'_>>,
     ) -> Result<Receipt> {
+        let context = block.candidate();
         let tx_bytes =
             tx.as_slice().len() as u64 + batch.as_ref().map_or(0, |item| item.extra_bytes);
         let mut next = *budget;
@@ -1744,7 +1748,7 @@ impl Store {
         let materialized = if staged_command.is_some() {
             staged_command
         } else {
-            self.materialize_lineage(tx, context, overlay, next)?
+            self.materialize_lineage(tx, block, overlay, next)?
         };
         ensure!(
             batch.is_none()
@@ -1811,11 +1815,6 @@ impl Store {
 
         let fresh = |point: &OutPoint| self.resolve_live(live, point);
         let header = |hash: &Byte32| self.resolve_header(hash, context.height);
-        let block = BlockContext {
-            candidate: context,
-            parent: &self.tip,
-            capacity: self.capacity,
-        };
         let concrete = materialized
             .as_ref()
             .map_or(tx, |command| &command.transaction);
@@ -1836,15 +1835,8 @@ impl Store {
                 .zip(bridge.as_ref())
                 .context("native bridge is not configured")?;
             let (grant, asset, changes) = bridge.mint(self, stage, context.height, tx)?;
-            let resolved = ResolvedTransaction::resolve_mint(
-                self.network.clone(),
-                tx.clone(),
-                block,
-                &grant,
-                asset,
-                fresh,
-                header,
-            )?;
+            let resolved =
+                ResolvedTransaction::resolve_mint(tx.clone(), block, &grant, asset, fresh, header)?;
             (resolved, changes)
         } else {
             let resolved = if reference_cycles != 0 {
@@ -1854,7 +1846,6 @@ impl Store {
                     .context("L1 references require a configured bridge")?;
                 let grant = bridge.verify_l1_references(self, concrete, context.height)?;
                 ResolvedTransaction::resolve_referenced(
-                    self.network.clone(),
                     concrete.clone(),
                     block,
                     grant,
@@ -1862,13 +1853,7 @@ impl Store {
                     header,
                 )?
             } else {
-                ResolvedTransaction::resolve(
-                    self.network.clone(),
-                    concrete.clone(),
-                    block,
-                    fresh,
-                    header,
-                )?
+                ResolvedTransaction::resolve(concrete.clone(), block, fresh, header)?
             };
             let changes = match self.bridge.as_ref().zip(bridge.as_ref()) {
                 Some((bridge, stage)) => bridge.burn(self, stage, concrete)?,
@@ -1897,7 +1882,7 @@ impl Store {
             None
         };
         let keeper_cycles = keeper_change.as_ref().map_or(0, |change| change.cycles);
-        let id = tx.id(&self.network);
+        let id = resolved.execution_id();
         let lineage_changes = self
             .lineage
             .as_ref()
@@ -2023,7 +2008,7 @@ impl Store {
                         )?;
                         return self.stage_transaction(
                             tx,
-                            context,
+                            block,
                             origin,
                             budget,
                             overlay,

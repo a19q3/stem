@@ -1407,9 +1407,8 @@ impl ResolvedTransaction {
     /// Resolve references in protocol order. Dep Groups use the CKB OutPointVec encoding.
     /// A Cell Dep may not be consumed by this transaction.
     pub fn resolve(
-        network_id: Byte32,
         transaction: Transaction,
-        block: BlockContext<'_>,
+        block: &BlockContext<'_>,
         live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
@@ -1419,21 +1418,12 @@ impl ResolvedTransaction {
                 && transaction.l1_reference_certificate().is_none(),
             "transaction requires its authenticated execution path"
         );
-        Self::resolve_with_capacity(
-            network_id,
-            transaction,
-            block,
-            None,
-            None,
-            live_cell,
-            committed_header,
-        )
+        Self::resolve_with_capacity(transaction, block, None, None, live_cell, committed_header)
     }
 
     pub fn resolve_referenced(
-        network_id: Byte32,
         transaction: Transaction,
-        block: BlockContext<'_>,
+        block: &BlockContext<'_>,
         grant: protocol::l1_reference::VerifiedL1References,
         live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         committed_header: impl FnMut(&Byte32) -> Result<Header>,
@@ -1442,9 +1432,8 @@ impl ResolvedTransaction {
             transaction.operation().is_none() && !transaction.has_lineage_command(),
             "L1 references require an ordinary Cell transaction"
         );
-        let references = grant.authorize(&transaction, &network_id)?;
+        let references = grant.authorize(&transaction, block.network())?;
         Self::resolve_with_capacity(
-            network_id,
             transaction,
             block,
             None,
@@ -1455,15 +1444,14 @@ impl ResolvedTransaction {
     }
 
     pub fn resolve_mint(
-        network_id: Byte32,
         transaction: Transaction,
-        block: BlockContext<'_>,
+        block: &BlockContext<'_>,
         grant: &protocol::VerifiedMint,
         asset: Option<Script>,
         live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
-        let capacity = grant.capacity(&network_id, &transaction)?;
+        let capacity = grant.capacity(block.network(), &transaction)?;
         let units = grant.observation().units;
         ensure!(
             asset.is_some() == (units > 0),
@@ -1471,7 +1459,6 @@ impl ResolvedTransaction {
         );
         let authorization = (capacity, asset.map(|script| (script, units)));
         Self::resolve_with_capacity(
-            network_id,
             transaction,
             block,
             Some(authorization),
@@ -1482,28 +1469,19 @@ impl ResolvedTransaction {
     }
 
     fn resolve_with_capacity(
-        network_id: Byte32,
         transaction: Transaction,
-        block: BlockContext<'_>,
+        block: &BlockContext<'_>,
         mint: Option<(u64, Option<(Script, u128)>)>,
         l1_references: Option<Arc<[protocol::l1_reference::L1ReferenceRecord]>>,
         live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         mut committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
-        ensure!(
-            network_id != Byte32::default(),
-            "zero Stem network identity"
-        );
-        ensure!(
-            block.parent.context.height.checked_add(1) == Some(block.candidate.height)
-                && block.parent.context.timestamp_ms <= block.candidate.timestamp_ms
-                && block.parent.id(&network_id) == block.candidate.parent,
-            "invalid parent block context"
-        );
+        let network = block.network();
+        let candidate = block.candidate();
         ensure!(
             transaction
                 .valid_before_height()
-                .is_none_or(|height| block.candidate.height < height),
+                .is_none_or(|height| candidate.height < height),
             "Transaction has expired"
         );
         let mut budget = ResolutionBudget::default();
@@ -1512,10 +1490,10 @@ impl ResolvedTransaction {
         for hash in transaction.header_deps() {
             let header = committed_header(&hash)?;
             ensure!(
-                header.id(&network_id) == hash && header.context.height < block.candidate.height,
+                header.id(network) == hash && header.context.height < candidate.height,
                 "header dependency is not a committed ancestor"
             );
-            headers_by_origin.insert(header.context.id(&network_id), headers.len());
+            headers_by_origin.insert(header.context.id(network), headers.len());
             headers.push(header);
         }
         let authorization::Cells {
@@ -1540,7 +1518,7 @@ impl ResolvedTransaction {
         }
         let has_intent_dependencies = dependencies.is_some();
         let authorization = authorization::LockAuthorization::new(
-            &network_id,
+            network,
             &transaction,
             commitment,
             dependencies,
@@ -1548,7 +1526,7 @@ impl ResolvedTransaction {
         );
         let outputs: Vec<_> = transaction.outputs().collect();
         for cell in &outputs {
-            block.capacity.verify(cell)?;
+            block.capacity().verify(cell)?;
         }
         let output_capacity = sum_capacity(outputs.iter())?;
         let fee = if let Some((minted_capacity, _)) = &mint {
@@ -1582,11 +1560,11 @@ impl ResolvedTransaction {
             .then(|| IntentScope::resolve(&transaction, &groups))
             .flatten();
         Ok(Self {
-            network_id,
+            network_id: network.clone(),
             transaction,
-            height: block.candidate.height,
-            parent: block.parent.clone(),
-            parent_id: block.candidate.parent.clone(),
+            height: candidate.height,
+            parent: block.parent().clone(),
+            parent_id: candidate.parent.clone(),
             authorization,
             lineage_authorization: None,
             inputs,
@@ -1601,7 +1579,7 @@ impl ResolvedTransaction {
             messages,
             intent_scope,
             programs: OnceLock::new(),
-            capacity: block.capacity,
+            capacity: block.capacity(),
             minted_asset: mint.and_then(|(_, asset)| asset),
             resolved_cell_bytes: budget.bytes,
             cell_reads: budget.references,
@@ -1687,7 +1665,7 @@ impl ResolvedTransaction {
 
     pub fn execution_id(&self) -> Byte32 {
         self.lineage_authorization.as_ref().map_or_else(
-            || self.transaction.id(&self.network_id),
+            || self.authorization.raw_id.clone(),
             |authorization| authorization.id.clone(),
         )
     }
@@ -2204,7 +2182,34 @@ mod tests {
             context: HeaderContext::after(&network, &origin, 124, Byte32::default())?,
             ..origin.clone()
         };
-        let candidate = HeaderContext::after(&network, &parent, 125, Byte32::default())?;
+        let block = BlockContext::after(
+            &network,
+            &parent,
+            125,
+            Byte32::default(),
+            CapacityPolicy::default(),
+        )?;
+        assert_eq!(&block.candidate().parent, &parent.id(&network));
+        assert!(
+            BlockContext::after(
+                &Byte32::default(),
+                &parent,
+                125,
+                Byte32::default(),
+                CapacityPolicy::default(),
+            )
+            .is_err()
+        );
+        assert!(
+            BlockContext::after(
+                &network,
+                &parent,
+                123,
+                Byte32::default(),
+                CapacityPolicy::default(),
+            )
+            .is_err()
+        );
         let resolve = |increment| {
             let tx = Transaction::new(
                 Vec::new(),
@@ -2216,14 +2221,10 @@ mod tests {
                 vec![output.clone()],
                 Vec::new(),
             )?;
-            ResolvedTransaction::resolve(
-                network.clone(),
+            let id = tx.id(&network);
+            let resolved = ResolvedTransaction::resolve(
                 tx,
-                BlockContext {
-                    candidate: &candidate,
-                    parent: &parent,
-                    capacity: Default::default(),
-                },
+                &block,
                 |_| {
                     Ok(LiveCell {
                         cell: cell.clone(),
@@ -2231,7 +2232,9 @@ mod tests {
                     })
                 },
                 |_| Ok(origin.clone()),
-            )
+            )?;
+            assert_eq!(resolved.execution_id(), id);
+            Ok::<_, anyhow::Error>(resolved)
         };
         let verified = resolve(2)?;
         assert_eq!(verified.groups().len(), 2);
@@ -2261,7 +2264,13 @@ mod tests {
             },
             receipt_root: Byte32::default(),
         };
-        let candidate = HeaderContext::after(&network, &parent, 124, Byte32::default())?;
+        let block = BlockContext::after(
+            &network,
+            &parent,
+            124,
+            Byte32::default(),
+            CapacityPolicy::default(),
+        )?;
         let origin = Origin::new(&network, &parent.context);
         let lock = script(1);
         let code_type = script(2);
@@ -2307,13 +2316,8 @@ mod tests {
                 vec![],
             )?;
             ResolvedTransaction::resolve(
-                network.clone(),
                 tx,
-                BlockContext {
-                    candidate: &candidate,
-                    parent: &parent,
-                    capacity: Default::default(),
-                },
+                &block,
                 |point| {
                     let index: usize = point.index().unpack();
                     Ok(LiveCell {

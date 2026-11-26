@@ -127,7 +127,7 @@ impl Network {
             },
             receipt_root: Byte32::default(),
         };
-        let candidate = HeaderContext::after(id, &parent, 43, Byte32::default())?;
+        let block = BlockContext::after(id, &parent, 43, Byte32::default(), Default::default())?;
         let origin = Origin::new(
             id,
             &HeaderContext {
@@ -137,13 +137,8 @@ impl Network {
             },
         );
         let tx = ResolvedTransaction::resolve(
-            id.clone(),
             tx,
-            BlockContext {
-                candidate: &candidate,
-                parent: &parent,
-                capacity: Default::default(),
-            },
+            &block,
             |point| {
                 let cell = self
                     .cells

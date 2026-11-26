@@ -83,16 +83,12 @@ fn fees_and_resource_caps_are_independent_for_control_transactions() -> Result<(
     assert!(Transaction::new(vec![], vec![], vec![], vec![], vec![]).is_err());
 
     let parent = genesis_header();
-    let block = HeaderContext::after(&hash(1), &parent, 0, hash(0))?;
+    let network = hash(1);
+    let block = BlockContext::after(&network, &parent, 0, hash(0), Default::default())?;
     assert!(
         ResolvedTransaction::resolve(
-            hash(1),
             decoded,
-            BlockContext {
-                candidate: &block,
-                parent: &parent,
-                capacity: Default::default(),
-            },
+            &block,
             |_| panic!("control transaction queried Live Cells"),
             |_| panic!("control transaction queried headers"),
         )
@@ -786,17 +782,11 @@ fn native_mint_authenticates_exact_capacity_and_outputs() -> Result<()> {
     let grant = VerifiedMint::verify(&tx, &network, &genesis, &previous, &authority, &mut budget)?;
 
     let parent = genesis_header();
-    let header = HeaderContext::after(&network, &parent, 0, hash(0))?;
-    let context = BlockContext {
-        candidate: &header,
-        parent: &parent,
-        capacity: Default::default(),
-    };
+    let context = BlockContext::after(&network, &parent, 0, hash(0), Default::default())?;
     let resolve = |tx| {
         ResolvedTransaction::resolve_mint(
-            network.clone(),
             tx,
-            context,
+            &context,
             &grant,
             None,
             |_| anyhow::bail!("unexpected Cell read"),

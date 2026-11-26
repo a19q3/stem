@@ -131,7 +131,7 @@ fn header_commitment(headers: &[Header]) -> Byte32 {
 
 #[derive(Clone, Debug)]
 pub(crate) struct LockAuthorization {
-    raw_id: Byte32,
+    pub(crate) raw_id: Byte32,
     pub(crate) cells: Byte32,
     dependencies: Option<Byte32>,
     headers: Byte32,

@@ -287,10 +287,9 @@ pub(super) struct FeeAuthorization {
 }
 
 pub(super) fn resolve_fee(
-    store: &Store,
     original: &Transaction,
     command: &Command,
-    block: BlockContext<'_>,
+    block: &BlockContext<'_>,
     fresh: impl FnMut(&OutPoint) -> Result<LiveCell>,
 ) -> Result<FeeAuthorization> {
     let mut fresh = fresh;
@@ -320,13 +319,9 @@ pub(super) fn resolve_fee(
         vec![refund.clone()],
         vec![witness.clone()],
     )?;
-    let preflight = ResolvedTransaction::resolve(
-        store.network.clone(),
-        initial_fee.clone(),
-        block,
-        fresh,
-        |_| unreachable!("Lineage fee preflight has no Header Deps"),
-    )?
+    let preflight = ResolvedTransaction::resolve(initial_fee.clone(), block, fresh, |_| {
+        unreachable!("Lineage fee preflight has no Header Deps")
+    })?
     .authorize_materialized_lineage(original, &fee_cell)?;
     Ok(FeeAuthorization {
         input: fee_input,
@@ -374,7 +369,7 @@ pub(super) fn materialize(
     store: &Store,
     original: &Transaction,
     command: &Command,
-    block: BlockContext<'_>,
+    block: &BlockContext<'_>,
     heads: &Heads,
     budget: Budget,
     mut fresh: impl FnMut(&OutPoint) -> Result<LiveCell>,
@@ -389,7 +384,7 @@ pub(super) fn materialize(
         refund,
         transaction: initial_fee,
         resolved: preflight,
-    } = resolve_fee(store, original, command, block, &mut fresh)?;
+    } = resolve_fee(original, command, block, &mut fresh)?;
     let executor_code = fresh(&command.executor_dep)?.cell;
     ensure!(
         executor_code.data_hash() == &command.executor,
@@ -447,8 +442,8 @@ pub(super) fn materialize(
     let run = executor::run(
         &executor_code.data(),
         executor::ContextData {
-            height: block.candidate.height,
-            parent_time_ms: block.parent.context.timestamp_ms,
+            height: block.candidate().height,
+            parent_time_ms: block.parent().context.timestamp_ms,
             payer_lock,
             actors,
             payload: command.payload.clone(),
@@ -459,7 +454,7 @@ pub(super) fn materialize(
     let run = run.and_then(|(results, cycles)| {
         let successors = successors(&loaded, &command.targets, results)?;
         for cell in &successors {
-            block.capacity.verify(cell)?;
+            block.capacity().verify(cell)?;
         }
         Ok((successors, cycles))
     });

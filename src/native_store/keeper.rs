@@ -9,7 +9,7 @@ use ckb_types::{
 };
 use stem_ledger::{
     BlockContext, Origin, ResolvedTransaction, Transaction,
-    block::{HeaderContext, Receipt},
+    block::Receipt,
     keeper::{self, Action, AgendaEntry, Reservation, Schedule, Trigger},
 };
 
@@ -226,7 +226,7 @@ pub(super) fn change(
     store: &Store,
     stage: &Stage,
     carrier: &ResolvedTransaction,
-    block: BlockContext<'_>,
+    block: &BlockContext<'_>,
     budget: &mut Budget,
     fresh: impl FnMut(&OutPoint) -> Result<stem_ledger::LiveCell>,
 ) -> Result<Option<Change>> {
@@ -426,9 +426,9 @@ fn check_horizon(
     policy: KeeperPolicy,
     command: &Transaction,
     schedule: Schedule,
-    block: BlockContext<'_>,
+    block: &BlockContext<'_>,
 ) -> Result<()> {
-    let height = block.candidate.height;
+    let height = block.candidate().height;
     let latest = height
         .checked_add(u64::from(policy.max_delay))
         .context("Keeper horizon overflow")?;
@@ -446,7 +446,7 @@ fn check_horizon(
             let time = policy
                 .time
                 .context("Keeper time triggers are not configured")?;
-            let now = block.parent.context.timestamp_ms;
+            let now = block.parent().context.timestamp_ms;
             ensure!(
                 target > now
                     && target - now <= time.max_delay_ms
@@ -474,7 +474,7 @@ fn check_horizon(
 fn verify_reservation(
     store: &Store,
     command: &Transaction,
-    block: BlockContext<'_>,
+    block: &BlockContext<'_>,
     budget: &mut Budget,
     slot_cycles: u64,
     mut fresh: impl FnMut(&OutPoint) -> Result<stem_ledger::LiveCell>,
@@ -494,7 +494,7 @@ fn verify_reservation(
     let mut total_cycles = 0u64;
     for member in members {
         let terms = member.lineage_command().expect("Keeper command terms");
-        let escrow = lineage::resolve_fee(store, member, terms, block, &mut fresh)?.resolved;
+        let escrow = lineage::resolve_fee(member, terms, block, &mut fresh)?.resolved;
         charge(
             &mut budget.reads,
             escrow.cell_reads() as u64 + 1,
@@ -648,7 +648,7 @@ impl Store {
     pub(super) fn run_keeper(
         &self,
         due: &Due,
-        context: &HeaderContext,
+        block: &BlockContext<'_>,
         origin: &Origin,
         budget: &mut Budget,
         overlay: &mut Overlay,
@@ -679,7 +679,7 @@ impl Store {
             let mut remaining = wake_budget(slot, command)?;
             let (mut receipt, may_retry) = match self.stage(
                 command,
-                context,
+                block,
                 origin,
                 &mut remaining,
                 overlay,
@@ -713,7 +713,12 @@ impl Store {
                 if let Some(next) = schedule
                     .retry
                     .filter(|_| may_retry && entry.attempts_left > 1)
-                    .and_then(|retry| context.height.checked_add(u64::from(retry.delay_blocks)))
+                    .and_then(|retry| {
+                        block
+                            .candidate()
+                            .height
+                            .checked_add(u64::from(retry.delay_blocks))
+                    })
                     .filter(|next| *next < entry.valid_before_height)
                 {
                     entry.eligible_height = next;

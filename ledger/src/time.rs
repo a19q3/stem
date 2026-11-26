@@ -117,14 +117,51 @@ impl Origin {
     }
 }
 
-#[derive(Clone, Copy)]
+/// A child derived from one immutable parent and network for transaction execution.
 pub struct BlockContext<'a> {
-    pub candidate: &'a HeaderContext,
-    pub parent: &'a Header,
-    pub capacity: CapacityPolicy,
+    network: &'a Byte32,
+    candidate: HeaderContext,
+    parent: &'a Header,
+    capacity: CapacityPolicy,
 }
 
-impl BlockContext<'_> {
+impl<'a> BlockContext<'a> {
+    pub fn after(
+        network: &'a Byte32,
+        parent: &'a Header,
+        timestamp_ms: u64,
+        transaction_root: Byte32,
+        capacity: CapacityPolicy,
+    ) -> Result<Self> {
+        ensure!(network != &Byte32::default(), "zero Stem network identity");
+        Ok(Self {
+            network,
+            candidate: HeaderContext::after(network, parent, timestamp_ms, transaction_root)?,
+            parent,
+            capacity,
+        })
+    }
+
+    pub fn candidate(&self) -> &HeaderContext {
+        &self.candidate
+    }
+
+    pub(crate) fn network(&self) -> &Byte32 {
+        self.network
+    }
+
+    pub fn into_candidate(self) -> HeaderContext {
+        self.candidate
+    }
+
+    pub fn parent(&self) -> &Header {
+        self.parent
+    }
+
+    pub fn capacity(&self) -> CapacityPolicy {
+        self.capacity
+    }
+
     pub fn verify_since(&self, since: Option<Since>, origin: &Origin) -> Result<()> {
         let mature = match since {
             None => true,
