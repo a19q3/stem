@@ -129,5 +129,6 @@ available. Published network evidence contains public genesis and proof data.
 | CKB Spore V2 Cluster membership | [Report](../BENCHMARKS.md#ckb-spore-v2-with-cluster-membership), [signed round trips, rejected transactions and independently verified proofs](2026-11-26-stem-spore-cluster.json.xz) |
 | Shared block context and resolved transaction IDs | [Report](../BENCHMARKS.md#shared-block-context-and-resolved-transaction-ids), [resolver samples, sustained workloads and network regressions](2026-11-26-stem-block-context.json.xz) |
 | Canonical execution records and Merkle allocations | [Report](../BENCHMARKS.md#canonical-execution-records-and-merkle-allocations), [exact proof comparisons, signed loads and rebuild records](2026-11-26-stem-execution-merkle.json.xz) |
+| Shared Jolteon receive buffers | [Report](../BENCHMARKS.md#shared-jolteon-receive-buffers), [decode allocations, signed loads, host pressure and mixed-binary recovery](2026-11-26-stem-consensus-bytes.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

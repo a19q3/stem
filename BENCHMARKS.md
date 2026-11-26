@@ -5823,3 +5823,85 @@ changed receipt in each checked proof.
 
 The release workspace passed 494 tests, the Go proof suite passed,
 and the frozen CometBFT feature built. [Raw experiments, signed workloads, executable fingerprints, and reproduction scripts](benchmarks/2026-11-26-stem-execution-merkle.json.xz).
+
+## Shared Jolteon receive buffers
+
+Baseline `ef12ab1` and candidate `b9edda9` used the same release
+profile, CKB Lock ELF and i9-13900H host. The candidate shares the
+immutable TCP receive allocation through protobuf frame decoding,
+proposal decoding and validated Strand transactions. Both builds
+re-encode protobuf messages to check canonical bytes and validate
+the complete Strand transaction. The candidate also passes existing
+transaction buffers to its proposal and client encoders.
+
+The pinned-core probe used actual signed ordinary payments and signed
+payments carrying 2 KiB of Cell Data from the preceding devnets.
+It placed the transactions in proposals with fixed metadata
+and measured canonical buffering, decoding and Strand parsing,
+before script verification. Frames and ordered transaction IDs
+were identical. Four time samples per build ran in alternating
+order on CPU 2. Allocation counting ran separately and excluded
+the initial receive buffer.
+
+| Decode fixture | Encoded frame | Median before / after | Allocation calls before / after | Requested bytes before / after |
+| --- | ---: | ---: | ---: | ---: |
+| 64 ordinary payments | 16,202 B | 198.18 / 148.38 µs | 660 / 400 | 143,481 / 63,609 |
+| 1,024 ordinary payments | 251,403 B | 3.982 / 3.016 ms | 10,268 / 6,168 | 2,261,242 / 1,006,330 |
+| 64 payments with 2 KiB Data | 147,275 B | 333.46 / 202.36 µs | 660 / 400 | 1,060,986 / 325,754 |
+| 1,024 payments with 2 KiB Data | 2,348,556 B | 14.583 / 9.738 ms | 10,268 / 6,168 | 16,941,307 / 5,200,635 |
+
+The four-replica tests used two VM workers per replica, a 250 ms
+proposal interval, a two-billion-cycle block limit and 64 persistent
+client senders. Each pair used identical funded genesis and signed
+workloads. Visible TPS measures all replicas during the offer window.
+The host was shared. CPU pressure and client drops were especially
+pronounced in the first runs.
+
+| Planned load and order | Build | Offered / admitted TPS | All-replica visible / with drain TPS | Finalized / client drops | p50 / p95 / p99 | Replica CPU |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| 1,000 TPS, 30 s | Baseline | 558.47 / 556.33 | 525.43 / 537.80 | 16,754 / 13,246 | 2.242 / 3.092 / 3.533 s | 75.46 s |
+| 1,000 TPS, 30 s | Candidate | 575.33 / 573.20 | 529.10 / 559.15 | 17,260 / 12,740 | 2.230 / 3.141 / 3.815 s | 78.49 s |
+| 750 TPS, 20 s, 2 KiB Data, first pair | Candidate | 593.35 / 590.15 | 536.60 / 559.84 | 11,867 / 3,133 | 1.999 / 2.769 / 3.692 s | 55.06 s |
+| 750 TPS, 20 s, 2 KiB Data, first pair | Baseline | 631.40 / 628.20 | 560.35 / 590.65 | 12,628 / 2,372 | 1.833 / 2.532 / 2.798 s | 55.78 s |
+| 750 TPS, 20 s, 2 KiB Data, reversed | Baseline | 555.40 / 552.20 | 491.35 / 530.22 | 11,108 / 3,892 | 2.111 / 2.863 / 3.343 s | 50.97 s |
+| 750 TPS, 20 s, 2 KiB Data, reversed | Candidate | 630.20 / 627.00 | 562.90 / 592.68 | 12,604 / 2,396 | 1.785 / 2.422 / 2.617 s | 58.22 s |
+| 2,000 TPS, 20 s | Baseline | 1,022.15 / 1,018.95 | 933.15 / 984.95 | 20,443 / 19,557 | 1.390 / 2.443 / 2.767 s | 61.36 s |
+| 2,000 TPS, 20 s | Candidate | 1,438.50 / 1,436.40 | 1,328.05 / 1,391.27 | 28,770 / 11,230 | 1.237 / 1.722 / 2.007 s | 65.23 s |
+| 1,000 TPS, 24 s, candidate first | Candidate | 1,000.00 / 1,000.00 | 974.58 / 981.07 | 24,000 / 0 | 0.835 / 1.072 / 1.133 s | 57.12 s |
+| 1,000 TPS, 24 s, candidate first | Baseline | 1,000.00 / 1,000.00 | 973.79 / 981.09 | 24,000 / 0 | 0.681 / 0.882 / 1.005 s | 42.16 s |
+| 1,000 TPS, 24 s, baseline first | Baseline | 1,000.00 / 998.75 | 969.50 / 976.03 | 24,000 / 0 | 0.618 / 0.777 / 0.813 s | 33.43 s |
+| 1,000 TPS, 24 s, baseline first | Candidate | 1,000.00 / 1,000.00 | 973.17 / 983.23 | 24,000 / 0 | 0.607 / 0.767 / 0.800 s | 32.51 s |
+
+The large-data pairs reversed direction when run order reversed.
+The overload pair reached different offered rates while observed
+host CPU pressure fell. Both effects prevent a causal estimate of
+the throughput change from those runs. The archive includes
+process writes, sampled memory, network traffic, and host CPU
+pressure for interpreting the comparisons.
+
+The two 24-second pairs finalized 24,000 transactions per run
+without client drops. Visible throughput was close across the four
+runs. The change in CPU and p99 reversed between pairs, so neither
+metric showed a repeatable improvement. A separate probe repeatedly
+read four decoded transaction fields from 1,024 transactions. It
+compared a shared proposal allocation with one allocation per
+transaction. Two readers pinned to separate cores took a median
+791.83 versus 276.80 ms for ordinary payments, and 907.23 versus
+269.28 ms for payments with 2 KiB Data. This isolates a reference
+count contention cost under repeated field reads. Its contribution
+to the network runs remains unmeasured.
+
+Mixed binaries agreed after restart in four- and sixteen-replica
+Jolteon networks. Each finalized all 96 signed payments while
+one and two replicas, respectively, were offline. The distributed
+AMM regression finalized all 2,880 offers and serially replayed
+5,760 Lineage Head updates. Keeper, Intercell, xUDT, fee payout,
+funded committee handoff, shared Metatype quorum, and clustered
+Spore regressions passed on the same candidate.
+
+The locked release workspace passed 495 tests. The Go proof suite
+and frozen CometBFT build check passed. The archive retains the
+initial Rust build failures from converting protobuf byte fields
+and the passing receive-buffer and canonical decoding tests.
+
+[Raw run records, signed workloads, build fingerprints and reproduction scripts](benchmarks/2026-11-26-stem-consensus-bytes.json.xz).
