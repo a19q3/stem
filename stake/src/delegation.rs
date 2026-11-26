@@ -35,6 +35,17 @@ pub fn verify(
     if amount == 0 {
         return Err(Error::Encoding);
     }
+    verify_position(network, id, root, amount, proof)
+}
+
+/// Verify a positive principal or the authenticated absence of the position.
+pub fn verify_position(
+    network: &Hash32,
+    id: DelegationId,
+    root: &Hash32,
+    amount: u64,
+    proof: &[u8],
+) -> Result<()> {
     let position = id.commitment();
     let leaf = leaf(network, &position, amount);
     domain(*network).update(&position, root, leaf, leaf, proof)?;

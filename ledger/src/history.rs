@@ -71,6 +71,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn portable_archive_proof_binds_the_external_root_and_network() -> Result<()> {
+        let network = [3u8; 32].pack();
+        let header = crate::block::Header::decode(&[0; stem_stake::finality::NATIVE_HEADER_BYTES])?;
+        let mut frontier = Frontier::empty(network.unpack());
+        frontier.append(0, &header.id(&network).unpack())?;
+        let proof = HistoricalHeaderProof {
+            header,
+            frontier: frontier.encode(),
+            siblings: vec![],
+        };
+        let mut encoded = proof.encode()?;
+        assert_eq!(HistoricalHeaderProof::decode(&encoded)?, proof);
+        proof.verify(&network, &frontier.root())?;
+        assert!(proof.verify(&network, &[7; 32]).is_err());
+        assert!(proof.verify(&[4u8; 32].pack(), &frontier.root()).is_err());
+        encoded.push(0);
+        assert!(HistoricalHeaderProof::decode(&encoded).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn peaks_bind_height_and_verify_append_only_history() -> Result<()> {
         let network = [3u8; 32].pack();
         let ids = [
@@ -121,5 +142,78 @@ mod tests {
             ));
         }
         Ok(())
+    }
+}
+
+/// Portable membership proof for one execution Header at a later history root.
+/// The verifier obtains the expected root from an independently authenticated Header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoricalHeaderProof {
+    pub header: crate::block::Header,
+    pub frontier: Vec<u8>,
+    pub siblings: Vec<[u8; 32]>,
+}
+
+impl HistoricalHeaderProof {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        anyhow::ensure!(
+            self.frontier.len() <= 8 + 64 * 32 && self.siblings.len() <= 63,
+            "history proof exceeds bounds"
+        );
+        let mut out = self.header.encode().to_vec();
+        crate::wire::Bytes::write_count(self.frontier.len(), &mut out)?;
+        out.extend_from_slice(&self.frontier);
+        crate::wire::Byte32Vec::write_count(self.siblings.len(), &mut out)?;
+        for sibling in &self.siblings {
+            out.extend_from_slice(sibling);
+        }
+        Ok(out)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<Self> {
+        use crate::strand::prelude::Reader;
+        anyhow::ensure!(
+            input.len() <= stem_stake::finality::NATIVE_HEADER_BYTES + 16 + 127 * 32,
+            "oversized history proof"
+        );
+        let reader = crate::wire::HistoricalHeaderProofReader::from_slice(input)?;
+        let frontier = reader.frontier().raw_data();
+        let siblings = reader.siblings();
+        anyhow::ensure!(
+            frontier.len() <= 8 + 64 * 32 && siblings.len() <= 63,
+            "history proof exceeds bounds"
+        );
+        Ok(Self {
+            header: crate::block::Header::decode(reader.header().as_slice())?,
+            frontier: frontier.to_vec(),
+            siblings: siblings
+                .iter()
+                .map(|node| node.as_slice().try_into().expect("fixed Strand hash"))
+                .collect(),
+        })
+    }
+
+    pub fn verify(&self, network: &Byte32, expected_root: &[u8; 32]) -> Result<()> {
+        let frontier = Frontier::decode(network.unpack(), &self.frontier)?;
+        anyhow::ensure!(
+            frontier.root() == *expected_root
+                && frontier.verify_inclusion(
+                    self.header.context.height,
+                    &self.header.id(network).unpack(),
+                    &self.siblings
+                ),
+            "historical Header differs from authenticated history"
+        );
+        Ok(())
+    }
+
+    /// The deployed CKB verifier derives the frontier length from its peak bitmap.
+    pub fn witness(&self) -> Vec<u8> {
+        let mut out = self.header.encode().to_vec();
+        out.extend_from_slice(&self.frontier);
+        for sibling in &self.siblings {
+            out.extend_from_slice(sibling);
+        }
+        out
     }
 }

@@ -473,6 +473,16 @@ The certificate probe reports one weighted signer payload at 4, 16, 32, 64, 100 
 
 ## Wallet and proofs
 
+### Portable Strand proofs and snapshots
+
+`stem checkpoint history` can write the same historical Header, MMR frontier and sibling hashes as a binary Strand file with `--strand-output history.strand`. The ordinary JSON response is also printed. Pass a file with the `.strand` suffix to the Intercell delivery command's `--history` option. Both inputs produce the deployed CKB witness format. A verifier must authenticate the expected history root separately.
+
+`stem stake delegation-proof` accepts `--strand-output position.strand` for a single delegation principal or an absent position. Check it against the root from the authenticated Registry entry using `stem stake verify-delegation-proof --network NETWORK --root ROOT --proof position.strand`. The returned identity includes the registry, validator, owner and nonce. An authenticated zero principal proves absence at that root.
+
+State snapshot files use the existing streaming layout. Its envelope, header suffix, record keys and record lengths are specified in the Strand schema. The node streams the records and authenticates the restored state against the supplied checkpoint. Existing snapshots and authenticated keys retain their byte representation. A four-validator archive produced a 384-byte history proof and the membership/absence fixtures produced 204-byte delegation proofs. [Archived public examples](evidence/2026-11-27-strand-proofs.json.xz)
+
+
+
 For paired partial authorization, fund one Cell using the `stem-intent-lock` Data code hash and 52 bytes of arguments. The first 20 bytes are the owner's compressed-key Blake160, followed by a 32-byte locally unique salt. Choose the exact delivery Cell and resolve the common Cell and Header Deps before signing. Use `stem wallet intent sign` with the signing-context JSON and a draft whose selected input and delivery are at the same index. The signer supplies an exclusive `--valid-before-height` and `--max-fee` in shannons. A sponsor additionally supplies `--sponsor-max-debit` and puts plain change at index 0 and the exact sponsored pair at index 1. The solver builds a new draft with every pair and uses `stem wallet intent attach --intent first.json --intent second.json`. Collect any complete transaction signatures after attaching the terms. To cancel, consume the input with `stem wallet sign --intent-code /path/to/stem-intent-lock` and empty proof data for that Lock Group.
 
 For Action-bearing pairs, every signer and the sponsor pass the same `--actions actions.json` to `wallet intent sign`. The solver supplies that file to `wallet intent attach` along with the signed pairs. The entries are ordered by role (`lock` then `type`) and raw Script hash, with one entry per identity. Within an entry, the order of Actions is signed. For example, the decoded `open` Action for a Type group is recorded as follows.

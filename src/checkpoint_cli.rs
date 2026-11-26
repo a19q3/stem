@@ -46,6 +46,9 @@ pub enum CheckpointCommand {
         archive: Archive,
         #[arg(long)]
         header: u64,
+        /// Also write a portable Strand history proof.
+        #[arg(long)]
+        strand_output: Option<PathBuf>,
     },
 }
 
@@ -266,21 +269,29 @@ impl CheckpointCommand {
             Self::JolteonBundle(args) => args.run(),
             Self::Publish(args) => args.run(),
             Self::Fund { command } => command.run(),
-            Self::History { archive, header } => {
+            Self::History {
+                archive, header, strand_output,
+            } => {
                 let (network, index) = archive.open()?;
                 let historical = index.header(header)?;
                 let id = historical.id(&network);
                 let frontier = index.frontier_at(archive.height)?;
                 let siblings = index.inclusion(header, archive.height)?;
-                ensure!(
-                    frontier.verify_inclusion(header, &id.unpack(), &siblings),
-                    "archive generated an invalid history proof"
-                );
+                let root = frontier.root();
+                let proof = stem_ledger::history::HistoricalHeaderProof {
+                    header: historical,
+                    frontier: frontier.encode(),
+                    siblings,
+                };
+                proof.verify(&network, &root)?;
+                if let Some(path) = strand_output {
+                    std::fs::write(path, proof.encode()?)?;
+                }
                 print_json(&json!({
-                    "header": encode(historical.encode()),
+                    "header": encode(proof.header.encode()),
                     "id": encode(id.as_slice()),
-                    "frontier": encode(frontier.encode()),
-                    "siblings": siblings.iter().map(encode).collect::<Vec<_>>(),
+                    "frontier": encode(&proof.frontier),
+                    "siblings": proof.siblings.iter().map(encode).collect::<Vec<_>>(),
                 }))
             }
         }

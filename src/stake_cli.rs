@@ -28,7 +28,6 @@ use stem_stake::{
     delegation::{DelegationTree, PrincipalChange},
     jolteon::CommitteeChange,
     l1::{DelegationId, GuardianProof, StakeCell, guardian_generation},
-    rewards::EpochRewards,
 };
 
 use crate::{
@@ -88,6 +87,18 @@ pub enum StakeCommand {
         positions: PathBuf,
         #[arg(long)]
         request: PathBuf,
+        /// Also write the canonical Strand membership or absence proof.
+        #[arg(long)]
+        strand_output: Option<PathBuf>,
+    },
+    /// Verify a Strand delegation position against a trusted Registry root.
+    VerifyDelegationProof {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        network: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        root: H256,
+        #[arg(long)]
+        proof: PathBuf,
     },
     /// Verify reward terms against an authenticated Stem Header and compute the allocation.
     RewardQuote {
@@ -463,7 +474,7 @@ impl StakeCommand {
                 let request: RewardQuoteRequest = read_json_limited(&request, 256 * 1024)?;
                 let header: JsonBytes = read_json_limited(&header, 4096)?;
                 let header = Header::decode(header.as_bytes())?;
-                let record = EpochRewards::decode(request.epoch_record.as_bytes())?;
+                let record = stem_ledger::stake_proof::decode_epoch_rewards(request.epoch_record.as_bytes())?;
                 let proof = Proof::decode(request.proof.as_bytes())?;
                 ensure!(
                     Store::verify_reward_epoch(&network.pack(), &header, &record, &proof),
@@ -520,10 +531,19 @@ impl StakeCommand {
                     "identity": JsonBytes::from_vec(id.encode().to_vec())}),
                 )
             }
+            Self::VerifyDelegationProof {
+                network, root, proof,
+            } => {
+                let bytes = crate::bridge_cli::read_limited(&proof, 16 * 1024)?;
+                let proof = stem_ledger::stake_proof::StakePrincipalProof::decode(&bytes)?;
+                proof.verify(network.as_bytes().try_into()?, root.as_bytes().try_into()?)?;
+                print_json(&json!({"identity": JsonBytes::from_vec(proof.identity.encode().to_vec()), "principal": proof.principal}))
+            }
             Self::DelegationProof {
                 network,
                 positions,
                 request,
+                strand_output,
             } => {
                 let network = network.as_bytes().try_into()?;
                 let request: DelegationProofRequest = read_json_limited(&request, 4096)?;
@@ -565,6 +585,15 @@ impl StakeCommand {
                         .map(H256::from)
                     })
                     .transpose()?;
+                if let Some(path) = strand_output {
+                    let portable = stem_ledger::stake_proof::StakePrincipalProof {
+                        identity: id,
+                        principal: before,
+                        path: proof.clone(),
+                    };
+                    portable.verify(&network, &root)?;
+                    std::fs::write(path, portable.encode()?)?;
+                }
                 print_json(&json!({"root": H256::from(root), "principal": before,
                     "proof": JsonBytes::from_vec(proof), "successor": successor}))
             }

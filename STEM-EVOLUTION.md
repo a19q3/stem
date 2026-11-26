@@ -7,7 +7,7 @@
 | 编号 | 方向 | 运行状态与剩余工作 |
 | --- | --- | --- |
 | 01 | Stem 改名 | GitHub 仓库、crate、CLI、服务、开发网及签名域已切换。历史分支和证据保留原名。 |
-| 02 | Strand | Cell、交易、Group Message、Witness、Header、Receipt、执行证明、Live Cell 路径、原生控制交易、桥接聚合记账和逐通道状态已接入。Rust 和 C 读取器做了针对性差分测试。其余专用系统记录、历史与质押证明、快照封套仍待评估和统一。 |
+| 02 | Strand | Cell、交易、Group Message、Witness、Header、Receipt、执行证明、Live Cell 路径、原生控制交易、桥接聚合记账和逐通道状态已接入。Rust 和 C 读取器做了针对性差分测试。账本已用 Strand 描述流式快照封套、已采纳 L1 锚点、已接受质押快照头、成员和奖励记录。归档历史证明及委托本金的成员或缺席证明均可导出 Strand 文件。4 副本归档与独立 CLI 复验、旧快照逐字节对照见[操作说明](OPERATIONS.md#portable-strand-proofs-and-snapshots)。其他专用记录仍需逐格式核对。 |
 | 03 | Indexed Script Table | 四种布局实测。共识采用内联 Strand。索引式布局进一步缩小批量输出，其规范验证和解析开销见基准测试。 |
 | 04 | Native Group Message | 已实现。消息进交易主体，通过 syscall 2123 读取。真实 Type Script 验证 Action 并拒绝缺失消息。 |
 | 05 | 完整输入签名 | 已实现标准完整交易授权。标准锁和 CLI 共用解析规则，绑定输入、显式依赖、展开成员、Header Deps、原始交易及非签名见证。部分授权语义仍待独立实现。 |

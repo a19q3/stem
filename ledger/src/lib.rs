@@ -32,6 +32,8 @@ pub mod proof;
 pub mod protocol;
 pub mod record;
 pub mod replay;
+pub mod snapshot;
+pub mod stake_proof;
 pub mod time;
 mod witness;
 

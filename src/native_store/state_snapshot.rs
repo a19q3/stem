@@ -1,10 +1,7 @@
 //! Export and restore canonical state records using an externally authenticated
 //! Stem AppHash. The Patricia nodes are reconstructed at the destination.
 
-use std::{
-    io::{Read, Write},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{DB, Direction, IteratorMode, prelude::*};
@@ -12,24 +9,14 @@ use ckb_types::{packed::Byte32, prelude::*};
 use stem_ledger::{
     block::Header,
     history::History,
-    patricia::{Key, Namespace},
-    record,
+    patricia::Namespace,
+    record, snapshot::StateSnapshot,
 };
 
 use super::{
     Batch, HEADER, HEADER_ID, HISTORY, STATE_NODE, STATE_RECORD, Store, TIP, index_key, put_nodes,
     put_tip, state_key, sync_with_consensus,
 };
-
-#[derive(Clone, Debug)]
-pub struct StateSnapshot {
-    pub header: Header,
-    pub frontier: Vec<u8>,
-    /// Canonical Cell and protocol records. Keys are in database order.
-    pub records: Vec<(Namespace, Key, Vec<u8>)>,
-    /// A suffix of native Headers including the checkpoint, in ascending order.
-    pub headers: Vec<Header>,
-}
 
 pub struct SnapshotReader {
     db: Arc<DB>,
@@ -258,100 +245,4 @@ impl Store {
             .unwrap_or_default();
         self.limits.header_dep_age.max(staking).saturating_sub(1)
     }
-}
-
-const HEADER_BYTES: usize = 208;
-
-impl StateSnapshot {
-    pub fn encode(&self, mut out: impl Write) -> Result<()> {
-        out.write_all(&self.header.encode())?;
-        sized_write(&mut out, &self.frontier)?;
-        out.write_all(&u32::try_from(self.headers.len())?.to_le_bytes())?;
-        for header in &self.headers {
-            out.write_all(&header.encode())?;
-        }
-        out.write_all(&u32::try_from(self.records.len())?.to_le_bytes())?;
-        for (namespace, key, record) in &self.records {
-            out.write_all(&[namespace.tag()])?;
-            out.write_all(key)?;
-            sized_write(&mut out, record)?;
-        }
-        Ok(())
-    }
-
-    pub fn decode(mut input: impl Read, length: u64) -> Result<Self> {
-        let mut remaining = length;
-        let mut encoded = [0; HEADER_BYTES];
-        snapshot_read(&mut input, &mut remaining, &mut encoded)?;
-        let header = Header::decode(&encoded)?;
-        let frontier = sized_read(&mut input, &mut remaining, 8 + 64 * 32)?;
-        let mut count = [0; 4];
-        snapshot_read(&mut input, &mut remaining, &mut count)?;
-        let headers_count = u32::from_le_bytes(count);
-        ensure!(
-            u64::from(headers_count) <= remaining / HEADER_BYTES as u64,
-            "invalid snapshot Header count"
-        );
-        let mut headers = Vec::new();
-        for _ in 0..headers_count {
-            snapshot_read(&mut input, &mut remaining, &mut encoded)?;
-            headers.push(Header::decode(&encoded)?);
-        }
-        snapshot_read(&mut input, &mut remaining, &mut count)?;
-        let records_count = u32::from_le_bytes(count);
-        ensure!(
-            u64::from(records_count) <= remaining / 37,
-            "invalid snapshot record count"
-        );
-        let mut records = Vec::new();
-        for _ in 0..records_count {
-            let mut prefix = [0; 33];
-            snapshot_read(&mut input, &mut remaining, &mut prefix)?;
-            let namespace = match prefix[0] {
-                0 => Namespace::Cells,
-                1 => Namespace::System,
-                _ => anyhow::bail!("invalid snapshot state namespace"),
-            };
-            let key = prefix[1..].try_into()?;
-            let value = sized_read(&mut input, &mut remaining, stem_ledger::MAX_CELL_BYTES + 84)?;
-            records.push((namespace, key, value));
-        }
-        ensure!(remaining == 0, "trailing snapshot data");
-        Ok(Self {
-            header,
-            frontier,
-            records,
-            headers,
-        })
-    }
-}
-
-fn sized_write(out: &mut impl Write, bytes: &[u8]) -> Result<()> {
-    out.write_all(&u32::try_from(bytes.len())?.to_le_bytes())?;
-    out.write_all(bytes)?;
-    Ok(())
-}
-
-fn sized_read(input: &mut impl Read, remaining: &mut u64, limit: usize) -> Result<Vec<u8>> {
-    let mut size = [0; 4];
-    *remaining = remaining
-        .checked_sub(4)
-        .context("truncated snapshot length")?;
-    input.read_exact(&mut size)?;
-    let size = u32::from_le_bytes(size) as usize;
-    ensure!(size <= limit, "snapshot record exceeds limit");
-    *remaining = remaining
-        .checked_sub(size as u64)
-        .context("truncated snapshot record")?;
-    let mut bytes = vec![0; size];
-    input.read_exact(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn snapshot_read(input: &mut impl Read, remaining: &mut u64, bytes: &mut [u8]) -> Result<()> {
-    *remaining = remaining
-        .checked_sub(bytes.len() as u64)
-        .context("truncated snapshot")?;
-    input.read_exact(bytes)?;
-    Ok(())
 }

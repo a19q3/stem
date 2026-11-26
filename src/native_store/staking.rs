@@ -12,9 +12,10 @@ use stem_ledger::{
     patricia::{Key, Namespace, Patricia},
     protocol::{BlockBudget, FeeFund, Limits, Operation, SnapshotContext, snapshot_body},
     replay::Key as ReplayKey,
+    stake_proof::{decode_accepted, decode_members, encode_accepted, encode_members},
 };
 use stem_stake::{
-    AcceptedSnapshot, Anchor, Attestation, Authority, Member, Registry, RegistryAnchor,
+    AcceptedSnapshot, Attestation, Authority, Member, Registry,
     StakeConfig, StakeDomain, StakeSnapshot, ValidatorKey,
     jolteon::{COMMITTEE_RECORD, CommitteeChange, evidence::epoch_end_key},
     l1::{
@@ -320,7 +321,7 @@ impl Staking {
             let current = store
                 .system_record(CURRENT_EPOCH)?
                 .context("missing current reward epoch")?;
-            let current = EpochRewards::decode(&current)?;
+            let current = stem_ledger::stake_proof::decode_epoch_rewards(&current)?;
             ensure!(
                 current.epoch < announced.epoch
                     && current.end_height == 0
@@ -473,61 +474,13 @@ impl StakeState {
     }
 
     fn decode(accepted: &[u8], announced: &[u8], applied_sequence: u64) -> Result<Self> {
-        let (header, eligible) = accepted
-            .split_at_checked(88)
-            .context("truncated accepted Stake Snapshot")?;
+        let (accepted, eligible) = decode_accepted(accepted)?;
         Ok(Self {
-            accepted: AcceptedSnapshot {
-                epoch: u64::from_le_bytes(header[..8].try_into()?),
-                anchor: RegistryAnchor {
-                    block: Anchor {
-                        height: u64::from_le_bytes(header[8..16].try_into()?),
-                        hash: header[16..48].try_into()?,
-                    },
-                    sequence: u64::from_le_bytes(header[48..56].try_into()?),
-                    commitment: header[56..88].try_into()?,
-                },
-            },
-            eligible: decode_members(eligible)?,
+            accepted,
+            eligible,
             applied_sequence,
             announced: CommitteeChange::decode(announced)?,
             submitted: None,
         })
     }
-}
-
-fn encode_accepted(accepted: AcceptedSnapshot, members: &[Member]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&accepted.epoch.to_le_bytes());
-    bytes.extend_from_slice(&accepted.anchor.block.height.to_le_bytes());
-    bytes.extend_from_slice(&accepted.anchor.block.hash);
-    bytes.extend_from_slice(&accepted.anchor.sequence.to_le_bytes());
-    bytes.extend_from_slice(&accepted.anchor.commitment);
-    bytes.extend_from_slice(&encode_members(members));
-    bytes
-}
-
-fn encode_members(members: &[Member]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(members.len() * 40);
-    for member in members {
-        bytes.extend_from_slice(&member.key);
-        bytes.extend_from_slice(&member.power.to_le_bytes());
-    }
-    bytes
-}
-
-fn decode_members(bytes: &[u8]) -> Result<Vec<Member>> {
-    ensure!(
-        bytes.len().is_multiple_of(40) && bytes.len() / 40 <= stem_stake::MAX_RECORDS,
-        "invalid committee record"
-    );
-    bytes
-        .chunks_exact(40)
-        .map(|entry| {
-            Ok(Member {
-                key: entry[..32].try_into()?,
-                power: u64::from_le_bytes(entry[32..].try_into()?),
-            })
-        })
-        .collect()
 }

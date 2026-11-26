@@ -49,7 +49,8 @@ use bridge::{Bridge, BridgeChanges, StagedBridge};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
 use staking::{StagedStake, StakeInputs, Staking};
 pub use staking::{StakeGenesis, stake_registry_policy};
-pub use state_snapshot::{SnapshotReader, StateSnapshot};
+pub use state_snapshot::SnapshotReader;
+pub use stem_ledger::snapshot::StateSnapshot;
 pub use stem_ledger::protocol::{FeeFundDestination, FeeFundPolicy};
 
 use stem_ledger::light::EXTINGUISHED_FEES_KEY as FEE_KEY;
@@ -862,10 +863,10 @@ impl Store {
         &self,
         epoch: u64,
     ) -> Result<(Option<stem_stake::rewards::EpochRewards>, Proof)> {
-        use stem_stake::rewards::{EpochRewards, epoch_key};
+        use stem_stake::rewards::epoch_key;
         let (record, proof) = self.prove_system(&epoch_key(epoch))?;
         Ok((
-            record.as_deref().map(EpochRewards::decode).transpose()?,
+            record.as_deref().map(stem_ledger::stake_proof::decode_epoch_rewards).transpose()?,
             proof,
         ))
     }

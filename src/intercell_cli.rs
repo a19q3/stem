@@ -96,6 +96,11 @@ struct HistoryProof {
 }
 
 fn historical_evidence(path: PathBuf, network: &[u8; 32]) -> Result<Vec<u8>> {
+    if path.extension().is_some_and(|ext| ext == "strand") {
+        let bytes = crate::bridge_cli::read_limited(&path, 16 * 1024)?;
+        let proof = stem_ledger::history::HistoricalHeaderProof::decode(&bytes)?;
+        return Ok(proof.witness());
+    }
     let proof: HistoryProof = read_json_limited(&path, 16 * 1024)?;
     let header = Header::decode(proof.header.as_bytes())?;
     ensure!(

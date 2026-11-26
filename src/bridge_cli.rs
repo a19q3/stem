@@ -577,12 +577,16 @@ pub(crate) fn read_key(path: &Path) -> Result<SigningKey> {
 }
 
 pub fn read_json_limited<T: DeserializeOwned>(path: &Path, limit: usize) -> Result<T> {
+    Ok(serde_json::from_slice(&read_limited(path, limit)?)?)
+}
+
+pub fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let mut raw = Vec::new();
     File::open(path)?
         .take(limit as u64 + 1)
         .read_to_end(&mut raw)?;
-    ensure!(raw.len() <= limit, "JSON input file exceeds size limit");
-    Ok(serde_json::from_slice(&raw)?)
+    ensure!(raw.len() <= limit, "input file exceeds size limit");
+    Ok(raw)
 }
 
 pub fn print_json(value: &impl Serialize) -> Result<()> {

@@ -405,6 +405,28 @@ impl VaultUpdate {
 }
 
 impl L1Anchor {
+    /// Authenticated system record for the backing anchor and adoption height.
+    pub fn encode_adopted(&self, adopted_at: u64) -> Vec<u8> {
+        let mut out = Vec::with_capacity(48);
+        out.extend_from_slice(&self.height.to_le_bytes());
+        out.extend_from_slice(self.hash.as_slice());
+        out.extend_from_slice(&adopted_at.to_le_bytes());
+        out
+    }
+
+    pub fn decode_adopted(data: &[u8]) -> Result<(Self, u64)> {
+        use crate::strand::prelude::Reader;
+        let row = wire::AdoptedL1AnchorReader::from_slice(data)?;
+        let anchor = row.anchor();
+        Ok((
+            Self {
+                height: u64::from_le_bytes(anchor.height().as_slice().try_into()?),
+                hash: Byte32::from_slice(anchor.hash().as_slice())?,
+            },
+            u64::from_le_bytes(row.adopted_at().as_slice().try_into()?),
+        ))
+    }
+
     fn encode(&self) -> wire::L1Anchor {
         wire::L1Anchor::new_builder()
             .height(uint64(self.height))

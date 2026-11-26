@@ -1082,6 +1082,184 @@
         { "name": "version", "type": "CompactUint64" },
         { "name": "executor", "type": "Byte32" }
       ]
+    },
+    {
+      "name": "SnapshotRecordKey",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "namespace",
+          "type": "byte"
+        },
+        {
+          "name": "key",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "SnapshotRecord",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "location",
+          "type": "SnapshotRecordKey"
+        },
+        {
+          "name": "value",
+          "type": "Bytes"
+        }
+      ]
+    },
+    {
+      "name": "SnapshotRecordVec",
+      "kind": "dense_vector",
+      "item": "SnapshotRecord"
+    },
+    {
+      "name": "SnapshotHeaderVec",
+      "kind": "dense_vector",
+      "item": "Header"
+    },
+    {
+      "name": "StateSnapshot",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "header",
+          "type": "Header"
+        },
+        {
+          "name": "frontier",
+          "type": "Bytes"
+        },
+        {
+          "name": "headers",
+          "type": "SnapshotHeaderVec"
+        },
+        {
+          "name": "records",
+          "type": "SnapshotRecordVec"
+        }
+      ]
+    },
+    {
+      "name": "HistoricalHeaderProof",
+      "kind": "sequence",
+      "fields": [
+        { "name": "header", "type": "Header" },
+        { "name": "frontier", "type": "Bytes" },
+        { "name": "siblings", "type": "Byte32Vec" }
+      ]
+    },
+    {
+      "name": "DelegationIdentity",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "registry",
+          "type": "Byte32"
+        },
+        {
+          "name": "validator",
+          "type": "Byte32"
+        },
+        {
+          "name": "owner",
+          "type": "Byte32"
+        },
+        {
+          "name": "nonce",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "StakePrincipalProof",
+      "kind": "sequence",
+      "fields": [
+        {
+          "name": "identity",
+          "type": "DelegationIdentity"
+        },
+        {
+          "name": "principal",
+          "type": "Uint64"
+        },
+        {
+          "name": "path",
+          "type": "Bytes"
+        }
+      ]
+    },
+    {
+      "name": "EpochRewards",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "epoch",
+          "type": "Uint64"
+        },
+        {
+          "name": "start_height",
+          "type": "Uint64"
+        },
+        {
+          "name": "end_height",
+          "type": "Uint64"
+        },
+        {
+          "name": "start_fees",
+          "type": "Uint64"
+        },
+        {
+          "name": "end_fees",
+          "type": "Uint64"
+        },
+        {
+          "name": "budget",
+          "type": "Uint64"
+        },
+        {
+          "name": "registry",
+          "type": "Byte32"
+        },
+        {
+          "name": "registry_commitment",
+          "type": "Byte32"
+        },
+        {
+          "name": "committee_commitment",
+          "type": "Byte32"
+        }
+      ]
+    },
+    {
+      "name": "StakeMember",
+      "kind": "struct",
+      "fields": [
+        { "name": "key", "type": "Byte32" },
+        { "name": "power", "type": "Uint64" }
+      ]
+    },
+    {
+      "name": "AcceptedStakePrefix",
+      "kind": "struct",
+      "fields": [
+        { "name": "epoch", "type": "Uint64" },
+        { "name": "height", "type": "Uint64" },
+        { "name": "hash", "type": "Byte32" },
+        { "name": "sequence", "type": "Uint64" },
+        { "name": "commitment", "type": "Byte32" }
+      ]
+    },
+    {
+      "name": "AdoptedL1Anchor",
+      "kind": "struct",
+      "fields": [
+        { "name": "anchor", "type": "L1Anchor" },
+        { "name": "adopted_at", "type": "Uint64" }
+      ]
     }
   ]
 }

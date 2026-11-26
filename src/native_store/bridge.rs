@@ -22,7 +22,7 @@ use stem_stake::{
     Authority, Member, Registry,
     finality::{CheckpointId, VaultPolicy},
     jolteon::{CommitteeChange, checkpoint::FundingPolicy},
-    rewards::{EpochRewards, epoch_key},
+    rewards::epoch_key,
 };
 
 use super::Store;
@@ -220,7 +220,7 @@ impl Bridge {
         );
         let authority = Authority::new(spec.guardian_generation.unpack(), &spec.guardians)?;
         let mut records = Records::new();
-        records.insert(ANCHOR.to_vec(), Some(encode_anchor(&spec.anchor, 0)));
+        records.insert(ANCHOR.to_vec(), Some(spec.anchor.encode_adopted(0)));
         records.insert(
             BACKING.to_vec(),
             Some(BridgeBacking::default().encode().to_vec()),
@@ -517,7 +517,7 @@ impl Bridge {
         );
         changes.records.insert(
             ANCHOR.to_vec(),
-            Some(encode_anchor(&observation.anchor, height)),
+            Some(observation.anchor.encode_adopted(height)),
         );
 
         let deposits = &mint.statement().deposits;
@@ -696,7 +696,7 @@ impl Bridge {
             let raw = store
                 .system_record(&epoch_key(epoch.epoch))?
                 .context("stake reward epoch is not closed")?;
-            let record = EpochRewards::decode(&raw)?;
+            let record = stem_ledger::stake_proof::decode_epoch_rewards(&raw)?;
             let registry = Registry::decode(&epoch.registry)?;
             let committee = CommitteeChange::decode(&epoch.committee)?;
             let terms = record.bind(&network, &registry, &committee)?;
@@ -849,7 +849,7 @@ impl Bridge {
             self.reference_verifier.authority(),
             &tx.certificate().context("missing L1 anchor certificate")?,
         )?;
-        let record = encode_anchor(&update.anchor, height);
+        let record = update.anchor.encode_adopted(height);
         Ok(BridgeChanges {
             budget: Some(budget),
             records: Records::from([(ANCHOR.to_vec(), Some(record))]),
@@ -914,7 +914,7 @@ impl Bridge {
         }
         changes.records.insert(
             ANCHOR.to_vec(),
-            Some(encode_anchor(&settlement.anchor, height)),
+            Some(settlement.anchor.encode_adopted(height)),
         );
         changes.protocol_result = settlement.anchor.hash.as_bytes();
         Ok(changes)
@@ -956,7 +956,7 @@ impl Bridge {
         tx: &Transaction,
         height: u64,
     ) -> Result<VerifiedL1References> {
-        let (anchor, adopted_at) = decode_anchor(
+        let (anchor, adopted_at) = L1Anchor::decode_adopted(
             &store
                 .system_record(ANCHOR)?
                 .context("missing L1 backing anchor")?,
@@ -973,7 +973,7 @@ impl Store {
     pub fn prove_bridge_anchor(&self) -> Result<((L1Anchor, u64), super::Proof)> {
         let (record, proof) = self.prove_system(ANCHOR)?;
         Ok((
-            decode_anchor(&record.context("bridge is not configured")?)?,
+            L1Anchor::decode_adopted(&record.context("bridge is not configured")?)?,
             proof,
         ))
     }
@@ -990,7 +990,7 @@ impl Store {
                 network,
                 header,
                 ANCHOR,
-                Some(&encode_anchor(anchor, adopted_at)),
+                Some(&anchor.encode_adopted(adopted_at)),
                 proof,
             )
     }
@@ -1254,7 +1254,7 @@ impl View<'_> {
     }
 
     fn anchor(&self) -> Result<L1Anchor> {
-        Ok(decode_anchor(&self.read(ANCHOR)?.context("missing L1 backing anchor")?)?.0)
+        Ok(L1Anchor::decode_adopted(&self.read(ANCHOR)?.context("missing L1 backing anchor")?)?.0)
     }
 
     fn backing(&self) -> Result<BridgeBacking> {
@@ -1322,23 +1322,6 @@ fn key(prefix: &[u8], id: &Byte32, nonce: Option<u64>) -> Vec<u8> {
     key
 }
 
-fn encode_anchor(anchor: &L1Anchor, adopted_at: u64) -> Vec<u8> {
-    let mut value = anchor.height.to_le_bytes().to_vec();
-    value.extend_from_slice(anchor.hash.as_slice());
-    value.extend_from_slice(&adopted_at.to_le_bytes());
-    value
-}
-
-fn decode_anchor(encoded: &[u8]) -> Result<(L1Anchor, u64)> {
-    ensure!(encoded.len() == 48, "invalid L1 backing anchor");
-    Ok((
-        L1Anchor {
-            height: u64::from_le_bytes(encoded[..8].try_into()?),
-            hash: Byte32::from_slice(&encoded[8..40])?,
-        },
-        u64::from_le_bytes(encoded[40..].try_into()?),
-    ))
-}
 fn decode_units(data: &[u8]) -> Result<u128> {
     let units = u128::from_le_bytes(
         data.try_into()

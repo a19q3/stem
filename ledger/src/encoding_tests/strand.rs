@@ -252,6 +252,9 @@ int main(int argc, char **argv) {
     tg_seg_t frame = {bytes, len};
     if (argc != 2) return 2;
     if (argv[1][0] == 'r') return TgReader_Receipt_verify(&frame);
+    if (argv[1][0] == 's') return TgReader_StateSnapshot_verify(&frame);
+    if (argv[1][0] == 'h') return TgReader_HistoricalHeaderProof_verify(&frame);
+    if (argv[1][0] == 'p') return TgReader_StakePrincipalProof_verify(&frame);
     return TgReader_Transaction_verify(&frame);
 }
 "#,
@@ -288,10 +291,22 @@ int main(int argc, char **argv) {
         protocol_result: strand::Bytes::new(),
     }
     .encode();
-    for (kind, canonical) in [("tx", transaction.as_slice()), ("receipt", &receipt)] {
+    let snapshot = codec::StateSnapshot::default();
+    let history = codec::HistoricalHeaderProof::default();
+    let principal = codec::StakePrincipalProof::default();
+    for (kind, canonical) in [
+        ("tx", transaction.as_slice()),
+        ("receipt", &receipt),
+        ("snapshot", snapshot.as_slice()),
+        ("history", history.as_slice()),
+        ("principal", principal.as_slice()),
+    ] {
         let validate = |value: &[u8]| match kind {
             "tx" => codec::TransactionReader::verify(value).is_ok(),
-            _ => codec::ReceiptReader::verify(value).is_ok(),
+            "receipt" => codec::ReceiptReader::verify(value).is_ok(),
+            "snapshot" => codec::StateSnapshotReader::verify(value).is_ok(),
+            "history" => codec::HistoricalHeaderProofReader::verify(value).is_ok(),
+            _ => codec::StakePrincipalProofReader::verify(value).is_ok(),
         };
         assert!(read_c(kind, canonical)?);
         for cut in 0..canonical.len() {
