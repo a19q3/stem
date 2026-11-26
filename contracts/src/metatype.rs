@@ -151,16 +151,20 @@ impl ManifestResolver {
         Ok(self.dependencies.as_deref().expect("resolved Cell Deps"))
     }
 
-    fn definition(&mut self, hash: Hash32) -> Option<Rc<ManifestDefinition>> {
-        if let Some(definition) = self.definitions.get(&hash) {
-            return Some(Rc::clone(definition));
-        }
+    pub fn dependency_data(&mut self, hash: &Hash32, max_bytes: usize) -> Option<Vec<u8>> {
         let index = self
             .dependency_hashes()
             .ok()?
             .iter()
-            .position(|item| *item == hash)?;
-        let raw = bounded_data(index, Source::CellDep, MAX_MANIFEST_DEFINITION_BYTES).ok()?;
+            .position(|item| item == hash)?;
+        bounded_data(index, Source::CellDep, max_bytes).ok()
+    }
+
+    fn definition(&mut self, hash: Hash32) -> Option<Rc<ManifestDefinition>> {
+        if let Some(definition) = self.definitions.get(&hash) {
+            return Some(Rc::clone(definition));
+        }
+        let raw = self.dependency_data(&hash, MAX_MANIFEST_DEFINITION_BYTES)?;
         let definition = Rc::new(ManifestDefinition::decode(raw)?);
         self.definitions.insert(hash, Rc::clone(&definition));
         Some(definition)

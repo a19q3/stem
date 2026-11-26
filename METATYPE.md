@@ -348,11 +348,39 @@ keeps a larger revision redeemable under the same mailbox. The
 two-chain checkpoint, CKB guardians and one-time mailbox rules are the
 same as in the immutable profile.
 
-This profile covers application state whose portable rule is a
-well-formed, strictly increasing revision with independent approval.
-Rules that depend on every intermediate state, dynamic authority
-changes or external data require their own portable validation and
-authenticated context.
+The identity adapter requires its exact approval Script. The custody
+Manifest can include additional portable constraints. The dedicated
+two-Script bridge still requires exactly its identity and approval
+Scripts at both boundaries because it has no adapter table.
+
+### Object state limit from an external record
+
+An object can carry an independent limit on the length of its complete
+encoded state. This includes the revision prefix and object encodings.
+The third Script's arguments are the complete identity Script hash and
+the CKB data hash of the rule record. The record is exactly one
+little-endian u16 from 1 through 2,048. The identity group checks
+canonical state, the approval group checks authorization, and the
+consumption Locks enforce ownership.
+
+Both hosts resolve the rule from an actual Cell Dep and compare its
+data hash. The configured bytes can be published independently on
+each chain and at a new OutPoint. The rule's integrity comes from its
+content hash. Availability requires a live copy of those bytes on the
+chain where the transaction executes. In this profile the CKB adapter
+checks both sides of transfers and the represented side of each
+authenticated boundary. The native group requires the same object
+and constraint in its successor, including when the object enters or
+leaves Stem custody. Source Cell Data remains in the identity entry
+of the CKB Manifest. The limit entry has empty state.
+
+The escrow and adapter table pin the three complete Scripts. Changing
+the rule bytes changes their Manifest commitment. Republish the same
+bytes to recover availability. A rule change for an existing object
+would need an explicitly authorized transition accepted by its old
+constraint. Neither chain follows a publisher's latest state. Rules
+that depend on mutable authority, an external live state assertion,
+or every intermediate transition need their own authenticated context.
 
 ### Cap-bound fungible UDT
 
@@ -417,6 +445,7 @@ commitments, and the participating owners' Locks.
 | Group witness to authorization | A builder swaps approvals or carries a seal to a different group, output, chain or raw transaction | Address rows by full deployment and group. Compare actual recipient and content. Verify the genesis dependency and strict Ed25519 seal over the domain-separated digest. |
 | Existing state to output state | A transfer removes a freeze, approval, identity or supply rule | Run all consumed groups and all created groups. Original policy decides whether retirement or migration is authorized. Revisable custody rejects rollback, same-revision edits and substituting stale data at the return boundary. |
 | Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
+| Rule record to object | A relayer replaces it with a looser rule, or spends the published copy | Resolve the pinned data hash in actual dependencies on both chains. Reject changed bytes and oversized states. Keep the original bytes available for publication at a new OutPoint. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |
 | Guest and dependency bounds | Recursive execution, malformed lengths, or excessive combinations consume resources | Use bounded lists and byte reads, immutable reviewed adapters, sequential spawn and CKB cycles. Reject unknown dependencies and failed child results. |

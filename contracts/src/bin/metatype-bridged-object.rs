@@ -61,7 +61,7 @@ fn state<'a>(
     policy: LogicalScript<'_>,
 ) -> Option<&'a [u8]> {
     let manifest = cell.view()?;
-    if manifest.entries().len() != 2 || !manifest.state_for(policy)?.is_empty() {
+    if !manifest.state_for(policy)?.is_empty() {
         return None;
     }
     let raw = manifest.state_for(script)?;

@@ -364,6 +364,13 @@ separate authority and ownership checks. The CKB import reserves
 mailbox Capacity for the largest permitted return. Stem accepts an
 authorized storage top-up without releasing any of the original
 principal.
+The object identity Script checks membership of its required approval
+Script and can compose with other constraints. The dedicated object
+escrow enforces its two-Script limit. Metatype custody pins the
+complete Manifest and runs the extra adapters. Its independent state
+limit Script and adapter resolve the same content-addressed rule
+record from actual dependencies on both chains. Republishing that
+record changes its OutPoint and preserves its rule identity.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and

@@ -1477,6 +1477,22 @@ and both original Type Scripts. The CKB fixture starts with a
 rejects an authenticated import leaving insufficient capacity for its
 largest valid return. Mailbox funding remains locked in the mailbox.
 
+For the three-Script object, build `stem-object-state-limit` and
+`metatype-object-state-limit` with the same RISC-V command. Add
+`--native-object-state-limit "$contract_dir/stem-object-state-limit"` and
+`--metatype-object-state-limit "$contract_dir/metatype-object-state-limit"`
+to the revisable object command. The fixture publishes the same
+120-byte ceiling record on both chains. It rejects the same changed
+object state on both chains, rejects missing and substituted records,
+and verifies the restored state at the exact byte limit. It also
+spends the original CKB record and republishes the same bytes at a
+different OutPoint while the object is on CKB. Use distinct ports and
+outputs for inline and shared Manifests. Check `native_object.external_rule`
+in the report for both CKB inclusion proofs and the authenticated
+Stem record. Combine the rule with `--metatype-revision-topup` to raise
+the fixture's rule limit to 700 bytes. This run starts at 9 CKB and
+adds 5 CKB to restore all three Scripts and the final state.
+
 ### Exercise cap-bound Metatype fungible custody
 
 Build and run the fungible Metatype profile against CKB devnet with

@@ -27,6 +27,7 @@ Applications can fund independent CKB security domains for paid Live Cell attest
 Configured networks carry Intercell messages between Stem and a CKB Mailbox. The native checkpoint verifies delivery on CKB, and guardians certify the CKB output used for delivery on Stem. Both chains enforce replay protection. A relay can rebuild its CKB inbox index from the live Mailbox. A Stem application can escrow its native UDT, issue a CKB representation, and redeem the underlying asset after a confirmed burn. The basic Spore V2 route restores the original CKB Spore after ownership moves on Stem. A native Stem object can also travel in the opposite direction with its transfer approval enforced on both chains. [Intercell workflow](OPERATIONS.md#exercise-intercell-messaging)
 
 - [Protocol](STEM-PROTOCOL.md)
+- [Metatype constraint composition and CKB settlement](METATYPE.md)
 - [Implementation and VM ABI](ARCHITECTURE.md)
 - [Build, configuration and reproducible network tests](OPERATIONS.md)
 - [Measurements and historical comparison](BENCHMARKS.md)

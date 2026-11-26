@@ -95,9 +95,7 @@ fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
                         policy.as_slice().as_ptr() as u64,
                         &mut [],
                     )
-                    .0 == 0
-                    && load(LOAD_TYPE_HASH, source as u64, 0, 2, &mut []).0
-                        == INDEX_OUT_OF_BOUND =>
+                    .0 == 0 =>
             {
                 Ok(Some(data))
             }
@@ -273,6 +271,8 @@ fn inspect(
                 if ty.code_hash() != code.code_hash()
                     || ty.hash_type() != code.hash_type()
                     || args[64..96] != *authority
+                    || load(LOAD_TYPE_HASH, source as u64, index, 2, &mut []).0
+                        != INDEX_OUT_OF_BOUND
                     || load_cell_data(index, source).map_err(|_| 119)? != data
                     || asset
                         .replace((load_cell_capacity(index, source).map_err(|_| 119)?, lock))

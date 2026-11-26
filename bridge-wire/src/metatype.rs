@@ -8,6 +8,7 @@ use crate::HASH_SIZE;
 
 pub mod custody;
 pub mod fungible;
+pub mod object_policy;
 pub mod witness;
 use custody::{Boundary, Custody, manifest_id};
 use witness::{GroupWitness, MAX_FIELDS_BYTES};
