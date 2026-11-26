@@ -91,7 +91,7 @@ def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=Non
         programs += len(reference.read_bytes())
     for extra in (getattr(args, "export_udt", None), getattr(args, "asset_escrow", None),
                   getattr(args, "stem_spore", None), getattr(args, "stem_native_object", None),
-                  getattr(args, "object_policy", None)):
+                  getattr(args, "object_policy", None), getattr(args, "stem_metatype_escrow", None)):
         if extra:
             programs += len(extra.read_bytes()) + 500
     funding = (programs + 20_000) * CKB
@@ -219,7 +219,7 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc,
         payloads.append(cell((len(code) + 500) * CKB, lock, code))
     for extra in (getattr(args, "export_udt", None), getattr(args, "asset_escrow", None),
                   getattr(args, "stem_spore", None), getattr(args, "stem_native_object", None),
-                  getattr(args, "object_policy", None)):
+                  getattr(args, "object_policy", None), getattr(args, "stem_metatype_escrow", None)):
         if extra:
             code = extra.read_bytes()
             payloads.append(cell((len(code) + 500) * CKB, lock, code))

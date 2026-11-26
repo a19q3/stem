@@ -2,6 +2,7 @@
 #![no_std]
 
 pub mod metatype;
+pub mod metatype_custody;
 
 use ckb_std::{
     ckb_constants::Source,

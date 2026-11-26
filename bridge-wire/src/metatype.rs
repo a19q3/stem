@@ -4,9 +4,11 @@ extern crate alloc;
 
 use alloc::{collections::BTreeMap, vec::Vec};
 
-use crate::{HASH_SIZE, hash};
+use crate::HASH_SIZE;
 
+pub mod custody;
 pub mod witness;
+use custody::{Boundary, Custody, manifest_id};
 use witness::{GroupWitness, MAX_FIELDS_BYTES};
 
 pub const MAX_TYPE_SCRIPTS: usize = 16;
@@ -17,7 +19,7 @@ pub const MAX_SCRIPT_BYTES: usize = 256;
 pub const MAX_STATE_BYTES: usize = 2048;
 pub const MAX_MANIFEST_BYTES: usize = 8192;
 pub const MAX_ADAPTERS: usize = 64;
-pub const MAX_ADAPTER_TABLE_BYTES: usize = 1 + 65 * MAX_ADAPTERS;
+pub const MAX_ADAPTER_TABLE_BYTES: usize = 2 + 65 * MAX_ADAPTERS + Custody::SIZE;
 
 type Hash = [u8; HASH_SIZE];
 
@@ -153,22 +155,24 @@ impl<'a> MetatypeManifest<'a> {
 
     pub fn id(&self) -> Hash {
         let ids: Vec<_> = self.entries.iter().map(|entry| entry.script.id()).collect();
-        hash(b"Stem Metatype manifest\0", &[ids.as_flattened()])
+        manifest_id(&ids)
     }
 }
 
 pub struct MetatypeAdapterTable<'a> {
     entries: &'a [[u8; 65]],
+    pub custody: Option<Custody>,
 }
 
 impl<'a> MetatypeAdapterTable<'a> {
     pub fn decode(raw: &'a [u8]) -> Option<Self> {
         let (&count, raw) = raw.split_first()?;
-        let (entries, rest) = raw.as_chunks::<65>();
-        if !rest.is_empty()
-            || entries.len() != usize::from(count)
-            || !(1..=MAX_ADAPTERS).contains(&entries.len())
-            || !entries.windows(2).all(|pair| pair[0][..33] < pair[1][..33])
+        if !(1..=MAX_ADAPTERS).contains(&usize::from(count)) {
+            return None;
+        }
+        let (entries, tail) = raw.split_at_checked(65 * usize::from(count))?;
+        let (entries, _) = entries.as_chunks::<65>();
+        if !entries.windows(2).all(|pair| pair[0][..33] < pair[1][..33])
             || entries.iter().any(|entry| {
                 entry[..32] == [0; HASH_SIZE]
                     || !matches!(entry[32], 0 | 1)
@@ -177,7 +181,12 @@ impl<'a> MetatypeAdapterTable<'a> {
         {
             return None;
         }
-        Some(Self { entries })
+        let custody = match tail {
+            [0] => None,
+            [1, raw @ ..] => Some(Custody::decode(raw)?),
+            _ => return None,
+        };
+        Some(Self { entries, custody })
     }
 
     pub fn adapter(&self, script: LogicalScript<'_>) -> Option<&'a Hash> {
@@ -239,10 +248,11 @@ pub fn project<'a>(
 }
 
 pub const MAX_INVOCATION_BYTES: usize =
-    32 + 2 + MAX_SCRIPT_BYTES + 2 * (1 + 2 * MAX_CELLS_PER_SIDE) + MAX_FIELDS_BYTES;
+    33 + 2 + MAX_SCRIPT_BYTES + 2 * (1 + 2 * MAX_CELLS_PER_SIDE) + MAX_FIELDS_BYTES;
 
 pub struct Invocation<'a> {
     pub deployment_type: &'a Hash,
+    pub boundary: Boundary,
     pub group: VirtualTypeGroup<'a>,
     pub witness: Option<GroupWitness<'a>>,
 }
@@ -250,6 +260,7 @@ pub struct Invocation<'a> {
 impl<'a> Invocation<'a> {
     pub fn encode(&self) -> Vec<u8> {
         let mut raw = self.deployment_type.to_vec();
+        raw.push(self.boundary as u8);
         let script = self.group.script.as_slice();
         raw.extend_from_slice(&(script.len() as u16).to_le_bytes());
         raw.extend_from_slice(script);
@@ -269,7 +280,9 @@ impl<'a> Invocation<'a> {
         if raw.len() > MAX_INVOCATION_BYTES {
             return None;
         }
-        let (deployment, mut raw) = raw.split_at_checked(HASH_SIZE)?;
+        let (deployment, raw) = raw.split_at_checked(HASH_SIZE)?;
+        let (&boundary, mut raw) = raw.split_first()?;
+        let boundary = Boundary::decode(boundary)?;
         let script = LogicalScript::decode(take_bytes(&mut raw)?)?;
         let input_indices = take_indices(&mut raw)?;
         let output_indices = take_indices(&mut raw)?;
@@ -283,6 +296,7 @@ impl<'a> Invocation<'a> {
             && !(input_indices.is_empty() && output_indices.is_empty()))
         .then_some(Self {
             witness,
+            boundary,
             deployment_type: deployment.try_into().ok()?,
             group: VirtualTypeGroup {
                 script,
@@ -360,6 +374,7 @@ mod tests {
             assert_eq!(group.output_indices, outputs);
             let invocation = Invocation {
                 deployment_type: &[8; HASH_SIZE],
+                boundary: Boundary::Standalone,
                 group,
                 witness: Some(GroupWitness {
                     action: 1,
@@ -372,6 +387,7 @@ mod tests {
             let decoded = Invocation::decode(&encoded).unwrap();
             assert_eq!(decoded.group, invocation.group);
             assert_eq!(decoded.witness, invocation.witness);
+            assert_eq!(decoded.boundary, invocation.boundary);
             assert_eq!(decoded.deployment_type, invocation.deployment_type);
         }
     }
@@ -396,6 +412,7 @@ mod tests {
             table.push(kind);
             table.extend_from_slice(&[adapter; HASH_SIZE]);
         }
+        table.push(0);
         let table = MetatypeAdapterTable::decode(&table).unwrap();
         let a = script(1, 9);
         let mut b = script(1, 9);

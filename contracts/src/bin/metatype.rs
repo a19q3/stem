@@ -18,10 +18,11 @@ use ckb_std::{
 };
 use stem_bridge_wire::metatype::{
     Invocation, MAX_ADAPTER_TABLE_BYTES, MAX_CELLS_PER_SIDE, MAX_MANIFEST_BYTES,
-    MAX_TRANSACTION_CELLS_PER_SIDE, MetatypeAdapterTable, MetatypeDeployment, project,
-    witness::GroupWitnesses,
+    MAX_TRANSACTION_CELLS_PER_SIDE, MetatypeAdapterTable, MetatypeDeployment, custody::Boundary,
+    project, witness::GroupWitnesses,
 };
 use stem_contracts::metatype::{bounded_data, witness_data};
+use stem_contracts::metatype_custody::require_gate;
 use stem_stake::Hash32;
 
 entry!(main);
@@ -68,6 +69,27 @@ fn verify() -> Result<(), i8> {
     let (_, outputs) = cells(Source::Output, &own_type, &mut remaining)?;
     let inputs = borrowed(&inputs);
     let outputs = borrowed(&outputs);
+    let boundary = match table.custody {
+        None => Boundary::Standalone,
+        Some(custody) => {
+            let boundary = Boundary::for_cardinality(inputs.len(), outputs.len()).ok_or(48)?;
+            if inputs
+                .iter()
+                .chain(&outputs)
+                .any(|(_, data)| custody.data(data).is_none())
+            {
+                return Err(48);
+            }
+            if boundary == Boundary::Transfer {
+                if inputs[0].1 != outputs[0].1 {
+                    return Err(48);
+                }
+            } else {
+                require_gate(&custody, &own_type, &deployment.ckb_genesis)?;
+            }
+            boundary
+        }
+    };
     let groups = project(&inputs, &outputs).ok_or(43)?;
     let raw_witness = witness_data(input_count).map_err(|_| 47)?;
     let witnesses = match raw_witness.as_deref() {
@@ -88,6 +110,7 @@ fn verify() -> Result<(), i8> {
         let argument = encode_hex(
             &Invocation {
                 deployment_type: &own_type,
+                boundary,
                 witness: witnesses.for_group(&own_type, group.script.id()),
                 group,
             }

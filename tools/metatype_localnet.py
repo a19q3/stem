@@ -47,7 +47,7 @@ def confirmed(l1, signed):
 def exercise(args, l1, fixture):
     programs = [args.dispatcher.read_bytes(), args.udt.read_bytes(), args.policy.read_bytes()]
     dispatcher_code, udt_code, policy_code = [ckb_hash(code) for code in programs]
-    table = bytes([2]) + b"".join(sorted([udt_code + b"\0" + udt_code, policy_code + b"\0" + policy_code]))
+    table = bytes([2]) + b"".join(sorted([udt_code + b"\0" + udt_code, policy_code + b"\0" + policy_code])) + b"\0"
     genesis = l1.call("get_block_by_number", "0x0")
     faucet, system = genesis["transactions"][:2]
     faucet_index, faucet_cell = next(

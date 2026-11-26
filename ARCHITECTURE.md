@@ -311,8 +311,12 @@ independent transfer policy over the same amount state. The first
 extra witness can route Messages, Proof Data and Seals by deployment
 and virtual Script identity. An immutable object adapter pins a
 separate approval group which verifies detached Ed25519 authority.
-See the [Metatype specification and threat model](METATYPE.md) for the
-portable ABI and the cross-chain acceptance conditions.
+An immutable custody policy binds a deployment to one Intercell
+Mailbox Type ID, an exact original Manifest and a designated data
+Script. The generic Stem escrow and CKB gate enforce complete
+projection, verified mint and burn, and recipient binding. The
+portable object and approval groups still execute at each boundary.
+See the [Metatype specification and threat model](METATYPE.md).
 
 ## Historical proofs and CKB checkpoints
 

@@ -72,7 +72,7 @@ def exercise(args, l1, fixture):
     default_deps = [dependency(point(system["hash"], 0), "dep_group")]
     programs = [args.dispatcher.read_bytes(), args.object.read_bytes(), args.approval.read_bytes()]
     code, *adapters = [ckb_hash(program) for program in programs]
-    adapter_table = bytes([2]) + b"".join(sorted(h + b"\0" + h for h in adapters))
+    adapter_table = bytes([2]) + b"".join(sorted(h + b"\0" + h for h in adapters)) + b"\0"
     programs.append(adapter_table)
     deposits = [(len(data) + 100) * CKB for data in programs]
     funding = int(faucet_cell["capacity"], 16) - sum(deposits) - FEE

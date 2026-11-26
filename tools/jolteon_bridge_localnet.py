@@ -564,7 +564,9 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     for name in ("stem-spore", "ckb-spore-escrow", "spore-v2"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
-    for name in ("stem-native-object", "object-policy", "ckb-stem-object"):
+    for name in ("stem-native-object", "object-policy", "ckb-stem-object",
+                 "stem-metatype-escrow", "metatype-dispatcher", "metatype-mailbox-lock",
+                 "metatype-bridged-object", "metatype-bridged-approval"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
@@ -583,10 +585,14 @@ def main():
             not all((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
             or args.export_udt):
         parser.error("Spore settlement requires its three binaries and the Intercell mailbox")
-    if any((args.stem_native_object, args.object_policy, args.ckb_stem_object)) and (
-            not all((args.stem_native_object, args.object_policy, args.ckb_stem_object, args.intercell_mailbox))
-            or args.export_udt or args.stem_spore):
-        parser.error("Native object settlement requires its three binaries and the Intercell mailbox")
+    metatype = (args.stem_metatype_escrow, args.metatype_dispatcher, args.metatype_mailbox_lock,
+                args.metatype_bridged_object, args.metatype_bridged_approval)
+    if any(metatype) and (not all(metatype) or args.ckb_stem_object):
+        parser.error("Metatype settlement needs all five portable scripts")
+    if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *metatype)) and (
+            not all((args.stem_native_object, args.object_policy, args.intercell_mailbox))
+            or not (args.ckb_stem_object or all(metatype)) or args.export_udt or args.stem_spore):
+        parser.error("Native object settlement needs its Stem scripts and one CKB route")
     if args.wasm_fixture and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
         parser.error("--wasm-fixture uses the generic Intercell mailbox fixture")
     if args.exercise_publisher and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
@@ -612,7 +618,8 @@ def main():
         report = bridge_round(args, l1, Fixtures(args), children)
         write_json(args.output / "jolteon-bridge-report.json", report)
         if args.stem_native_object:
-            print(f"Verified native object policy and CKB round trip at agreed height {report['agreed']['height']}")
+            name = "Metatype custody" if args.metatype_dispatcher else "native object policy"
+            print(f"Verified {name} and CKB round trip at agreed height {report['agreed']['height']}")
         elif args.stem_spore:
             print(f"Verified Spore settlement and original ID at agreed height {report['agreed']['height']}")
         elif args.export_udt:

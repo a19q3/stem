@@ -1294,3 +1294,45 @@ independent approvals have been placed in the first extra witness.
 The fixture writes CKB inclusion proofs, proposal and receipt
 evidence from four native replicas, and each negative case. Use
 the three native script options together for the differential run.
+
+### Exercise Stem to CKB Metatype custody
+
+Build the existing Jolteon checkpoint, CKB vault, Intercell mailbox,
+and native object scripts together with the immutable custody
+profile:
+
+```sh
+CARGO_TARGET_DIR=target/stem-metatype \
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf \
+  --bin vault-type --bin deposit-lock --bin stem-lock --bin bridge-udt \
+  --bin jolteon-checkpoint --bin intercell-mailbox \
+  --bin stem-native-object --bin stem-object-policy --bin stem-metatype-escrow \
+  --bin metatype --bin metatype-mailbox \
+  --bin metatype-bridged-object --bin metatype-bridged-approval
+
+contract_dir=target/stem-metatype/riscv64imac-unknown-none-elf/release
+python3 tools/jolteon_bridge_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb \
+  --vault "$contract_dir/vault-type" --deposit-lock "$contract_dir/deposit-lock" \
+  --native-lock "$contract_dir/stem-lock" --wrapped "$contract_dir/bridge-udt" \
+  --direct-checkpoint "$contract_dir/jolteon-checkpoint" \
+  --intercell-mailbox "$contract_dir/intercell-mailbox" \
+  --stem-native-object "$contract_dir/stem-native-object" \
+  --object-policy "$contract_dir/stem-object-policy" \
+  --stem-metatype-escrow "$contract_dir/stem-metatype-escrow" \
+  --metatype-dispatcher "$contract_dir/metatype" \
+  --metatype-mailbox-lock "$contract_dir/metatype-mailbox" \
+  --metatype-bridged-object "$contract_dir/metatype-bridged-object" \
+  --metatype-bridged-approval "$contract_dir/metatype-bridged-approval" \
+  --port 31780 --l1-port 31790 --output /tmp/stem-metatype-custody
+```
+
+To run the specialized comparison, replace the five custody and
+dispatcher options with `--ckb-stem-object "$contract_dir/ckb-stem-object"`
+and build that ELF. Both profiles use the same native object and
+independent approval fixture. Use a fresh output directory and
+ports for every run. The output includes the original and returned
+Cell proofs, each CKB transaction and witness inclusion proof, and
+all accepted and rejected signed transactions.
