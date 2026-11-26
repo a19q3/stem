@@ -5184,3 +5184,54 @@ bounded in code. The composed custody devnet fixture used two
 assets and four Type Scripts.
 
 [Signed data, proofs, build fingerprints, commands and rejection controls](benchmarks/2026-11-26-stem-composed-assets.json.xz).
+
+## Selective Metatype redemptions
+
+Four colocated Jolteon replicas and a real CKB devnet ran two selective
+returns and repeated the previous balanced and full return fixtures.
+Both assets entered custody with 160 and 250 units. The inline selective
+return moved 60 units of the first asset to Stem and retained 100 and
+250 units. The shared selective return moved all 160 units of the first
+asset, leaving 0 and 250. A second burn then returned all 250 units,
+with the same Manifest and the next Mailbox nonce. The final Stem
+escrow held only its Capacity bond.
+
+| Layout and return | Asset deltas | CKB burn bytes / cycles | Stem redeem bytes / cycles |
+| --- | ---: | ---: | ---: |
+| Inline selective | 60, 0 | 2,497 / 5,072,630 | 3,477 / 14,342,599 |
+| Shared selective, first | 160, 0 | 2,026 / 5,139,674 | 3,477 / 14,342,664 |
+| Shared selective, remainder | 0, 250 | 1,804 / 4,889,003 | 2,908 / 14,258,776 |
+| Shared balanced | 60, 110 | 2,026 / 5,134,543 | 3,477 / 14,342,599 |
+| Shared full | 160, 250 | 1,804 / 4,931,895 | 2,908 / 14,258,620 |
+
+Every CKB burn carried 170 witness bytes. All Stem returns stayed
+under the existing 20-million-cycle transaction limit. The shared
+balanced and full fixtures retained the previous transaction sizes.
+These are per-transaction measurements under local test conditions.
+
+CKB rejected a burn that increased one asset while decreasing the
+other, a declared delta inconsistent with the burn, and a proposed live representation
+with two zero amounts. Stem rejected a release that preserved total
+supply yet took an extra unit of the asset excluded from the CKB
+message. The original cap, canonical ordering, signed reference and
+replay controls also passed. The asset and cap groups ran for the
+zero slot. CKB kept the complete Manifest, and Stem kept all four
+original Type Scripts on the asset Cells.
+
+Independent WASM verification checked the four Stem runs and both
+redemptions in the sequential case. Twenty-one offline CKB proof
+checks authenticated the transactions and witnesses, including the
+shared Manifest definitions. The verifier decoded the quantities
+of each authenticated residual output by full asset Script hash.
+Ten devnet regressions included standalone inline and shared 2, 4,
+8 and 16 constraint deployments, dual-lane settlement, scalar UDT,
+workflow recovery, Intercell, CKB/xUDT, Spore, fee payouts and funded
+committee handoff. The Rust workspace passed 490 tests with 22
+ignored. The Go proof suite and CometBFT build check passed.
+
+The evidence includes the initial Rust and RISC-V build failures
+from a missing import and the first offline checker failure from
+reading the transaction hash at the wrong JSON level. Corrected
+reruns succeeded.
+
+[Signed transactions, proofs, result JSON, commands and failed attempts](benchmarks/2026-11-26-stem-selective-metatype.json.xz).
