@@ -18,7 +18,7 @@ from security_domain_localnet import Scenario, use_stem_receipt
 from checkpoint_fee_fund_localnet import deploy_fee_lock, use_fee_fund
 from asset_export_localnet import asset_round
 from metatype_multiasset_localnet import multiasset_round
-from spore_settlement_localnet import spore_round
+from spore_settlement_localnet import spore_round, verify_spore_history
 from object_export_localnet import object_round
 from jolteon_localnet import FINALITY, HANDOFF, HEADER, QUERY, STATUS, SUBMIT, evidence_keys, rpc, write_configuration
 from localnet import run, write_json
@@ -516,6 +516,8 @@ def bridge_round(args, l1, fixture, children):
         report["native_object"] = object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     elif args.stem_spore or args.native_spore_origin:
         report["spore_settlement"] = spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
+        if args.spore_type_history:
+            report["spore_history"] = verify_spore_history(args.binary, args.output, args.l1_port, report["spore_settlement"])
     elif args.metatype_multiasset:
         report["metatype_multiasset"] = multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     elif args.metatype_composed_cell:
@@ -586,6 +588,8 @@ def main():
                         help="issue an unrestricted immutable object on Stem and export to standard Spore V2")
     parser.add_argument("--native-spore-approval", type=lambda path: Path(path).resolve(),
                         help="deploy the native approval Type and carry its policy in a CKB Spore holder Lock")
+    parser.add_argument("--spore-type-history", action="store_true",
+                        help="collect and independently verify every CKB Spore ownership transition")
     parser.add_argument("--spore-content-bytes", type=int, default=0,
                         help="exercise commitment settlement with a plain text body of the requested size")
     parser.add_argument("--native-spore-sync-melt", action="store_true",
@@ -661,6 +665,8 @@ def main():
     if args.spore_content_bytes and (not args.spore_v2 or args.native_spore_json or args.native_spore_multipart
             or not 4096 <= args.spore_content_bytes < 512 * 1024):
         parser.error("the large Spore fixture needs a plain body from 4096 bytes up to the native transaction limit")
+    if args.spore_type_history and not args.spore_v2:
+        parser.error("--spore-type-history requires the Spore V2 settlement fixture")
     if args.spore_immortal and not args.spore_v2:
         parser.error("--spore-immortal requires the original Spore V2 settlement fixture")
     if args.native_spore_origin and any((args.stem_spore, args.spore_cluster_v2, args.stem_native_object, args.export_udt)):

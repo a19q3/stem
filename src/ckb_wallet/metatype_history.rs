@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, ensure};
-use ckb_jsonrpc_types::HeaderView as JsonHeader;
+use ckb_jsonrpc_types::{HeaderView as JsonHeader, TransactionAndWitnessProof};
 use ckb_types::{
     H256,
     bytes::Bytes,
@@ -24,9 +24,9 @@ use stem_ledger::Cell;
 
 use crate::l1::Rpc;
 
-const MAX_HEADERS: u64 = 4_096;
-const MAX_RAW_TRANSACTIONS: usize = 512;
-const MAX_RAW_BYTES: usize = 32 * 1024 * 1024;
+pub(super) const MAX_HEADERS: u64 = 4_096;
+pub(super) const MAX_RAW_TRANSACTIONS: usize = 512;
+pub(super) const MAX_RAW_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DEPS: usize = 128;
 
 pub(super) fn output(tx: &TransactionView, point: &OutPoint) -> Result<(CellOutput, Bytes)> {
@@ -278,7 +278,7 @@ pub(super) struct History {
     rpc: Rpc,
     pub anchor: H256,
     anchor_height: u64,
-    oldest: HeaderView,
+    pub(super) headers: Vec<HeaderView>,
     raw: HashMap<Byte32, RawTransaction>,
     raw_bytes: usize,
 }
@@ -290,13 +290,17 @@ impl History {
             rpc.block_hash(0)?.as_bytes() == genesis,
             "CKB RPC genesis differs from the route"
         );
+        Self::at_anchor(rpc, anchor)
+    }
+
+    pub(super) fn at_anchor(rpc: Rpc, anchor: H256) -> Result<Self> {
         let oldest = Self::header(&rpc, &anchor)?;
         let anchor_height = oldest.number();
         let history = Self {
             rpc,
             anchor,
             anchor_height,
-            oldest,
+            headers: vec![oldest],
             raw: HashMap::new(),
             raw_bytes: 0,
         };
@@ -334,22 +338,26 @@ impl History {
             "CKB history exceeds the supported anchor distance"
         );
         ensure!(
-            height <= self.oldest.number(),
+            self.headers
+                .last()
+                .is_some_and(|header| height <= header.number()),
             "CKB custody heights are reversed"
         );
-        while self.oldest.number() > height {
-            let parent = Self::header(&self.rpc, &self.oldest.parent_hash().unpack())?;
+        while self.headers.len() <= depth as usize {
+            let child = self.headers.last().context("missing CKB anchor")?;
+            let parent = Self::header(&self.rpc, &child.parent_hash().unpack())?;
             ensure!(
-                parent.number().checked_add(1) == Some(self.oldest.number()),
+                parent.number().checked_add(1) == Some(child.number()),
                 "CKB ancestor height differs"
             );
-            self.oldest = parent;
+            self.headers.push(parent);
         }
+        let header = &self.headers[depth as usize];
         ensure!(
-            self.oldest.hash().as_slice() == hash.as_bytes(),
+            header.hash().as_slice() == hash.as_bytes(),
             "CKB transaction is outside the trusted anchor ancestry"
         );
-        Ok(self.oldest.clone())
+        Ok(header.clone())
     }
 
     fn raw(&mut self, hash: &Byte32) -> Result<RawTransaction> {
@@ -375,11 +383,23 @@ impl History {
         Ok(value)
     }
 
-    fn referenced(&mut self, point: &OutPoint) -> Result<(CellOutput, Bytes)> {
+    pub(super) fn fetched(&self) -> impl Iterator<Item = &TransactionView> {
+        self.raw.values().map(|value| &value.tx)
+    }
+
+    pub(super) fn referenced(&mut self, point: &OutPoint) -> Result<(CellOutput, Bytes)> {
         output(&self.raw(&point.tx_hash())?.tx, point)
     }
 
     pub(super) fn included(&mut self, hash: &Byte32) -> Result<(TransactionView, u64)> {
+        let (tx, height, _) = self.witnessed(hash)?;
+        Ok((tx, height))
+    }
+
+    pub(super) fn witnessed(
+        &mut self,
+        hash: &Byte32,
+    ) -> Result<(TransactionView, u64, TransactionAndWitnessProof)> {
         let raw = self.raw(hash)?;
         let header = self.authenticate_block(raw.height, &raw.block)?;
         let tx_hash: H256 = hash.unpack();
@@ -387,38 +407,14 @@ impl History {
             .rpc
             .call("get_transaction_and_witness_proof", json!([[tx_hash]]))?;
         stem::l1_proof::verify_transaction(&header.hash(), &header, &raw.tx, &merkle)?;
-        Ok((raw.tx, raw.height))
+        Ok((raw.tx, raw.height, merkle))
     }
 
     pub(super) fn dependencies(
         &mut self,
         tx: &TransactionView,
     ) -> Result<Vec<(CellOutput, Bytes)>> {
-        ensure!(tx.cell_deps().len() <= MAX_DEPS, "too many CKB Cell Deps");
-        let mut dependencies = Vec::new();
-        for dep in tx.cell_deps() {
-            let cell = self.referenced(&dep.out_point())?;
-            match DepType::try_from(dep.dep_type())? {
-                DepType::Code => {
-                    ensure!(
-                        dependencies.len() < MAX_DEPS,
-                        "too many resolved CKB Cell Deps"
-                    );
-                    dependencies.push(cell);
-                }
-                DepType::DepGroup => {
-                    let members = OutPointVec::from_slice(&cell.1)?;
-                    ensure!(
-                        members.len() <= MAX_DEPS - dependencies.len(),
-                        "too many resolved CKB Cell Deps"
-                    );
-                    for point in members {
-                        dependencies.push(self.referenced(&point)?);
-                    }
-                }
-            }
-        }
-        Ok(dependencies)
+        resolve_dependencies(tx, |point| self.referenced(point))
     }
 
     fn definition(&mut self, tx: &TransactionView, hash: &Identity) -> Result<ManifestDefinition> {
@@ -431,4 +427,35 @@ impl History {
             .context("CKB Cell Deps contain no matching shared Manifest definition")?;
         ManifestDefinition::decode(data.to_vec()).context("invalid shared definition")
     }
+}
+
+pub(super) fn resolve_dependencies(
+    tx: &TransactionView,
+    mut resolve: impl FnMut(&OutPoint) -> Result<(CellOutput, Bytes)>,
+) -> Result<Vec<(CellOutput, Bytes)>> {
+    ensure!(tx.cell_deps().len() <= MAX_DEPS, "too many CKB Cell Deps");
+    let mut dependencies = Vec::new();
+    for dep in tx.cell_deps() {
+        let cell = resolve(&dep.out_point())?;
+        match DepType::try_from(dep.dep_type())? {
+            DepType::Code => {
+                ensure!(
+                    dependencies.len() < MAX_DEPS,
+                    "too many resolved CKB Cell Deps"
+                );
+                dependencies.push(cell);
+            }
+            DepType::DepGroup => {
+                let members = OutPointVec::from_slice(&cell.1)?;
+                ensure!(
+                    members.len() <= MAX_DEPS - dependencies.len(),
+                    "too many resolved CKB Cell Deps"
+                );
+                for point in members {
+                    dependencies.push(resolve(&point)?);
+                }
+            }
+        }
+    }
+    Ok(dependencies)
 }

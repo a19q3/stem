@@ -604,6 +604,8 @@ Data. The CLI requires retained CKB transactions and witnesses.
 Additional workflow cycles and proof bytes enter the ordinary
 Stem resource budget.
 
+The wallet also verifies a general CKB Type history offline against a pinned anchor, birth and end transaction. It can check an ordered sequence of intermediate Lock and data hashes. On the shared workflow fixture it recovered the same two revision OutPoints as the signed workflow verifier. This also works for a mutable mailbox whose data changes at every step. Consensus enforcement on return still belongs to the native Type. [Witness format and real histories](research/type-history/README.md)
+
 ### Fixed Capacity royalty
 
 An immutable or revisable object can bind an independent royalty

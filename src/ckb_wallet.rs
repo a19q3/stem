@@ -26,6 +26,7 @@ use crate::bridge_cli::{parse_hash, print_json, read_json_limited, read_key};
 
 mod ceiling;
 mod metatype_history;
+mod type_history;
 mod workflow;
 
 #[derive(Subcommand)]
@@ -58,6 +59,20 @@ pub enum CkbWallet {
         tx_hash: ckb_types::H256,
         #[arg(long)]
         output_index: u32,
+    },
+    /// Collect the witnessed history of a unique CKB Type from its birth through a named transaction.
+    ProveTypeHistory {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        l1_rpc: String,
+    },
+    /// Verify a CKB Type history against an independently pinned request without RPC.
+    VerifyTypeHistory {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        proof: PathBuf,
     },
     /// Recover a Metatype workflow return from witnessed CKB custody history.
     RecoverMetatypeWorkflow {
@@ -148,6 +163,8 @@ impl CkbWallet {
                     "data": JsonBytes::from_bytes(data),
                 }))
             }
+            Self::ProveTypeHistory { request, l1_rpc } => type_history::prove(&request, &l1_rpc),
+            Self::VerifyTypeHistory { request, proof } => type_history::verify(&request, &proof),
             Self::RecoverMetatypeWorkflow { request, l1_rpc } => {
                 workflow::recover(&request, &l1_rpc)
             }

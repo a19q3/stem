@@ -1,6 +1,8 @@
 """Verify real Spore V2 custody, Stem ownership and CKB redemption."""
 
+import hashlib
 import json
+import subprocess
 
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, output,
                              packed_script, point, script, script_hash, transaction, wallet_group)
@@ -38,6 +40,45 @@ def cobuild(object_type, object_id, source, target, *, data=None, cluster=False)
         detail = le(tag + 1, 4) + table(object_id, le(0, 4) + packed_script(source), to)
     action = table(SCRIPT_INFO, script_hash(object_type), molecule_bytes(detail))
     return hex_bytes(le(0xff000001, 4) + table(molecule_bytes(b""), table(table(action))))
+
+
+def verify_spore_history(binary_path, directory, l1_port, report):
+    native = report.get("origin") == "stem"
+    if native:
+        object_type = report["spore_type"]
+        events = [report[k] for k in ("minted", "ckb_wallet_transfer", "deposited", "released_same_spore")]
+        if report["standard_melt"]:
+            events.append(report["standard_melt"]["transaction"])
+    else:
+        object_type = report["original_type"]
+        events = [report[k] for k in ("minted", "held", "released", "redeposited")]
+    request = {
+        "anchor": events[-1]["inclusion"]["proof"]["block_hash"],
+        "type_hash": hex_bytes(script_hash(object_type)),
+        "origin": point(events[0]["hash"], 0),
+        "end_transaction": events[-1]["hash"],
+    }
+    deposit_name = "ckb-return" if native else "spore-deposit"
+    deposit = json.loads((directory / f"{deposit_name}.json").read_text())
+    index, = [i for i, cell in enumerate(deposit["outputs"]) if cell["type"] == object_type]
+    request["required_states"] = [{
+        "lock_hash": hex_bytes(script_hash(deposit["outputs"][index]["lock"])),
+        "data_hash": hex_bytes(ckb_hash(binary(deposit["outputs_data"][index]))),
+    }]
+    request_path = directory / "spore-history-request.json"
+    proof_path = directory / "spore-history-proof.json"
+    write_json(request_path, request)
+    with proof_path.open("wb") as destination:
+        subprocess.run([binary_path, "ckb-wallet", "prove-type-history", "--request", request_path,
+                        "--l1-rpc", f"http://127.0.0.1:{l1_port}"], stdout=destination, check=True)
+    result = json.loads(run(binary_path, "ckb-wallet", "verify-type-history", "--request", request_path,
+                            "--proof", proof_path))
+    assert [r["transaction"] for r in result["transitions"]] == [e["hash"] for e in events]
+    assert result["matched_states"] == [point(report["deposited" if native else "held"]["hash"], index)]
+    assert result["ended_in_burn"] == bool(report.get("standard_melt"))
+    with proof_path.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
+    return {"request": request, "verified": result, "proof_sha256": digest, "proof_bytes": proof_path.stat().st_size}
 
 
 def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay):

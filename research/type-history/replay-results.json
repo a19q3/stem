@@ -1,0 +1,52 @@
+{
+  "approved": {
+    "transitions": 4,
+    "matched": 1,
+    "burned": false
+  },
+  "cluster": {
+    "transitions": 4,
+    "matched": 1,
+    "burned": false
+  },
+  "immortal": {
+    "transitions": 4,
+    "matched": 1,
+    "burned": false
+  },
+  "melt496": {
+    "transitions": 5,
+    "matched": 1,
+    "burned": true
+  },
+  "mailbox": {
+    "transitions": 4,
+    "matched": 2,
+    "burned": false
+  },
+  "workflow": {
+    "transitions": 5,
+    "matched": 2,
+    "burned": true
+  },
+  "fresh": {
+    "transitions": 4,
+    "matched": 1,
+    "burned": false
+  },
+  "anchor": "Error: wrong trusted CKB anchor",
+  "type_hash": "Error: wrong CKB Type birth",
+  "end_transaction": "Error: wrong final transaction",
+  "wrong birth output": "Error: wrong CKB Type birth",
+  "reversed requirements": "Error: required intermediate state absent or out of order",
+  "same visit twice": "Error: required intermediate state absent or out of order",
+  "empty predicate": "Error: invalid intermediate state requirements",
+  "birth only": "Error: required intermediate state absent or out of order",
+  "end only": "Error: required intermediate state absent or out of order",
+  "skipped Header": "Error: disconnected CKB Header chain",
+  "hidden transition with authentic reference": "Error: disconnected CKB Type history",
+  "changed witness": "Error: CKB transaction or witness proof does not match the Header",
+  "swapped inclusion": "Error: CKB proof is outside the trusted block",
+  "missing reference": "Error: missing referenced CKB transaction",
+  "duplicated reference": "Error: duplicate Type history reference"
+}

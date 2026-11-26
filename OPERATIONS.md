@@ -914,6 +914,17 @@ Relay the certified L1 observation through the standard Intercell receive action
 
 With `--native-spore-sync-melt`, four replicas and a local CKB exercised a multipart object and a 96 KiB object. Both native originals were provably spent and both named recipients received the full collateral. The fixture also checked recipient, tag, amount, preservation of the CKB Spore and replay, and reran the approved and immortal routes. [Balances, finality and rejection reports](evidence/2026-11-27-synchronized-spore-melt.json.xz)
 
+#### Offline history of a CKB Type
+
+Create a request with an independently trusted CKB Header hash in `anchor`, the expected full Type Script hash in `type_hash`, the birth CKB JSON OutPoint in `origin`, and the final transaction hash in `end_transaction`. The endpoint can be a transfer or a burn. Optionally supply `required_states` as an ordered array. Each entry specifies `lock_hash`, `data_hash`, or both. The data hash is the CKB BLAKE2b hash of the complete Cell data. Matching visits must be distinct and strictly between the birth and final transactions.
+
+```sh
+stem ckb-wallet prove-type-history --request request.json --l1-rpc "$CKB_RPC" > history.json
+stem ckb-wallet verify-type-history --request request.json --proof history.json
+```
+
+The second command works offline. The verifier returns the ordered transaction hashes, heights, output OutPoints, Lock and data hashes, matched visits and terminal burn status. Each bundle contains the packed CKB Headers, witnessed transactions with single-leaf inclusion proofs, and the raw preimages needed to resolve every input and expanded Cell Dep. The current wallet supports up to 4,096 Headers behind the anchor, 512 combined path and reference transactions, 32 MiB of transaction bytes, and 128 expanded Cell Deps per transaction. The caller's trusted anchor authenticates CKB history. A later transfer on Stem runs the rules of its deployed native Types. Add `--spore-type-history` to a Spore V2 localnet run to collect a fresh proof and match the complete transaction sequence and required custody visit against its settlement receipts. [Seven actual histories and offline controls](research/type-history/README.md)
+
 #### Large-content execution cost
 
 The native endpoint checks committed content using the indexed Cell data length and its authenticated CKB data hash. The native identity still compares the complete original and successor bytes. It compares aligned words and checks both unaligned ends, with a full byte comparison for unequal alignment. The focused test exercises every alignment, length modulo eight and single-byte difference.
