@@ -507,7 +507,7 @@ impl Store {
         };
         let origin = Origin::new(&network, &context);
         let mut batch = Batch::default();
-        let mut cell_edit = cells.edit(cells.empty_root(), |_| Ok(None));
+        let mut cell_edit = cells.edit(cells.empty_root(), |_| Ok(None::<Vec<u8>>));
         if let Some(marker) = &spec.lineage_type {
             ensure!(
                 *marker != Byte32::default(),
@@ -541,7 +541,7 @@ impl Store {
         cell_edit
             .set_batch(&allocations, |_, _, _| {})
             .context("invalid genesis allocations")?;
-        let mut system_edit = system.edit(system.empty_root(), |_| Ok(None));
+        let mut system_edit = system.edit(system.empty_root(), |_| Ok(None::<Vec<u8>>));
         let mut params = spec.limits.encode();
         params.extend_from_slice(&spec.fees.encode());
         params.extend_from_slice(&spec.capacity.bond_per_byte.to_le_bytes());
@@ -1132,7 +1132,7 @@ impl Store {
         self.header(height)?.context("missing indexed Header")
     }
 
-    fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<Vec<u8>>> {
+    fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<node_storage::CanonicalNode>> {
         self.read(state_key(STATE_NODE, namespace, id))?
             .as_deref()
             .map(node_storage::canonical)

@@ -7,6 +7,7 @@ const CHILD_BYTES: usize = 64;
 const PREFIX_START: usize = 2;
 const CHILD_START: usize = PREFIX_START + PREFIX_BYTES;
 const BRANCH_BYTES: usize = CHILD_START + CHILD_BYTES;
+const LEAF_BYTES: usize = 1 + CHILD_BYTES;
 
 pub(super) fn compact(mut node: Vec<u8>) -> Vec<u8> {
     // The Patricia editor produces canonical bytes. All omitted prefix
@@ -19,22 +20,37 @@ pub(super) fn compact(mut node: Vec<u8>) -> Vec<u8> {
     node
 }
 
-pub(super) fn canonical(stored: &[u8]) -> Result<Vec<u8>> {
-    match stored {
-        [0, bytes @ ..] if bytes.len() == CHILD_BYTES => Ok(stored.to_vec()),
+pub(super) struct CanonicalNode {
+    bytes: [u8; BRANCH_BYTES],
+    len: usize,
+}
+
+impl AsRef<[u8]> for CanonicalNode {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+pub(super) fn canonical(stored: &[u8]) -> Result<CanonicalNode> {
+    let mut bytes = [0; BRANCH_BYTES];
+    let len = match stored {
+        [0, ..] if stored.len() == LEAF_BYTES => {
+            bytes[..LEAF_BYTES].copy_from_slice(stored);
+            LEAF_BYTES
+        }
         [1, bits, ..] => {
             let end = PREFIX_START + usize::from(*bits).div_ceil(8);
             ensure!(
                 stored.len() == end + CHILD_BYTES,
                 "invalid stored Patricia branch length"
             );
-            let mut node = vec![0; BRANCH_BYTES];
-            node[..end].copy_from_slice(&stored[..end]);
-            node[CHILD_START..].copy_from_slice(&stored[end..]);
-            Ok(node)
+            bytes[..end].copy_from_slice(&stored[..end]);
+            bytes[CHILD_START..].copy_from_slice(&stored[end..]);
+            BRANCH_BYTES
         }
         _ => bail!("invalid stored Patricia node"),
-    }
+    };
+    Ok(CanonicalNode { bytes, len })
 }
 
 #[cfg(test)]
@@ -60,7 +76,7 @@ mod tests {
             let bytes = node.encode();
             let stored = compact(bytes.clone());
             assert_eq!(stored.len(), 66 + usize::from(bits).div_ceil(8));
-            assert_eq!(canonical(&stored)?, bytes);
+            assert_eq!(canonical(&stored)?.as_ref(), bytes);
             assert!(canonical(&stored[..stored.len() - 1]).is_err());
             assert!(canonical(&[stored.as_slice(), &[0]].concat()).is_err());
         }
@@ -70,7 +86,7 @@ mod tests {
         }
         .encode();
         assert_eq!(compact(leaf.clone()), leaf);
-        assert_eq!(canonical(&leaf)?, leaf);
+        assert_eq!(canonical(&leaf)?.as_ref(), leaf);
         assert!(canonical(&leaf[..leaf.len() - 1]).is_err());
         Ok(())
     }
@@ -87,7 +103,7 @@ mod tests {
         let value = |i: u32| Some(tree.value_hash(&i.to_le_bytes()));
         let mut initial = (0..LIVE).map(|i| (key(i), value(i))).collect::<Vec<_>>();
         initial.sort_unstable_by_key(|(key, _)| *key);
-        let mut seed = tree.edit(tree.empty_root(), |_| Ok(None));
+        let mut seed = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
         seed.set_batch(&initial, |_, _, _| {})?;
         let root = seed.root();
         let nodes = seed.into_writes();
@@ -131,7 +147,16 @@ mod tests {
                     reads += 1;
                     read_bytes += raw.len();
                     let start = Instant::now();
-                    let restored = if pack { canonical(&raw)? } else { raw.to_vec() };
+                    let restored = if pack {
+                        canonical(&raw)?
+                    } else {
+                        let mut bytes = [0; BRANCH_BYTES];
+                        bytes[..raw.len()].copy_from_slice(&raw);
+                        CanonicalNode {
+                            bytes,
+                            len: raw.len(),
+                        }
+                    };
                     decode_ns += start.elapsed().as_nanos();
                     Ok(Some(restored))
                 });

@@ -2022,7 +2022,7 @@ mod tests {
         };
         let tree = patricia::Patricia::new(network.clone(), patricia::Namespace::Cells);
         let key = record::cell_key(&tree, &point);
-        let mut edit = tree.edit(tree.empty_root(), |_| Ok(None));
+        let mut edit = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
         edit.set(key, Some(record::cell_value(&tree, &point, &record)))?;
         let (_, proof) = edit.prove(&key)?;
         let encoded_path = proof.encode()?;

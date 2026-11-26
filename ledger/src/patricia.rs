@@ -47,11 +47,11 @@ impl Patricia {
         self.commitment.record_key(name)
     }
 
-    pub fn edit(
-        &self,
-        root: Key,
-        read: impl FnMut(&Key) -> Result<Option<Vec<u8>>>,
-    ) -> Edit<'_, impl FnMut(&Key) -> Result<Option<Vec<u8>>>> {
+    pub fn edit<Read, Value>(&self, root: Key, read: Read) -> Edit<'_, Read>
+    where
+        Read: FnMut(&Key) -> Result<Option<Value>>,
+        Value: AsRef<[u8]>,
+    {
         Edit {
             tree: self,
             root,
@@ -107,7 +107,11 @@ pub struct Edit<'tree, Read> {
     writes: BTreeMap<Key, Option<Vec<u8>>>,
 }
 
-impl<Read: FnMut(&Key) -> Result<Option<Vec<u8>>>> Edit<'_, Read> {
+impl<Read, Value> Edit<'_, Read>
+where
+    Read: FnMut(&Key) -> Result<Option<Value>>,
+    Value: AsRef<[u8]>,
+{
     pub fn root(&self) -> Key {
         self.root
     }
@@ -146,8 +150,10 @@ impl<Read: FnMut(&Key) -> Result<Option<Vec<u8>>>> Edit<'_, Read> {
         let mut depth = 0;
         let mut value = None;
         while id != self.tree.empty_root() {
-            let (node, bytes) = self.load(&id)?;
-            nodes.push(bytes);
+            let node = self.load(&id, |node, bytes| {
+                nodes.push(bytes.to_vec());
+                node
+            })?;
             match node {
                 Node::Leaf {
                     key: found,
@@ -177,17 +183,21 @@ impl<Read: FnMut(&Key) -> Result<Option<Vec<u8>>>> Edit<'_, Read> {
         self.writes
     }
 
-    fn load(&mut self, id: &Key) -> Result<(Node, Vec<u8>)> {
+    fn load<T>(&mut self, id: &Key, use_node: impl FnOnce(Node, &[u8]) -> T) -> Result<T> {
+        let loaded;
         let bytes = match self.writes.get(id) {
-            Some(entry) => entry.clone(),
-            None => (self.read)(id)?,
+            Some(entry) => entry.as_deref(),
+            None => {
+                loaded = (self.read)(id)?;
+                loaded.as_ref().map(AsRef::as_ref)
+            }
         }
         .context("missing Patricia node")?;
         ensure!(
-            self.tree.node_hash(&bytes) == *id,
+            self.tree.node_hash(bytes) == *id,
             "Patricia node hash mismatch"
         );
-        Ok((Node::decode(&bytes)?, bytes))
+        Ok(use_node(Node::decode(bytes)?, bytes))
     }
 
     fn insert(&mut self, node: Node) -> Key {
@@ -201,7 +211,7 @@ impl<Read: FnMut(&Key) -> Result<Option<Vec<u8>>>> Edit<'_, Read> {
         if id == self.tree.empty_root() {
             Ok(None)
         } else {
-            Ok(Some((id, self.load(&id)?.0)))
+            Ok(Some((id, self.load(&id, |node, _| node)?)))
         }
     }
 
@@ -330,7 +340,7 @@ mod tests {
             .collect();
         let old = tree.value_hash(b"old");
         let new = tree.value_hash(b"new");
-        let mut genesis = tree.edit(tree.empty_root(), |_| Ok(None));
+        let mut genesis = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
         for &key in &keys[..700] {
             genesis.set(key, Some(old))?;
         }
@@ -420,8 +430,8 @@ mod tests {
             .map(|i| tree.record_key(&i.to_le_bytes()))
             .collect();
         let value = tree.value_hash(b"record");
-        let mut first = tree.edit(tree.empty_root(), |_| Ok(None));
-        let mut second = tree.edit(tree.empty_root(), |_| Ok(None));
+        let mut first = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
+        let mut second = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
         for (&a, &b) in keys.iter().zip(keys.iter().rev()) {
             assert!(first.set(a, Some(value))?.is_none());
             assert!(second.set(b, Some(value))?.is_none());
@@ -436,7 +446,7 @@ mod tests {
         let mut reads = 0;
         let mut third = tree.edit(root, |id| {
             reads += 1;
-            Ok(storage.get(id).cloned())
+            Ok(storage.get(id).map(Vec::as_slice))
         });
         let (actual, included) = third.prove(&keys[71])?;
         assert_eq!(actual, Some(value));

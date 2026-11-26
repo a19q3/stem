@@ -20,8 +20,10 @@ The Cell and system roots use the same incremental Patricia implementation. Each
 
 RocksDB stores each Patricia branch with its bit length, the prefix
 bytes through that bit length, and two child hashes. Loading a node
-restores the trailing zero bytes before checking its canonical hash.
-The local storage marker binds this layout to the genesis ID.
+restores the canonical bytes in a fixed-size buffer before checking
+the node hash. The editor borrows nodes it has already staged and
+copies node bytes into an owned proof only when a proof is requested.
+The local storage marker binds the stored layout to the genesis ID.
 
 A prepared block retains its decoded Live Cell changes by OutPoint.
 The Patricia leaf hashes the OutPoint, creation metadata and Cell

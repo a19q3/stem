@@ -164,8 +164,12 @@ impl Store {
                 batch.delete(key);
             }
         }
-        let mut cells = self.cells.edit(self.cells.empty_root(), |_| Ok(None));
-        let mut system = self.system.edit(self.system.empty_root(), |_| Ok(None));
+        let mut cells = self
+            .cells
+            .edit(self.cells.empty_root(), |_| Ok(None::<Vec<u8>>));
+        let mut system = self
+            .system
+            .edit(self.system.empty_root(), |_| Ok(None::<Vec<u8>>));
         let mut cell_records = Vec::new();
         let mut system_records = Vec::new();
         let mut previous = None;
