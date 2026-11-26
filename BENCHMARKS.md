@@ -1717,6 +1717,59 @@ lifecycle begins with an original CKB Spore.
 [Reproduction](OPERATIONS.md#exercise-ckb-spore-settlement) ·
 [Raw runs, signed rejections and fingerprints](benchmarks/2026-11-26-stem-spore-settlement.json.xz).
 
+## CKB Spore V2 with Cluster membership
+
+Four Jolteon replicas and CKB 0.210.0 ran the complete custody lifecycle
+with the published Spore and Cluster ELFs. The original Cell carried
+360 CKB. Its 99-byte Molecule data carried the same Cluster ID
+at CKB issuance, deposit, Stem ownership transfer, release and redeposit.
+CKB transferred ownership of the actual Cluster while its member was
+on Stem. That transfer preserved Cluster data and had no effect on the
+member's identity or redemption.
+
+| Operation | Plain Spore, candidate bytes / cycles | Cluster member, candidate bytes / cycles |
+| --- | ---: | ---: |
+| CKB member issuance | 899 / 1,730,905 | 1,081 / 1,809,943 |
+| CKB deposit | 2,223 / 3,529,890 | 2,295 / 3,564,515 |
+| Stem import | 2,203 / 14,050,931 | 2,311 / 14,052,410 |
+| Stem ownership transfer | 415 / 1,942,041 | 451 / 1,943,329 |
+| Stem return | 877 / 2,055,996 | 913 / 2,057,457 |
+| CKB release | 2,612 / 4,375,553 | 2,684 / 4,394,858 |
+| CKB redeposit | 2,223 / 3,526,182 | 2,295 / 3,557,085 |
+| Stem reimport | 2,203 / 14,050,931 | 2,311 / 14,052,410 |
+
+CKB cycles are node estimates for signed transactions. Stem cycles are
+from committed receipts. The 36 membership bytes raised the calculated
+occupied Capacity from 189 to 225 CKB under the owner's Lock and from
+297 to 333 CKB under escrow. The separate CKB Cluster creation and
+transfer used 819 and 1,025 transaction bytes and 1,742,896 and
+1,744,863 estimated cycles.
+The baseline and candidate plain runs both completed, with identical
+byte counts for the eight operations above. The baseline refused a valid
+clustered deposit after native CKB minting. The archive also retains an
+earlier clustered attempt where the fixture omitted an input from the
+two-input CKB Sighash Lock signing group.
+
+The final clustered run recorded 22 rejection controls, including native
+minting without the Cluster dependency or owner authorization, identity
+forgery and Cluster removal at the custody boundary, loss of membership
+on Stem, and a repeated redemption after redeposit. Independent CKB
+verification checked six outputs against transaction and witness roots
+and rejected an altered release witness. The WASM SDK verified the
+Cluster bytes in the live mapping, absence of the burned mapping, the
+Intercell inbox and outbox, and all four Stem execution receipts under
+Jolteon finality. This profile covers native Spore V2 transfer semantics
+for the two plain MIME types. Application extensions require their own
+verification rules.
+
+The dedicated Stem object route, shared Metatype return, generic Intercell,
+CKB/xUDT withdrawals and funded Jolteon handoff passed devnet regression
+runs. The Rust workspace passed 494 tests with 22 ignored. The Go proof
+suite and release `comet-benchmark` build check passed.
+
+[Reproduction](OPERATIONS.md#exercise-ckb-spore-settlement) ·
+[Signed runs, proofs, controls and build fingerprints](benchmarks/2026-11-26-stem-spore-cluster.json.xz).
+
 ## Native compound object settlement over CKB
 
 Revision `df181fd` tested a Stem-issued object with two actual Type
