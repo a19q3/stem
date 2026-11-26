@@ -5235,3 +5235,49 @@ reading the transaction hash at the wrong JSON level. Corrected
 reruns succeeded.
 
 [Signed transactions, proofs, result JSON, commands and failed attempts](benchmarks/2026-11-26-stem-selective-metatype.json.xz).
+
+## Metatype object royalties
+
+Four Jolteon replicas and a real CKB devnet tested a three-constraint
+object with identity, approval and a fixed 110 CKB royalty. Three
+round trips covered immutable objects with inline and shared Manifests
+and a revisable object with an inline Manifest. Each run paid on a
+native holder change, export into escrow, transfer on CKB and release
+on Stem. The revisable run also committed same-Lock updates on both
+chains without a royalty payment.
+
+| Object and layout | CKB representation occupied | CKB transfer bytes / cycles | CKB import cycles | CKB burn cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Immutable inline control | 563 CKB | 1,373 / 4,060,865 | 5,026,855 | 4,163,551 |
+| Immutable inline royalty | 724 CKB | 1,712 / 4,463,189 | 5,388,474 | 4,527,721 |
+| Immutable shared control | 293 CKB | 1,140 / 4,141,556 | 5,079,482 | 4,250,472 |
+| Immutable shared royalty | 295 CKB | 1,320 / 4,528,015 | 5,496,061 | 4,585,308 |
+| Revisable inline royalty | 729 CKB | 1,737 / 4,519,449 | 5,383,544 | 4,515,496 |
+
+The shared immutable definition occupied 529 CKB with the royalty
+and 368 CKB in the control. Every transfer in the table carried
+170 raw witness bytes. The paired CKB transfer cost rose 9.9%
+inline and 9.3% shared, including the extra adapter and payment
+output. Across the three royalty runs, Stem export used
+4.103–4.105 million cycles, native transfer used 3.924 million and
+release used 14.176 million. The revisable same-Lock Stem update
+used 3.910 million cycles. These measurements describe individual
+transactions on a colocated development network.
+
+Stem and CKB rejected missing, underpaid, misdirected, wrongly
+scoped and duplicate payments. Both rejected removal of the
+royalty rule. Stem separately rejected missing payments at the
+export and release boundaries. Independent WASM verification
+checked three finalized Stem payment Cells per run, and verified
+membership of all original Type Scripts on the escrowed and
+restored objects. Twelve CKB offline checks verified transfer
+payments, object output inclusion and mailbox outputs against
+their recorded transaction and witness roots.
+
+Eight further devnet runs covered workflow recovery, fungible
+Metatype, selective composed-asset redemption, Intercell,
+CKB/xUDT, Spore, fee payouts and funded committee handoff.
+The Rust workspace passed 491 tests with 22 ignored. The Go proof
+suite and the CometBFT build check passed.
+
+[Signed payments, paired controls, rejection logs, proofs and reproduction commands](benchmarks/2026-11-26-stem-metatype-royalty.json.xz).

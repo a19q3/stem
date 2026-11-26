@@ -119,5 +119,6 @@ available. Published network evidence contains public genesis and proof data.
 | Atomic settlement of two Metatype assets | [Report](../BENCHMARKS.md#atomic-settlement-of-two-metatype-assets), [paired layouts, receipts, rejection controls and proofs](2026-11-26-stem-metatype-multiasset.json.xz) |
 | Composed Metatype asset Cells | [Report](../BENCHMARKS.md#composed-metatype-asset-cells), [full and partial returns, offline proofs, controls and regressions](2026-11-26-stem-composed-assets.json.xz) |
 | Selective Metatype redemptions | [Report](../BENCHMARKS.md#selective-metatype-redemptions), [sequential returns, verified residuals and reruns](2026-11-26-stem-selective-metatype.json.xz) |
+| Metatype object royalties | [Report](../BENCHMARKS.md#metatype-object-royalties), [signed payments, paired controls and rejection logs](2026-11-26-stem-metatype-royalty.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
