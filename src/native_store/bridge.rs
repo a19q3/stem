@@ -13,7 +13,8 @@ use stem_ledger::{
         BlockBudget, BridgeBacking, BridgeLedger, FeeClaim, FeeFund, FeeFundDestination,
         FeeFundPolicy, FeePayouts, L1Anchor, L1AnchorUpdate, Lane, Limits, PendingWithdrawal,
         RewardClaim, SettlementChanges, VaultRevenue, VaultRevenueEntry, VerifiedMint,
-        l1_reference::VerifiedL1References, reward_balance_key, reward_claim_key,
+        l1_reference::{L1ReferenceVerifier, VerifiedL1References},
+        reward_balance_key, reward_claim_key,
     },
     replay,
 };
@@ -79,7 +80,7 @@ pub struct RecipientLock {
 
 pub(super) struct Bridge {
     l1_genesis: Byte32,
-    authority: Authority,
+    reference_verifier: L1ReferenceVerifier,
     burn: Byte32,
     lanes: BTreeMap<Byte32, Asset>,
     recipient_locks: Vec<(Byte32, u8, u32)>,
@@ -353,7 +354,11 @@ impl Bridge {
 
         let mut bridge = Self {
             l1_genesis: spec.l1_genesis.clone(),
-            authority,
+            reference_verifier: L1ReferenceVerifier::new(
+                network.clone(),
+                spec.l1_genesis.clone(),
+                authority,
+            ),
             burn: spec.burn_code_hash.clone(),
             lanes,
             recipient_locks,
@@ -447,7 +452,7 @@ impl Bridge {
             store.network(),
             &self.l1_genesis,
             &view.anchor()?,
-            &self.authority,
+            self.reference_verifier.authority(),
             &mut budget,
         )?;
         let observation = mint.observation();
@@ -841,7 +846,7 @@ impl Bridge {
             store.network(),
             &self.l1_genesis,
             &view.anchor()?,
-            &self.authority,
+            self.reference_verifier.authority(),
             &tx.certificate().context("missing L1 anchor certificate")?,
         )?;
         let record = encode_anchor(&update.anchor, height);
@@ -870,7 +875,7 @@ impl Bridge {
             store.network(),
             &self.l1_genesis,
             &view.anchor()?,
-            &self.authority,
+            self.reference_verifier.authority(),
             &view,
             &mut budget,
         )?;
@@ -959,14 +964,8 @@ impl Bridge {
         let age = height
             .checked_sub(adopted_at)
             .context("L1 anchor is newer than the transaction")?;
-        VerifiedL1References::verify(
-            tx,
-            store.network(),
-            &self.l1_genesis,
-            &anchor,
-            age <= store.limits.header_dep_age,
-            &self.authority,
-        )
+        self.reference_verifier
+            .verify(tx, &anchor, age <= store.limits.header_dep_age)
     }
 }
 

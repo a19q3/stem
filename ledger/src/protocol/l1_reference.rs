@@ -1,5 +1,7 @@
 //! Explicit read-only CKB outputs certified by the pinned L1 observation authority.
 
+use std::sync::{Arc, Mutex, OnceLock};
+
 use anyhow::{Context, Result, bail, ensure};
 use ckb_types::{
     bytes::Bytes,
@@ -7,6 +9,7 @@ use ckb_types::{
     packed::{Byte32, CellOutput, OutPoint},
     prelude::Entity,
 };
+use lru::LruCache;
 use stem_stake::Authority;
 
 use super::{L1Anchor, byte32, bytes, hash32, out_point};
@@ -20,6 +23,7 @@ pub const MAX_REFERENCES: usize = 4;
 const MAX_OUTPUT_DATA: usize = 16 * 1024;
 const MAX_OUTPUT: usize = 4096;
 const SIGNATURE_CYCLES: u64 = 4_000_000;
+const VERIFIED_SET_LIMIT: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -150,7 +154,54 @@ pub fn l1_reference_digest(network: &Byte32, generation: &[u8; 32], body: &[u8])
 
 pub struct VerifiedL1References {
     transaction: Byte32,
-    records: Vec<Bytes>,
+    records: Arc<[L1ReferenceRecord]>,
+}
+
+/// One immutable observation authenticated by the reference-set certificate.
+#[derive(Debug)]
+pub struct L1ReferenceRecord {
+    raw: Bytes,
+    observation: L1Reference,
+    type_hash: OnceLock<Option<Byte32>>,
+    live_typed_data: OnceLock<Option<Bytes>>,
+}
+
+impl L1ReferenceRecord {
+    pub fn as_slice(&self) -> &[u8] {
+        &self.raw
+    }
+
+    pub fn observation(&self) -> &L1Reference {
+        &self.observation
+    }
+
+    pub fn type_hash(&self) -> Option<&Byte32> {
+        self.type_hash
+            .get_or_init(|| {
+                self.observation
+                    .output
+                    .type_()
+                    .to_opt()
+                    .map(|ty| ty.calc_script_hash())
+            })
+            .as_ref()
+    }
+
+    /// Syscall 2130's typed projection, cached separately from the raw record.
+    pub fn live_typed_data(&self) -> Option<&[u8]> {
+        self.live_typed_data
+            .get_or_init(|| {
+                if self.observation.kind != L1ReferenceKind::LiveAtAnchor {
+                    return None;
+                }
+                let type_hash = self.type_hash()?;
+                let mut data = Vec::with_capacity(32 + self.observation.data.len());
+                data.extend_from_slice(type_hash.as_slice());
+                data.extend_from_slice(&self.observation.data);
+                Some(data.into())
+            })
+            .as_deref()
+    }
 }
 
 impl VerifiedL1References {
@@ -161,40 +212,11 @@ impl VerifiedL1References {
         })
     }
 
-    pub fn verify(
+    pub(crate) fn authorize(
+        self,
         tx: &Transaction,
         network: &Byte32,
-        genesis: &Byte32,
-        anchor: &L1Anchor,
-        live_fresh: bool,
-        authority: &Authority,
-    ) -> Result<Self> {
-        let certificate = tx
-            .l1_reference_certificate()
-            .context("missing L1 reference certificate")?;
-        let body = certificate.body();
-        let set = decode_reference_set(&body)?;
-        for (reference, _) in &set {
-            ensure!(
-                &reference.genesis == genesis && &reference.anchor == anchor,
-                "L1 reference does not use the committed CKB anchor"
-            );
-            ensure!(
-                reference.kind != L1ReferenceKind::LiveAtAnchor || live_fresh,
-                "live L1 reference observation is stale"
-            );
-        }
-        authority.verify(
-            l1_reference_digest(network, &authority.generation(), &body).as_slice(),
-            &certificate.attestations().collect::<Vec<_>>(),
-        )?;
-        Ok(Self {
-            transaction: tx.commitment(network),
-            records: set.into_iter().map(|(_, bytes)| bytes).collect(),
-        })
-    }
-
-    pub(crate) fn authorize(self, tx: &Transaction, network: &Byte32) -> Result<Vec<Bytes>> {
+    ) -> Result<Arc<[L1ReferenceRecord]>> {
         ensure!(
             self.transaction == tx.commitment(network),
             "L1 reference authorization differs from transaction"
@@ -203,9 +225,103 @@ impl VerifiedL1References {
     }
 }
 
+/// Shares successful quorum checks only within a single immutable bridge trust domain.
+pub struct L1ReferenceVerifier {
+    network: Byte32,
+    genesis: Byte32,
+    authority: Authority,
+    verified: Mutex<LruCache<Vec<u8>, Arc<[L1ReferenceRecord]>>>,
+}
+
+impl L1ReferenceVerifier {
+    pub fn new(network: Byte32, genesis: Byte32, authority: Authority) -> Self {
+        Self {
+            network,
+            genesis,
+            authority,
+            verified: Mutex::new(LruCache::new(VERIFIED_SET_LIMIT)),
+        }
+    }
+
+    pub fn authority(&self) -> &Authority {
+        &self.authority
+    }
+
+    pub fn verify(
+        &self,
+        tx: &Transaction,
+        anchor: &L1Anchor,
+        live_fresh: bool,
+    ) -> Result<VerifiedL1References> {
+        let certificate = tx
+            .l1_reference_certificate()
+            .context("missing L1 reference certificate")?;
+        // Keep only the exact certificate bytes, not the backing transaction buffer.
+        let key = certificate.encoded.as_slice();
+        let cached = self
+            .verified
+            .lock()
+            .expect("L1 reference cache lock")
+            .get(key)
+            .cloned();
+        let records = if let Some(records) = cached {
+            self.check_context(&records, anchor, live_fresh)?;
+            records
+        } else {
+            let body = certificate.body();
+            let records: Arc<[L1ReferenceRecord]> = decode_reference_set(&body)?
+                .into_iter()
+                .map(|(observation, raw)| L1ReferenceRecord {
+                    raw,
+                    observation,
+                    type_hash: OnceLock::new(),
+                    live_typed_data: OnceLock::new(),
+                })
+                .collect();
+            self.check_context(&records, anchor, live_fresh)?;
+            self.authority.verify(
+                l1_reference_digest(&self.network, &self.authority.generation(), &body).as_slice(),
+                &certificate.attestations().collect::<Vec<_>>(),
+            )?;
+            self.verified
+                .lock()
+                .expect("L1 reference cache lock")
+                .put(key.to_vec(), Arc::clone(&records));
+            records
+        };
+        Ok(VerifiedL1References {
+            transaction: tx.commitment(&self.network),
+            records,
+        })
+    }
+
+    fn check_context(
+        &self,
+        records: &[L1ReferenceRecord],
+        anchor: &L1Anchor,
+        live_fresh: bool,
+    ) -> Result<()> {
+        for entry in records {
+            let reference = entry.observation();
+            ensure!(
+                reference.genesis == self.genesis && &reference.anchor == anchor,
+                "L1 reference does not use the committed CKB anchor"
+            );
+            ensure!(
+                reference.kind != L1ReferenceKind::LiveAtAnchor || live_fresh,
+                "live L1 reference observation is stale"
+            );
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use ckb_types::prelude::Pack;
+    use ckb_types::{
+        packed::Script,
+        prelude::{Builder, Pack},
+    };
     use ed25519_dalek::{Signer, SigningKey};
     use stem_stake::{Attestation, Member};
 
@@ -254,7 +370,11 @@ mod tests {
     #[test]
     fn one_quorum_binds_every_record_and_does_not_share_live_freshness() -> Result<()> {
         let first = record(1, L1ReferenceKind::Historical);
-        let second = record(2, L1ReferenceKind::LiveAtAnchor);
+        let mut second = record(2, L1ReferenceKind::LiveAtAnchor);
+        let ty = Script::default();
+        second.output = CellOutput::new_builder()
+            .type_(Some(ty.clone()).pack())
+            .build();
         let records = [first.encode(), second.encode()];
         let network = [8; 32].pack();
         let generation = [6; 32];
@@ -263,7 +383,9 @@ mod tests {
             key: key.verifying_key().to_bytes(),
             power: 1,
         };
-        let authority = Authority::new(generation, &[member.clone()])?;
+        let authority = Authority::new(generation, &[member])?;
+        let verifier =
+            L1ReferenceVerifier::new(network.clone(), first.genesis.clone(), authority.clone());
         let body = encode_reference_set(&records)?;
         let digest = l1_reference_digest(&network, &generation, &body);
         let vote = Attestation {
@@ -277,23 +399,36 @@ mod tests {
             vec![],
             vec![],
         )?;
-        let attach = |body| {
-            unsigned.with_l1_reference_certificate(Certificate::new(body, vec![vote.clone()])?)
-        };
+        let attach =
+            |body| unsigned.with_l1_reference_certificate(Certificate::new(body, vec![vote])?);
         let tx = attach(body)?;
-        let verify = |tx: &Transaction, fresh| {
-            VerifiedL1References::verify(
-                tx,
-                &network,
-                &first.genesis,
-                &first.anchor,
-                fresh,
-                &authority,
-            )
-        };
+        let verify = |tx: &Transaction, fresh| verifier.verify(tx, &first.anchor, fresh);
         assert_eq!(VerifiedL1References::cycles(&tx), SIGNATURE_CYCLES);
-        assert_eq!(verify(&tx, true)?.authorize(&tx, &network)?, records);
+        let resolved = verify(&tx, true)?.authorize(&tx, &network)?;
+        for (entry, bytes) in resolved.iter().zip(&records) {
+            assert_eq!(entry.as_slice(), bytes.as_ref());
+        }
+        assert_eq!(resolved.len(), records.len());
+        assert!(resolved[0].live_typed_data().is_none());
+        let typed = resolved[1].live_typed_data().unwrap();
+        assert_eq!(&typed[..32], ty.calc_script_hash().as_slice());
+        assert_eq!(&typed[32..], second.data.as_ref());
+        let cert = tx.l1_reference_certificate().unwrap();
+        let reuse = unsigned
+            .with_valid_before_height(10)?
+            .with_l1_reference_certificate(cert.clone())?;
+        assert!(verify(&tx, true)?.authorize(&reuse, &network).is_err());
+        assert!(Arc::ptr_eq(
+            &verify(&reuse, true)?.authorize(&reuse, &network)?,
+            &resolved
+        ));
         assert!(verify(&tx, false).is_err());
+        assert!(verifier.verify(&tx, &anchor(4), true).is_err());
+        let mut invalid = vote;
+        invalid.signature[0] ^= 1;
+        let invalid = unsigned
+            .with_l1_reference_certificate(Certificate::new(cert.body(), vec![invalid])?)?;
+        assert!(verify(&invalid, true).is_err());
         assert!(verify(&attach(encode_reference_set(&records[..1])?)?, true).is_err());
         let mut changed = second;
         changed.data = Bytes::from_static(b"modified");
@@ -308,18 +443,21 @@ mod tests {
             .is_err()
         );
         let wrong_generation = Authority::new([9; 32], &[member])?;
-        for (domain, guardian) in [(&[9; 32].pack(), &authority), (&network, &wrong_generation)] {
-            assert!(
-                VerifiedL1References::verify(
-                    &tx,
-                    domain,
-                    &first.genesis,
-                    &first.anchor,
-                    true,
-                    guardian
-                )
-                .is_err()
-            );
+        let other_signer = SigningKey::from_bytes(&[4; 32]);
+        let other_guardian = Authority::new(
+            generation,
+            &[Member {
+                key: other_signer.verifying_key().to_bytes(),
+                power: 1,
+            }],
+        )?;
+        for (domain, guardian) in [
+            ([9; 32].pack(), authority),
+            (network.clone(), wrong_generation),
+            (network.clone(), other_guardian),
+        ] {
+            let verifier = L1ReferenceVerifier::new(domain, first.genesis.clone(), guardian);
+            assert!(verifier.verify(&tx, &first.anchor, true).is_err());
         }
         Ok(())
     }

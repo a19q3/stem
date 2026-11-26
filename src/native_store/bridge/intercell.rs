@@ -6,10 +6,8 @@ use stem_bridge_wire::intercell::{
     Identity, MailboxPolicy, MailboxState, Message, RECEIVE_ACTION, SEND_ACTION, record_key,
 };
 use stem_ledger::{
-    ResolvedTransaction, ScriptGroupKind,
-    block::Header,
-    patricia::Proof,
-    protocol::l1_reference::{L1Reference, L1ReferenceKind},
+    ResolvedTransaction, ScriptGroupKind, block::Header, patricia::Proof,
+    protocol::l1_reference::L1ReferenceKind,
 };
 
 use super::{Bridge, BridgeChanges, StagedBridge, Store, View};
@@ -65,15 +63,19 @@ pub(in crate::native_store) fn apply(
         // The application can read other certified outputs in the same transaction.
         // Only the exact historical send from this mailbox authorizes delivery.
         let mut matches = 0;
-        for raw in tx.l1_references() {
-            let reference = L1Reference::decode(raw)?;
+        for entry in tx.l1_references() {
+            let reference = entry.observation();
+            if reference.kind != L1ReferenceKind::Historical {
+                continue;
+            }
             let Some(script) = reference.output.type_().to_opt() else {
                 continue;
             };
-            if reference.kind != L1ReferenceKind::Historical
-                || script.code_hash() != *code
+            if script.code_hash() != *code
                 || ScriptHashType::try_from(script.hash_type())? != ScriptHashType::Data2
-                || script.calc_script_hash().as_slice() != message.sender
+                || entry
+                    .type_hash()
+                    .is_none_or(|hash| hash.as_slice() != message.sender)
             {
                 continue;
             }

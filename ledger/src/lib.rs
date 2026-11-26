@@ -1348,7 +1348,7 @@ pub struct ResolvedTransaction {
     inputs: Vec<LiveCell>,
     outputs: Vec<Cell>,
     cell_deps: Vec<LiveCell>,
-    l1_references: Vec<Bytes>,
+    l1_references: Option<Arc<[protocol::l1_reference::L1ReferenceRecord]>>,
     headers: Vec<Header>,
     headers_by_origin: HashMap<Byte32, usize>,
     cache_key: OnceLock<Byte32>,
@@ -1425,7 +1425,7 @@ impl ResolvedTransaction {
             transaction,
             block,
             None,
-            Vec::new(),
+            None,
             live_cell,
             committed_header,
         )
@@ -1449,7 +1449,7 @@ impl ResolvedTransaction {
             transaction,
             block,
             None,
-            references,
+            Some(references),
             live_cell,
             committed_header,
         )
@@ -1476,7 +1476,7 @@ impl ResolvedTransaction {
             transaction,
             block,
             Some(authorization),
-            Vec::new(),
+            None,
             live_cell,
             committed_header,
         )
@@ -1487,7 +1487,7 @@ impl ResolvedTransaction {
         transaction: Transaction,
         block: BlockContext<'_>,
         mint: Option<(u64, Option<(Script, u128)>)>,
-        l1_references: Vec<Bytes>,
+        l1_references: Option<Arc<[protocol::l1_reference::L1ReferenceRecord]>>,
         live_cell: impl FnMut(&OutPoint) -> Result<LiveCell>,
         mut committed_header: impl FnMut(&Byte32) -> Result<Header>,
     ) -> Result<Self> {
@@ -1645,8 +1645,8 @@ impl ResolvedTransaction {
     pub fn cell_deps(&self) -> &[LiveCell] {
         &self.cell_deps
     }
-    pub fn l1_references(&self) -> &[Bytes] {
-        &self.l1_references
+    pub fn l1_references(&self) -> &[protocol::l1_reference::L1ReferenceRecord] {
+        self.l1_references.as_deref().unwrap_or(&[])
     }
     pub fn header(&self, index: usize) -> Option<&Header> {
         self.headers.get(index)
@@ -1769,10 +1769,12 @@ impl ResolvedTransaction {
                 );
                 hash.update(authorization.digest.as_slice());
             }
-            hash.update(&(self.l1_references.len() as u64).to_le_bytes());
-            for reference in &self.l1_references {
-                hash.update(&(reference.len() as u64).to_le_bytes());
-                hash.update(reference);
+            let references = self.l1_references();
+            hash.update(&(references.len() as u64).to_le_bytes());
+            for reference in references {
+                let raw = reference.as_slice();
+                hash.update(&(raw.len() as u64).to_le_bytes());
+                hash.update(raw);
             }
             hash.update(&(self.headers.len() as u64).to_le_bytes());
             for header in &self.headers {

@@ -1916,7 +1916,7 @@ impl Store {
             + resolved
                 .l1_references()
                 .iter()
-                .map(|record| record.len() as u64)
+                .map(|record| record.as_slice().len() as u64)
                 .sum::<u64>()
             + message_read_bytes
             + lineage_reads
