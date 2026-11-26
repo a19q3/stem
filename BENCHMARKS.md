@@ -3945,3 +3945,51 @@ funded Jolteon handoff with historical Intercell delivery.
 
 [Reproduction](OPERATIONS.md#exercise-cap-bound-metatype-fungible-custody) ·
 [Signed transactions, proofs and failed attempts](benchmarks/2026-11-26-stem-metatype-fungible.json.xz).
+
+## Borrowed Metatype Manifest views
+
+CKB 0.210.0 ran the prior and candidate RISC-V ELFs over the same
+standalone fixture, with both inline Cell Data and shared definitions.
+The pinned Stem CLI signed every transaction. Each split consumes two
+asset Cells and creates three, with the same amounts and logical
+groups in corresponding runs. The four cases ran in reverse order
+after the first round. All recorded split cycles and byte sizes
+repeated exactly.
+
+| Groups in long set | Prior / candidate inline cycles | Prior / candidate shared cycles | Shared cycles saved | Inline / shared transaction bytes |
+| --- | ---: | ---: | ---: | ---: |
+| 2 | 2,406,107 / 2,419,890 | 2,471,775 / 2,418,039 | 2.2% | 2,326 / 1,553 |
+| 4 | 3,202,085 / 3,202,731 | 3,449,826 / 3,243,911 | 6.0% | 3,066 / 1,598 |
+| 8 | 5,170,970 / 5,172,112 | 5,867,291 / 5,021,355 | 14.4% | 4,546 / 1,614 |
+| 16 | 9,969,918 / 9,950,088 | 12,384,121 / 9,023,302 | 27.1% | 7,506 / 1,646 |
+
+Each local VM resolves the actual definition and indexes canonical
+Script ranges once. The dispatcher, custody gate and adapters inspect
+borrowed Script and state slices. The dispatcher still meters the
+full expanded size before dispatch. Shared Cell Data, transaction
+sizes and occupied Capacity follow the existing wire format.
+
+Inline costs moved by at most 0.6%. The 16-group candidate shared
+split used 9.3% fewer cycles than candidate inline. The candidate
+mixed-layout two-asset settlement used 4,127,197 cycles, against
+4,324,384 with the prior ELFs. All corresponding rejection sets
+matched, including 19 shared cases. The expansion control still
+rejected 79,059 encoded bytes expanding to 132,867 bytes. The
+fixture also consumed and replaced a definition at a new OutPoint
+and then finalized a split using its replacement. The archive
+records actual issuance, split and settlement proofs for each run.
+
+The release workspace passed 477 tests with 19 ignored. The RISC-V
+contract build, Go proof tests and CometBFT benchmark build passed.
+Real CKB devnet and four-replica Jolteon runs covered immutable
+Metatype custody, capped fungible custody with consecutive 150
+and 100 unit returns, standalone object approvals and their
+Polytype comparison, specialized UDT, Spore, and a funded committee
+handoff followed by delivery of a historical Intercell message.
+Independent WASM runs verified the execution and Cell state
+proofs for both Metatype custody paths. The first baseline start
+failed because the devnet RPC listener port was occupied. The
+successful retry and the failed start logs are both in the archive.
+
+[Reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
+[Signed transactions, proofs and failed start](benchmarks/2026-11-26-stem-metatype-view.json.xz).

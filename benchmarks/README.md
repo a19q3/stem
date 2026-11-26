@@ -97,5 +97,6 @@ available. Published network evidence contains public genesis and proof data.
 | RISC-V instruction-width dispatch | [Report](../BENCHMARKS.md#risc-v-instruction-width-dispatch), [ELF corpus, paired results, CPU samples and regression logs](2026-11-26-stem-vm-decoder.json.xz) |
 | Shared Metatype manifest definitions | [Report](../BENCHMARKS.md#shared-metatype-manifest-definitions), [matched CKB layouts, custody proofs and failed build](2026-11-26-stem-metatype-shared.json.xz) |
 | Cap-bound fungible Metatype custody | [Report](../BENCHMARKS.md#cap-bound-fungible-metatype-custody), [partial and full returns, matched controls, proofs and failed attempts](2026-11-26-stem-metatype-fungible.json.xz) |
+| Borrowed Metatype Manifest views | [Report](../BENCHMARKS.md#borrowed-metatype-manifest-views), [eight paired CKB runs, proofs and failed start](2026-11-26-stem-metatype-view.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
