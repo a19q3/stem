@@ -233,8 +233,9 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         let header = headers
             .get(usize::try_from(depth)?)
             .context("missing CKB Header")?;
-        let tx = packed::Transaction::from_slice(step.transaction.as_bytes())?.into_view();
-        stem::l1_proof::verify_transaction(&header.hash(), header, &tx, &step.proof)?;
+        let packed = packed::Transaction::from_slice(step.transaction.as_bytes())?;
+        let tx =
+            stem::l1_proof::verify_packed_transaction(&header.hash(), header, packed, &step.proof)?;
         let (previous, next) = transition(&tx, &request.type_hash, |point| {
             let hash = point.tx_hash();
             let raw = sources

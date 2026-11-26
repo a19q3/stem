@@ -5,7 +5,7 @@ use ckb_jsonrpc_types::{MerkleProof as Proof, TransactionAndWitnessProof};
 use ckb_types::{
     bytes::Bytes,
     core::{HeaderView, TransactionView},
-    packed::{Byte32, CellOutput, OutPoint},
+    packed::{Byte32, CellOutput, OutPoint, Transaction},
     prelude::*,
     utilities::{MerkleProof, merkle_root},
 };
@@ -18,13 +18,40 @@ pub fn verify_transaction(
     tx: &TransactionView,
     proof: &TransactionAndWitnessProof,
 ) -> Result<()> {
+    let packed = tx.data();
+    verify_commitments(
+        trusted_block,
+        header,
+        packed.calc_tx_hash(),
+        packed.calc_witness_hash(),
+        proof,
+    )
+}
+
+/// Calculate both transaction commitments from these packed bytes and return the authenticated view.
+pub fn verify_packed_transaction(
+    trusted_block: &Byte32,
+    header: &HeaderView,
+    packed: Transaction,
+    proof: &TransactionAndWitnessProof,
+) -> Result<TransactionView> {
+    let tx = packed.into_view();
+    verify_commitments(trusted_block, header, tx.hash(), tx.witness_hash(), proof)?;
+    Ok(tx)
+}
+
+fn verify_commitments(
+    trusted_block: &Byte32,
+    header: &HeaderView,
+    raw_hash: Byte32,
+    witness_hash: Byte32,
+    proof: &TransactionAndWitnessProof,
+) -> Result<()> {
     ensure!(
         &header.data().calc_header_hash() == trusted_block
             && proof.block_hash.as_bytes() == trusted_block.as_slice(),
         "CKB proof is outside the trusted block"
     );
-    let transaction = tx.data();
-    let raw_hash = transaction.calc_tx_hash();
     let raw = &proof.transactions_proof;
     let witness = &proof.witnesses_proof;
     ensure!(
@@ -44,10 +71,8 @@ pub fn verify_transaction(
             .context("invalid CKB inclusion proof path")
     };
     ensure!(
-        merkle_root(&[
-            root(raw, raw_hash)?,
-            root(witness, transaction.calc_witness_hash())?
-        ]) == header.transactions_root(),
+        merkle_root(&[root(raw, raw_hash)?, root(witness, witness_hash)?])
+            == header.transactions_root(),
         "CKB transaction or witness proof does not match the Header"
     );
     Ok(())
