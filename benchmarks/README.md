@@ -122,5 +122,6 @@ available. Published network evidence contains public genesis and proof data.
 | Metatype object royalties | [Report](../BENCHMARKS.md#metatype-object-royalties), [signed payments, paired controls and rejection logs](2026-11-26-stem-metatype-royalty.json.xz) |
 | Metatype approval key rotation | [Report](../BENCHMARKS.md#metatype-approval-key-rotation), [registry records, signatures, proofs and failed rounds](2026-11-26-stem-metatype-rotation.json.xz) |
 | Metatype freeze and thaw | [Report](../BENCHMARKS.md#metatype-freeze-and-thaw), [registry updates, pending-return and thaw proofs, failed rounds](2026-11-26-stem-metatype-freeze.json.xz) |
+| Metatype ceiling decreases | [Report](../BENCHMARKS.md#metatype-ceiling-decreases), [oversized import and return proofs, repaired states and failures](2026-11-26-stem-metatype-ceiling.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

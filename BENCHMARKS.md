@@ -5379,3 +5379,56 @@ offline checker failure, which passed the new state byte to the
 public-key decoder.
 
 [Registry changes, signed tests, pending and released proofs, measurements and failed runs](benchmarks/2026-11-26-stem-metatype-freeze.json.xz).
+
+## Metatype ceiling decreases
+
+Four Jolteon replicas and a real CKB devnet ran two revisable objects
+through an adjustable ceiling. The inline fixture had three Type
+Groups. The shared fixture also had a rotating approval and froze the
+pending return before thawing. In both fixtures a 70-byte state
+committed on Stem was imported after lowering the CKB ceiling to
+69 bytes. CKB later admitted a 200-byte revision under a 200-byte
+ceiling, kept those exact bytes through an owner transfer under a
+120-byte ceiling, and burned the representation. A second decrease
+before Stem release set the current ceiling to 100 bytes. Stem
+restored the exact 200-byte state with the pinned custody proof and
+then committed a 68-byte revision under the lower ceiling.
+
+| Fixture | CKB import bytes / cycles | CKB unchanged transfer bytes / cycles | CKB burn bytes / cycles | Stem return bytes / cycles | Return route proof |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Inline, three groups | 3,342 / 5,694,741 | 1,773 / 4,517,465 | 1,981 / 4,542,801 | 4,246 / 14,228,091 | 666 B |
+| Shared, rotating approval and freeze | 3,103 / 8,353,864 | 1,667 / 7,264,839 | 2,296 / 7,284,497 | 4,900 / 16,412,036 | 731 B |
+
+CKB import witnesses totaled 1,257 and 1,291 bytes respectively.
+A compliant Stem edit after release consumed 15,916,954 and
+18,066,317 cycles. All Stem operations fit the existing 20-million-
+cycle transaction limit. These are individual transaction measurements.
+
+CKB rejected oversized imports with missing or substituted route
+proofs and rejected editing a still-oversized state even at the
+same length. Stem rejected missing return evidence and, in the
+inline case, a substituted wrapper or adapter table. Both fixtures
+also rejected applying the exact return proof to an ordinary
+oversized edit. The combined fixture verified that the frozen and
+thawed Inbox states preserve the same return message.
+
+Independent verification checked 19 CKB output inclusions including
+both sets of registry updates. It decoded the exact imported,
+preserved and burned bytes and checked the returned deployment and
+adapter table commitment. WASM independently verified both Stem
+returns, all original Type Groups and the final 68-byte state.
+Eleven further devnet runs covered live-ceiling growth, key
+rotation, royalties, workflow recovery, scalar and composed UDTs,
+Intercell, CKB/xUDT, Spore, fee payouts and funded handoff. The Rust
+workspace passed 493 tests with 22 ignored. Go proof tests and the
+CometBFT comparison build check passed.
+
+The archive retains four failed fixture attempts. Two negative
+controls omitted the old dependency after a registry update instead
+of removing the active dependency. The shared fixture also exceeded
+the CKB pool's transaction size limit when publishing all code
+together. The final runner resolves the actual registry head and
+splits the deployment into two transactions under the same pool
+limits.
+
+[Registry updates, signed transfers, route proofs, finality and failed runs](benchmarks/2026-11-26-stem-metatype-ceiling.json.xz).
