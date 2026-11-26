@@ -12,11 +12,38 @@ import time
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import (
-    CKB, FEE, FAUCET_ARG, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le,
+    CKB, FEE, FAUCET_ARG, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, reject_cli,
     output, point, script, script_hash, transaction, wallet_group, write_key,
 )
 from localnet import run, write_json
 from stake_localnet import witness
+
+
+def verify_expense_fixture(binary_path, directory, genesis, receipt, evidence):
+    path = directory / "operating-expense-evidence.json"
+    write_json(path, evidence)
+    pins = {"--l1-genesis": genesis, "--trusted-block": receipt["block"],
+            "--transaction": receipt["transaction"], "--payer-lock": receipt["payer_lock"]}
+    def command(path, overrides=None):
+        options = pins | (overrides or {})
+        return [binary_path, "checkpoint", "fund", "verify-expense", "--evidence", path,
+                *(value for pair in options.items() for value in pair)]
+    assert json.loads(run(*command(path))) == receipt
+    wrong = "0x" + "ec" * 32
+    rejected = {}
+    for flag, message in [("--trusted-block", "outside the trusted block"),
+                          ("--transaction", "unexpected expense transaction"),
+                          ("--payer-lock", "pinned payer lock")]:
+        rejected[flag[2:]] = reject_cli(message, *command(path, {flag: wrong}))
+    for label, parents, error in [
+        ("missing-funding-transaction", [], "missing committed funding transaction"),
+        ("duplicate-funding-transaction", evidence["parents"] * 2, "expense input count is out of range"),
+    ]:
+        invalid = directory / f"expense-{label}.json"
+        write_json(invalid, evidence | {"parents": parents})
+        rejected[label] = reject_cli(error, *command(invalid))
+    assert json.loads(run(*command(path))) == receipt
+    return rejected
 
 
 class Scenario:
@@ -148,6 +175,18 @@ class Scenario:
         amount = reward + self.receipt_capacity
         tx = self.pay_transaction([], [output(amount, lock)], ["0x"], [], change_delta=-amount)
         result = self.accept(name, tx)
+        if name == "query-one":
+            block = self.committed[name]["inclusion"]["proof"]["block_hash"]
+            pins = ["--l1-genesis", self.genesis, "--trusted-block", block,
+                    "--transaction", result, "--payer-lock", hex_bytes(script_hash(self.release_lock))]
+            bundle = json.loads(run(self.args.binary, "checkpoint", "fund", "prove-expense",
+                                    "--l1-rpc", self.l1.url, *pins))
+            receipt = bundle["receipt"]
+            assert receipt["miner_fee_shannons"] == FEE
+            assert receipt["total_output_shannons"] - receipt["returned_to_payer_shannons"] == amount
+            self.committed[name]["expense_receipt"] = receipt
+            self.committed[name]["expense_rejections"] = verify_expense_fixture(
+                self.args.binary, self.args.output, self.genesis, receipt, bundle["evidence"])
         return {"point": point(result, 0), "capacity": amount, "reward": reward, "buyer": buyer, "refund": refund}
 
     def sign_command(self, request, index):

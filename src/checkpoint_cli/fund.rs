@@ -21,8 +21,36 @@ use crate::{
     l1::Rpc,
 };
 
+mod expense;
+
 #[derive(Subcommand)]
 pub enum Command {
+    /// Collect a portable receipt for a committed single-payer plain-CKB expense.
+    ProveExpense {
+        #[arg(long)]
+        l1_rpc: String,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        l1_genesis: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        trusted_block: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        transaction: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        payer_lock: H256,
+    },
+    /// Authenticate the receipt offline using the independent chain, block, transaction and payer pins.
+    VerifyExpense {
+        #[arg(long)]
+        evidence: PathBuf,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        l1_genesis: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        trusted_block: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        transaction: H256,
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        payer_lock: H256,
+    },
     /// Derive the CKB Lock that receives the PoW Security Fund payout.
     Lock {
         #[arg(long)]
@@ -72,6 +100,32 @@ pub(super) struct Funded {
 impl Command {
     pub(super) fn run(self) -> Result<()> {
         match self {
+            Self::ProveExpense {
+                l1_rpc,
+                l1_genesis,
+                trusted_block,
+                transaction,
+                payer_lock,
+            } => expense::prove(
+                &l1_rpc,
+                &l1_genesis,
+                &trusted_block,
+                &transaction,
+                &payer_lock,
+            ),
+            Self::VerifyExpense {
+                evidence,
+                l1_genesis,
+                trusted_block,
+                transaction,
+                payer_lock,
+            } => expense::verify(
+                &evidence,
+                &l1_genesis,
+                &trusted_block,
+                &transaction,
+                &payer_lock,
+            ),
             Self::Lock { request } => lock(&request),
             Self::Update {
                 request,

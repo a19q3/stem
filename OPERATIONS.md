@@ -431,6 +431,18 @@ two-chain proofs, handoffs and native application queries. Verify a received
 certificate against the configured genesis and prior handoffs. A certificate
 for a later descendant requires proof of the requested Header's ancestry.
 
+### Verify a single-payer CKB operating expense
+
+Pin the CKB genesis, a block hash accepted under the operator's confirmation policy, the expense transaction hash and the payer's complete Lock Script hash. `prove-expense` fetches the transaction, witness inclusion proof and the funding transactions referenced by its inputs. The offline verifier uses the caller's trusted block on the specified network. It supports up to 64 ordinary untyped inputs under one Lock.
+
+```sh
+stem checkpoint fund prove-expense --l1-rpc "$rpc" --l1-genesis "$genesis" --trusted-block "$block" --transaction "$transaction" --payer-lock "$payer" > bundle.json
+jq '.evidence' bundle.json > expense.json
+stem checkpoint fund verify-expense --evidence expense.json --l1-genesis "$genesis" --trusted-block "$block" --transaction "$transaction" --payer-lock "$payer"
+```
+
+The receipt reports total input and output capacity, capacity returned to the payer and the actual miner fee, all in shannons. Its network-scoped transaction ID allows a reimbursement ledger to detect duplicates. An operator must independently establish which service the transaction paid for, the eligible amount, and whether the expense has already been settled before authorizing a payment. In the fixture the miner fee was 0.01 CKB, while 794 CKB went into a Live Cell service request. [Offline evidence and verification controls](evidence/2026-11-27-l1-expense.json.xz)
+
 ## Reproduce the CometBFT comparison
 
 The frozen comparison source is commit `12744bf`. A fresh comparison build
