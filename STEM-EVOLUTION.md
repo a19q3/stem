@@ -130,3 +130,5 @@ Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验
 将数据库和驱动目录放在跨两块 NVMe 的 Btrfs 卷后，同样的 250 ms 和 100 ms 配置在 180 秒内分别共同确认 303,734 和 330,706 笔支付，相当于 1,687.41 和 1,837.26 TPS。p99 从 175.32 秒降到 2.24 秒。含 45 秒排空期的设备总写入从约 11.49 GB 增至 12.64–12.67 GB。每档各一轮，四个副本仍在同一台机器。[设备计数、签名交易及收据](research/storage/proposal-cadence/nvme/README.md)
 
 第 20 项用上游 beta.2 的 Cluster 程序独立验证了普通集合的三次所有权状态和成员 Spore 的发行、换手、销毁。集合自身引用 Lua 注册的发行样本未获 CKB 接受。测试网抽取的 256 个近期存活集合均未填写该字段，这一类扩展仍需已确认样本。[Cluster 对照、测试网抽样与离线证明](research/spore-permit/upstream/beta2/README.md#cluster-membership-and-collection-level-registration)
+
+第 10 项在同一双 NVMe 卷上补做了投递与区块容量对照。固定 64 个发送线程，轮询投递在三分钟内四副本共同可见 1,844.03 TPS。改为每个节点 16 个线程从共享队列取支付后，原区块上限下达到 1,954.52 TPS，交易池同时拒绝了 24,054 笔。2,048 笔／40 亿 cycles 的宽区块用两个 VM 工作线程时达到 2,221.14 TPS，415,001 笔写入全部确认，p99 为 21.98 秒。相同创世改为四个 VM 工作线程后为 2,208.92 TPS，p99 为 14.89 秒。跨主机持续目标仍待验证。[四轮签名归档、实际节点分配与逐秒积压](research/storage/dispatch/README.md)

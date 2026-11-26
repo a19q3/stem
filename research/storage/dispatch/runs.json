@@ -1,0 +1,282 @@
+{
+  "round-a": {
+    "node_sha256": "2d20ea6b3f9e9ecb5e99f9c706cd164bbec7fd0a5c1efaae85372cfe440f523f",
+    "source_report_sha256": "75623f5c7c6f3c4d14300d81d9a8381ec4107cfa1f676c271ad9384c7621c197",
+    "archive_sha256": "0cf6efb149181b2e263e79bb4f7e4a298a22eff66c2eb43cd7f0889559ad83eb",
+    "genesis": {
+      "genesis_id": "8858b9bf207848ceb9a78467b178892a8158a3eb9aa39c6960f67a4748061d92",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "preparation": {
+      "storage_settings": {
+        "RATE": 3000,
+        "SECONDS": 180,
+        "DRAIN": 45,
+        "SENDERS": 64,
+        "CADENCE": 100,
+        "VM_WORKERS": 2,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0,
+        "SHARD_SENDERS": 0,
+        "READY_SENDERS": 0,
+        "BLOCK_TRANSACTIONS": 1024,
+        "BLOCK_CYCLES": 2000000000
+      },
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+      "genesis_sha256": "caf7a089b485490d33e402602e690bb307c8c8d2da5939a4a475cab7525c502b"
+    },
+    "measurement_driver": {
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed"
+    },
+    "observer_failures": [],
+    "agreed_height": 1113,
+    "signed_workload": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "sampled_receipts": [
+      {
+        "height": 515,
+        "count": 3
+      }
+    ],
+    "rocksdb": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1105964364,
+        "wal_syncs": 2477
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1105985914,
+        "wal_syncs": 2527
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1105995396,
+        "wal_syncs": 2549
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1105812268,
+        "wal_syncs": 2540
+      }
+    ]
+  },
+  "ready-a": {
+    "node_sha256": "2d20ea6b3f9e9ecb5e99f9c706cd164bbec7fd0a5c1efaae85372cfe440f523f",
+    "source_report_sha256": "d97461d2ba644141d27a828a655329812c46b91e53f3f7ce59b7857d97c55509",
+    "archive_sha256": "4ec763d527e583e835e0eb63abe777efa3ea976a670895e016baf321d8900de9",
+    "genesis": {
+      "genesis_id": "8858b9bf207848ceb9a78467b178892a8158a3eb9aa39c6960f67a4748061d92",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "preparation": {
+      "storage_settings": {
+        "RATE": 3000,
+        "SECONDS": 180,
+        "DRAIN": 45,
+        "SENDERS": 64,
+        "CADENCE": 100,
+        "VM_WORKERS": 2,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0,
+        "SHARD_SENDERS": 0,
+        "READY_SENDERS": 1,
+        "BLOCK_TRANSACTIONS": 1024,
+        "BLOCK_CYCLES": 2000000000
+      },
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+      "genesis_sha256": "caf7a089b485490d33e402602e690bb307c8c8d2da5939a4a475cab7525c502b"
+    },
+    "measurement_driver": {
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed"
+    },
+    "observer_failures": [],
+    "agreed_height": 690,
+    "signed_workload": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "sampled_receipts": [
+      {
+        "height": 441,
+        "count": 3
+      }
+    ],
+    "rocksdb": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1325746621,
+        "wal_syncs": 1291
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1325745601,
+        "wal_syncs": 1290
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1325745601,
+        "wal_syncs": 1290
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1325654871,
+        "wal_syncs": 1290
+      }
+    ]
+  },
+  "ready-wide": {
+    "node_sha256": "2d20ea6b3f9e9ecb5e99f9c706cd164bbec7fd0a5c1efaae85372cfe440f523f",
+    "source_report_sha256": "6f6920ad528bf570db4ee5b36268c5a9800f2093d9154d620f01d4c849a35519",
+    "archive_sha256": "33f8a46b440c1b2516f39ca0d89b38ae2599f6f96b7486119b71b0bd0ca197c7",
+    "genesis": {
+      "genesis_id": "656fbb0761a045dbf5147849c7e408be8dbc2d460379f0c04f68418996c8d8b7",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "preparation": {
+      "storage_settings": {
+        "RATE": 3000,
+        "SECONDS": 180,
+        "DRAIN": 45,
+        "SENDERS": 64,
+        "CADENCE": 100,
+        "VM_WORKERS": 2,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0,
+        "SHARD_SENDERS": 0,
+        "READY_SENDERS": 1,
+        "BLOCK_TRANSACTIONS": 2048,
+        "BLOCK_CYCLES": 4000000000
+      },
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+      "genesis_sha256": "650eca2cc298b057aa54f48fe7718edd373e9c2235070faeed670a8de3b253ef"
+    },
+    "measurement_driver": {
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed"
+    },
+    "observer_failures": [],
+    "agreed_height": 773,
+    "signed_workload": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "sampled_receipts": [
+      {
+        "height": 396,
+        "count": 3
+      }
+    ],
+    "rocksdb": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1199164399,
+        "wal_syncs": 1490
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1199170002,
+        "wal_syncs": 1503
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1199170002,
+        "wal_syncs": 1503
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1199064291,
+        "wal_syncs": 1503
+      }
+    ]
+  },
+  "ready-wide-4w": {
+    "node_sha256": "2d20ea6b3f9e9ecb5e99f9c706cd164bbec7fd0a5c1efaae85372cfe440f523f",
+    "source_report_sha256": "14d6da891cae769efe2c2222d821f2d21274a1d1c6fc7deef2e370ef0015d54c",
+    "archive_sha256": "47c97507937e0cd19cc7ac390977fec41ee14967bd44fc77656b7c7350c1ebfe",
+    "genesis": {
+      "genesis_id": "656fbb0761a045dbf5147849c7e408be8dbc2d460379f0c04f68418996c8d8b7",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "preparation": {
+      "storage_settings": {
+        "RATE": 3000,
+        "SECONDS": 180,
+        "DRAIN": 45,
+        "SENDERS": 64,
+        "CADENCE": 100,
+        "VM_WORKERS": 4,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0,
+        "SHARD_SENDERS": 0,
+        "READY_SENDERS": 1,
+        "BLOCK_TRANSACTIONS": 2048,
+        "BLOCK_CYCLES": 4000000000
+      },
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "a19e471c02cf744967ffc0710ae2f44884133ef903bd8e96c26624412080b8df",
+      "genesis_sha256": "650eca2cc298b057aa54f48fe7718edd373e9c2235070faeed670a8de3b253ef"
+    },
+    "measurement_driver": {
+      "harness_sha256": "b0230f43fef56afd9c0fc011d717e920d264cfc20aad152555a36b768aa8e7ed"
+    },
+    "observer_failures": [],
+    "agreed_height": 876,
+    "signed_workload": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "sampled_receipts": [
+      {
+        "height": 402,
+        "count": 3
+      }
+    ],
+    "rocksdb": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1182663651,
+        "wal_syncs": 1778
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1182633050,
+        "wal_syncs": 1707
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1182636498,
+        "wal_syncs": 1715
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1182513437,
+        "wal_syncs": 1718
+      }
+    ]
+  }
+}

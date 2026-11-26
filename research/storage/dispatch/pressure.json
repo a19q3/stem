@@ -1,0 +1,412 @@
+{
+  "nvme100.json.xz": {
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "senders": 64,
+    "ready_senders": false,
+    "writes_missing_successful_replies": 0,
+    "writes_without_end_observation": 0,
+    "response_worker_seconds": 9146.832171,
+    "max_open_per_endpoint": [
+      64,
+      64,
+      64,
+      64
+    ],
+    "acked_per_endpoint": [
+      82990,
+      82965,
+      83070,
+      83020
+    ],
+    "all_unwritten_at_planned_time": {
+      "observations": 207955,
+      "pending_all": {
+        "63": 27,
+        "64": 207928
+      },
+      "pending_busiest_endpoint": {
+        "17": 284,
+        "18": 1942,
+        "19": 4356,
+        "20": 2769,
+        "21": 1446,
+        "22": 15643,
+        "23": 69225,
+        "24": 35016,
+        "25": 14461,
+        "26": 6585,
+        "27": 5403,
+        "28": 2930,
+        "29": 1982,
+        "30": 2122,
+        "31": 1355,
+        "32": 2275,
+        "33": 2424,
+        "34": 6004,
+        "35": 1185,
+        "36": 526,
+        "37": 193,
+        "38": 4130,
+        "39": 81,
+        "40": 270,
+        "41": 455,
+        "42": 295,
+        "43": 287,
+        "44": 278,
+        "45": 319,
+        "46": 361,
+        "47": 392,
+        "48": 520,
+        "49": 438,
+        "50": 366,
+        "51": 365,
+        "52": 374,
+        "53": 294,
+        "54": 283,
+        "55": 487,
+        "56": 349,
+        "57": 286,
+        "58": 277,
+        "59": 232,
+        "60": 222,
+        "61": 176,
+        "62": 130,
+        "63": 167,
+        "64": 17995
+      },
+      "pending_quietest_endpoint": {
+        "0": 171231,
+        "1": 10609,
+        "2": 5040,
+        "3": 3871,
+        "4": 2312,
+        "5": 2184,
+        "6": 1345,
+        "7": 987,
+        "8": 537,
+        "9": 569,
+        "10": 975,
+        "11": 2054,
+        "12": 2530,
+        "13": 2321,
+        "14": 1168,
+        "15": 222
+      }
+    }
+  },
+  "round-a.json.xz": {
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "senders": 64,
+    "ready_senders": false,
+    "writes_missing_successful_replies": 0,
+    "writes_without_end_observation": 0,
+    "response_worker_seconds": 8958.77598,
+    "max_open_per_endpoint": [
+      64,
+      64,
+      64,
+      64
+    ],
+    "acked_per_endpoint": [
+      83502,
+      83488,
+      83525,
+      83435
+    ],
+    "all_unwritten_at_planned_time": {
+      "observations": 206050,
+      "pending_all": {
+        "63": 15,
+        "64": 206035
+      },
+      "pending_busiest_endpoint": {
+        "17": 130,
+        "18": 1984,
+        "19": 3691,
+        "20": 2449,
+        "21": 985,
+        "22": 24524,
+        "23": 50243,
+        "24": 49839,
+        "25": 12054,
+        "26": 9443,
+        "27": 4763,
+        "28": 3151,
+        "29": 2322,
+        "30": 1545,
+        "31": 1737,
+        "32": 1152,
+        "33": 1233,
+        "34": 486,
+        "35": 2422,
+        "36": 614,
+        "37": 92,
+        "38": 122,
+        "39": 31,
+        "40": 186,
+        "41": 110,
+        "42": 273,
+        "43": 242,
+        "44": 284,
+        "45": 393,
+        "46": 305,
+        "47": 460,
+        "48": 314,
+        "49": 270,
+        "50": 291,
+        "51": 574,
+        "52": 273,
+        "53": 284,
+        "54": 429,
+        "55": 237,
+        "56": 235,
+        "57": 254,
+        "58": 192,
+        "59": 186,
+        "60": 522,
+        "61": 220,
+        "62": 85,
+        "63": 114,
+        "64": 24305
+      },
+      "pending_quietest_endpoint": {
+        "0": 168684,
+        "1": 10253,
+        "2": 5600,
+        "3": 3557,
+        "4": 4980,
+        "5": 2154,
+        "6": 1055,
+        "7": 483,
+        "8": 467,
+        "9": 531,
+        "10": 921,
+        "11": 2087,
+        "12": 2372,
+        "13": 1956,
+        "14": 826,
+        "15": 124
+      }
+    },
+    "queue_full_at_observed_time": {
+      "observations": 205291,
+      "pending_all": {
+        "62": 1,
+        "63": 56,
+        "64": 205234
+      },
+      "pending_busiest_endpoint": {
+        "17": 130,
+        "18": 1984,
+        "19": 3669,
+        "20": 2415,
+        "21": 960,
+        "22": 24483,
+        "23": 50224,
+        "24": 49758,
+        "25": 12050,
+        "26": 9434,
+        "27": 4758,
+        "28": 3148,
+        "29": 2317,
+        "30": 1543,
+        "31": 1733,
+        "32": 1148,
+        "33": 1230,
+        "34": 483,
+        "35": 2417,
+        "36": 614,
+        "37": 92,
+        "38": 122,
+        "39": 31,
+        "40": 187,
+        "41": 109,
+        "42": 274,
+        "43": 242,
+        "44": 285,
+        "45": 391,
+        "46": 309,
+        "47": 456,
+        "48": 314,
+        "49": 272,
+        "50": 290,
+        "51": 574,
+        "52": 272,
+        "53": 284,
+        "54": 429,
+        "55": 237,
+        "56": 237,
+        "57": 253,
+        "58": 191,
+        "59": 186,
+        "60": 522,
+        "61": 220,
+        "62": 87,
+        "63": 114,
+        "64": 23813
+      },
+      "pending_quietest_endpoint": {
+        "0": 168064,
+        "1": 10225,
+        "2": 5593,
+        "3": 3551,
+        "4": 4972,
+        "5": 2152,
+        "6": 1047,
+        "7": 481,
+        "8": 460,
+        "9": 520,
+        "10": 903,
+        "11": 2069,
+        "12": 2357,
+        "13": 1954,
+        "14": 819,
+        "15": 124
+      }
+    }
+  },
+  "ready-a.json.xz": {
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "senders": 64,
+    "ready_senders": true,
+    "writes_missing_successful_replies": 24054,
+    "writes_without_end_observation": 0,
+    "response_worker_seconds": 7088.466,
+    "max_open_per_endpoint": [
+      16,
+      16,
+      16,
+      16
+    ],
+    "acked_per_endpoint": [
+      103080,
+      103580,
+      105027,
+      112078
+    ],
+    "all_unwritten_at_planned_time": {
+      "observations": 92181,
+      "pending_all": {
+        "63": 2,
+        "64": 92179
+      },
+      "pending_busiest_endpoint": {
+        "16": 92181
+      },
+      "pending_quietest_endpoint": {
+        "15": 2,
+        "16": 92179
+      }
+    },
+    "queue_full_at_observed_time": {
+      "observations": 92117,
+      "pending_all": {
+        "63": 64,
+        "64": 92053
+      },
+      "pending_busiest_endpoint": {
+        "16": 92117
+      },
+      "pending_quietest_endpoint": {
+        "15": 64,
+        "16": 92053
+      }
+    }
+  },
+  "ready-wide.json.xz": {
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "senders": 64,
+    "ready_senders": true,
+    "writes_missing_successful_replies": 0,
+    "writes_without_end_observation": 0,
+    "response_worker_seconds": 7225.440666,
+    "max_open_per_endpoint": [
+      16,
+      16,
+      16,
+      16
+    ],
+    "acked_per_endpoint": [
+      106375,
+      100381,
+      102196,
+      106049
+    ],
+    "all_unwritten_at_planned_time": {
+      "observations": 124999,
+      "pending_all": {
+        "63": 5,
+        "64": 124994
+      },
+      "pending_busiest_endpoint": {
+        "16": 124999
+      },
+      "pending_quietest_endpoint": {
+        "15": 5,
+        "16": 124994
+      }
+    },
+    "queue_full_at_observed_time": {
+      "observations": 124999,
+      "pending_all": {
+        "63": 108,
+        "64": 124891
+      },
+      "pending_busiest_endpoint": {
+        "16": 124999
+      },
+      "pending_quietest_endpoint": {
+        "15": 108,
+        "16": 124891
+      }
+    }
+  },
+  "ready-wide-4w.json.xz": {
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "senders": 64,
+    "ready_senders": true,
+    "writes_missing_successful_replies": 0,
+    "writes_without_end_observation": 0,
+    "response_worker_seconds": 7266.74842,
+    "max_open_per_endpoint": [
+      16,
+      16,
+      16,
+      16
+    ],
+    "acked_per_endpoint": [
+      98524,
+      102553,
+      104124,
+      101091
+    ],
+    "all_unwritten_at_planned_time": {
+      "observations": 133708,
+      "pending_all": {
+        "63": 1,
+        "64": 133707
+      },
+      "pending_busiest_endpoint": {
+        "16": 133708
+      },
+      "pending_quietest_endpoint": {
+        "15": 1,
+        "16": 133707
+      }
+    },
+    "queue_full_at_observed_time": {
+      "observations": 133708,
+      "pending_all": {
+        "63": 104,
+        "64": 133604
+      },
+      "pending_busiest_endpoint": {
+        "16": 133708
+      },
+      "pending_quietest_endpoint": {
+        "15": 104,
+        "16": 133604
+      }
+    }
+  }
+}

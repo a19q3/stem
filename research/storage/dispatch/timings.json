@@ -1,0 +1,570 @@
+{
+  "round-a.json.xz": {
+    "write_to_common_us": {
+      "p50": 832251,
+      "p95": 1289970,
+      "p99": 2244033
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 83502,
+        "acknowledged": 83502,
+        "in_window": 82993,
+        "confirmed": 83502
+      },
+      "127.0.0.12:28890": {
+        "written": 83488,
+        "acknowledged": 83488,
+        "in_window": 82983,
+        "confirmed": 83488
+      },
+      "127.0.0.13:28890": {
+        "written": 83525,
+        "acknowledged": 83525,
+        "in_window": 83020,
+        "confirmed": 83525
+      },
+      "127.0.0.14:28890": {
+        "written": 83435,
+        "acknowledged": 83435,
+        "in_window": 82930,
+        "confirmed": 83435
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 1113,
+    "cadence_ms": 100,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "ready_senders": false,
+    "scheduled": 540000,
+    "written": 333950,
+    "acknowledged": 333950,
+    "dropped_before_write": 206050,
+    "in_window": 331926,
+    "confirmed": 333950,
+    "window_tps": 1844.0333333333333,
+    "in_window_by_minute": [
+      110371,
+      113986,
+      107569
+    ],
+    "after_window": 2024,
+    "window_nonempty_blocks": 505,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 0,
+    "window_block_sizes": {
+      "p50": 664,
+      "p95": 711,
+      "p99": 727
+    },
+    "window_header_gap_us": {
+      "p50": 339000,
+      "p95": 397000,
+      "p99": 992000
+    },
+    "ack_after_header": 812,
+    "clock_offset_change_us": -1.0,
+    "clock_sampling_span_us": {
+      "end": 4,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 333950,
+      "write_to_ack_us": {
+        "p50": 398,
+        "p95": 141266,
+        "p99": 174349
+      },
+      "ack_to_header_us": {
+        "p50": 76564,
+        "p95": 343586,
+        "p99": 406114
+      },
+      "header_to_common_us": {
+        "p50": 667944,
+        "p95": 1010492,
+        "p99": 1924881
+      },
+      "write_to_common_us": {
+        "p50": 832251,
+        "p95": 1289970,
+        "p99": 2244033
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 331926,
+      "write_to_ack_us": {
+        "p50": 397,
+        "p95": 141420,
+        "p99": 174444
+      },
+      "ack_to_header_us": {
+        "p50": 76519,
+        "p95": 343877,
+        "p99": 406562
+      },
+      "header_to_common_us": {
+        "p50": 667989,
+        "p95": 1010492,
+        "p99": 1924881
+      },
+      "write_to_common_us": {
+        "p50": 833031,
+        "p95": 1292591,
+        "p99": 2248700
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 2024,
+      "write_to_ack_us": {
+        "p50": 1294,
+        "p95": 119410,
+        "p99": 147588
+      },
+      "ack_to_header_us": {
+        "p50": 81577,
+        "p95": 298605,
+        "p99": 312896
+      },
+      "header_to_common_us": {
+        "p50": 606879,
+        "p95": 614826,
+        "p99": 614826
+      },
+      "write_to_common_us": {
+        "p50": 675759,
+        "p95": 900974,
+        "p99": 915028
+      }
+    }
+  },
+  "ready-a.json.xz": {
+    "write_to_common_us": {
+      "p50": 1912817,
+      "p95": 141924759,
+      "p99": 192753309
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 110710,
+        "acknowledged": 103080,
+        "in_window": 85824,
+        "confirmed": 103080
+      },
+      "127.0.0.12:28890": {
+        "written": 111123,
+        "acknowledged": 103580,
+        "in_window": 85835,
+        "confirmed": 103580
+      },
+      "127.0.0.13:28890": {
+        "written": 110052,
+        "acknowledged": 105027,
+        "in_window": 87103,
+        "confirmed": 105027
+      },
+      "127.0.0.14:28890": {
+        "written": 115934,
+        "acknowledged": 112078,
+        "in_window": 93052,
+        "confirmed": 112078
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 690,
+    "cadence_ms": 100,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "ready_senders": true,
+    "scheduled": 540000,
+    "written": 447819,
+    "acknowledged": 423765,
+    "dropped_before_write": 92181,
+    "in_window": 351814,
+    "confirmed": 423765,
+    "window_tps": 1954.5222222222221,
+    "in_window_by_minute": [
+      123462,
+      116736,
+      111616
+    ],
+    "after_window": 71951,
+    "window_nonempty_blocks": 345,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 342,
+    "window_block_sizes": {
+      "p50": 1024,
+      "p95": 1024,
+      "p99": 1024
+    },
+    "window_header_gap_us": {
+      "p50": 499000,
+      "p95": 637000,
+      "p99": 1180000
+    },
+    "ack_after_header": 59,
+    "clock_offset_change_us": 0.0,
+    "clock_sampling_span_us": {
+      "end": 4,
+      "start": 2
+    },
+    "all": {
+      "acknowledged_and_visible": 423765,
+      "write_to_ack_us": {
+        "p50": 320,
+        "p95": 142236,
+        "p99": 260314
+      },
+      "ack_to_header_us": {
+        "p50": 491865,
+        "p95": 140690644,
+        "p99": 191509362
+      },
+      "header_to_common_us": {
+        "p50": 1234092,
+        "p95": 1786711,
+        "p99": 2353513
+      },
+      "write_to_common_us": {
+        "p50": 1912817,
+        "p95": 141924759,
+        "p99": 192753309
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 351814,
+      "write_to_ack_us": {
+        "p50": 320,
+        "p95": 141981,
+        "p99": 260059
+      },
+      "ack_to_header_us": {
+        "p50": 440969,
+        "p95": 8597544,
+        "p99": 48944841
+      },
+      "header_to_common_us": {
+        "p50": 1244472,
+        "p95": 1791814,
+        "p99": 2506400
+      },
+      "write_to_common_us": {
+        "p50": 1764728,
+        "p95": 9855457,
+        "p99": 50101892
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 71951,
+      "write_to_ack_us": {
+        "p50": 319,
+        "p95": 143309,
+        "p99": 261210
+      },
+      "ack_to_header_us": {
+        "p50": 103699593,
+        "p95": 193874813,
+        "p99": 209135990
+      },
+      "header_to_common_us": {
+        "p50": 1180705,
+        "p95": 1367280,
+        "p99": 1958699
+      },
+      "write_to_common_us": {
+        "p50": 104914545,
+        "p95": 195142211,
+        "p99": 210353855
+      }
+    }
+  },
+  "ready-wide.json.xz": {
+    "write_to_common_us": {
+      "p50": 3000731,
+      "p95": 6293418,
+      "p99": 21981325
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 106375,
+        "acknowledged": 106375,
+        "in_window": 102520,
+        "confirmed": 106375
+      },
+      "127.0.0.12:28890": {
+        "written": 100381,
+        "acknowledged": 100381,
+        "in_window": 96887,
+        "confirmed": 100381
+      },
+      "127.0.0.13:28890": {
+        "written": 102196,
+        "acknowledged": 102196,
+        "in_window": 98572,
+        "confirmed": 102196
+      },
+      "127.0.0.14:28890": {
+        "written": 106049,
+        "acknowledged": 106049,
+        "in_window": 101827,
+        "confirmed": 106049
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 773,
+    "cadence_ms": 100,
+    "block_transactions": 2048,
+    "block_cycles": 4000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "ready_senders": true,
+    "scheduled": 540000,
+    "written": 415001,
+    "acknowledged": 415001,
+    "dropped_before_write": 124999,
+    "in_window": 399806,
+    "confirmed": 415001,
+    "window_tps": 2221.1444444444446,
+    "in_window_by_minute": [
+      134667,
+      134419,
+      130720
+    ],
+    "after_window": 15195,
+    "window_nonempty_blocks": 221,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 117,
+    "window_block_sizes": {
+      "p50": 2048,
+      "p95": 2048,
+      "p99": 2048
+    },
+    "window_header_gap_us": {
+      "p50": 807000,
+      "p95": 1077000,
+      "p99": 1219000
+    },
+    "ack_after_header": 74,
+    "clock_offset_change_us": -0.5,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 415001,
+      "write_to_ack_us": {
+        "p50": 289,
+        "p95": 42101,
+        "p99": 420317
+      },
+      "ack_to_header_us": {
+        "p50": 737334,
+        "p95": 3533803,
+        "p99": 19984356
+      },
+      "header_to_common_us": {
+        "p50": 2083240,
+        "p95": 3098274,
+        "p99": 3178868
+      },
+      "write_to_common_us": {
+        "p50": 3000731,
+        "p95": 6293418,
+        "p99": 21981325
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 399806,
+      "write_to_ack_us": {
+        "p50": 289,
+        "p95": 42322,
+        "p99": 418911
+      },
+      "ack_to_header_us": {
+        "p50": 727666,
+        "p95": 3249349,
+        "p99": 9903037
+      },
+      "header_to_common_us": {
+        "p50": 2090428,
+        "p95": 3119714,
+        "p99": 3326197
+      },
+      "write_to_common_us": {
+        "p50": 2975854,
+        "p95": 5681880,
+        "p99": 12126105
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 15195,
+      "write_to_ack_us": {
+        "p50": 284,
+        "p95": 24516,
+        "p99": 452598
+      },
+      "ack_to_header_us": {
+        "p50": 3439303,
+        "p95": 51486695,
+        "p99": 63581018
+      },
+      "header_to_common_us": {
+        "p50": 1994428,
+        "p95": 2531129,
+        "p99": 2531129
+      },
+      "write_to_common_us": {
+        "p50": 5529565,
+        "p95": 52695537,
+        "p99": 64792978
+      }
+    }
+  },
+  "ready-wide-4w.json.xz": {
+    "write_to_common_us": {
+      "p50": 2860425,
+      "p95": 6638750,
+      "p99": 14893693
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 98524,
+        "acknowledged": 98524,
+        "in_window": 96404,
+        "confirmed": 98524
+      },
+      "127.0.0.12:28890": {
+        "written": 102553,
+        "acknowledged": 102553,
+        "in_window": 100292,
+        "confirmed": 102553
+      },
+      "127.0.0.13:28890": {
+        "written": 104124,
+        "acknowledged": 104124,
+        "in_window": 101948,
+        "confirmed": 104124
+      },
+      "127.0.0.14:28890": {
+        "written": 101091,
+        "acknowledged": 101091,
+        "in_window": 98962,
+        "confirmed": 101091
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 876,
+    "cadence_ms": 100,
+    "block_transactions": 2048,
+    "block_cycles": 4000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "ready_senders": true,
+    "scheduled": 540000,
+    "written": 406292,
+    "acknowledged": 406292,
+    "dropped_before_write": 133708,
+    "in_window": 397606,
+    "confirmed": 406292,
+    "window_tps": 2208.9222222222224,
+    "in_window_by_minute": [
+      131935,
+      135751,
+      129920
+    ],
+    "after_window": 8686,
+    "window_nonempty_blocks": 232,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 103,
+    "window_block_sizes": {
+      "p50": 1815,
+      "p95": 2048,
+      "p99": 2048
+    },
+    "window_header_gap_us": {
+      "p50": 766000,
+      "p95": 1107000,
+      "p99": 1707000
+    },
+    "ack_after_header": 73,
+    "clock_offset_change_us": -0.5,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 406292,
+      "write_to_ack_us": {
+        "p50": 283,
+        "p95": 46075,
+        "p99": 398625
+      },
+      "ack_to_header_us": {
+        "p50": 674696,
+        "p95": 4041061,
+        "p99": 12938342
+      },
+      "header_to_common_us": {
+        "p50": 1962554,
+        "p95": 3026291,
+        "p99": 3523929
+      },
+      "write_to_common_us": {
+        "p50": 2860425,
+        "p95": 6638750,
+        "p99": 14893693
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 397606,
+      "write_to_ack_us": {
+        "p50": 283,
+        "p95": 46027,
+        "p99": 398602
+      },
+      "ack_to_header_us": {
+        "p50": 670960,
+        "p95": 3754338,
+        "p99": 11672752
+      },
+      "header_to_common_us": {
+        "p50": 1966222,
+        "p95": 3037897,
+        "p99": 3523929
+      },
+      "write_to_common_us": {
+        "p50": 2857300,
+        "p95": 6395522,
+        "p99": 13832949
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 8686,
+      "write_to_ack_us": {
+        "p50": 292,
+        "p95": 48834,
+        "p99": 401085
+      },
+      "ack_to_header_us": {
+        "p50": 1623765,
+        "p95": 17101629,
+        "p99": 19595044
+      },
+      "header_to_common_us": {
+        "p50": 1554476,
+        "p95": 2330022,
+        "p99": 2330022
+      },
+      "write_to_common_us": {
+        "p50": 3009576,
+        "p95": 18569300,
+        "p99": 20838961
+      }
+    }
+  }
+}

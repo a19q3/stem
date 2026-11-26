@@ -1,0 +1,160 @@
+{
+  "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+  "certified_height": 1068,
+  "driver_total_us": {
+    "started_us_to_connected_us": 7441574,
+    "connected_us_to_offered_us": 1769267,
+    "offered_us_to_response_us": 9143882990,
+    "response_us_to_acknowledged_us": 2949181
+  },
+  "client_errors": {
+    "dispatch queue full": 207166,
+    "queue deadline": 789
+  },
+  "replica_counters": [
+    {
+      "member": 0,
+      "admission": {
+        "client_queue": {
+          "count": 82990,
+          "elapsed_us": 2238173847
+        },
+        "client_service": {
+          "count": 82990,
+          "elapsed_us": 16392241
+        },
+        "client_requests": 82990,
+        "relayed_requests": 123215,
+        "checks": 206005,
+        "verification_us": 37071852
+      },
+      "execution": {
+        "candidate_verify": {
+          "count": 599,
+          "elapsed_us": 49262612
+        },
+        "commit": {
+          "count": 799,
+          "elapsed_us": 16185365
+        },
+        "proposal": {
+          "count": 200,
+          "elapsed_us": 10258492
+        }
+      },
+      "sampled_max": {
+        "mempool_bytes": 347270,
+        "mempool_transactions": 1435
+      },
+      "transport_drops": 49
+    },
+    {
+      "member": 1,
+      "admission": {
+        "client_queue": {
+          "count": 82965,
+          "elapsed_us": 2187186346
+        },
+        "client_service": {
+          "count": 82965,
+          "elapsed_us": 16598830
+        },
+        "client_requests": 82965,
+        "relayed_requests": 122592,
+        "checks": 205557,
+        "verification_us": 37479596
+      },
+      "execution": {
+        "candidate_verify": {
+          "count": 599,
+          "elapsed_us": 49852446
+        },
+        "commit": {
+          "count": 799,
+          "elapsed_us": 15613869
+        },
+        "proposal": {
+          "count": 200,
+          "elapsed_us": 10088926
+        }
+      },
+      "sampled_max": {
+        "mempool_bytes": 352594,
+        "mempool_transactions": 1457
+      },
+      "transport_drops": 76
+    },
+    {
+      "member": 2,
+      "admission": {
+        "client_queue": {
+          "count": 83070,
+          "elapsed_us": 2300223048
+        },
+        "client_service": {
+          "count": 83070,
+          "elapsed_us": 16522056
+        },
+        "client_requests": 83070,
+        "relayed_requests": 121271,
+        "checks": 204096,
+        "verification_us": 36845607
+      },
+      "execution": {
+        "candidate_verify": {
+          "count": 600,
+          "elapsed_us": 49591999
+        },
+        "commit": {
+          "count": 799,
+          "elapsed_us": 15888145
+        },
+        "proposal": {
+          "count": 199,
+          "elapsed_us": 9980196
+        }
+      },
+      "sampled_max": {
+        "mempool_bytes": 313148,
+        "mempool_transactions": 1294
+      },
+      "transport_drops": 46
+    },
+    {
+      "member": 3,
+      "admission": {
+        "client_queue": {
+          "count": 83020,
+          "elapsed_us": 2342699502
+        },
+        "client_service": {
+          "count": 83020,
+          "elapsed_us": 16548935
+        },
+        "client_requests": 83020,
+        "relayed_requests": 121420,
+        "checks": 204440,
+        "verification_us": 37095952
+      },
+      "execution": {
+        "candidate_verify": {
+          "count": 599,
+          "elapsed_us": 49507499
+        },
+        "commit": {
+          "count": 799,
+          "elapsed_us": 17169928
+        },
+        "proposal": {
+          "count": 200,
+          "elapsed_us": 9942880
+        }
+      },
+      "sampled_max": {
+        "mempool_bytes": 320408,
+        "mempool_transactions": 1324
+      },
+      "transport_drops": 35
+    }
+  ]
+}
