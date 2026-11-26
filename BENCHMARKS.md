@@ -5049,3 +5049,39 @@ reported a missing Molecule trait import, which the archived rebuild
 corrected.
 
 [Signed transactions, inclusion and finality proofs, measurements, build fingerprints and commands](benchmarks/2026-11-26-stem-metatype-workflow.json.xz).
+
+## Recovering Metatype workflow proofs from CKB
+
+The recovery CLI starts with an authenticated Stem escrow Cell,
+a trusted CKB anchor, and the CKB import and burn OutPoints. It follows
+the actual CKB spends, verifies transaction and witness inclusion under
+the anchor, and replays the workflow signatures. The lab used a real
+CKB devnet and four Jolteon replicas in each configuration. Each
+CKB path included an ownership transfer with identical workflow data.
+
+| Return case | CKB object Cells on path | Recovered proof | First / fresh process | Stem return bytes / cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Inline, revision 3 | 4 | 128 B | 21.0 / 25.2 ms | 3,222 / 18,430,390 |
+| Shared, revision 3 | 4 | 128 B | 37.9 / 41.1 ms | 3,222 / 18,407,719 |
+| Shared, revision 2 | 3 | 64 B | 27.5 / 35.1 ms | 3,158 / 16,298,870 |
+
+The timings are individual loopback samples from CLI process launch
+through the verified JSON result. Each pair used two fresh processes
+with the same public request and produced identical output. The real
+Stem return used the recovered bytes in its group witness. WASM
+verified the resulting Block, execution and restored Cell proofs.
+
+The CLI rejected a stale anchor, a wrong import, and a wrong burn
+output. After the early return, the fixture replaced the CKB block
+containing the burn. The old anchor was unavailable and recovery
+refused it. The raw record retains the original and replacement hashes.
+The first runs found a difference between native Script ordering and
+the required Molecule Manifest order. The archived retry sorts the
+original Scripts by their Molecule bytes. Both initial Rust build
+failures are recorded.
+
+The workspace, Go proof suite and CometBFT comparison build passed.
+Devnet regressions verified Intercell, CKB and xUDT, Spore, fee payouts,
+funded committee handoff and append-only custody.
+
+[Recovery requests, signed transactions, proofs, timings, commands and failures](benchmarks/2026-11-26-stem-workflow-recovery.json.xz).
