@@ -92,5 +92,6 @@ available. Published network evidence contains public genesis and proof data.
 | Bounded submission connection reuse and CPU profile | [Report](../BENCHMARKS.md#bounded-submission-connection-reuse), [matched payments, CPU samples and regression evidence](2026-11-26-stem-submission-reuse.json.xz) |
 | Standalone CKB Metatype composition | [Report](../BENCHMARKS.md#standalone-ckb-metatype-composition), [signed transactions, inclusion proofs and failed runs](2026-11-26-stem-metatype-ckb.json.xz) |
 | Metatype object approvals and Polytype comparison | [Report](../BENCHMARKS.md#metatype-object-approvals-and-native-polytype-comparison), [signed cases, proof verification and unsuccessful runs](2026-11-26-stem-metatype-object.json.xz) |
+| Immutable Metatype custody round trip | [Report](../BENCHMARKS.md#immutable-metatype-custody-round-trip), [signed cases, state proofs and failed attempts](2026-11-26-stem-metatype-custody.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

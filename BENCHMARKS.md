@@ -3597,3 +3597,60 @@ historical Intercell delivery.
 
 [Reproduction](OPERATIONS.md#exercise-immutable-objects-and-independent-approvals) ·
 [Signed cases, failures, proofs and exact commands](benchmarks/2026-11-26-stem-metatype-object.json.xz).
+
+## Immutable Metatype custody round trip
+
+Four native Jolteon replicas and CKB 0.210.0 finalized an original
+Polytype object, locked it under the generic escrow, minted its full
+Manifest as a CKB Metatype Cell, transferred it with the independent
+application approval, burned the representation, and restored the
+native Cell. The complete run reached common Stem height 45.
+A separate WASM verifier authenticated the native issue, export and
+return receipts from their finalized Headers. It checked membership
+of the original escrow at height 28, non-membership of that same
+OutPoint at height 45, and membership of the returned Cell at height
+45. The second run reproduced the round trip and the rejection set.
+
+The matched fixture switches CKB profiles while keeping the original
+66-byte object, two native Type Scripts, independent approval Lock
+and transaction roles. The specialized and Metatype runs below
+used the same Stem and CKB binaries. The CKB node estimated actual
+script cycles and verified each committed transaction and witness
+inclusion proof. Proof sizes can vary among independently initialized
+devnets.
+
+| CKB operation | Specialized cycles | Metatype cycles | Specialized bytes | Metatype bytes | Specialized / Metatype witness bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Import from Stem | 4,256,272 | 4,954,725 | 2,183 | 2,600 | 896 / 794 |
+| Transfer | 3,306,776 | 4,046,888 | 886 | 1,373 | 170 / 170 |
+| Burn and return | 3,447,165 | 4,122,449 | 1,523 | 1,735 | 170 / 170 |
+
+Occupied Capacity was 256 CKB in the specialized fixture and 563 CKB
+in the Metatype fixture. The increase covers the inline original
+Scripts and projection data. The native receipt cycles for issue,
+export and return were 3,897,526, 4,041,264 and 14,113,742. On CKB the
+separate Metatype adapters require the same paired authority Lock.
+This bridge run uses ordinary CKB input signatures for that authority.
+The standalone detached-seal profile is measured separately above.
+
+The Metatype fixture rejected 22 cases, including wrong Manifest at
+export, missing source policy at import and transfer, a foreign
+Metatype deployment, import without the pinned mailbox, missing
+Jolteon checkpoint, unapproved import, transfer and return, returning
+without burning, replay on CKB, and repeat release on Stem.
+The first three attempts are preserved. The first failed to encode
+a mailbox hash in the fixture. The second had insufficient CKB
+funds for the deliberate remint attempt. The third reached the
+native return and rejected the missing policy at the escrow Lock,
+while the fixture expected its independent Type Script error.
+
+The first locked Rust release workspace run reached its 260-second
+timeout. The retry passed 474 tests with 19 ignored. The Go proof
+tests and frozen CometBFT feature check passed. A rebuilt Stem node
+repeated the round trip and the independent WASM verification.
+Standalone Metatype UDT and object, Spore, native UDT, and a funded
+four-to-four Jolteon handoff with historical Intercell delivery
+passed on the devnets.
+
+[Reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
+[Signed runs, rejected controls and proof verification](benchmarks/2026-11-26-stem-metatype-custody.json.xz).
