@@ -509,6 +509,7 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     let hash = archive.tip().app_hash(archive.network());
     let restore_path = tempfile::tempdir()?;
     let mut restore = Store::open(restore_path.path(), &fixture.spec, Retention::Recent(2))?;
+    assert!(restore.live_cell(&fixture.spend)?.is_some());
     let mut wrong_frontier = snapshot.clone();
     wrong_frontier.frontier[9] ^= 1;
     assert!(restore.install_state(wrong_frontier, &hash).is_err());
@@ -516,7 +517,10 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     wrong_record.records.pop();
     assert!(restore.install_state(wrong_record, &hash).is_err());
     assert_eq!(*restore.tip(), genesis);
+    assert!(restore.live_cell(&fixture.spend)?.is_some());
     restore.install_state(snapshot, &hash)?;
+    assert!(restore.live_cell(&fixture.spend)?.is_none());
+    assert!(restore.prove_cell(&fixture.spend)?.0.is_none());
     assert_eq!(restore.tip(), archive.tip());
     let next = OutPoint::new(mature.id(archive.network()), 0);
     assert!(restore.prove_cell(&next)?.0.is_some());
@@ -587,8 +591,9 @@ fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> R
     let fixture = Fixture::new()?;
     let dir = tempfile::tempdir()?;
     let ref_dir = tempfile::tempdir()?;
-    let store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+    let mut store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
     let mut reference = Store::open(ref_dir.path(), &fixture.spec, Retention::Archive)?;
+    assert!(store.live_cell(&fixture.spend)?.is_some());
     let parent = fixture.signed(fixture.spend.clone(), None, FUND - FEE, None)?;
     let parent_output = OutPoint::new(parent.id(store.network()), 0);
     let child = fixture.signed(
@@ -601,12 +606,26 @@ fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> R
     let parent_batch =
         std::sync::Arc::new(store.prepare(std::slice::from_ref(&parent), TIME + 1, false)?);
     let fork_batch = std::sync::Arc::new(store.prepare(&[fork], TIME + 1, false)?);
+    let later_parent =
+        std::sync::Arc::new(store.prepare(std::slice::from_ref(&parent), TIME + 2, false)?);
+    for (candidate, expected_time) in [(&parent_batch, TIME + 1), (&later_parent, TIME + 2)] {
+        store.on_branch(std::slice::from_ref(candidate), |state| {
+            assert!(state.live_cell(&fixture.spend)?.is_none());
+            let (cell, _) = state.prove_cell(&parent_output)?;
+            assert_eq!(
+                cell.context("branch output missing")?.origin.timestamp_ms,
+                expected_time
+            );
+            Ok(())
+        })?;
+    }
+
     assert!(
         store
             .prepare(std::slice::from_ref(&child), TIME + 2, false)
             .is_err()
     );
-    let next = store.on_branch(&[parent_batch], |state| {
+    let next = store.on_branch(std::slice::from_ref(&parent_batch), |state| {
         state.prepare(std::slice::from_ref(&child), TIME + 2, false)
     })?;
     assert!(
@@ -627,5 +646,32 @@ fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> R
     let expected = reference.prepare(&[child], TIME + 2, false)?;
     assert_eq!(next.header(), expected.header());
     assert_eq!(next.receipts(), expected.receipts());
+    let next = std::sync::Arc::new(next);
+    store.on_branch(&[parent_batch.clone(), next.clone()], |state| {
+        assert!(state.live_cell(&parent_output)?.is_none());
+        assert!(state.live_cell(&fixture.spend)?.is_none());
+        Ok(())
+    })?;
+
+    let parent_batch = std::sync::Arc::try_unwrap(parent_batch)
+        .ok()
+        .context("shared test batch")?;
+    store.commit(parent_batch)?;
+    assert!(store.live_cell(&fixture.spend)?.is_none());
+    assert_eq!(
+        store
+            .live_cell(&parent_output)?
+            .context("finalized output missing")?
+            .origin
+            .timestamp_ms,
+        TIME + 1
+    );
+    let next = std::sync::Arc::try_unwrap(next)
+        .ok()
+        .context("shared test batch")?;
+    store.commit(next)?;
+    assert!(store.live_cell(&parent_output)?.is_none());
+    assert!(store.prove_cell(&parent_output)?.0.is_none());
+
     Ok(())
 }

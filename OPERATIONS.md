@@ -907,6 +907,11 @@ For a comparison of VM cache revisions, keep the signed workload,
 transaction limits, sender count and worker count fixed. Run both a
 rate every client can sustain and a higher rate that exposes overload
 behavior. Compare completed writes and common visibility separately.
+
+For a state-read comparison, run the same signed payments and then
+repeat with `STEM_LINEAGE_WORKLOAD=distributed_amm` and the
+`sustained_lineage_load` test filter. The latter verifies finalized
+receipts, state roots and AMM balances by serial replay.
 The RISC-V parent-cache controls can be run with
 `cargo test --locked --release -p stem-vm --test native block_context`
 and the same command with `payment_verification_reuses_cycles`.

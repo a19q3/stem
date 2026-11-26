@@ -235,7 +235,7 @@ impl Store {
                 .map(|m| (m, super::Purpose::Restore)),
         )?;
         self.tip = image.header;
-        self.live_cache.get_mut().expect("Live Cell cache").clear();
+        self.live_cache.lock().expect("Live Cell cache").clear();
         self.history = frontier;
         Ok(())
     }

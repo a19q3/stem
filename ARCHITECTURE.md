@@ -23,6 +23,14 @@ bytes through that bit length, and two child hashes. Loading a node
 restores the trailing zero bytes before checking its canonical hash.
 The local storage marker binds this layout to the genesis ID.
 
+A prepared block retains its decoded Live Cell changes by OutPoint.
+Candidate reads search these changes newest first, and a consumed
+entry blocks a read from the committed store. All branch views of
+the same Store share a bounded cache of committed records, including
+their authenticated creation metadata. Successful finalization
+invalidates exactly the changed OutPoints. Snapshot installation
+clears the cache after the atomic write.
+
 ### Independently signed pairs and sponsorship
 
 The RISC-V Intent Lock uses the same recoverable signature syscall as the regular Lock. It signs one exact input, the exact delivered Cell, ordered resolved dependencies, expiry and a fee ceiling. The input's absolute position selects the delivery output at execution. Dependency resolution shares validation with complete signatures. Each paired signer commits to the same ordered Action manifest. The wallet and ledger identify a manifest entry by Lock or Type role and the full Script hash. Assembly maps stable identities to current group indices, and resolution hashes the actual messages the VM will deliver. A sponsor uses input and output 0 and signs the beneficiary pair at position 1. Paying at most the actual transaction fee is checked against resolved Capacity. The wallet derives group indices at assembly and attaches all partial proof data before complete transaction signers seal their groups.

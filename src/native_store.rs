@@ -271,7 +271,7 @@ pub struct Store {
     fees: ResourceFees,
     cache: Arc<VerificationCache>,
     branch: Vec<Arc<Prepared>>,
-    live_cache: Mutex<LiveCache>,
+    live_cache: Arc<Mutex<LiveCache>>,
 }
 
 #[derive(Default)]
@@ -287,12 +287,24 @@ impl LiveCache {
         if self.records.contains_key(&point) {
             return;
         }
-        let bytes = cell.cell.as_slice().len() + Origin::LEN + OutPoint::TOTAL_SIZE;
+        let bytes = Self::record_bytes(&cell);
         if self.bytes + bytes > MAX_BYTES || self.records.len() == MAX_ITEMS {
             self.clear();
         }
         self.bytes += bytes;
         self.records.insert(point, cell);
+    }
+
+    fn invalidate<'a>(&mut self, points: impl Iterator<Item = &'a OutPoint>) {
+        for point in points {
+            if let Some(cell) = self.records.remove(point) {
+                self.bytes -= Self::record_bytes(&cell);
+            }
+        }
+    }
+
+    fn record_bytes(cell: &LiveCell) -> usize {
+        cell.cell.as_slice().len() + Origin::LEN + OutPoint::TOTAL_SIZE
     }
 
     fn clear(&mut self) {
@@ -309,6 +321,7 @@ pub struct Prepared {
     keeper_receipts: usize,
     validator_updates: Vec<stem_stake::Member>,
     committee_change: Option<CommitteeChange>,
+    live: BTreeMap<OutPoint, Option<LiveCell>>,
     batch: Batch,
 }
 
@@ -668,7 +681,7 @@ impl Store {
             capacity: spec.capacity,
             limits: spec.limits,
             fees: spec.fees,
-            live_cache: Mutex::default(),
+            live_cache: Arc::default(),
             cache: Arc::new(VerificationCache::new(4096)),
             branch: Vec::new(),
         })
@@ -764,7 +777,7 @@ impl Store {
             fees: self.fees,
             cache: self.cache.clone(),
             branch: branch.to_vec(),
-            live_cache: Mutex::default(),
+            live_cache: Arc::clone(&self.live_cache),
         };
         task(&view)
     }
@@ -1016,6 +1029,11 @@ impl Store {
     }
 
     pub fn live_cell(&self, point: &OutPoint) -> Result<Option<LiveCell>> {
+        for prepared in self.branch.iter().rev() {
+            if let Some(cell) = prepared.live.get(point) {
+                return Ok(cell.clone());
+            }
+        }
         if let Some(cell) = self
             .live_cache
             .lock()
@@ -1027,8 +1045,11 @@ impl Store {
             return Ok(Some(cell));
         }
         let id = record::cell_key(&self.cells, point);
+        // Only committed records enter this shared cache. The newest candidate
+        // above is authoritative even when its value is a deletion.
         let found = self
-            .read(state_key(STATE_RECORD, Namespace::Cells, &id))
+            .db
+            .get(state_key(STATE_RECORD, Namespace::Cells, &id))
             .context(StateReadFault)?
             .map(|bytes| {
                 let (stored_point, record) = record::decode_cell(&bytes)?;
@@ -1258,10 +1279,10 @@ impl Store {
             self.node(Namespace::Cells, id)
         });
         let mut cell_changes = Vec::with_capacity(overlay.live.len());
-        for (point, record) in overlay.live {
-            let id = record::cell_key(&self.cells, &point);
-            let value = record.map(|record| {
-                let bytes = record::encode_cell(&point, &record);
+        for (point, record) in &overlay.live {
+            let id = record::cell_key(&self.cells, point);
+            let value = record.as_ref().map(|record| {
+                let bytes = record::encode_cell(point, record);
                 let hash = self.cells.value_hash(&bytes);
                 batch.put(state_key(STATE_RECORD, Namespace::Cells, &id), bytes);
                 hash
@@ -1377,6 +1398,7 @@ impl Store {
             keeper_receipts,
             validator_updates,
             committee_change,
+            live: overlay.live,
             batch,
         })
     }
@@ -2048,7 +2070,12 @@ impl Store {
         )?;
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
-        self.live_cache.get_mut().expect("Live Cell cache").clear();
+        if !prepared.live.is_empty() {
+            self.live_cache
+                .lock()
+                .expect("Live Cell cache")
+                .invalidate(prepared.live.keys());
+        }
         Ok(())
     }
 }
