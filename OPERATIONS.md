@@ -903,6 +903,13 @@ To compare submission connections, set `STEM_STORAGE_REUSE_SUBMISSIONS=0`
 for fresh sockets, then set it to `1` against the same node binary.
 The report counts per-payment socket reuse and measures socket readiness
 and reply latency alongside replica admission queue and service time.
+For a comparison of VM cache revisions, keep the signed workload,
+transaction limits, sender count and worker count fixed. Run both a
+rate every client can sustain and a higher rate that exposes overload
+behavior. Compare completed writes and common visibility separately.
+The RISC-V parent-cache controls can be run with
+`cargo test --locked --release -p stem-vm --test native block_context`
+and the same command with `payment_verification_reuses_cycles`.
 Use `STEM_STORAGE_SENDERS=64 STEM_STORAGE_RATE=2000 STEM_STORAGE_SECONDS=20`
 for the short high-rate comparison.
 

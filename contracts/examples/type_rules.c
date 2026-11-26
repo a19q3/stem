@@ -123,6 +123,16 @@ static int verify(void) {
         return 34;
     return le64(context) != le64(height) + 1 ||
            le64(context + 8) != le64(time) || le64(time) < 42;
+#elif RULE == 14
+    byte context[48];
+    len = sizeof(context);
+    return load(LOAD_BLOCK_CONTEXT, context, &len, 0, 0, 0) ||
+           len != sizeof(context) || le64(context + 8) < 42;
+#elif RULE == 15
+    byte time[8];
+    len = sizeof(time);
+    return load(LOAD_HEADER_FIELD, time, &len, 0, 5, 1) ||
+           len != sizeof(time) || le64(time) < 42;
 #elif RULE == 12
     byte message[16];
     len = sizeof(message);

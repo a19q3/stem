@@ -1708,6 +1708,7 @@ impl ResolvedTransaction {
             id: original.id(&self.network_id),
             digest: original.lineage_signing_digest(&self.network_id, fee_cell)?,
         });
+        self.cache_key.take();
         Ok(self)
     }
 
@@ -1746,15 +1747,14 @@ impl ResolvedTransaction {
         &self.parent_id
     }
 
-    /// All VM-visible data and the full witnessed transaction, in resolution order.
-    /// This key is valid only after resolving against the block's current state.
+    /// Commit the full witnessed transaction and resolved data, except the
+    /// candidate height and its parent. The VM cache binds the parent separately
+    /// when execution reads it. Resolution always checks the current state.
     pub fn script_cache_key(&self) -> &Byte32 {
         self.cache_key.get_or_init(|| {
             let mut hash = new_blake2b();
-            hash.update(b"Stem VM execution context\0");
+            hash.update(b"Stem VM resolved transaction\0");
             hash.update(self.network_id.as_slice());
-            hash.update(&self.height.to_le_bytes());
-            hash.update(self.parent_id.as_slice());
             hash.update(self.authorization.cells.as_slice());
             hash.update(&self.capacity.bond_per_byte.to_le_bytes());
             hash.update(&self.capacity.state_overhead.to_le_bytes());
@@ -1764,6 +1764,7 @@ impl ResolvedTransaction {
                 hash.update(&units.to_le_bytes());
             }
             hash.update(self.transaction.commitment(&self.network_id).as_slice());
+            hash.update(&[u8::from(self.lineage_authorization.is_some())]);
             if let Some(authorization) = &self.lineage_authorization {
                 hash.update(
                     authorization
@@ -1773,6 +1774,12 @@ impl ResolvedTransaction {
                 );
                 hash.update(authorization.digest.as_slice());
             }
+            hash.update(&(self.l1_references.len() as u64).to_le_bytes());
+            for reference in &self.l1_references {
+                hash.update(&(reference.len() as u64).to_le_bytes());
+                hash.update(reference);
+            }
+            hash.update(&(self.headers.len() as u64).to_le_bytes());
             for header in &self.headers {
                 hash.update(&header.encode());
             }

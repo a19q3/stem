@@ -5,7 +5,10 @@ pub mod executor;
 
 pub use crypto::{SECP256K1_RECOVER, SECP256K1_RECOVERY_CYCLES};
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{Context, Result, ensure};
 use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
@@ -63,6 +66,9 @@ struct GroupContext {
     program: u32,
     transaction_id: Byte32,
     script_hash: Byte32,
+    // The scheduler gives Spawn and Exec the same group context. A read
+    // from any of those VMs binds the whole verification to this parent.
+    parent_read: Arc<AtomicBool>,
 }
 
 impl GroupContext {
@@ -111,7 +117,10 @@ impl GroupContext {
                 );
             }
             HEADER_DEP => return self.tx.header(index).ok_or(INDEX_OUT_OF_BOUND),
-            COMMITTED_PARENT if index == 0 => return Ok(self.tx.parent_header()),
+            COMMITTED_PARENT if index == 0 => {
+                self.parent_read.store(true, Ordering::Relaxed);
+                return Ok(self.tx.parent_header());
+            }
             _ => return Err(INDEX_OUT_OF_BOUND),
         };
         self.tx
@@ -160,18 +169,27 @@ impl DataSource<DataPieceId> for GroupContext {
 /// Verify the automatically derived Lock and Type Script Groups.
 /// The same transaction cycle budget applies whether groups run serially or in parallel.
 pub fn verify(tx: Arc<ResolvedTransaction>, max_cycles: u64, parallel: bool) -> Result<u64> {
-    verify_groups(tx, max_cycles, parallel, &[], |_, _| {})
+    verify_groups(tx, max_cycles, parallel, &Arc::default(), &[], |_, _| {})
 }
 
 fn verify_groups(
     tx: Arc<ResolvedTransaction>,
     max_cycles: u64,
     parallel: bool,
+    parent_read: &Arc<AtomicBool>,
     estimates: &[Option<u64>],
     mut observe: impl FnMut(usize, u64),
 ) -> Result<u64> {
     let transaction_id = tx.execution_id();
-    let run = |group, limit| execute_group(Arc::clone(&tx), &transaction_id, group, limit);
+    let run = |group, limit| {
+        execute_group(
+            Arc::clone(&tx),
+            &transaction_id,
+            group,
+            limit,
+            Arc::clone(parent_read),
+        )
+    };
     let mut total = 0;
     let group_count = tx.groups().len();
     let workers = if parallel {
@@ -220,8 +238,13 @@ fn verify_groups(
 
 /// Caches verified transactions and remembers recent Script Group costs for scheduling.
 pub struct VerificationCache {
-    verified: Mutex<LruCache<Byte32, u64>>,
+    verified: Mutex<LruCache<Byte32, CachedVerification>>,
     estimates: Mutex<LruCache<(u8, Byte32), u64>>,
+}
+
+struct CachedVerification {
+    cycles: u64,
+    parent: Option<Byte32>,
 }
 
 impl VerificationCache {
@@ -239,18 +262,26 @@ impl VerificationCache {
         parallel: bool,
     ) -> Result<u64> {
         let key = tx.script_cache_key().clone();
+        let parent = tx.parent_id().clone();
         let found = self
             .verified
             .lock()
             .expect("VM cache lock")
             .get(&key)
-            .copied();
+            .filter(|entry| {
+                entry
+                    .parent
+                    .as_ref()
+                    .is_none_or(|required| required == &parent)
+            })
+            .map(|entry| entry.cycles);
         if let Some(cycles) = found {
             return charge(0, cycles, max_cycles);
         }
 
+        let parent_read = Arc::new(AtomicBool::new(false));
         let cycles = if tx.groups().len() < 2 {
-            verify(tx, max_cycles, parallel)?
+            verify_groups(tx, max_cycles, parallel, &parent_read, &[], |_, _| {})?
         } else {
             let groups: Vec<_> = tx
                 .groups()
@@ -264,19 +295,29 @@ impl VerificationCache {
                 Vec::new()
             };
             let mut measured = Vec::with_capacity(groups.len());
-            let cycles = verify_groups(tx, max_cycles, parallel, &estimated, |index, cost| {
-                measured.push((index, cost));
-            })?;
+            let cycles = verify_groups(
+                tx,
+                max_cycles,
+                parallel,
+                &parent_read,
+                &estimated,
+                |index, cost| {
+                    measured.push((index, cost));
+                },
+            )?;
             let mut cache = self.estimates.lock().expect("VM estimates lock");
             for (index, cost) in measured {
                 cache.put(groups[index].clone(), cost);
             }
             cycles
         };
-        self.verified
-            .lock()
-            .expect("VM cache lock")
-            .put(key, cycles);
+        self.verified.lock().expect("VM cache lock").put(
+            key,
+            CachedVerification {
+                cycles,
+                parent: parent_read.load(Ordering::Relaxed).then_some(parent),
+            },
+        );
         Ok(cycles)
     }
 }
@@ -294,6 +335,7 @@ fn execute_group(
     transaction_id: &Byte32,
     index: usize,
     limit: u64,
+    parent_read: Arc<AtomicBool>,
 ) -> Result<u64> {
     let group = &tx.groups()[index];
     let script_hash = group.script.calc_script_hash();
@@ -305,6 +347,7 @@ fn execute_group(
         program,
         transaction_id: transaction_id.clone(),
         script_hash: script_hash.clone(),
+        parent_read,
     };
     let mut scheduler = scheduler(context, syscalls, ());
     let result = scheduler
@@ -376,6 +419,7 @@ impl<M: SupportMachine> Syscalls<M> for LoadContext {
                 if source != 0 || index != 0 {
                     return Ok(status(machine, INDEX_OUT_OF_BOUND));
                 }
+                context.parent_read.store(true, Ordering::Relaxed);
                 let mut data = [0; 48];
                 data[..8].copy_from_slice(&context.tx.height().to_le_bytes());
                 data[8..16].copy_from_slice(

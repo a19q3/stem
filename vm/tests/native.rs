@@ -115,7 +115,7 @@ impl Network {
     ) -> Result<Arc<ResolvedTransaction>> {
         let parent = Header {
             context: HeaderContext {
-                height: 0,
+                height: 1,
                 timestamp_ms: parent_time,
                 parent: Byte32::default(),
                 transaction_root: Byte32::default(),
@@ -128,7 +128,14 @@ impl Network {
             receipt_root: Byte32::default(),
         };
         let candidate = HeaderContext::after(id, &parent, 43, Byte32::default())?;
-        let origin = Origin::new(id, &parent.context);
+        let origin = Origin::new(
+            id,
+            &HeaderContext {
+                height: 0,
+                timestamp_ms: 1,
+                ..parent.context.clone()
+            },
+        );
         let tx = ResolvedTransaction::resolve(
             id.clone(),
             tx,
@@ -167,7 +174,7 @@ fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/examples/type_rules.c");
     let compiler = std::env::var_os("STEM_RISCV_CC").unwrap_or_else(|| "clang".into());
     let mut programs = Vec::new();
-    for rule in 1..=12 {
+    for rule in (1..=12).chain(14..=15) {
         let path = tmp.path().join(format!("rule-{rule}"));
         let output = Command::new(&compiler)
             .args([
@@ -204,18 +211,65 @@ fn build_contracts(network: &mut Network) -> Result<Vec<Bytes>> {
 fn block_context_uses_committed_parent_time_and_partitions_cache() -> Result<()> {
     let mut network = Network::new()?;
     let binaries = build_contracts(&mut network)?;
-    let type_script = script(&binaries[10], b"");
-    let cell = network.output(vec![type_script], Bytes::new())?;
-    let input = network.add_input(cell.clone());
-    let tx = network.signed(vec![input], vec![cell])?;
-    let accepted = network.resolve_at(&network.id, tx.clone(), 42)?;
-    // The proposed timestamp is 43 in both cases and cannot satisfy this rule.
-    let rejected = network.resolve_at(&network.id, tx, 41)?;
-    assert_ne!(accepted.script_cache_key(), rejected.script_cache_key());
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+
+    // Exercise each read in isolation, both on the original VM and via Spawn
+    // or Exec. Rule 14 is Cell Dep 13 because rule 13 was not built.
+    for (program, args) in [
+        (10, Vec::new()),
+        (12, Vec::new()),
+        (13, Vec::new()),
+        (6, 13u32.to_le_bytes().to_vec()),
+        (8, 14u32.to_le_bytes().to_vec()),
+    ] {
+        let type_script = script(&binaries[program], &args);
+        let cell = network.output(vec![type_script], Bytes::new())?;
+        let input = network.add_input(cell.clone());
+        let tx = network.signed(vec![input], vec![cell])?;
+        let accepted = network.resolve_at(&network.id, tx.clone(), 42)?;
+        let rejected = network.resolve_at(&network.id, tx, 41)?;
+        // The candidate time is 43 in both cases. The resolved inputs,
+        // including their creation origins, are identical.
+        assert_eq!(accepted.script_cache_key(), rejected.script_cache_key());
+        assert_ne!(accepted.parent_id(), rejected.parent_id());
+        let cache = VerificationCache::new(4);
+        let expected = verify(accepted.clone(), CYCLE_LIMIT, false)?;
+        pool.install(|| -> Result<()> {
+            assert_eq!(cache.verify(accepted.clone(), CYCLE_LIMIT, true)?, expected);
+            assert!(cache.verify(rejected, CYCLE_LIMIT, true).is_err());
+            assert_eq!(cache.verify(accepted, expected, true)?, expected);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+#[test]
+fn payment_verification_reuses_cycles_after_the_parent_changes() -> Result<()> {
+    let mut network = Network::new()?;
+    let output = network.output(vec![], Bytes::new())?;
+    let input = network.add_input(output.clone());
+    let signed = network.signed(vec![input], vec![output])?;
+    let first = network.resolve_at(&network.id, signed.clone(), 41)?;
+    let second = network.resolve_at(&network.id, signed.clone(), 42)?;
+    assert_eq!(first.script_cache_key(), second.script_cache_key());
+    assert_ne!(first.parent_id(), second.parent_id());
     let cache = VerificationCache::new(4);
-    let expected = verify(accepted.clone(), CYCLE_LIMIT, false)?;
-    assert_eq!(cache.verify(accepted, CYCLE_LIMIT, true)?, expected);
-    assert!(cache.verify(rejected, CYCLE_LIMIT, true).is_err());
+    let expected = verify(second.clone(), CYCLE_LIMIT, false)?;
+    assert_eq!(cache.verify(first, CYCLE_LIMIT, true)?, expected);
+    assert_eq!(cache.verify(second.clone(), expected, true)?, expected);
+    assert!(cache.verify(second, expected - 1, true).is_err());
+    let unsigned = signed.with_witnesses(Vec::new())?;
+    assert_eq!(signed.id(&network.id), unsigned.id(&network.id));
+    assert!(
+        cache
+            .verify(
+                network.resolve_at(&network.id, unsigned, 42)?,
+                CYCLE_LIMIT,
+                true
+            )
+            .is_err()
+    );
     Ok(())
 }
 
