@@ -43,7 +43,11 @@ pub fn find_unique(source: Source, target: &Hash32) -> Result<Option<usize>, i8>
 
 /// A boundary has to consume the unique configured Intercell Mailbox
 /// under the approved Gate. Its independent Lock and Type both execute.
-pub fn require_gate(custody: &Custody, physical_type: &Hash32, genesis: &Hash32) -> Result<(), i8> {
+pub fn require_gate(
+    custody: &Custody,
+    physical_type: &Hash32,
+    genesis: &Hash32,
+) -> Result<(Gate, MailboxPolicy), i8> {
     for index in 0..MAX_TRANSACTION_CELLS_PER_SIDE {
         let script = match load_cell_type(index, Source::Input) {
             Ok(Some(script)) => script,
@@ -63,7 +67,7 @@ pub fn require_gate(custody: &Custody, physical_type: &Hash32, genesis: &Hash32)
         }
         let gate = Gate::decode(&lock.args().raw_data(), custody.guard_code).ok_or(48)?;
         return if &gate.custody == custody && &gate.metatype == physical_type {
-            Ok(())
+            Ok((gate, policy))
         } else {
             Err(48)
         };

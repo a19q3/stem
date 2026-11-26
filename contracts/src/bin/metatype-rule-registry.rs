@@ -1,4 +1,4 @@
-//! CKB Type ID registry that can only increase an object's state byte ceiling.
+//! CKB Type ID registry for an object's current state-edit ceiling.
 
 #![no_std]
 #![no_main]
@@ -34,9 +34,7 @@ fn verify() -> Option<()> {
     let next = read_limit(Source::GroupOutput)?;
     match load_cell_lock_hash(0, Source::GroupInput) {
         Err(SysError::IndexOutOfBound) => Some(()),
-        Ok(before) if before == owner && next.increases(&read_limit(Source::GroupInput)?) => {
-            Some(())
-        }
+        Ok(before) if before == owner && next != read_limit(Source::GroupInput)? => Some(()),
         _ => None,
     }
 }

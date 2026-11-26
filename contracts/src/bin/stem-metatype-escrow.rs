@@ -22,7 +22,8 @@ use stem_bridge_wire::{
         LogicalScript, MAX_SCRIPT_BYTES, MAX_STATE_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE,
         MAX_TYPE_SCRIPTS,
         custody::{
-            Custody, Gate, Principal, Profile, Transfer, escrow_nonce, manifest_id, positive_amount,
+            Custody, EscrowArgs, Gate, Principal, Profile, Transfer, escrow_nonce, manifest_id,
+            positive_amount,
         },
         fungible::{Amounts, MAX_DATA},
     },
@@ -59,14 +60,13 @@ fn verify() -> Result<(), i8> {
         return Err(52);
     }
     let args = script.args().raw_data();
-    let (route, custody) = args.split_at_checked(4 * 32).ok_or(52)?;
-    let [ckb, metatype, checkpoint_code, checkpoint_id] = route.as_chunks::<32>().0 else {
-        return Err(52);
-    };
-    if route.as_chunks::<32>().0.contains(&[0; 32]) {
-        return Err(52);
-    }
-    let custody = Custody::decode(custody).ok_or(52)?;
+    let EscrowArgs {
+        ckb,
+        metatype,
+        checkpoint_code,
+        checkpoint_id,
+        custody,
+    } = EscrowArgs::decode(&args).ok_or(52)?;
     let mut network = [0; 32];
     if load(LOAD_NETWORK, 0, 0, 0, &mut network) != (0, 32) {
         return Err(52);

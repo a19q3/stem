@@ -586,6 +586,7 @@ def main():
     parser.add_argument("--metatype-revision-topup", action="store_true")
     parser.add_argument("--metatype-workflow-early-return", action="store_true")
     parser.add_argument("--metatype-object-freeze", action="store_true")
+    parser.add_argument("--metatype-decrease-ceiling", action="store_true")
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--finish-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
@@ -624,6 +625,8 @@ def main():
         parser.error("The state limit fixture requires both Type Script binaries and a revisable Metatype object")
     if args.metatype_rule_registry and (not all(state_limit) or args.metatype_revision_topup):
         parser.error("The live rule fixture requires the state limit scripts and uses its own capacity profile")
+    if args.metatype_decrease_ceiling and not args.metatype_rule_registry:
+        parser.error("The decrease fixture requires a live ceiling registry")
     append_only = (args.native_object_append_only, args.metatype_object_append_only)
     if any(append_only) and not all((*append_only, metatype_object, args.metatype_revisable_object)):
         parser.error("The append-only fixture requires both Type Script binaries and a revisable Metatype object")

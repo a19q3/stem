@@ -1532,6 +1532,13 @@ cannot authorize a return under the new anchor. The historical mailbox
 record and live registry record share one certificate, so the return
 fits the usual 20-million-cycle transaction limit.
 
+Add `--metatype-decrease-ceiling` to that fixture to lower the registry
+while an import and return are pending. It preserves the bytes of
+already admitted state, checks the oversized boundary proofs, rejects
+an oversized local edit and then commits a revision within the lower
+ceiling. Inspect `native_object.ceiling_decrease` for the signed
+registry updates, route proof size and finality evidence.
+
 Build `stem-object-append-only` and `metatype-object-append-only`
 and add the following options to the revisable object command.
 Keep the two state-limit options and the registry option to test all

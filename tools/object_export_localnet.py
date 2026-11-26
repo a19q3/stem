@@ -37,6 +37,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     use_royalty = args.native_object_royalty is not None
     use_rotation = args.native_object_rotating_approval is not None
     use_freeze = args.metatype_object_freeze
+    decrease = args.metatype_decrease_ceiling
     early_return = args.metatype_workflow_early_return
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
@@ -87,23 +88,44 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if use_rotation:
         item_caps[rotation_seed_index] = 450 * CKB
     funding_change = vault["change"] - sum(item_caps) - mailbox_cap - authority_funds - 2 * FEE
-    funding = transaction([vault["change_point"]],
-        [output(cap, fixture.standard) for cap in item_caps] +
-        [output(mailbox_cap + FEE, fixture.standard), output(authority_funds, ckb_authority),
-         output(funding_change, fixture.standard)],
-        [hex_bytes(item) for item in ckb_items] + ["0x"] * 3, [secp])
-    funded = l1.send(fixture.sign("object-fund-ckb", funding, [wallet_group(0, [fixture.faucet])]))
-    type_id = ckb_hash(le(0, 8) + binary(funded) + le(mailbox_seed_index, 4) + le(0, 8))
+    payer = [wallet_group(0, [fixture.faucet])]
+
+    def funding(label, source, offset):
+        tx = transaction([source], [output(cap, fixture.standard) for cap in item_caps[offset:]] +
+            [output(mailbox_cap + FEE, fixture.standard), output(authority_funds, ckb_authority),
+             output(funding_change, fixture.standard)],
+            [hex_bytes(item) for item in ckb_items[offset:]] + ["0x"] * 3, [secp])
+        return fixture.sign(label, tx, payer)
+
+    signed = funding("object-fund-ckb", vault["change_point"], 0)
+    prefix = []
+    if len(binary(signed["molecule"])) > 512_000:
+        # Publish the mailbox program first when the code bundle exceeds the CKB pool limit.
+        partial = transaction([vault["change_point"]],
+            [output(item_caps[0], fixture.standard),
+             output(vault["change"] - item_caps[0] - FEE, fixture.standard)],
+            [hex_bytes(ckb_items[0]), "0x"], [secp])
+        first = l1.send(fixture.sign("object-fund-mailbox-code", partial, payer))
+        prefix.append(point(first, 0))
+        funding_change -= FEE
+        signed = funding("object-fund-remaining-ckb", point(first, 1), len(prefix))
+    funded = l1.send(signed)
+
+    def deployed(index):
+        return prefix[index] if index < len(prefix) else point(funded, index - len(prefix))
+
+    mailbox_seed = deployed(mailbox_seed_index)
+    type_id = ckb_hash(le(0, 8) + binary(mailbox_seed["tx_hash"]) + le(int(mailbox_seed["index"], 16), 4) + le(0, 8))
     anchor_code, anchor_id = binary(vault["anchor"]["hash"]), vault["anchor"]["id"]
-    ckb_deps = [secp, *[dependency(point(funded, i)) for i in range(len(codes))]]
+    ckb_deps = [secp, *[dependency(deployed(i)) for i in range(len(codes))]]
     native_deps = [mint["lock_dep"], point(mint["mint_id"], 2), point(mint["mint_id"], 3)]
-    authority_point = point(funded, auth_index)
+    authority_point = deployed(auth_index)
     for index in range(sum((metatype, state_limit is not None, append_only, use_workflow, use_royalty, use_rotation))):
         native_deps.append(point(mint["mint_id"], 4 + index))
     if state_limit and not live_rule:
-        l1_rule_point = point(funded, len(codes))
+        l1_rule_point = deployed(len(codes))
         l1_rule_dep = dependency(l1_rule_point)
-        l1_other_rule_dep = dependency(point(funded, len(codes) + 1))
+        l1_other_rule_dep = dependency(deployed(len(codes) + 1))
         ckb_deps.append(l1_rule_dep)
 
     def ckb_submit(signed):
@@ -138,8 +160,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         return binary(point_["tx_hash"]) + le(int(point_["index"], 16), 4)
 
     registry_rejections = {}
+    ceiling_updates = []
+    return_ceiling_proof = b""
     if live_rule:
-        rule_seed = point(funded, len(codes))
+        rule_seed = deployed(len(codes))
         registry_code = hex_bytes(ckb_hash(live_registry_code))
         rule_types = [script(registry_code, hex_bytes(ckb_hash(le(0, 8) + packed(rule_seed) + le(i, 8))),
                              "data2") for i in range(2)]
@@ -157,13 +181,31 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         other_rule_point = point(registry_birth["hash"], 1)
         l1_other_rule_dep = dependency(other_rule_point)
         ckb_deps.append(l1_rule_dep)
+        live_ceiling = l1_rule_point
+        live_ceiling_capacity = rule_cap
+
+        def rule_update(label, value, *, keep_type=True, lock=None):
+            tx = transaction([live_ceiling], [output(live_ceiling_capacity - FEE, lock or fixture.standard,
+                rule_types[0] if keep_type else None)], [hex_bytes(le(value, 2))],
+                [secp, dependency(deployed(live_registry_index))])
+            return fixture.sign(f"object-{label}", tx, [wallet_group(0, [fixture.faucet])])
+
+        def set_ceiling(label, value):
+            nonlocal live_ceiling, live_ceiling_capacity
+            update = ckb_submit(rule_update(label, value))
+            ckb_deps.remove(dependency(live_ceiling))
+            live_ceiling = point(update["hash"], 0)
+            ckb_deps.append(dependency(live_ceiling))
+            live_ceiling_capacity -= FEE
+            ceiling_updates.append({"label": label, "value": value, "update": update})
+            return update
 
     live_votes = None
     rotation = None
     rotation_type = None
 
     def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None,
-                    workflow_proof=b"", rotation_signature=None):
+                    workflow_proof=b"", rotation_signature=None, ceiling_proof=None):
         locks = sorted({packed_script(lock): (lock, key) for _, lock, key in spending}.values(),
                        key=lambda pair: packed_script(pair[0]))
         points = [p for p, _, _ in spending]
@@ -178,6 +220,12 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             scripts = sorted(map(packed_script, types))
             index = len(locks) + scripts.index(packed_script(workflow_type))
             request["proofs"] = [{"group_index": index, "proof_data": hex_bytes(workflow_proof)}]
+        if ceiling_proof is None:
+            ceiling_proof = return_ceiling_proof if receive else b""
+        if ceiling_proof:
+            index = len(locks) + sorted(map(packed_script, types)).index(packed_script(ceiling_type))
+            request["proofs"] = sorted([*request.get("proofs", []),
+                {"group_index": index, "proof_data": hex_bytes(ceiling_proof)}], key=lambda row: row["group_index"])
         path = args.output / f"object-{label}-request.json"
         draft = args.output / f"object-{label}-draft.json"
         context = args.output / f"object-{label}-context.json"
@@ -265,7 +313,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         return attest("attest-reference", label, ["--request", request])
 
     if use_rotation:
-        rotation = Rotation(fixture, genesis, network, ckb_hash(rotation_code), point(funded, rotation_seed_index))
+        rotation = Rotation(fixture, genesis, network, ckb_hash(rotation_code), deployed(rotation_seed_index))
         rotation_birth = ckb_submit(rotation.update("birth", 0, ckb_deps))
         rotation.applied(rotation_birth["hash"], 0)
         old_registry_point = rotation.location
@@ -310,7 +358,14 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         substitute_hash = script_hash(rule_types[1]) if live_rule else ckb_hash(rule_records[1])
         rule_tag = bytes([int(live_rule)])
         state_limit_code = ckb_hash(args.native_object_state_limit.read_bytes())
-        types.append(script(hex_bytes(state_limit_code), hex_bytes(identity_hash + rule_tag + rule_hash), "data"))
+        route_commitment = b""
+        if live_rule:
+            route_codes = (ckb_hash(args.stem_metatype_escrow.read_bytes()) + ckb_hash(codes[2])
+                + ckb_code + mailbox_code + ckb_hash(args.metatype_object_state_limit.read_bytes()))
+            route_commitment = ckb_hash(b"Stem Metatype ceiling route\0" + route_codes)
+        ceiling_type = script(hex_bytes(state_limit_code),
+            hex_bytes(identity_hash + rule_tag + rule_hash + route_commitment), "data")
+        types.append(ceiling_type)
         if live_rule:
             if use_rotation:
                 birth_header = rotation_header
@@ -420,7 +475,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             table_data.append(hex_bytes(definition))
             table_change -= definition_capacity
         fee_index = len(table_outputs)
-        table_tx = transaction([point(funded, change_index)],
+        table_tx = transaction([deployed(change_index)],
             [*table_outputs, output(table_change, fixture.standard)], [*table_data, "0x"], [secp])
         table_deployed = l1.send(fixture.sign("object-adapter-table", table_tx, [wallet_group(0, [fixture.faucet])]))
         ckb_deps.append(dependency(point(table_deployed, 0)))
@@ -452,7 +507,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     mailbox_id = script_hash(mailbox)
     if not metatype:
         wrapper = script(hex_bytes(ckb_code), hex_bytes(mailbox_id + script_hash(ckb_owner) + authority_id), "data2")
-    initial = transaction([point(funded, mailbox_seed_index)], [output(mailbox_cap, ckb_owner, mailbox)],
+    initial = transaction([mailbox_seed], [output(mailbox_cap, ckb_owner, mailbox)],
                           [hex_bytes(le(0, 8) + empty)], ckb_deps)
     initial["header_deps"] = [genesis]
     live_mailbox = point(l1.send(fixture.sign("object-create-mailbox", initial,
@@ -517,13 +572,15 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                 rejected["stem_historical_rule"] = reject_stem(native_sign("historical-rule", previous,
                     valid_update, votes=historical_votes), "exited with 56")
             rejected["stem_revision_removes_state_limit"] = reject_stem(native_sign("remove-state-limit", previous,
-                [cell(object_cap, owner, native_update, types[:-1]), cheaper_auth]), "exited with 56")
-            substitute = dict(types[-1], args=hex_bytes(identity_hash + rule_tag + substitute_hash))
+                [cell(object_cap, owner, native_update, [item for item in types if item != ceiling_type]),
+                 cheaper_auth]), "exited with 56")
+            substitute = dict(ceiling_type, args=hex_bytes(identity_hash + rule_tag + substitute_hash + route_commitment))
             both = (dict(votes=attest_references("both-rules", birth_header, *approval_target,
                                                 (l1_rule_point, True), (other_rule_point, True))) if live_rule else
                     dict(deps=[*native_deps, native_other_rule_point]))
             rejected["stem_revision_replaces_state_limit"] = reject_stem(native_sign("replace-state-limit", previous,
-                [cell(object_cap, owner, native_update, [*types[:-1], substitute]), cheaper_auth],
+                [cell(object_cap, owner, native_update,
+                      [substitute if item == ceiling_type else item for item in types]), cheaper_auth],
                 **both), "exited with 56")
         if append_only:
             retained = [item for item in types if item != append_script]
@@ -649,10 +706,13 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     root = binary(proof["successor_root"])
     path = binary(proof["input_type"])
     next_nonce = 0
+    if decrease:
+        import_ceiling = len(data) - 1
+        set_ceiling("lower-before-import", import_ceiling)
 
     def mint_ckb(label, recipient=fixture.owner_lock, contents=data, *, include_checkpoint=True,
                  include_policy=True, output_type=wrapper, approve=True, include_definition=True,
-                 fund_mailbox=True, rotation_signature=None):
+                 fund_mailbox=True, rotation_signature=None, ceiling_proof=None):
         input_point, amount, signer, fee_lock = (authority_point, authority_funds, authority_key, ckb_authority)
         if not approve:
             input_point, amount = point(table_deployed, fee_index), table_change
@@ -668,9 +728,17 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         tx["witnesses"] = [witness(path)]
         if metatype:
             tx["header_deps"] = [genesis]
+        if ceiling_proof is None:
+            ceiling_proof = route_codes if decrease else b""
+        rows = [(wrapper_hash, script_hash(ceiling_type), 1, b"", ceiling_proof, b"")] if ceiling_proof else []
         signers = [wallet_group(1, [signer])]
-        return (rotation.ckb_sign(label, tx, signers, wrapper_hash, rotation_signature)
-                if use_rotation else fixture.sign(f"object-{label}", tx, signers))
+        if use_rotation:
+            return rotation.ckb_sign(label, tx, signers, wrapper_hash, rotation_signature, rows)
+        if rows:
+            from metatype_object_localnet import encode
+
+            tx["witnesses"] += ["0x", hex_bytes(encode(rows))]
+        return fixture.sign(f"object-{label}", tx, signers)
 
     gate_invalid = 51 if metatype else 123
     rejected["ckb_mint_wrong_recipient"] = reject_ckb(mint_ckb("redirect-mint", recipient=fixture.friend_lock), gate_invalid)
@@ -700,10 +768,17 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if use_rotation:
         rejected["ckb_import_missing_rotating_approval"] = reject_ckb(
             mint_ckb("import-missing-rotating-approval", rotation_signature=False), 46)
+    if decrease:
+        rejected["ckb_oversize_import_missing_route"] = reject_ckb(
+            mint_ckb("import-no-ceiling-route", ceiling_proof=b""), 46)
+        rejected["ckb_oversize_import_substituted_route"] = reject_ckb(
+            mint_ckb("import-substitute-ceiling-route", ceiling_proof=bytes([1]) * len(route_codes)), 46)
     ckb_minted = ckb_submit(mint_ckb("mint"))
     live_mailbox, wrapped_point, authority_point = [point(ckb_minted["hash"], i) for i in range(3)]
     authority_funds -= token_cap + (funded_mailbox_cap - mailbox_cap) + FEE
     mailbox_cap = funded_mailbox_cap
+    if decrease:
+        set_ceiling("restore-before-edit", state_limit)
     if use_rotation:
         registry_deps = [dep for dep in ckb_deps if dep != old_registry_dep]
         for label, update in (
@@ -811,7 +886,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rejected["ckb_revision_removes_append_only"] = reject_ckb(
                 transfer("remove-append-only", contents=ckb_update, selected=retained), 48)
         if state_limit:
-            without_rule = [dep for dep in ckb_deps if dep != l1_rule_dep]
+            active_rule_dep = dependency(live_ceiling) if live_rule else l1_rule_dep
+            without_rule = [dep for dep in ckb_deps if dep != active_rule_dep]
             rejected["ckb_revision_exceeds_external_limit"] = reject_ckb(
                 transfer("external-rule-limit", contents=over_limit), 46)
             rejected["ckb_revision_missing_external_rule"] = reject_ckb(
@@ -819,9 +895,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rejected["ckb_revision_substituted_external_rule"] = reject_ckb(
                 transfer("substitute-external-rule", contents=ckb_update, deps=[*without_rule, l1_other_rule_dep]), 46)
             rejected["ckb_revision_removes_state_limit"] = reject_ckb(
-                transfer("remove-state-limit", contents=ckb_update, selected=types[:-1]), 48)
+                transfer("remove-state-limit", contents=ckb_update,
+                         selected=[item for item in types if item != ceiling_type]), 48)
             rejected["ckb_revision_replaces_state_limit"] = reject_ckb(
-                transfer("replace-state-limit", contents=ckb_update, selected=[*types[:-1], substitute],
+                transfer("replace-state-limit", contents=ckb_update,
+                         selected=[substitute if item == ceiling_type else item for item in types],
                          deps=[*ckb_deps, l1_other_rule_dep]), 48)
         transferred = ckb_submit(transfer("transfer-and-revise", contents=ckb_update,
                                           workflow_proof=ckb_first_proof))
@@ -840,18 +918,12 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     rule_evidence = None
     if state_limit:
         if live_rule:
-            def rule_update(label, value, *, keep_type=True, lock=None):
-                tx = transaction([l1_rule_point], [output(rule_cap - FEE, lock or fixture.standard,
-                    rule_types[0] if keep_type else None)], [hex_bytes(le(value, 2))],
-                    [secp, dependency(point(funded, live_registry_index))])
-                return fixture.sign(f"object-{label}", tx, [wallet_group(0, [fixture.faucet])])
-
-            registry_rejections["decrease"] = reject_ckb(rule_update("decrease-rule", state_limit - 1), 57)
+            registry_rejections["zero"] = reject_ckb(rule_update("zero-rule", 0), 57)
             registry_rejections["unchanged"] = reject_ckb(rule_update("same-rule", state_limit), 57)
             registry_rejections["remove"] = reject_ckb(rule_update("remove-rule", next_limit, keep_type=False), 57)
             registry_rejections["owner_change"] = reject_ckb(rule_update("rule-owner-change", next_limit,
                                                                        lock=fixture.friend_lock), 57)
-            republished = ckb_submit(rule_update("expand-rule", next_limit))
+            republished = set_ceiling("expand-rule", next_limit)
             rule_birth = registry_birth["proof"]
         else:
             rotate = transaction([l1_rule_point], [output(item_caps[len(codes)] - FEE, fixture.standard)],
@@ -861,10 +933,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rule_birth = l1.prove_committed(funded)
         assert l1.call("get_live_cell", l1_rule_point, True)["status"] != "live"
         l1_rule_replacement = point(republished["hash"], 0)
-        ckb_deps.remove(l1_rule_dep)
-        ckb_deps.append(dependency(l1_rule_replacement))
+        if not live_rule:
+            ckb_deps.remove(l1_rule_dep)
+            ckb_deps.append(dependency(l1_rule_replacement))
         rule_evidence = {"bytes": hex_bytes(rule_records[0]),
-                         "state_byte_limit": state_limit, "type": types[-1],
+                         "state_byte_limit": state_limit, "type": ceiling_type,
                          "differential_input": hex_bytes(data), "differential_rejected_output": hex_bytes(over_limit),
                          "ckb_initial_point": l1_rule_point, "ckb_initial_inclusion": rule_birth,
                          "ckb_replacement_point": l1_rule_replacement}
@@ -894,6 +967,18 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             wrapped_point, authority_point = [point(updated["hash"], i) for i in range(2)]
             authority_funds -= FEE + (royalty if return_owner == fixture.owner else 0)
             return_owner, return_lock = fixture.friend, fixture.friend_lock
+
+    if decrease:
+        set_ceiling("lower-before-burn", state_limit)
+        changed = object_data(b"X" * (len(return_state) - len(object_data(b"", 5))), 5)
+        assert len(changed) == len(return_state) > state_limit
+        rejected["ckb_oversize_edit"] = reject_ckb(transfer("oversize-ckb-edit",
+            contents=changed, from_key=return_owner, recipient=fixture.owner_lock), 46)
+        preserved = ckb_submit(transfer("preserve-oversize", contents=return_state,
+            from_key=return_owner, recipient=fixture.owner_lock))
+        wrapped_point, authority_point = [point(preserved["hash"], i) for i in range(2)]
+        authority_funds -= FEE + royalty
+        return_owner, return_lock = fixture.owner, fixture.owner_lock
 
     inbound = packet("return", False, script_hash(buyer), 0, content=return_state)
     def return_ckb(label, *, consume=True, message=inbound, approve=True, deps=None, rotation_signature=None):
@@ -928,8 +1013,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         rejected["ckb_return_stale_state"] = reject_ckb(return_ckb("return-stale-state",
             message=packet("return-stale-state", False, script_hash(buyer), 0, content=data)), gate_invalid)
     if state_limit:
+        active_rule_dep = dependency(live_ceiling if live_rule else l1_rule_replacement)
         rejected["ckb_return_without_rule"] = reject_ckb(return_ckb("return-missing-rule", deps=[
-            dep for dep in ckb_deps if dep != dependency(l1_rule_replacement)]), 46)
+            dep for dep in ckb_deps if dep != active_rule_dep]), 46)
     if use_freeze:
         change_freeze("freeze-before-burn", True)
         frozen_before_burn = rotation.generation
@@ -948,9 +1034,15 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     rejected["ckb_replay_after_burn"] = reject_ckb(mint_ckb("repeat-after-burn"), 85)
     assert l1.call("get_live_cell", wrapped_point, True)["status"] != "live"
 
+    if decrease:
+        final_ceiling = state_limit - 20
+        lowered_after_burn = set_ceiling("lower-after-burn", final_ceiling)
+        l1_rule_replacement = live_ceiling
+    else:
+        lowered_after_burn = None
     frozen_after_burn = change_freeze("freeze-after-burn", True) if use_freeze else None
     l1.mine(spec["bridge"]["confirmations"])
-    anchor = (frozen_after_burn or burned)["proof"]["header"]
+    anchor = (frozen_after_burn or lowered_after_burn or burned)["proof"]["header"]
     advanced = attest_anchor("anchor", anchor)
     mailbox_votes = attest_references("return-mailbox", anchor, (live_mailbox, False))
     certified = mailbox_votes
@@ -1018,6 +1110,15 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         recovery = {"result": recovered, "first_ms": first_ms, "restart_ms": restart_ms,
                     "ownership_only": ownership_only}
     restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup - royalty, authority)]
+    if decrease:
+        return_ceiling_proof = route_codes + packed_script(wrapper) + adapter_table
+        probe_outputs = [*restored_outputs, cell(royalty, stem_payee, stem_tag)] if use_royalty else restored_outputs
+        if not use_freeze:
+            for label, evidence in (("missing", b""), ("table", return_ceiling_proof[:-1] + bytes([return_ceiling_proof[-1] ^ 1])),
+                                    ("wrapper", route_codes + bytes(len(packed_script(wrapper))) + adapter_table)):
+                rejected[f"stem_oversize_return_{label}"] = reject_stem(native_sign(f"return-ceiling-{label}",
+                    with_approval, probe_outputs, endpoint=endpoint, message=inbound, receive=True,
+                    votes=certified, workflow_proof=return_proof, ceiling_proof=evidence), "exited with 56")
     if use_freeze:
         blocked_outputs = [*restored_outputs, cell(royalty, stem_payee, stem_tag)] if use_royalty else restored_outputs
         rejected["stem_frozen_return"] = reject_stem(native_sign("frozen-return",
@@ -1041,6 +1142,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         rejected["stem_old_same_key_seal"] = reject_stem(native_sign("pre-thaw-seal",
             with_approval, blocked_outputs, endpoint=endpoint, message=inbound, receive=True,
             votes=certified, workflow_proof=return_proof, rotation_signature=frozen_generation), "exited with 62")
+        if decrease:
+            rejected["stem_oversize_return_missing"] = reject_stem(native_sign("return-ceiling-missing",
+                with_approval, blocked_outputs, endpoint=endpoint, message=inbound, receive=True,
+                votes=certified, workflow_proof=return_proof, ceiling_proof=b""), "exited with 56")
     rejected["stem_return_without_policy_approval"] = reject_stem(native_sign("return-no-consent",
         release_inputs + [(native_fee, owner, owner_key)], release + [cell(remainder - FEE - return_topup, owner)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified, workflow_proof=return_proof),
@@ -1112,6 +1217,17 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
          (at(redeemed, 2), authority, authority_key)], release + [cell(native_auth_capacity - 3 * FEE - return_topup, authority)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified)
     rejected["stem_replay_release"] = reject_stem(reject_query, "nonce already used")
+    if decrease:
+        spend = [(at(redeemed, 1), buyer, buyer_key), (at(redeemed, 2), authority, authority_key)]
+        change = cell(native_auth_capacity - 3 * FEE - return_topup, authority)
+        rejected["stem_oversize_edit_with_return_proof"] = reject_stem(native_sign("ordinary-oversize-edit", spend,
+            [cell(object_cap + return_topup, buyer, changed, types), change],
+            votes=certified, ceiling_proof=return_ceiling_proof), "exited with 56")
+        shorter = object_data(b"restored below the ceiling", 5)
+        assert len(shorter) <= final_ceiling
+        repaired = commit(native_sign("repair-oversize", spend,
+            [cell(object_cap + return_topup, buyer, shorter, types), change], votes=certified))
+        assert signing_cell(client, at(repaired, 0))["cell"] == cell(object_cap + return_topup, buyer, shorter, types)
     if append_only:
         rewritten = object_data(b"X" + content[1:], 5)
         rejected["stem_rewrite_after_return"] = reject_stem(native_sign("rewrite-after-return",
@@ -1152,12 +1268,20 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             "frozen_before_burn": frozen_before_burn, "burn_generation": burn_generation,
             "redeem_generation": rotation.generation,
             "consumed": {**consumed, "height": inbox_height, "finality": client.finality(inbox_height)["proof"]}}
+    ceiling_evidence = None
+    if decrease:
+        ceiling_evidence = {"type": ceiling_type, "updates": ceiling_updates,
+            "imported_bytes": len(data), "returned_bytes": len(return_state), "final_ceiling": final_ceiling,
+            "proof_bytes": len(return_ceiling_proof), "ckb_preserved": preserved,
+            "repaired": repaired, "repair_proof": certified_cell(at(repaired, 0)),
+            "repair_execution": execution(repaired), "repaired_state": hex_bytes(shorter)}
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
             "approval_rotation": ({"type": rotation_type, "registry": rotation.registry,
                 "birth": rotation_birth, "rotation": rotated, "birth_stem_anchor": rotation_initial_anchor,
                 "records": [hex_bytes(rotation.record(generation)) for generation in range(rotation.generation + 1)],
                 "birth_votes": rotation_votes, "return_votes": certified} if use_rotation else None),
             "freeze": freeze_evidence,
+            "ceiling_decrease": ceiling_evidence,
             "royalty": royalty_evidence,
             "shared_manifest": shared_evidence,
             "external_rule": rule_evidence,

@@ -374,10 +374,13 @@ limit Script and adapter resolve the same content-addressed rule
 record from actual dependencies on both chains. Republishing that
 record changes its OutPoint and preserves its rule identity.
 The state limit also supports a CKB Type ID registry with a stable
-Type hash and a strictly increasing ceiling. Stem reads the registry
-through an authenticated live reference at the committed CKB anchor.
-The portable adapter reads it directly as a CKB dependency. This rule
-can expand while a represented object remains on CKB.
+Type hash and an adjustable ceiling. Stem resolves a live reference
+at its committed CKB anchor, and the portable adapter resolves the
+actual CKB dependency. Decreases apply to new or edited state.
+Byte-identical transfers preserve previously admitted state. An
+oversized import or changed return requires the pinned dispatcher,
+gate, mailbox, adapter and native escrow to authenticate admission
+on the originating chain.
 An independent approval group reads a rotating Ed25519 key from a
 CKB Type ID registry. Both VM hosts verify an exact-transaction
 seal with the registry generation. CKB reads the actual dependency

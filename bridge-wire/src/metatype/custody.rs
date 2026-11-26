@@ -65,6 +65,22 @@ impl Custody {
         })
     }
 
+    fn encode(self) -> [u8; Self::SIZE] {
+        let mut bytes = [0; Self::SIZE];
+        bytes[0] = self.profile as u8;
+        bytes[1..].copy_from_slice(
+            &[
+                self.mailbox_code,
+                self.mailbox_id,
+                self.guard_code,
+                self.manifest,
+                self.data_script,
+            ]
+            .as_flattened(),
+        );
+        bytes
+    }
+
     /// The on-chain projection commits every original Script. One explicitly
     /// identified Script carries the original Cell Data.
     pub fn data<'a>(&self, manifest: &MetatypeManifest<'a>) -> Option<&'a [u8]> {
@@ -167,6 +183,45 @@ impl Custody {
             });
         }
         Some(sums)
+    }
+}
+
+pub struct EscrowArgs<'a> {
+    pub ckb: &'a Hash,
+    pub metatype: &'a Hash,
+    pub checkpoint_code: &'a Hash,
+    pub checkpoint_id: &'a Hash,
+    pub custody: Custody,
+}
+
+impl<'a> EscrowArgs<'a> {
+    pub fn decode(raw: &'a [u8]) -> Option<Self> {
+        let (route, custody) = raw.split_at_checked(4 * 32)?;
+        let [ckb, metatype, checkpoint_code, checkpoint_id] = route.as_chunks::<32>().0 else {
+            return None;
+        };
+        (!route.as_chunks::<32>().0.contains(&[0; 32])).then_some(Self {
+            ckb,
+            metatype,
+            checkpoint_code,
+            checkpoint_id,
+            custody: Custody::decode(custody)?,
+        })
+    }
+
+    pub fn encode(&self) -> [u8; 4 * 32 + Custody::SIZE] {
+        let mut raw = [0; 4 * 32 + Custody::SIZE];
+        raw[..4 * 32].copy_from_slice(
+            &[
+                *self.ckb,
+                *self.metatype,
+                *self.checkpoint_code,
+                *self.checkpoint_id,
+            ]
+            .as_flattened(),
+        );
+        raw[4 * 32..].copy_from_slice(&self.custody.encode());
+        raw
     }
 }
 

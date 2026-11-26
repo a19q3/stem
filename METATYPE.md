@@ -368,7 +368,8 @@ encoded state. This includes the revision prefix and object encodings.
 The third Script's arguments are the complete identity Script hash,
 a one-byte rule source, and its 32-byte commitment. Source `0` uses
 the CKB data hash of an immutable record. Source `1` uses the full
-CKB Type Script hash of a rule registry. The record is exactly one
+CKB Type Script hash of a rule registry, followed by a 32-byte
+custody code commitment. The ceiling record is exactly one
 little-endian u16 from 1 through 2,048. The identity group checks
 canonical state, the approval group checks authorization, and the
 consumption Locks enforce ownership.
@@ -388,15 +389,15 @@ The escrow and adapter table pin the three complete Scripts. Changing
 the immutable rule bytes changes their Manifest commitment. Republish
 the same bytes to recover availability.
 
-### Live registry for an increasing ceiling
+### Live registry with adjustable ceilings
 
 With rule source `1`, the application configures the audited CKB
 `metatype-rule-registry` Type code and a specific Type ID. Creation
 binds the first consumed OutPoint and output index using CKB Type ID
 rules. A transition must recreate exactly one registry Cell with the
-same Type and Lock and a strictly increased ceiling. The consumed Lock
-authorizes the change. The registry cannot be retired or replaced by a
-new Type under this profile.
+same Type and Lock and a different ceiling in range. The consumed
+Lock authorizes increases and decreases. The registry keeps its Type ID
+and stays live.
 
 CKB resolves exactly one actual Cell Dep with that full Type hash.
 Stem resolves exactly one typed `LiveAtAnchor` CKB reference whose
@@ -409,12 +410,43 @@ and the live rule record in one reference-set certificate at the same
 anchor.
 
 Rule updates keep the Manifest, deployment and object identity fixed.
-Every later valid ceiling also accepts earlier authorized states. If
-CKB updated the rule after Stem's current anchor, a transaction that
-needs the higher ceiling must first advance Stem's anchor and get a
-new live attestation. This relies on the current CKB observation and
-confirmation model. Decreasing a limit or enforcing arbitrary external
-transition history requires settlement rules for earlier accepted state.
+New state and any changed state must fit the current ceiling. A
+previously admitted byte-identical state can transfer above the new
+ceiling. A CKB burn can consume that state through its verified
+custody gate. Stem uses the authenticated current CKB ceiling at
+its committed anchor.
+
+The code commitment is the CKB hash of
+`"Stem Metatype ceiling route\0" || codes`. In order, the five
+32-byte hashes identify the Stem escrow, CKB dispatcher, CKB gate,
+CKB mailbox and CKB ceiling adapter. They bind the grandfathering
+path for a previously admitted state arriving from the other chain.
+
+An oversized CKB import supplies the 160-byte code preimage in
+action 1 Proof Data of the ceiling Group Witness. The message and
+seal fields are empty. The adapter verifies the physical dispatcher,
+actual adapter table, gate and mailbox. It reconstructs the exact
+Stem escrow Lock named by the authenticated import. That Lock
+committed the original state through the native group.
+
+For an oversized Stem return with changed bytes compared with the
+escrowed object, the ceiling Type Group's Proof Data concatenates
+the code preimage, the complete 149-byte physical CKB wrapper Script,
+and its bounded adapter table. Stem matches the actual consumed
+escrow Lock and pinned wrapper hash, verifies the table's content
+hash, and checks the limit adapter and custody configuration. The
+independent escrow Lock authenticates the exact returned state
+through the pinned CKB gate and mailbox. This proves that the
+grandfathered state passed the original ceiling rules on its
+authoritative chain. A local edit cannot use the custody proof.
+
+A state admitted before a reduction can therefore complete an
+in-flight import or return. An edit above the current ceiling
+fails even if its byte length stays constant. A revision that fits
+the lower ceiling can resume normal editing. The cross-chain
+exceptions use the existing CKB and Stem mailbox trust models.
+Arbitrary policies that depend on intermediate state still need
+their own replayable validation witness.
 
 ### Rotating object approval and freeze
 
@@ -689,7 +721,7 @@ commitments, and the participating owners' Locks.
 | Existing state to output state | A transfer removes a freeze, approval, identity or supply rule | Run all consumed groups and all created groups. Original policy decides whether retirement or migration is authorized. Revisable custody rejects rollback, same-revision edits and substituting stale data at the return boundary. |
 | Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
 | Rule record to object | A relayer replaces it with a looser rule, or spends the published copy | Resolve the pinned data hash in actual dependencies on both chains. Reject changed bytes and oversized states. Keep the original bytes available for publication at a new OutPoint. |
-| Live rule registry | An updater forks or removes the registry, reduces the limit after a transfer, or supplies an obsolete CKB observation to Stem | Enforce Type ID and a same-Lock successor with a strict increase. Resolve one current CKB dependency or one guardian-certified live reference at Stem's committed anchor. |
+| Live ceiling | An updater forks the registry or a transfer uses grandfathering to create or rewrite an oversized state | Enforce Type ID and a same-Lock successor. Apply the current ceiling to changed states and check the proven custody code path for oversized cross-chain settlement. |
 | Rotating approval and freeze | A spender uses a superseded key or record, or supplies a valid signature while frozen | Require an active current registry, an exact-generation strict Ed25519 seal and the same object and approval identities. Keep the CKB registry Lock responsible for rotation and freezes. |
 | Append-only revision | An approval authorizes a rewrite, truncation, MIME change, or removal of the constraint | Bind the full identity Script, require a valid successor, and compare the exact revision relationship and decoded content prefix on both chains. |
 | Signed workflow history | A return omits a review or substitutes, reorders or replays approval from another subject or chain | Verify each role's signature over the preceding head and exact step. Bind the fully replayed head to the authenticated return state. |
