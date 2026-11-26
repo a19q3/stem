@@ -940,6 +940,14 @@ cargo test --locked --release --lib measure_patricia_node_storage \
   -- --ignored --nocapture
 ```
 
+For the fixed-buffer read comparison, build the test executable at
+`87b5730` and at `fc49e54` in separate worktrees or retain a copy of
+each executable. Run the probe in baseline, candidate, candidate,
+baseline order. Use a separate `STEM_PATRICIA_REPORT` for each run.
+Compare the compact samples by edit duration, canonical reconstruction
+time, node bytes and resulting root. The archived commands also run
+the same signed payment workload on four Jolteon replicas per version.
+
 ### Measure sustained Lineage commands
 
 Run the native load fixture with real Lineage registration, signed fee

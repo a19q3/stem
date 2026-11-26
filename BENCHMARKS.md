@@ -4311,3 +4311,62 @@ Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Signed workloads, ordered and initial timings, byte accounting and recovery evidence](benchmarks/2026-11-26-stem-live-cell-finality.json.xz).
+
+## Fixed-buffer Patricia reads
+
+The baseline is `87b5730` and the candidate is `fc49e54`. Both read
+the same compact Patricia records and check their canonical hashes.
+The candidate reconstructs up to 98 bytes inline and borrows nodes
+already staged by the editor. Proof generation still produces the
+canonical path bytes.
+
+The RocksDB editor probe seeds 8,192 records, then removes 512 and
+inserts 512 per trial. The two versions alternated in baseline,
+candidate, candidate, baseline order, with 11 warm compact samples
+per invocation. Each compact sample read 4,120 nodes and 277,207
+value bytes and generated a 503,521-byte node batch. The resulting
+root and exact edit operations matched.
+
+| Median across 22 compact samples per version | Baseline | Fixed buffer |
+| --- | ---: | ---: |
+| Canonical reconstruction per edit | 0.124 ms | 0.083 ms |
+| RocksDB fetches per edit | 2.033 ms | 2.047 ms |
+| Complete edit | 5.741 ms | 5.672 ms |
+
+The reconstruction time fell 32.8%. The complete edit was 1.2%
+faster in this probe. The node batch had the same size.
+
+The payment comparison uses four colocated Jolteon replicas, two
+VM workers per replica, 64 senders, a 250 ms proposal interval, a
+two-billion-cycle block budget and a 12-second drain. The 1,000
+TPS target ran for 24 seconds, baseline first. The 2,000 TPS
+target ran for 20 seconds, candidate first. Each pair used the
+same genesis, resource limits and signed transactions.
+
+| Target and revision | Written / admitted / common-visible TPS in offer | Confirmed / client drops | p50 / p95 / p99 | Replica CPU | Peak aggregate RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1,000 baseline | 1,000.00 / 1,000.00 / 976.88 | 24,000 / 0 | 0.646 / 0.805 / 0.834 s | 40.43 s | 587.3 MiB |
+| 1,000 fixed buffer | 1,000.00 / 1,000.00 / 978.00 | 24,000 / 0 | 0.645 / 0.812 / 0.848 s | 40.30 s | 591.9 MiB |
+| 2,000 baseline | 1,798.40 / 1,795.20 / 1,704.25 | 35,968 / 4,032 | 0.922 / 1.211 / 1.263 s | 57.22 s | 727.1 MiB |
+| 2,000 fixed buffer | 1,796.65 / 1,794.15 / 1,707.35 | 35,933 / 4,067 | 0.929 / 1.196 / 1.284 s | 57.52 s | 722.7 MiB |
+
+Confirmation throughput including drain was 978.82 and 978.36 TPS
+in the first pair and 1,741.11 and 1,729.72 TPS in the second.
+Aggregate process writes were 402.52 and 402.28 MB, then
+483.96 and 488.06 MB. Peer sends were 29.99 and 29.64 MB, then
+65.36 and 64.67 MB. All offered transactions were confirmed.
+The 2,000 TPS runs reached roughly 1,798 TPS at the client.
+The run pairs did not establish a sustained throughput or p99
+latency gain from the fixed buffer.
+
+The release workspace passed 480 tests with 19 ignored. Go proof
+tests and the frozen CometBFT feature check passed. A mixed
+four-replica Jolteon network confirmed 96 payments with one
+validator offline and recovered to a common execution Header.
+A CKB devnet accepted the funded four-to-four committee handoff
+and a historical Intercell delivery. Separate CKB runs verified
+historical and live-at-anchor Cell references and a revisable
+Metatype custody round trip with a signed Capacity top-up.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw editor samples, signed workloads, build fingerprints and CKB evidence](benchmarks/2026-11-26-stem-patricia-inline-read.json.xz).
