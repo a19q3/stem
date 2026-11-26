@@ -100,5 +100,6 @@ available. Published network evidence contains public genesis and proof data.
 | Borrowed Metatype Manifest views | [Report](../BENCHMARKS.md#borrowed-metatype-manifest-views), [eight paired CKB runs, proofs and failed start](2026-11-26-stem-metatype-view.json.xz) |
 | Revisable Metatype objects across CKB | [Report](../BENCHMARKS.md#revisable-metatype-objects-across-ckb), [signed round trips, capacity boundary controls and failed runs](2026-11-26-stem-metatype-revision.json.xz) |
 | VM verification reuse across parent changes | [Report](../BENCHMARKS.md#vm-verification-reuse-across-parent-changes), [paired payments, raw CPU profiles, CKB proofs and recovery](2026-11-26-stem-vm-parent-cache.json.xz) |
+| Live Cell reuse across candidate branches | [Report](../BENCHMARKS.md#live-cell-reuse-across-candidate-branches), [matched payments, AMM replay and recovery evidence](2026-11-26-stem-live-cell-reuse.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

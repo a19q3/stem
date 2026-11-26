@@ -4141,3 +4141,66 @@ with a Stem Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Signed workloads, raw profiles, proof and recovery evidence](benchmarks/2026-11-26-stem-vm-parent-cache.json.xz).
+
+## Live Cell reuse across candidate branches
+
+Revision `6f15f7a` lets candidate branches resolve their decoded
+Live Cell changes by OutPoint. A candidate deletion masks the
+committed record. Branches share only committed cache entries.
+Finality evicts the changed OutPoints and snapshot installation
+clears that cache. Prepared blocks retain their decoded changes
+alongside the serialized commit batch. The database format, atomic
+write and authenticated record encoding are shared with the
+`fead22e` baseline.
+
+Four local Jolteon replicas used a pinned load driver, two VM
+workers per replica, 64 fresh-socket submitters, a 250 ms proposal
+interval and a two-billion-cycle block budget. Each comparison
+used the same signed workload, genesis and limits. The equal
+1,000 TPS payment pair ran for 36 seconds. Each planned 2,000 TPS
+payment run and each distributed AMM run lasted 24 seconds.
+Every run had a 12-second drain allowance.
+
+| Workload and revision | Written / admitted / common-visible TPS in offer | Confirmed by end / client drops | Visibility p50 / p95 / p99 | Aggregate replica CPU |
+| --- | ---: | ---: | ---: | ---: |
+| Payments 1,000 baseline | 1,000.00 / 1,000.00 / 983.00 | 36,000 / 0 | 0.708 / 0.897 / 0.943 s | 69.85 s |
+| Payments 1,000 reuse | 1,000.00 / 1,000.00 / 982.53 | 36,000 / 0 | 0.705 / 0.883 / 0.932 s | 69.86 s |
+| Payments 2,000 baseline | 1,777.75 / 1,775.08 / 1,699.38 | 42,666 / 5,334 | 0.939 / 1.216 / 1.280 s | 70.08 s |
+| Payments 2,000 reuse | 1,589.83 / 1,588.83 / 1,515.58 | 38,156 / 9,844 | 1.098 / 1.610 / 1.754 s | 76.51 s |
+| Payments 2,000 baseline repeat | 1,727.62 / 1,726.46 / 1,669.04 | 41,463 / 6,537 | 0.989 / 1.373 / 1.510 s | 72.58 s |
+| Payments 2,000 reuse repeat | 1,789.50 / 1,786.83 / 1,709.92 | 42,948 / 5,052 | 0.923 / 1.206 / 1.262 s | 67.65 s |
+| Distributed AMM 140 baseline | 140.00 / 140.00 / 136.00 | 3,360 / 0 | 0.625 / 0.785 / 0.813 s | 22.77 s |
+| Distributed AMM 140 reuse | 140.00 / 140.00 / 137.12 | 3,360 / 0 | 0.623 / 0.782 / 0.807 s | 22.37 s |
+
+Every completed frame write was confirmed. The overload pairs
+reversed their order and moved in opposite directions. Observed
+throughput fell 10.8% in the first pair and rose 2.4% in the
+second, with different achieved ingress rates. This round gives
+no reproducible sustained throughput gain. At equal 1,000 TPS,
+mean candidate verification changed from 42.95 to 41.90 ms.
+Aggregate process writes were 583.05 and 575.46 MB, peer sends
+were 48.08 and 46.96 MB, and peak aggregate resident memory was
+668.7 and 679.2 MiB. The equal AMM pair used 256.6 and 263.3 MiB.
+Its candidate verification mean changed from 23.28 to 22.64 ms.
+
+Independent serial AMM replay verified 3,360 commands, 6,720
+Head updates, identical total fees and cycles, each finalized
+Header and receipt, and conservation of each market's assets
+in both runs. Focused state tests warmed committed Live Cell
+records before creating forks and installing a snapshot. They
+verified distinct creation times for the same Output on
+competing forks, deletion precedence through a child branch and
+after finalization, and the absence proof for a spent record
+after snapshot installation. The locked release workspace
+passed 479 tests with 19 ignored. The Go proofs and frozen
+CometBFT feature check passed.
+
+A mixed four-replica network finalized 96 signed payments during
+one validator outage and restarted the missing validator. The
+replicas agreed on the complete execution Header and the archive's
+finality proof. Separate real CKB devnets passed a funded committee
+handoff and historical Intercell delivery, both kinds of L1 Cell
+Reference, and the revisable Metatype return with Capacity top-up.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Signed workloads, raw timings, state replay and proofs](benchmarks/2026-11-26-stem-live-cell-reuse.json.xz).
