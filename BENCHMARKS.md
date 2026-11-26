@@ -4063,3 +4063,81 @@ historical and live-at-anchor CKB references.
 
 [Reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
 [Signed transactions, proofs, timings and failed runs](benchmarks/2026-11-26-stem-metatype-revision.json.xz).
+
+## VM verification reuse across parent changes
+
+Revision `8914ab0` records whether the executed Script Groups read
+the parent Header or candidate height. Each cached result commits
+the full Witness, resolved Cell contents and origins, declared
+Headers and authenticated L1 references. Results that read the
+parent through the original VM, Spawn or Exec still require that
+parent. Every transaction is resolved against its current candidate
+state. Cached cycles are charged in full.
+
+The test fixture used four local Jolteon replicas, 64 fresh-socket
+submitters, two VM workers per replica, a 250 ms proposal interval,
+two billion cycles per block and a 12-second drain allowance.
+The baseline was `04bccd6`. At each rate the binaries received
+byte-identical signed workloads and genesis, with equal network
+limits. The two 2,000 TPS pairs reversed the order.
+
+| Planned TPS and revision | Written / admitted / common-visible TPS in the offer window | Confirmed by end / client drops | Common visibility p50 / p95 / p99 | Aggregate replica CPU |
+| --- | ---: | ---: | ---: | ---: |
+| 400 baseline | 400.00 / 399.86 / 390.50 | 11,200 / 0 | 0.548 / 0.689 / 0.719 s | 22.87 s |
+| 400 cache reuse | 400.00 / 400.00 / 393.18 | 11,200 / 0 | 0.506 / 0.639 / 0.662 s | 18.83 s |
+| 2,000 baseline | 1,446.54 / 1,446.50 / 1,375.79 | 34,717 / 13,283 | 1.360 / 1.808 / 1.934 s | 68.15 s |
+| 2,000 cache reuse | 1,838.21 / 1,835.54 / 1,757.58 | 44,117 / 3,883 | 0.896 / 1.153 / 1.195 s | 65.59 s |
+| 2,000 baseline repeat | 1,460.17 / 1,457.50 / 1,368.33 | 35,044 / 12,956 | 1.335 / 1.768 / 1.824 s | 67.41 s |
+| 2,000 cache reuse repeat | 1,789.62 / 1,789.46 / 1,718.67 | 42,951 / 5,049 | 0.929 / 1.217 / 1.259 s | 68.93 s |
+| 1,000 baseline, 60 s | 1,000.00 / 1,000.00 / 985.60 | 60,000 / 0 | 0.969 / 1.224 / 1.286 s | 127.41 s |
+| 1,000 cache reuse, 60 s | 1,000.00 / 1,000.00 / 984.60 | 60,000 / 0 | 0.710 / 0.901 / 0.947 s | 107.20 s |
+
+The 400 TPS runs offered traffic for 28 seconds. At the same
+11,200 confirmed payments, aggregate replica CPU fell 17.7% and
+mean candidate verification for uncached proposals fell from
+13.29 to 9.37 ms. The four processes wrote 229.56 and 226.03 MB
+and sent 14.61 and 14.46 MB of peer traffic. The 2,000 TPS runs
+offered traffic for 24 seconds. Common visibility in the offer
+window rose 27.8% and 25.6% across the two pairs. Including drain,
+the two baseline rates were 1,405.79 and 1,413.12 TPS and the
+cache-reuse rates were 1,789.20 and 1,731.84 TPS. Client drops
+occurred before writing, and every completed write was confirmed.
+Process writes rose from 471–480 MB to 677–686 MB as more payments
+confirmed. Mean uncached candidate verification fell from
+73.71–74.14 to 61.49–66.44 ms.
+
+Both 60-second runs sustained 1,000 TPS written and admitted,
+and confirmed all 60,000 payments. The candidate reduced aggregate
+replica CPU by 15.9% and common-visibility p99 by 26.4%.
+Process writes were 1,086.03 and 1,136.53 MB. The four replicas
+sent 96.53 and 83.52 MB over peer connections and peaked at
+814.0 and 809.3 MiB of aggregate resident memory. Including drain,
+finalized throughput was 989.34 and 990.22 TPS. The two 2,000 TPS
+pairs used 781–794 MiB of resident memory on the baseline and
+801–813 MiB on the candidate at their higher actual admission rates.
+
+The separate userspace profiles recorded 6,291 and 6,012 samples
+with zero losses. The baseline profiling run reached only 456.37
+TPS written, versus 1,735.67 for the candidate. Both recordings
+are preserved. Their sample shares are descriptive because the
+achieved loads differed substantially. The unprofiled comparisons
+in the table are the throughput evidence.
+
+The release workspace passed 479 tests with 19 ignored. Real
+RISC-V controls use identical resolved inputs on distinct parents
+and exercise the context syscall and the parent Header syscall
+independently. They also test each read through Spawn or Exec.
+Complete signed payments use the same cached cycles, while
+removing a seal or lowering the cycle limit causes rejection.
+The Go proof suite and frozen CometBFT feature check passed.
+
+A mixed network with two binaries of each revision finalized 96
+payments during a one-validator outage, then restarted the missing
+validator. All four agreed on the complete execution Header and the
+archive's two-chain finality proof. Separate real CKB devnets verified
+a funded committee handoff with historical Intercell delivery, both
+kinds of L1 Cell Reference, and the revisable Metatype round trip
+with a Stem Capacity top-up.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Signed workloads, raw profiles, proof and recovery evidence](benchmarks/2026-11-26-stem-vm-parent-cache.json.xz).
