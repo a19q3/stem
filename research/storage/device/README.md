@@ -1,0 +1,19 @@
+# Device writes under replicated payment load
+
+Four local Jolteon instances used fresh databases on the same two-device Btrfs filesystem. Each validator ran in a private systemd I/O-accounting scope. The load generator ran on CPUs 0–3, nodes on 4–31, with 32 senders and 4,096 payload bytes per payment. The 600-second and 60-second runs offered the identical 96,000 signed transactions. The churn workload pre-signed 375,000 transactions in 32,768 independent chains. Each transaction after the initial round spends its chain's previous confirmed output.
+
+| Offer duration and workload | Planned / sent / admitted / confirmed | All-replica visible TPS during offer | Common-finality p99 | Device bytes across four scopes | Device bytes / confirmed / replica |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 600 s, 160 independent payments/s | 96,000 / 96,000 / 96,000 / 96,000 | 159.86 | 2.046 s | 10,158,370,816 | 26,454 |
+| 60 s, 1,600 independent payments/s | 96,000 / 83,130 / 71,806 / 71,806 | 1,124.67 | 52.501 s | 6,125,985,792 | 21,328 |
+| 300 s, 1,250 chained payments/s | 375,000 / 357,161 / 277,868 / 277,868 | 925.39 | 1.471 s | 22,084,579,328 | 19,870 |
+
+Each confirmed ID appeared once. The verifier authenticated the agreed Header and archived a historical proof. In the chained trial 17,839 transactions missed client dispatch or queue deadlines. Another 79,293 reached a node before a required previously offered output was live or after its predecessor had failed. All 277,868 acknowledged transactions finalized. These dependencies and the client losses affect the measured rate.
+
+The kernel attributed respectively 1.657, 1.419 and 1.354 device bytes per serialized RocksDB batch byte. This is a within-window ratio including journal and finality traffic. Per-node, per-device and logical-namespace deltas are in the [summary](summary.json). Device counters cover filesystem block I/O and can include filesystem metadata. A drive's internal NAND writes are outside this measurement. The SST LOG covers the full fresh fixture, including startup. The 600-second run produced 1,151,026,334 flush and 1,311,606,014 compaction bytes, with 24 distinct compaction jobs creating files.
+
+The [SST block attribution](churn-pressure-sst.json) decodes every key in each captured RocksDB block, assigns each compressed data block and its five-byte trailer to its namespace when all keys agree, and retains mixed blocks and file metadata separately. RocksDB's recorded entry count, range tombstones, data-block count and data size were cross-checked per file. Capture started during the 300-second run and retained 1,271,730,531 of the 5,588,311,571 SST bytes created. Uncaptured files remain marked explicitly. Filesystem overhead, the shared WAL, and drive-internal amplification cannot be apportioned by this decoder.
+
+### Reproduce
+
+Build the harness with `cargo test --locked --release --test native_store --no-run` and use the unchanged replica from `fefb8cc`. Pass `--device-accounting` to the [runner](../run_load.py) with a dedicated block-backed scratch directory, `--data-bytes 4096 --senders 32 --drain 36`, and the rate and duration in the table. Use `--complete-volume` for the 160 TPS run. For the churn experiment add `--payment-chains 32768`. Check that systemd user scopes and Linux cgroup v2 I/O accounting are available. To record SSTs from the beginning, start `python3 research/storage/sst/capture.py SCRATCH CAPTURE --seconds DURATION` before starting the load. CAPTURE must support hard links on the same filesystem. After the run, build the reader with `c++ -std=c++20 -O2 research/storage/sst/blocks.cc -lsnappy -o /tmp/stem-sst-blocks` and use `python3 research/storage/sst/attribute.py RUN.json.xz CAPTURE/stem-storage-ID /tmp/stem-sst-blocks`. The fixture ID appears in the archived harness log.

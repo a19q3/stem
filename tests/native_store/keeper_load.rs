@@ -106,9 +106,17 @@ struct Observation {
 
 #[derive(Serialize)]
 pub(super) struct ProcessStats {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device: Option<DeviceCounters>,
     cpu_ticks: u64,
     write_bytes: u64,
     resident_kib: u64,
+}
+
+#[derive(serde::Serialize)]
+struct DeviceCounters {
+    scope: String,
+    io_stat: String,
 }
 
 #[test]
@@ -698,7 +706,18 @@ pub(super) fn stats(pid: u32) -> Result<ProcessStats> {
         .next()
         .context("missing resident size")?
         .parse()?;
+    let device = if std::env::var_os("STEM_TEST_DEVICE_ACCOUNTING").is_some() {
+        let cgroups = fs::read_to_string(format!("/proc/{pid}/cgroup"))?;
+        let scope = cgroups.lines().find_map(|line| line.strip_prefix("0::/"))
+            .context("no unified cgroup for replica")?;
+        ensure!(scope.ends_with(".scope"), "replica outside its accounting scope");
+        let io_stat = fs::read_to_string(Path::new("/sys/fs/cgroup").join(scope).join("io.stat"))?;
+        Some(DeviceCounters { scope: scope.to_owned(), io_stat })
+    } else {
+        None
+    };
     Ok(ProcessStats {
+        device,
         cpu_ticks,
         write_bytes,
         resident_kib,

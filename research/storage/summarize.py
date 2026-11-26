@@ -6,6 +6,31 @@ import lzma
 from pathlib import Path
 
 
+def device_writes(report):
+    def bytes_by_device(snapshot):
+        rows = {}
+        for line in snapshot.splitlines():
+            device, *counters = line.split()
+            assert device not in rows
+            values = dict(field.split("=", 1) for field in counters)
+            rows[device] = int(values["wbytes"])
+        return rows
+
+    scopes = set()
+    writes = []
+    for before, after in zip(report["before"]["resources"], report["after"]["resources"], strict=True):
+        old, new = before["device"], after["device"]
+        assert old["scope"] == new["scope"] and old["scope"] not in scopes
+        scopes.add(old["scope"])
+        old, new = bytes_by_device(old["io_stat"]), bytes_by_device(new["io_stat"])
+        assert old.keys() <= new.keys()
+        delta = {dev: count - old.get(dev, 0) for dev, count in new.items()}
+        assert all(count >= 0 for count in delta.values()) and sum(delta.values()) > 0
+        writes.append(delta)
+    assert len(scopes) == report["load"]["replicas"]
+    return writes
+
+
 def summarize(path):
     with lzma.open(path, "rt") as f:
         run = json.load(f)
@@ -80,6 +105,22 @@ def summarize(path):
         genesis_sha256=run["genesis.json_sha256"],
         observer_errors=len(r["observation_errors"]),
     )
+    if run.get("scratch_mount") and r["before"]["resources"][0].get("device"):
+        by_node = device_writes(r)
+        total = sum(sum(node.values()) for node in by_node)
+        namespaces = {}
+        for before, after in zip(r["before"]["storage"], r["after"]["storage"], strict=True):
+            for phase, values in after["writes"].items():
+                previous = before["writes"][phase]["batch_bytes"]
+                for key, value in values["batch_bytes"].items():
+                    namespaces[key] = namespaces.get(key, 0) + value - previous[key]
+        assert sum(v for k, v in namespaces.items() if k != "serialized") == namespaces["serialized"]
+        result["device"] = {
+            "mount": run["scratch_mount"], "bytes_by_node_and_device": by_node,
+            "total_bytes": total, "per_confirmed_replica": total / (visible * replicas),
+            "logical_bytes_by_namespace": namespaces,
+            "device_over_serialized_batch_bytes": total / namespaces["serialized"],
+        }
     for kind in ["candidate_verify", "proposal", "commit"]:
 
         def elapsed(state):

@@ -41,6 +41,7 @@ struct Load {
     reuse_submissions: bool,
     complete_volume: bool,
     payment_data_bytes: usize,
+    payment_chains: usize,
 }
 
 impl Load {
@@ -65,18 +66,26 @@ impl Load {
             measured: read("STEM_STORAGE_METRICS", 1)? != 0,
             reuse_submissions: read("STEM_STORAGE_REUSE_SUBMISSIONS", 0)? != 0,
             complete_volume: read("STEM_STORAGE_COMPLETE_VOLUME", 0)? != 0,
+            payment_chains: read("STEM_STORAGE_PAYMENT_CHAINS", 0)?.try_into()?,
             payment_data_bytes: read("STEM_STORAGE_PAYMENT_DATA_BYTES", 0)?.try_into()?,
         };
         ensure!(
             (4..=16).contains(&load.replicas)
                 && (1..=5000).contains(&load.rate)
-                && (1..=600).contains(&load.seconds)
+                && (1..=3600).contains(&load.seconds)
                 && (2..=45).contains(&load.drain)
                 && (1..=64).contains(&load.senders)
                 && (50..=1000).contains(&load.cadence_ms)
                 && (1..=16).contains(&load.vm_workers)
                 && (32..=512).contains(&load.retention)
-                && load.rate as u64 * load.seconds <= 100_000
+                && load.rate as u64 * load.seconds
+                    <= if load.payment_chains == 0 {
+                        100_000
+                    } else {
+                        400_000
+                    }
+                && load.payment_chains <= 100_000
+                && load.payment_chains <= load.rate * load.seconds as usize
                 && load.block_cycles >= 20_000_000
                 && load.payment_data_bytes <= 16_384,
             "invalid sustained storage experiment settings"
@@ -214,6 +223,10 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     limits.cell_write_bytes = 4 * 1024 * 1024;
     limits.header_dep_age = 32;
     let work = load.rate * load.seconds as usize;
+    ensure!(
+        mode.is_none() || load.payment_chains == 0,
+        "churn requires a payment workload"
+    );
     let (lineage, transactions_to_offer) = if let Some(mode) = mode {
         ensure!(
             (load.seconds + load.drain + 10) * 1000 / load.cadence_ms < 1000,
@@ -222,18 +235,32 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         let (workload, commands) = lineage_load::Workload::fund(&mut fixture, mode, work)?;
         (Some(workload), commands)
     } else {
-        (None, payments(&mut fixture, work, load.payment_data_bytes)?)
+        (
+            None,
+            payments(
+                &mut fixture,
+                work,
+                load.payment_data_bytes,
+                load.payment_chains,
+            )?,
+        )
     };
     let mut jobs = Vec::with_capacity(work);
-    let mut workload = Vec::new();
+    let mut file = std::io::BufWriter::new(fs::File::create(output.join("workload.bin"))?);
+    let mut hash = ckb_hash::new_blake2b();
     for tx in transactions_to_offer {
-        workload.extend_from_slice(&(tx.as_slice().len() as u32).to_le_bytes());
-        workload.extend_from_slice(tx.as_slice());
+        let length = u32::try_from(tx.as_slice().len())?.to_le_bytes();
+        for bytes in [length.as_slice(), tx.as_slice()] {
+            std::io::Write::write_all(&mut file, bytes)?;
+            hash.update(bytes);
+        }
         jobs.push((hex::encode(tx.id(&fixture.spec.network).as_slice()), tx));
     }
-    fs::write(output.join("workload.bin"), &workload)?;
-    let workload_hash = hex::encode(ckb_hash::blake2b_256(&workload));
-    drop(workload);
+    std::io::Write::flush(&mut file)?;
+    drop(file);
+    let mut hash_bytes = [0; 32];
+    hash.finalize(&mut hash_bytes);
+    let workload_hash = hex::encode(hash_bytes);
 
     let (replicas, clients) = start_network_configured(
         &mut fixture,
@@ -548,22 +575,36 @@ fn percentiles(from: impl Iterator<Item = u64>) -> Value {
     json!({"p50": at(50), "p95": at(95), "p99": at(99)})
 }
 
-fn payments(fixture: &mut Fixture, work: usize, data_bytes: usize) -> Result<Vec<Transaction>> {
+fn payments(
+    fixture: &mut Fixture,
+    work: usize,
+    data_bytes: usize,
+    chains: usize,
+) -> Result<Vec<Transaction>> {
     let base = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
-    let change = Cell::new(
-        FUND - FEE,
-        fixture.lock.clone(),
-        vec![],
-        Bytes::from(vec![0x6a; data_bytes]),
-    )?;
+    let data = Bytes::from(vec![0x6a; data_bytes]);
     let (code_point, code) = fixture.spec.development_cells[0].clone();
     let mut payments = Vec::with_capacity(work);
+    let width = if chains == 0 { work } else { chains };
+    let mut heads: Vec<(OutPoint, Cell)> = Vec::with_capacity(chains);
     for index in 0..work {
-        let point = OutPoint::new([138; 32].pack(), index as u32);
-        fixture
-            .spec
-            .development_cells
-            .push((point.clone(), base.clone()));
+        let slot = index % width;
+        let (point, spent) = if index < width {
+            let point = OutPoint::new([138; 32].pack(), index as u32);
+            fixture
+                .spec
+                .development_cells
+                .push((point.clone(), base.clone()));
+            (point, base.clone())
+        } else {
+            heads[slot].clone()
+        };
+        let change = Cell::new(
+            spent.capacity() - FEE,
+            fixture.lock.clone(),
+            vec![],
+            data.clone(),
+        )?;
         let tx = Transaction::new(
             fixture.deps.clone(),
             vec![],
@@ -573,12 +614,20 @@ fn payments(fixture: &mut Fixture, work: usize, data_bytes: usize) -> Result<Vec
         )?;
         let tx = fixture.seal_with(tx, |input| {
             if input == &point {
-                Ok(base.clone())
+                Ok(spent.clone())
             } else {
                 ensure!(input == &code_point, "unexpected signing dependency");
                 Ok(code.clone())
             }
         })?;
+        if chains != 0 {
+            let next = (OutPoint::new(tx.id(&fixture.spec.network), 0), change);
+            if index < width {
+                heads.push(next);
+            } else {
+                heads[slot] = next;
+            }
+        }
         payments.push(tx);
     }
     Ok(payments)

@@ -11,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 
+from summarize import device_writes
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -27,8 +29,11 @@ def main():
     for name in ["harness", "binary", "contracts", "time", "output", "scratch"]:
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--complete-volume", action="store_true")
+    parser.add_argument("--device-accounting", action="store_true",
+                        help="run each validator in its own Linux systemd user I/O scope on a block-backed filesystem")
     parser.add_argument("--rate", type=int, required=True)
     parser.add_argument("--seconds", type=int, required=True)
+    parser.add_argument("--payment-chains", type=int, default=0, help="number of independently recycled payment outputs")
     parser.add_argument("--data-bytes", type=int, default=0)
     parser.add_argument("--cadence-ms", type=int, default=250)
     parser.add_argument("--replicas", type=int, default=4)
@@ -45,13 +50,22 @@ def main():
     with tempfile.TemporaryDirectory(dir=args.scratch) as tmp:
         root = Path(tmp).resolve()
         wrapper = root / "replica"
-        wrapper.write_text(
-            "#!/bin/sh\nexec taskset -c "
-            + shlex.quote(args.node_cpus)
-            + " "
-            + shlex.quote(str(args.binary.resolve()))
-            + ' "$@"\n'
-        )
+        launch = "taskset -c " + shlex.quote(args.node_cpus) + " " + shlex.quote(str(args.binary.resolve())) + ' "$@"'
+        wrapper_lines = ["#!/bin/sh"]
+        mount = None
+        if args.device_accounting:
+            mount = json.loads(subprocess.check_output(
+                ["findmnt", "--json", "--target", root, "--output", "TARGET,SOURCE,FSTYPE,OPTIONS"]
+            ))["filesystems"][0]
+            if mount["fstype"] in ("tmpfs", "ramfs") or not mount["source"].startswith("/dev/"):
+                raise SystemExit("device accounting requires a block-backed scratch directory")
+            wrapper_lines += [
+                'if [ "$1" = run ]; then',
+                "  exec systemd-run --user --scope --quiet --expand-environment=no --property=IOAccounting=yes -- " + launch,
+                "fi",
+            ]
+        wrapper_lines.append("exec " + launch)
+        wrapper.write_text("\n".join(wrapper_lines) + "\n")
         wrapper.chmod(0o700)
         fund = root / "evidence"
         fund.mkdir()
@@ -67,9 +81,12 @@ def main():
             STEM_STORAGE_CADENCE=str(args.cadence_ms),
             STEM_STORAGE_REPLICAS=str(args.replicas),
             STEM_STORAGE_SENDERS=str(args.senders),
+            STEM_STORAGE_PAYMENT_CHAINS=str(args.payment_chains),
             STEM_STORAGE_PAYMENT_DATA_BYTES=str(args.data_bytes),
             STEM_STORAGE_DRAIN=str(args.drain),
         )
+        if args.device_accounting:
+            env["STEM_TEST_DEVICE_ACCOUNTING"] = "1"
         case = "storage_load::sustained_payment_storage"
         if args.mode != "payments":
             env["STEM_LINEAGE_WORKLOAD"] = args.mode
@@ -99,6 +116,8 @@ def main():
             binary_sha256=binary_hash,
             harness_sha256=harness_hash,
         )
+        if mount is not None:
+            archive["scratch_mount"] = mount
         if len(paths) == 1:
             folder = paths[0]
             for name in (
@@ -134,6 +153,8 @@ def main():
             raise SystemExit("Load run failed; inspect the archived log")
         summary = recorded["report.json"]["summary"]
         print(json.dumps(summary, sort_keys=True))
+        if args.device_accounting:
+            device_writes(recorded["report.json"])
         if args.complete_volume:
             assert (
                 summary["planned"]

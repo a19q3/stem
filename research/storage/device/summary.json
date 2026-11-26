@@ -1,0 +1,284 @@
+[
+  {
+    "file": "churn-pressure.json.xz",
+    "replicas": 4,
+    "seconds": 300,
+    "planned": 375000,
+    "written": 357161,
+    "admitted": 277868,
+    "visible": 277868,
+    "drops": 17839,
+    "visible_tps": 925.39,
+    "p99_common_us": 1471423,
+    "p99_client_queue_us": 33486,
+    "p99_client_response_us": 81837,
+    "cpu_seconds": 415.37,
+    "peak_sampled_node_rss_kib": 298716,
+    "process_write_B_per_confirmed_replica": 20487.794204442398,
+    "wal_bytes": 16316222930,
+    "compaction_jobs_creating_files": 60,
+    "sst": {
+      "flush": {
+        "files": 244,
+        "bytes": 2407387619
+      },
+      "compaction": {
+        "files": 76,
+        "bytes": 3180923952
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 11486096250,
+      "finality_sync_microseconds": 37861329,
+      "finality_writes": 3704,
+      "journal_serialized": 4830126680,
+      "journal_sync_microseconds": 48398176,
+      "journal_writes": 7360
+    },
+    "agreed_height": 929,
+    "workload_sha256": "24d8d5bff37b4e0633c77707e0cf505c6f61c9eee5cfea7c8053ac50b4d768e1",
+    "genesis_sha256": "f3c22960088ccea8d8db184e13c5ae25ae750baa4f12acd1c76629ea5e6539e1",
+    "observer_errors": 0,
+    "device": {
+      "mount": {
+        "target": "/home",
+        "source": "/dev/nvme0n1p2[/@home]",
+        "fstype": "btrfs",
+        "options": "rw,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@home"
+      },
+      "bytes_by_node_and_device": [
+        {
+          "259:0": 207429632,
+          "259:1": 5028331520
+        },
+        {
+          "259:0": 211333120,
+          "259:1": 5028372480
+        },
+        {
+          "259:0": 274784256,
+          "259:1": 4963348480
+        },
+        {
+          "259:0": 322129920,
+          "259:1": 6048849920
+        }
+      ],
+      "total_bytes": 22084579328,
+      "per_confirmed_replica": 19869.667727122232,
+      "logical_bytes_by_namespace": {
+        "cell_trie": 1833993468,
+        "consensus_records": 8121393,
+        "execution": 4837220106,
+        "framing": 132768,
+        "headers_and_history": 1765012,
+        "live_cells": 4806004928,
+        "other": 818584,
+        "proposal_journal": 4827200959,
+        "serialized": 16316222930,
+        "system_records": 135000,
+        "system_trie": 830712
+      },
+      "device_over_serialized_batch_bytes": 1.3535350321423931
+    },
+    "candidate_verify_mean_us": 42606.61519078474,
+    "proposal_mean_us": 21924.46220302376,
+    "commit_mean_us": 12715.831533477321
+  },
+  {
+    "file": "disk-aged.json.xz",
+    "replicas": 4,
+    "seconds": 600,
+    "planned": 96000,
+    "written": 96000,
+    "admitted": 96000,
+    "visible": 96000,
+    "drops": 0,
+    "visible_tps": 159.86333333333334,
+    "p99_common_us": 2046417,
+    "p99_client_queue_us": 32965,
+    "p99_client_response_us": 405233,
+    "cpu_seconds": 207.9,
+    "peak_sampled_node_rss_kib": 264736,
+    "process_write_B_per_confirmed_replica": 26730.858666666667,
+    "wal_bytes": 6131571971,
+    "compaction_jobs_creating_files": 24,
+    "sst": {
+      "flush": {
+        "files": 101,
+        "bytes": 1151026334
+      },
+      "compaction": {
+        "files": 28,
+        "bytes": 1311606014
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 4453259395,
+      "finality_sync_microseconds": 81202096,
+      "finality_writes": 7908,
+      "journal_serialized": 1678312576,
+      "journal_sync_microseconds": 156352183,
+      "journal_writes": 15810
+    },
+    "agreed_height": 1980,
+    "workload_sha256": "416f13c2cb33c70542a6db77efa5d05c300b6ea6406a3cad26d39ffacd6cbbc7",
+    "genesis_sha256": "4960006fda89809a768e0829e5228320553877714a676b6d653c00ea5fc0082c",
+    "observer_errors": 0,
+    "device": {
+      "mount": {
+        "target": "/home",
+        "source": "/dev/nvme0n1p2[/@home]",
+        "fstype": "btrfs",
+        "options": "rw,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@home"
+      },
+      "bytes_by_node_and_device": [
+        {
+          "259:0": 218066944,
+          "259:1": 2262794240
+        },
+        {
+          "259:0": 225431552,
+          "259:1": 2256613376
+        },
+        {
+          "259:0": 242204672,
+          "259:1": 2278744064
+        },
+        {
+          "259:0": 231321600,
+          "259:1": 2443194368
+        }
+      ],
+      "total_bytes": 10158370816,
+      "per_confirmed_replica": 26454.090666666667,
+      "logical_bytes_by_namespace": {
+        "cell_trie": 1102159388,
+        "consensus_records": 17399752,
+        "execution": 1671372669,
+        "framing": 284616,
+        "headers_and_history": 3929114,
+        "live_cells": 1660416000,
+        "other": 1747668,
+        "proposal_journal": 1671867372,
+        "serialized": 6131571971,
+        "system_records": 334800,
+        "system_trie": 2060592
+      },
+      "device_over_serialized_batch_bytes": 1.6567318893173275
+    },
+    "candidate_verify_mean_us": 9667.935929860058,
+    "proposal_mean_us": 5999.585230146687,
+    "commit_mean_us": 10761.982549317147
+  },
+  {
+    "file": "disk-pressure.json.xz",
+    "replicas": 4,
+    "seconds": 60,
+    "planned": 96000,
+    "written": 83130,
+    "admitted": 71806,
+    "visible": 71806,
+    "drops": 12870,
+    "visible_tps": 1124.6666666666667,
+    "p99_common_us": 52500868,
+    "p99_client_queue_us": 65654,
+    "p99_client_response_us": 108298,
+    "cpu_seconds": 113.74,
+    "peak_sampled_node_rss_kib": 337668,
+    "process_write_B_per_confirmed_replica": 21973.702921761414,
+    "wal_bytes": 4316455323,
+    "compaction_jobs_creating_files": 16,
+    "sst": {
+      "flush": {
+        "files": 68,
+        "bytes": 819154075
+      },
+      "compaction": {
+        "files": 21,
+        "bytes": 949864388
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 3068139351,
+      "finality_sync_microseconds": 10455634,
+      "finality_writes": 1040,
+      "journal_serialized": 1248315972,
+      "journal_sync_microseconds": 14531672,
+      "journal_writes": 2069
+    },
+    "agreed_height": 263,
+    "workload_sha256": "416f13c2cb33c70542a6db77efa5d05c300b6ea6406a3cad26d39ffacd6cbbc7",
+    "genesis_sha256": "4960006fda89809a768e0829e5228320553877714a676b6d653c00ea5fc0082c",
+    "observer_errors": 0,
+    "device": {
+      "mount": {
+        "target": "/home",
+        "source": "/dev/nvme0n1p2[/@home]",
+        "fstype": "btrfs",
+        "options": "rw,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@home"
+      },
+      "bytes_by_node_and_device": [
+        {
+          "259:0": 56860672,
+          "259:1": 1468592128
+        },
+        {
+          "259:0": 68448256,
+          "259:1": 1454432256
+        },
+        {
+          "259:0": 56127488,
+          "259:1": 1468452864
+        },
+        {
+          "259:0": 54013952,
+          "259:1": 1499058176
+        }
+      ],
+      "total_bytes": 6125985792,
+      "per_confirmed_replica": 21328.25178954405,
+      "logical_bytes_by_namespace": {
+        "cell_trie": 573807516,
+        "consensus_records": 2265902,
+        "execution": 1250023876,
+        "framing": 37308,
+        "headers_and_history": 461936,
+        "live_cells": 1241956576,
+        "other": 229840,
+        "proposal_journal": 1247479457,
+        "serialized": 4316455323,
+        "system_records": 27000,
+        "system_trie": 165912
+      },
+      "device_over_serialized_batch_bytes": 1.4192167724655955
+    },
+    "candidate_verify_mean_us": 45661.77435897436,
+    "proposal_mean_us": 28932.188461538462,
+    "commit_mean_us": 12609.410576923077
+  }
+]
