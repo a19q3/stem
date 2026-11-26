@@ -117,5 +117,6 @@ available. Published network evidence contains public genesis and proof data.
 | Metatype workflow history | [Report](../BENCHMARKS.md#metatype-workflow-history), [signed histories, proof checks and devnet records](2026-11-26-stem-metatype-workflow.json.xz) |
 | Recovering Metatype workflow proofs from CKB | [Report](../BENCHMARKS.md#recovering-metatype-workflow-proofs-from-ckb), [restarts, signed history, early return and reorg](2026-11-26-stem-workflow-recovery.json.xz) |
 | Atomic settlement of two Metatype assets | [Report](../BENCHMARKS.md#atomic-settlement-of-two-metatype-assets), [paired layouts, receipts, rejection controls and proofs](2026-11-26-stem-metatype-multiasset.json.xz) |
+| Composed Metatype asset Cells | [Report](../BENCHMARKS.md#composed-metatype-asset-cells), [full and partial returns, offline proofs, controls and regressions](2026-11-26-stem-composed-assets.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

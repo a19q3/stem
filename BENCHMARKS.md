@@ -5129,3 +5129,58 @@ Metatype return, workflow proof recovery, Intercell, native CKB
 and xUDT, Spore, fee payouts and funded committee handoff.
 
 [Signed transactions, proofs, measurements, commands and rejection controls](benchmarks/2026-11-26-stem-metatype-multiasset.json.xz).
+
+## Composed Metatype asset Cells
+
+Four Jolteon replicas and a CKB devnet executed the same 160-unit and
+250-unit capped assets in one Cell. The Stem fixture issued the assets
+in distinct Cells, composed a Cell with four Type Scripts, exported it,
+and restored that Script set on return. A final transaction split the
+restored Cell into two scalar asset Cells with their original Scripts.
+The CKB path imported one Metatype representation, transferred it
+to another owner and burned it through the authenticated mailbox.
+
+| Manifest layout and return | CKB import bytes / cycles | CKB transfer bytes / cycles | CKB burn bytes / cycles | Stem return bytes / cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Inline, full | 2,738 / 5,621,512 | 1,335 / 3,126,918 | 1,767 / 4,795,284 | 2,908 / 14,257,163 |
+| Shared, full | 2,369 / 5,715,803 | 864 / 3,189,930 | 1,804 / 4,875,064 | 2,908 / 14,257,163 |
+| Shared, partial | 2,471 / 5,760,304 | 864 / 3,202,268 | 2,026 / 5,162,407 | 3,477 / 14,340,528 |
+
+The inline representation occupied 771 CKB. The shared layout
+occupied 263 CKB per representation and 610 CKB once for the
+shared definition. Import witnesses totaled 723, 825 and 927
+bytes across the three runs. Transfer and burn witnesses totaled 85
+and 170 bytes respectively in each run. The Stem composition,
+export and split consumed 2,026,304, 2,265,902 and 2,026,295 cycles.
+Every Stem return ran under the 20-million-cycle limit.
+
+The partial return released 60 and 110 units. Stem retained 100
+and 140 units in escrow, matching the two amounts in the surviving
+CKB representation. Negative controls rejected noncanonical native
+amount order, an exceeded independent cap, exchanging amounts
+between asset keys, inflation, an unchanged component during partial
+burn, misstated burn amounts, and substituted import witness data.
+Admission also rejected missing message authorization or a missing
+burn reference, misdirected release and replay. The separate four-
+and five-action controls verified atomic admission at the action limit.
+
+Against the earlier two-Cell shared fixture, full shared return fell
+from 4,295 to 2,908 Stem bytes. Its CKB transfer fell from 1,366 to
+864 bytes and from 4,842,060 to 3,189,930 cycles. The two-Cell
+fixture settled assets to distinct owners. The composed fixture moved
+both under a common Lock and stored two quantities in a single
+representation. These are individual transaction measurements.
+
+Independent WASM verification checked Jolteon finality, execution
+receipts, message consumption and exact Cell state, including both
+residual escrow quantities. Twelve offline CKB checks authenticated
+the signed transaction and Witness paths for the recorded outputs.
+The Rust workspace passed 489 tests with 22 ignored. The Go proof
+suite and CometBFT comparison build passed. Eight further devnet
+runs covered separate two-asset settlement, single-asset Metatype,
+workflow recovery, Intercell, CKB and xUDT, Spore, fee payouts
+and a CKB-funded committee handoff. The 2–8-key encoding is
+bounded in code. The composed custody devnet fixture used two
+assets and four Type Scripts.
+
+[Signed data, proofs, build fingerprints, commands and rejection controls](benchmarks/2026-11-26-stem-composed-assets.json.xz).
