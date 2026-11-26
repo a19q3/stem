@@ -128,3 +128,5 @@ Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验
 第 10 项用同一批 54 万笔签名支付复测了提议间隔。单机四副本、tmpfs 数据库、64 个发送线程、原区块上限下，两次 250 ms 的窗口吞吐为 1,720.67 和 1,698.24 TPS，两次 100 ms 为 2,079.95 和 2,099.64 TPS。后两次从套接字写入到全副本共同可见的 p99 为 1.32 和 1.25 秒。独立验证者主机仍需复测 3,000、5,000 和 10,000 TPS。[签名归档、计时分解与投递实验](research/storage/proposal-cadence/README.md)
 
 将数据库和驱动目录放在跨两块 NVMe 的 Btrfs 卷后，同样的 250 ms 和 100 ms 配置在 180 秒内分别共同确认 303,734 和 330,706 笔支付，相当于 1,687.41 和 1,837.26 TPS。p99 从 175.32 秒降到 2.24 秒。含 45 秒排空期的设备总写入从约 11.49 GB 增至 12.64–12.67 GB。每档各一轮，四个副本仍在同一台机器。[设备计数、签名交易及收据](research/storage/proposal-cadence/nvme/README.md)
+
+第 20 项用上游 beta.2 的 Cluster 程序独立验证了普通集合的三次所有权状态和成员 Spore 的发行、换手、销毁。集合自身引用 Lua 注册的发行样本未获 CKB 接受。测试网抽取的 256 个近期存活集合均未填写该字段，这一类扩展仍需已确认样本。[Cluster 对照、测试网抽样与离线证明](research/spore-permit/upstream/beta2/README.md#cluster-membership-and-collection-level-registration)

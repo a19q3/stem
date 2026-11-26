@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--stem", type=Path, required=True)
     args = parser.parse_args()
     records = {}
-    for filename in ("histories.json.xz", "two-registrations.json.xz"):
+    for filename in ("histories.json.xz", "two-registrations.json.xz", "cluster-controls.json.xz"):
         with lzma.open(HERE / filename, "rt") as source:
             records.update(json.load(source))
     with tempfile.TemporaryDirectory() as scratch:
@@ -62,6 +62,17 @@ def main():
                 assert "local_mutant_transfer" in settlement["rejections"]
                 assert checked["ended_in_burn"] == bool(settlement.get("standard_melt"))
             print(name, len(checked["transitions"]), "CKB transitions")
+        collection, member = records["collection"], records["cluster-member"]
+        cluster_data = binary(collection["operations"]["mint"]["signed"]["json"]["outputs_data"][0])
+        member_data = binary(member["operations"]["mint"]["signed"]["json"]["outputs_data"][0])
+        cluster_offset = int.from_bytes(member_data[12:16], "little")
+        assert member_data[cluster_offset:] == (32).to_bytes(4, "little") + binary(collection["type"]["args"])
+        assert hex_bytes(script_hash(collection["type"])) == collection["verified"]["type_hash"]
+        assert {"type_hash": collection["verified"]["type_hash"], "data_hash": hex_bytes(ckb_hash(cluster_data))} in (
+            member["verified"]["required_dependencies_per_transition"])
+        for record, data in [(member, member_data), (collection, cluster_data)]:
+            surviving = [s["output"] for s in record["verified"]["transitions"] if s["output"] is not None]
+            assert surviving and all(cell["data_hash"] == hex_bytes(ckb_hash(data)) for cell in surviving)
         # Same real proof, stronger caller predicate. The corpus contains both
         # the program text and executable bytes; only their authentic Types match.
         asset = records["mutant"]
