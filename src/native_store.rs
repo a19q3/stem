@@ -313,6 +313,8 @@ impl LiveCache {
     }
 }
 
+type LiveChanges = BTreeMap<OutPoint, Option<LiveCell>>;
+
 pub struct Prepared {
     parent: Byte32,
     next: Header,
@@ -321,12 +323,12 @@ pub struct Prepared {
     keeper_receipts: usize,
     validator_updates: Vec<stem_stake::Member>,
     committee_change: Option<CommitteeChange>,
-    live: BTreeMap<OutPoint, Option<LiveCell>>,
+    live: LiveChanges,
     batch: Batch,
 }
 
 struct Overlay {
-    live: BTreeMap<OutPoint, Option<LiveCell>>,
+    live: LiveChanges,
     stake: Option<StagedStake>,
     bridge: Option<StagedBridge>,
     lineages: lineage::Heads,
@@ -656,6 +658,7 @@ impl Store {
             sync_with_consensus(
                 &db,
                 &batch,
+                None,
                 &[],
                 &[],
                 metrics.as_deref().map(|m| (m, Purpose::Bootstrap)),
@@ -801,6 +804,7 @@ impl Store {
         sync_with_consensus(
             &self.db,
             &Batch::default(),
+            None,
             records,
             &[],
             self.metrics.as_deref().map(|m| (m, Purpose::Journal)),
@@ -1281,12 +1285,9 @@ impl Store {
         let mut cell_changes = Vec::with_capacity(overlay.live.len());
         for (point, record) in &overlay.live {
             let id = record::cell_key(&self.cells, point);
-            let value = record.as_ref().map(|record| {
-                let bytes = record::encode_cell(point, record);
-                let hash = self.cells.value_hash(&bytes);
-                batch.put(state_key(STATE_RECORD, Namespace::Cells, &id), bytes);
-                hash
-            });
+            let value = record
+                .as_ref()
+                .map(|record| record::cell_value(&self.cells, point, record));
             cell_changes.push((id, value));
         }
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
@@ -2064,6 +2065,7 @@ impl Store {
         sync_with_consensus(
             &self.db,
             &prepared.batch,
+            Some((&self.cells, &prepared.live)),
             records,
             retired,
             self.metrics.as_deref().map(|m| (m, Purpose::Finality)),
@@ -2276,6 +2278,7 @@ impl Batch {
 fn sync_with_consensus(
     db: &DB,
     batch: &Batch,
+    live: Option<(&Patricia, &LiveChanges)>,
     records: &[(Vec<u8>, Vec<u8>)],
     retired: &[Range<Vec<u8>>],
     measured: Option<(&StorageMetrics, Purpose)>,
@@ -2293,6 +2296,21 @@ fn sync_with_consensus(
         }
         if let Some(bytes) = &mut bytes {
             bytes.add(key, raw.size_in_bytes());
+        }
+    }
+    if let Some((tree, changes)) = live {
+        let mut encoded = Vec::new();
+        for (point, cell) in changes {
+            // The Patricia edit already scheduled actual record deletions.
+            if let Some(cell) = cell {
+                let id = record::cell_key(tree, point);
+                let key = state_key(STATE_RECORD, Namespace::Cells, &id);
+                record::encode_cell_into(point, cell, &mut encoded);
+                raw.put(key, &encoded)?;
+                if let Some(bytes) = &mut bytes {
+                    bytes.add(&key, raw.size_in_bytes());
+                }
+            }
         }
     }
     for (key, value) in records {

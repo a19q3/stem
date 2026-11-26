@@ -228,6 +228,7 @@ impl Store {
         sync_with_consensus(
             &self.db,
             &batch,
+            None,
             consensus,
             &[],
             self.metrics

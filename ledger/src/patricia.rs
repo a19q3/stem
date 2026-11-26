@@ -39,6 +39,10 @@ impl Patricia {
         self.commitment.value_hash(bytes)
     }
 
+    pub(crate) fn value_hash_parts(&self, parts: &[&[u8]]) -> Key {
+        self.commitment.value_hash_parts(parts)
+    }
+
     pub fn record_key(&self, name: &[u8]) -> Key {
         self.commitment.record_key(name)
     }

@@ -195,6 +195,7 @@ mod tests {
             sync_with_consensus(
                 &db,
                 &Batch::default(),
+                None,
                 records,
                 retired,
                 Some((&metrics, Purpose::Finality)),

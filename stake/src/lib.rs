@@ -610,6 +610,10 @@ fn public_key(bytes: &ValidatorKey) -> Result<VerifyingKey> {
 }
 
 fn digest(domain: &[u8], values: &[&[u8]]) -> Hash32 {
+    digest_parts(domain, values.iter().copied())
+}
+
+fn digest_parts<'a>(domain: &[u8], values: impl Iterator<Item = &'a [u8]>) -> Hash32 {
     let mut hash = new_blake2b();
     hash.update(domain);
     for value in values {

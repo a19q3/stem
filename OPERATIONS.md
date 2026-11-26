@@ -912,6 +912,10 @@ For a state-read comparison, run the same signed payments and then
 repeat with `STEM_LINEAGE_WORKLOAD=distributed_amm` and the
 `sustained_lineage_load` test filter. The latter verifies finalized
 receipts, state roots and AMM balances by serial replay.
+Set `STEM_STORAGE_PAYMENT_DATA_BYTES=2048` on both sides of a
+payment comparison to create signed outputs with 2 KiB of fixed
+Cell Data. The default is an empty payload. Match this setting
+when comparing memory or database behavior.
 The RISC-V parent-cache controls can be run with
 `cargo test --locked --release -p stem-vm --test native block_context`
 and the same command with `payment_verification_reuses_cycles`.

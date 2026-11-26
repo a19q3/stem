@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, Hash32, Result, digest};
+use crate::{Error, Hash32, Result, digest, digest_parts};
 
 pub type Key = Hash32;
 pub const MAX_NODES: usize = 257;
@@ -123,9 +123,17 @@ impl Commitment {
     }
 
     pub fn value_hash(&self, bytes: &[u8]) -> Key {
-        digest(
+        self.value_hash_parts(&[bytes])
+    }
+
+    /// Hash the concatenated canonical record without assembling a buffer.
+    pub fn value_hash_parts(&self, parts: &[&[u8]]) -> Key {
+        let namespace = [self.namespace.tag()];
+        digest_parts(
             b"Stem state record\0",
-            &[&self.network, &[self.namespace.tag()], bytes],
+            [self.network.as_slice(), namespace.as_slice()]
+                .into_iter()
+                .chain(parts.iter().copied()),
         )
     }
 

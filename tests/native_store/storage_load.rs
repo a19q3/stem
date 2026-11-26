@@ -39,6 +39,7 @@ struct Load {
     retention: u64,
     measured: bool,
     reuse_submissions: bool,
+    payment_data_bytes: usize,
 }
 
 impl Load {
@@ -62,6 +63,7 @@ impl Load {
             retention: read("STEM_STORAGE_RETENTION", 64)?,
             measured: read("STEM_STORAGE_METRICS", 1)? != 0,
             reuse_submissions: read("STEM_STORAGE_REUSE_SUBMISSIONS", 0)? != 0,
+            payment_data_bytes: read("STEM_STORAGE_PAYMENT_DATA_BYTES", 0)?.try_into()?,
         };
         ensure!(
             (4..=16).contains(&load.replicas)
@@ -73,7 +75,8 @@ impl Load {
                 && (1..=16).contains(&load.vm_workers)
                 && (32..=512).contains(&load.retention)
                 && load.rate as u64 * load.seconds <= 100_000
-                && load.block_cycles >= 20_000_000,
+                && load.block_cycles >= 20_000_000
+                && load.payment_data_bytes <= 16_384,
             "invalid sustained storage experiment settings"
         );
         Ok(load)
@@ -210,7 +213,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         let (workload, commands) = lineage_load::Workload::fund(&mut fixture, mode, work)?;
         (Some(workload), commands)
     } else {
-        (None, payments(&mut fixture, work)?)
+        (None, payments(&mut fixture, work, load.payment_data_bytes)?)
     };
     let mut jobs = Vec::with_capacity(work);
     let mut workload = Vec::new();
@@ -524,9 +527,14 @@ fn percentiles(from: impl Iterator<Item = u64>) -> Value {
     json!({"p50": at(50), "p95": at(95), "p99": at(99)})
 }
 
-fn payments(fixture: &mut Fixture, work: usize) -> Result<Vec<Transaction>> {
+fn payments(fixture: &mut Fixture, work: usize, data_bytes: usize) -> Result<Vec<Transaction>> {
     let base = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
-    let change = Cell::new(FUND - FEE, fixture.lock.clone(), vec![], Bytes::new())?;
+    let change = Cell::new(
+        FUND - FEE,
+        fixture.lock.clone(),
+        vec![],
+        Bytes::from(vec![0x6a; data_bytes]),
+    )?;
     let (code_point, code) = fixture.spec.development_cells[0].clone();
     let mut payments = Vec::with_capacity(work);
     for index in 0..work {

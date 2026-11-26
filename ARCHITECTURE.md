@@ -24,8 +24,12 @@ restores the trailing zero bytes before checking its canonical hash.
 The local storage marker binds this layout to the genesis ID.
 
 A prepared block retains its decoded Live Cell changes by OutPoint.
-Candidate reads search these changes newest first, and a consumed
-entry blocks a read from the committed store. All branch views of
+The Patricia leaf hashes the OutPoint, creation metadata and Cell
+bytes as one canonical record. Preparation feeds those slices
+directly into the hasher. Finality encodes each created record with
+one reused buffer and adds it to the atomic RocksDB batch.
+Candidate reads search changes newest first, and a consumed entry
+blocks a read from the committed store. All branch views of
 the same Store share a bounded cache of committed records, including
 their authenticated creation metadata. Successful finalization
 invalidates exactly the changed OutPoints. Snapshot installation
