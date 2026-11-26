@@ -2,7 +2,7 @@
 
 import json
 
-from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
+from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, output,
                              packed_script, point, script, script_hash, transaction, wallet_group)
 from localnet import run, write_json
 from metatype_localnet import capacity as occupied, manifest_definition, metatype_data, metatype_reference
@@ -360,8 +360,7 @@ def asset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             "--previous-hash", previous["hash"], "--height", str(height)])
         advance = stem_commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", votes)))
         path = args.output / f"udt-{label}-reference.json"
-        write_json(path, {"out_point": point(committed["hash"], 0), "anchor_height": height,
-                          "anchor_hash": hash_, "live_at_anchor": False})
+        write_json(path, l1_reference_request(height, hash_, (point(committed["hash"], 0), False)))
         approved = attest("attest-reference", label, "reference", ["--request", path])
         return advance, approved
 

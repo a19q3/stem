@@ -619,7 +619,7 @@ The result authenticates the selected output at creation. It provides no authori
 
 ### Read a CKB Cell from StemVM
 
-Query `/stem/bridge-anchor` with `prove=true` and empty data to get the accepted CKB height and hash and the Stem adoption height. Verify the path with `Store::verify_bridge_anchor` and the finalized Header. Build a request with the CKB JSON `out_point`, integer `anchor_height`, hex `anchor_hash`, and boolean `live_at_anchor`. Wait until the selected CKB anchor itself meets the configured confirmation depth. The guardian checks output inclusion and, for a live request, that unspent state is visible on a stable descendant of the requested anchor.
+Query `/stem/bridge-anchor` with `prove=true` and empty data to get the accepted CKB height and hash and the Stem adoption height. Verify the path with `Store::verify_bridge_anchor` and the finalized Header. Build a request with integer `anchor_height`, hex `anchor_hash` and a `references` array of one to four entries. Each entry supplies a CKB JSON `out_point` and the boolean `live_at_anchor`. Wait until the selected CKB anchor meets the configured confirmation depth. The guardian verifies inclusion for every output and checks each live request for unspent state on the same stable descendant tip.
 
 ```sh
 stem bridge attest-reference --genesis STEM_GENESIS --l1-rpc CKB_RPC \
@@ -628,7 +628,7 @@ stem bridge attach-references --genesis STEM_GENESIS --transaction draft.json \
   --observations reference-votes.json
 ```
 
-Collect strictly more than two-thirds of guardian weight in the input JSON array for each requested OutPoint. Save the returned transaction and sign it through the ordinary full Lock path. Use syscall 2130 and decode its Strand `L1Reference` at index `a3`. Applications can check the observation kind, CKB genesis and anchor, OutPoint, full Molecule CellOutput and Data. If the accepted CKB anchor advances, collect signatures against the new anchor. A live record expires after the Stem Header Dep horizon measured from adoption of the anchor.
+Collect strictly more than two-thirds of guardian weight over the complete set. Each response contains the ordered `records`, `signer` and `signature`. Put these responses in one JSON array, attach them to the draft, then sign through the ordinary full Lock path. Use syscall 2130 and decode an individual Strand `L1Reference` at index `a3`. Applications can check the observation kind, CKB genesis and anchor, OutPoint, full Molecule CellOutput and Data. If the accepted anchor advances, have the guardians sign the complete set against the new anchor. A live record expires after the Stem Header Dep horizon measured from adoption of the anchor.
 
 During a bridge lull, advance the anchor using the exact accepted predecessor and a strictly higher CKB height that already meets the network's confirmation depth. Use the same private guardian journal as for mint and settlement observations.
 
@@ -764,9 +764,9 @@ python3 tools/jolteon_bridge_localnet.py \
   --output /tmp/stem-intercell-devnet
 ```
 
-Add `--exercise-publisher` to drive the fixture through the sparse publisher. The fixture first delivers against an exact checkpoint, then advances it and delivers an older Outbox proof with a history path. The generic bidirectional fixture sets a 50-million-cycle transaction cap to verify three separately certified CKB references in one receive. It exercises the 4,096-byte payload limit on both chains.
+Add `--exercise-publisher` to drive the fixture through the sparse publisher. The fixture first delivers against an exact checkpoint, then advances it and delivers an older Outbox proof with a history path. The generic bidirectional fixture receives a message with three CKB references under the usual 20-million-cycle transaction cap. It exercises the 4,096-byte payload limit on both chains.
 
-Use `stem intercell encode --request message.json`. The request fields are `source`, `destination`, `sender`, `receiver`, `nonce` and hex `payload`. The result contains the hex message `record` and stable `id`. Include the record as a Group Action with kind 65280 for sending or 65281 for receiving. For a receive, use `attest-reference` with `live_at_anchor: false` against the currently accepted anchor. Put the resulting observations and any application reference observations in the same `--observations` array for `attach-references`. Exactly one historical reference must match the complete outgoing record. A historical reference can prove an outgoing mailbox record after its output is spent. Sign the assigned consuming Lock group after attaching the references.
+Use `stem intercell encode --request message.json`. The request fields are `source`, `destination`, `sender`, `receiver`, `nonce` and hex `payload`. The result contains the hex message `record` and stable `id`. Include the record as a Group Action with kind 65280 for sending or 65281 for receiving. For a receive, put the mailbox output with `live_at_anchor: false` and any application references in one `attest-reference` request at the currently accepted anchor. Pass the guardians' votes for that set to `attach-references`. Exactly one historical reference must match the complete outgoing record. A historical reference can prove an outgoing mailbox record after its output is spent. Sign the assigned consuming Lock group after attaching the certificate.
 
 For CKB delivery, query `/stem/intercell/outbox` with the message ID as hex `data` and `prove=true`. Use a live Jolteon Checkpoint Cell at or after the proof height. Save the Outbox proof while its height is the Stem tip. Pass the query's `record` and `proof` and the live Mailbox's `expected_root` to `stem intercell delivery-witness --request delivery.json --header header.json`. Supply exactly one of `consumed` (an array of consumed IDs) and `replay_path` (a hex-encoded sparse non-inclusion proof for the message ID at that root). The Header file holds the execution Header from the live Checkpoint Cell as a JSON hex string. The command verifies the Outbox and replay paths and derives the successor root. Put the returned `input_type` in the mailbox input's Molecule WitnessArgs and the `successor_root` in the successor data. Keep the outbound nonce and use empty outgoing bytes. The CKB transaction references that live checkpoint and the owner signs the transaction. A relay can maintain `stem_stake::intercell::Inbox` and use `Inbox::path` to construct a proof without passing its full index to the witness builder.
 
@@ -1499,9 +1499,9 @@ the revisable three-Script command to exercise a live rule. The
 CKB registry Type ID stays fixed while the two-byte record changes
 from 120 to 200. The run advances Stem's CKB anchor twice and obtains
 guardians' live rule observations. It verifies that an old reference
-cannot authorize a return under the new anchor. The fixture configures
-50 million transaction cycles for this profile because returning the
-object executes two separately certified references.
+cannot authorize a return under the new anchor. The historical mailbox
+record and live registry record share one certificate, so the return
+fits the usual 20-million-cycle transaction limit.
 
 ### Exercise cap-bound Metatype fungible custody
 

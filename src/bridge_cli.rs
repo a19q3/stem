@@ -92,9 +92,9 @@ pub enum BridgeCommand {
     AttestPayout(payout::AttestPayout),
     /// Observe a confirmed L1 vault rotation or two-vault reserve adjustment.
     AttestVault(vault::AttestVault),
-    /// Observe and sign a historical output or live-at-anchor CKB reference.
+    /// Observe and sign a set of historical or live-at-anchor CKB references.
     AttestReference(reference::AttestReference),
-    /// Attach verified CKB reference certificates to an unsigned Stem transaction.
+    /// Attach one verified CKB reference-set certificate to an unsigned Stem transaction.
     AttachReferences(reference::AttachReferences),
     /// Attest a confirmed CKB anchor without a vault transaction.
     AttestAnchor(anchor::AttestAnchor),

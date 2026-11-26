@@ -56,6 +56,11 @@ def point(tx_hash, index):
     return {"tx_hash": tx_hash, "index": hex(index)}
 
 
+def l1_reference_request(height, block_hash, *references):
+    return {"anchor_height": height, "anchor_hash": block_hash,
+            "references": [{"out_point": point_, "live_at_anchor": live} for point_, live in references]}
+
+
 def dependency(outpoint, dep_type="code"):
     return {"out_point": outpoint, "dep_type": dep_type}
 

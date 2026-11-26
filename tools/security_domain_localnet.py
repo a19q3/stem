@@ -12,7 +12,7 @@ import time
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bridge_localnet import (
-    CKB, FEE, FAUCET_ARG, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le,
+    CKB, FEE, FAUCET_ARG, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le,
     output, point, script, script_hash, transaction, wallet_group, write_key,
 )
 from localnet import run, write_json
@@ -499,18 +499,16 @@ def use_stem_receipt(args, l1, fixture, vault, spec, spec_path, mint, client):
     assert accepted["height"] == height and accepted["hash"] == block, accepted
 
     request = args.output / "security-reference-request.json"
-    write_json(request, {"out_point": ckb["receipt"]["out_point"], "live_at_anchor": False,
-                         "anchor_height": height, "anchor_hash": block})
+    write_json(request, l1_reference_request(height, block, (ckb["receipt"]["out_point"], False)))
     observations, votes = collect("service", "attest-reference", ["--request", request])
     live_request = args.output / "security-reference-spent-as-live.json"
-    write_json(live_request, {"out_point": ckb["receipt"]["out_point"], "live_at_anchor": True,
-                             "anchor_height": height, "anchor_hash": block})
+    write_json(live_request, l1_reference_request(height, block, (ckb["receipt"]["out_point"], True)))
     spurious = subprocess.run([args.binary, "bridge", "attest-reference", "--genesis", spec_path,
         "--l1-rpc", l1.url, "--key-file", fixture.guardian_keys[0], "--journal", args.output / "journal-0",
         "--request", live_request], text=True, capture_output=True)
     assert spurious.returncode and "no longer live" in spurious.stderr, spurious
-    record = binary(votes[0]["record"])
-    assert all(binary(vote["record"]) == record for vote in votes)
+    record = binary(votes[0]["records"][0])
+    assert all(len(vote["records"]) == 1 and binary(vote["records"][0]) == record for vote in votes)
     assert binary(ckb["receipt"]["data"]) in record
     assert binary(ckb["domain"]["domain"]) in record
     native_lock = script(hex_bytes(ckb_hash(args.native_lock.read_bytes())),

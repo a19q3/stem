@@ -363,7 +363,7 @@ fn load_draft(path: &Path) -> Result<Transaction> {
     let tx = Transaction::from_slice(encoded.as_bytes())?;
     ensure!(
         tx.operation().is_none()
-            && tx.l1_references().len() == 0
+            && tx.l1_reference_certificate().is_none()
             && tx.keeper_action().is_none()
             && !tx.has_lineage_command(),
         "intent draft must be an ordinary transaction without protocol operations or L1 references"

@@ -396,8 +396,9 @@ Type hash matches. The existing CKB guardian quorum must authenticate
 it at the current committed anchor. StemVM exposes the typed projection
 through syscall 2130. A historical inclusion supplies no live rule
 data. The caller supplies the attestation for every transition that
-executes this group. A return carries a separate historical message
-record at the same anchor.
+executes this group. A return includes the historical message record
+and the live rule record in one reference-set certificate at the same
+anchor.
 
 Rule updates keep the Manifest, deployment and object identity fixed.
 Every later valid ceiling also accepts earlier authorized states. If

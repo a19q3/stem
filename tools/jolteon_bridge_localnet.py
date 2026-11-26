@@ -10,7 +10,8 @@ import secrets
 import struct
 import subprocess
 
-from bridge_localnet import CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, le, point, reject_cli, script, write_key
+from bridge_localnet import (CKB, FEE, Fixtures, L1, binary, ckb_hash, dependency, hex_bytes, l1_reference_request,
+                             le, point, reject_cli, script, write_key)
 from jolteon_checkpoint_localnet import PublisherFixture, Relay
 from intercell_localnet import intercell_round
 from security_domain_localnet import use_stem_receipt
@@ -197,8 +198,7 @@ def reference_round(args, l1, fixture, spec, spec_path, lane, mint, client):
 
     def attest(label, target, live, height=anchor["height"], block=anchor["hash"], rejected=None):
         path = args.output / f"reference-{label}-request.json"
-        write_json(path, {"out_point": target, "live_at_anchor": live,
-                          "anchor_height": height, "anchor_hash": block})
+        write_json(path, l1_reference_request(height, block, (target, live)))
         votes = []
         for index, key in enumerate(fixture.guardian_keys[:3]):
             command = [args.binary, "bridge", "attest-reference", "--genesis", spec_path,
@@ -209,7 +209,7 @@ def reference_round(args, l1, fixture, spec, spec_path, lane, mint, client):
                 assert result.returncode and rejected in result.stderr, result
                 return result.stderr
             votes.append(json.loads(run(*command)))
-        assert len({vote["record"] for vote in votes}) == 1
+        assert len({tuple(vote["records"]) for vote in votes}) == 1
         votes_file = args.output / f"reference-{label}-votes.json"
         write_json(votes_file, votes)
         return votes, votes_file
@@ -258,10 +258,10 @@ def reference_round(args, l1, fixture, spec, spec_path, lane, mint, client):
         policy = script(hex_bytes(script_code), hex_bytes(bytes([kind]) + ckb_hash(binary(record))), "data")
         return [cell(capacity, native_lock, types=[policy])]
 
-    live_outputs = output(live_votes[0]["record"], 1, part - FEE)
+    live_outputs = output(live_votes[0]["records"][0], 1, part - FEE)
     errors["missing"] = reject(sign("missing", live_input, live_outputs), "exited with 13")
     errors["wrong_kind"] = reject(sign("wrong-kind", live_input,
-        output(historical_live_votes[0]["record"], 1, part - FEE), historical_live_file), "exited with 13")
+        output(historical_live_votes[0]["records"][0], 1, part - FEE), historical_live_file), "exited with 13")
     submit_live = sign("accepted-live", live_input, live_outputs, live_file)
     corrupted = bytearray(binary(submit_live))
     signature = binary(live_votes[0]["signature"])
@@ -275,7 +275,7 @@ def reference_round(args, l1, fixture, spec, spec_path, lane, mint, client):
     newer = anchor["height"] + 1
     future_hash = l1.call("get_block_hash", hex(newer))
     future_votes, future_file = attest("other-anchor", live_point, True, newer, future_hash)
-    history_outputs = output(old_votes[0]["record"], 0, part - FEE)
+    history_outputs = output(old_votes[0]["records"][0], 0, part - FEE)
     errors["uncommitted_anchor"] = reject(sign("uncommitted-anchor", history_input, history_outputs, future_file),
                                           "committed CKB anchor")
     expiry = anchor["adopted_at"] + spec["limits"]["header_dep_age"]
@@ -329,10 +329,10 @@ def reference_round(args, l1, fixture, spec, spec_path, lane, mint, client):
     assert lane_before["record"] == lane_after["record"]
     assert fees_before["extinguished_shannons"] == fees_after["extinguished_shannons"]
     errors["superseded_anchor"] = reject(
-        sign("superseded", refresh_input, output(old_votes[0]["record"], 0, part - 2 * FEE), old_file),
+        sign("superseded", refresh_input, output(old_votes[0]["records"][0], 0, part - 2 * FEE), old_file),
         "committed CKB anchor")
     refreshed_tx = sign("refreshed-live", refresh_input,
-        output(future_votes[0]["record"], 1, part - 2 * FEE), future_file)
+        output(future_votes[0]["records"][0], 1, part - 2 * FEE), future_file)
     refreshed = client.call("broadcast_tx_commit", tx=refreshed_tx)
     assert refreshed["check_tx"]["code"] == 0, refreshed
 
@@ -442,14 +442,10 @@ def bridge_round(args, l1, fixture, children):
             bridge["checkpoint_fee_fund_code"] = fee_fund["lock"]["code_hash"]
     keys = evidence_keys(args)
     members = [{"ed25519": hex_bytes(key), "power": 1} for key, _ in keys]
-    generic_intercell = args.intercell_mailbox and not any(
-        (args.export_udt, args.stem_spore, args.stem_native_object))
-    # The generic receive fixture carries three separately certified references.
-    transaction_cycles = 50_000_000 if generic_intercell or args.metatype_rule_registry else 20_000_000
     spec = {"chain_id": "stem-jolteon-ckb-local", "network_id": network, "genesis_time_ms": 1_735_689_600_000,
             "capacity": {"bond_per_byte": 1_000_000, "state_overhead": 80},
             "limits": {"transaction_count": 64, "transaction_bytes": 2 * 1024 * 1024,
-                       "transaction_cycles": transaction_cycles, "block_cycles": 400_000_000, "cell_reads": 1024,
+                       "transaction_cycles": 20_000_000, "block_cycles": 400_000_000, "cell_reads": 1024,
                        "cell_read_bytes": 64 * 1024 * 1024, "cell_write_bytes": 4 * 1024 * 1024, "header_dep_age": 64},
             "development_validators": members, "bridge": bridge}
     spec_path = args.output / "stem.json"

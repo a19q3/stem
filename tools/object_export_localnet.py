@@ -4,7 +4,7 @@ import json
 import subprocess
 import time
 
-from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
+from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, output,
                              packed_script, point, script, script_hash, transaction, wallet_group)
 from localnet import run, write_json
 from metatype_localnet import (
@@ -122,8 +122,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     live_votes = None
 
-    def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None,
-                    use_live_votes=True, rule_votes=None):
+    def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None):
         locks = sorted({packed_script(lock): (lock, key) for _, lock, key in spending}.values(),
                        key=lambda pair: packed_script(pair[0]))
         points = [p for p, _, _ in spending]
@@ -139,9 +138,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         context = args.output / f"object-{label}-context.json"
         write_json(path, request)
         write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", path)))
-        observations = [*votes] if votes else []
-        if live_rule and use_live_votes:
-            observations.extend(rule_votes if rule_votes is not None else live_votes or [])
+        observations = votes if votes is not None else live_votes
         if observations:
             observation_file = args.output / f"object-{label}-references.json"
             write_json(observation_file, observations)
@@ -197,10 +194,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         approval_file = args.output / f"object-{label}-approvals.json"
         return commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", approval_file)))
 
-    def attest_reference(label, outpoint, header, *, live):
+    def attest_references(label, header, *targets):
         request = args.output / f"object-{label}-reference-request.json"
-        write_json(request, {"out_point": outpoint, "anchor_height": int(header["number"], 16),
-                             "anchor_hash": header["hash"], "live_at_anchor": live})
+        write_json(request, l1_reference_request(int(header["number"], 16), header["hash"], *targets))
         return attest("attest-reference", label, ["--request", request])
 
     seed_cap, auth_cap, object_cap, bond_cap = [capacity * CKB for capacity in (450, 200, 200, 120)]
@@ -229,9 +225,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             birth_header = registry_birth["proof"]["header"]
             l1.mine(spec["bridge"]["confirmations"])
             first_rule_anchor = attest_anchor("rule-anchor-initial", birth_header)
-            initial_votes = attest_reference("rule-initial", l1_rule_point, birth_header, live=True)
-            other_votes = attest_reference("rule-other", other_rule_point, birth_header, live=True)
-            historical_votes = attest_reference("rule-historical", l1_rule_point, birth_header, live=False)
+            initial_votes = attest_references("rule-initial", birth_header, (l1_rule_point, True))
+            other_votes = attest_references("rule-other", birth_header, (other_rule_point, True))
+            historical_votes = attest_references("rule-historical", birth_header, (l1_rule_point, False))
             live_votes = initial_votes
         else:
             native_rule_point, native_other_rule_point = [at(separated, i) for i in (3, 4)]
@@ -353,8 +349,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             "exited with 117")
         if state_limit:
             valid_update = [cell(object_cap, owner, native_update, types), cheaper_auth]
-            absent = dict(use_live_votes=False) if live_rule else dict(deps=native_deps[:-1])
-            unrelated = (dict(rule_votes=other_votes) if live_rule else
+            absent = dict(votes=[]) if live_rule else dict(deps=native_deps[:-1])
+            unrelated = (dict(votes=other_votes) if live_rule else
                          dict(deps=[*native_deps[:-1], native_other_rule_point]))
             rejected["stem_revision_missing_external_rule"] = reject_stem(native_sign("missing-external-rule", previous,
                 valid_update, **absent), "exited with 56")
@@ -362,11 +358,12 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                 valid_update, **unrelated), "exited with 56")
             if live_rule:
                 rejected["stem_historical_rule"] = reject_stem(native_sign("historical-rule", previous,
-                    valid_update, rule_votes=historical_votes), "exited with 56")
+                    valid_update, votes=historical_votes), "exited with 56")
             rejected["stem_revision_removes_state_limit"] = reject_stem(native_sign("remove-state-limit", previous,
                 [cell(object_cap, owner, native_update, types[:-1]), cheaper_auth]), "exited with 56")
             substitute = dict(types[-1], args=hex_bytes(identity_hash + rule_tag + substitute_hash))
-            both = (dict(rule_votes=[*initial_votes, *other_votes]) if live_rule else
+            both = (dict(votes=attest_references("both-rules", birth_header,
+                                                (l1_rule_point, True), (other_rule_point, True))) if live_rule else
                     dict(deps=[*native_deps, native_other_rule_point]))
             rejected["stem_revision_replaces_state_limit"] = reject_stem(native_sign("replace-state-limit", previous,
                 [cell(object_cap, owner, native_update, [*types[:-1], substitute]), cheaper_auth],
@@ -636,12 +633,12 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     l1.mine(spec["bridge"]["confirmations"])
     anchor = burned["proof"]["header"]
     advanced = attest_anchor("anchor", anchor)
-    certified = attest_reference("return", live_mailbox, anchor, live=False)
+    mailbox_votes = attest_references("return-mailbox", anchor, (live_mailbox, False))
+    certified = mailbox_votes
     if live_rule:
-        live_votes = attest_reference("rule-expanded", l1_rule_replacement, anchor, live=True)
+        certified = attest_references("return", anchor, (l1_rule_replacement, True), (live_mailbox, False))
         old = args.output / "object-consumed-rule-request.json"
-        write_json(old, {"out_point": l1_rule_point, "anchor_height": int(anchor["number"], 16),
-                         "anchor_hash": anchor["hash"], "live_at_anchor": True})
+        write_json(old, l1_reference_request(int(anchor["number"], 16), anchor["hash"], (l1_rule_point, True)))
         refused = subprocess.run([args.binary, "bridge", "attest-reference", "--genesis", spec_path,
             "--l1-rpc", l1.url, "--key-file", fixture.guardian_keys[0], "--request", old,
             "--journal", args.output / "object-consumed-rule"], capture_output=True, text=True)
@@ -665,13 +662,14 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                             cell(native_auth_capacity - 2 * FEE, authority)],
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
     if state_limit:
+        without_rule = dict(votes=mailbox_votes) if live_rule else dict(votes=certified, **absent)
         rejected["stem_return_under_missing_rule"] = reject_stem(native_sign("return-missing-rule", with_approval,
             release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)],
-            endpoint=endpoint, message=inbound, receive=True, votes=certified, **absent), "exited with 56")
+            endpoint=endpoint, message=inbound, receive=True, **without_rule), "exited with 56")
     if live_rule:
         rejected["stem_return_under_superseded_rule_anchor"] = reject_stem(native_sign("return-old-rule-anchor", with_approval,
             release + [cell(native_auth_capacity - 2 * FEE, authority)],
-            endpoint=endpoint, message=inbound, receive=True, votes=certified, rule_votes=initial_votes),
+            endpoint=endpoint, message=inbound, receive=True, votes=initial_votes),
             "committed CKB anchor")
     if topup:
         rejected["stem_return_without_required_topup"] = reject_stem(native_sign("return-underfunded",

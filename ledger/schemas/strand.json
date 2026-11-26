@@ -440,9 +440,9 @@
       "item": "Certificate"
     },
     {
-      "name": "L1ReferenceVec",
+      "name": "L1ReferenceSet",
       "kind": "dense_vector",
-      "item": "Certificate"
+      "item": "L1Reference"
     },
     {
       "name": "L1Reference",
@@ -704,8 +704,8 @@
           "bit": 1
         },
         {
-          "name": "l1_references",
-          "type": "L1ReferenceVec",
+          "name": "l1_reference_certificate",
+          "type": "CertificateOpt",
           "bit": 2
         }
       ],

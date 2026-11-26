@@ -7,7 +7,7 @@ from threading import Thread
 import time
 from urllib.request import Request, urlopen
 
-from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
+from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, output,
                              point, script, script_hash, transaction, wallet_group)
 from localnet import run, write_json
 from native_bridge_localnet import cell, signing_cell, start, wait_for
@@ -461,16 +461,18 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
         write_json(path, votes)
         return json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", path))
 
-    def reference(label, out_point, anchor, reason=None, *, live=False):
+    def references(label, targets, anchor, reason=None):
         request = args.output / f"intercell-{label}-reference.json"
-        write_json(request, {"out_point": out_point, "anchor_height": anchor["height"],
-                            "anchor_hash": anchor["hash"], "live_at_anchor": live})
+        write_json(request, l1_reference_request(anchor["height"], anchor["hash"], *targets))
         votes = signers("attest-reference", "observations", ["--request", request], reason)
         if reason:
             return votes
         path = args.output / f"intercell-{label}-approvals.json"
         write_json(path, votes)
         return path
+
+    def reference(label, out_point, anchor, reason=None, *, live=False):
+        return references(label, [(out_point, live)], anchor, reason)
 
     incoming_body = b"r" * MAX_PAYLOAD
     at_limit = prepare("oversized-source", genesis, network, mailbox_id, native_owner, receive_count,
@@ -502,12 +504,13 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     wrong_votes = reference("wrong-receiver", misdirected["point"], anchor)
     counterfeit_votes = reference("counterfeit", point(counterfeit, 0), anchor, live=True)
     alternate_votes = reference("alternate-checkpoint", point(alternate_send, 0), anchor)
-    composed_votes = args.output / "intercell-composed-approvals.json"
-    write_json(composed_votes, [vote for path in (wrong_votes, counterfeit_votes, approvals)
-                               for vote in json.loads(path.read_text())])
-    unrelated_votes = args.output / "intercell-unrelated-approvals.json"
-    write_json(unrelated_votes, [vote for path in (wrong_votes, counterfeit_votes)
-                                for vote in json.loads(path.read_text())])
+    unrelated = [(misdirected["point"], False), (point(counterfeit, 0), True)]
+    composed_votes = references("composed", [*unrelated, (sent["point"], False)], anchor)
+    unrelated_votes = references("unrelated", unrelated, anchor)
+    reordered = references("composed-reordered", [(sent["point"], False), *reversed(unrelated)], anchor)
+    assert json.loads(reordered.read_text()) == json.loads(composed_votes.read_text())
+    rejected["guardian_duplicate_reference"] = references("duplicate", unrelated * 2, anchor,
+                                                            "unique OutPoint")
     source_mismatch = "uniquely matching certified CKB mailbox output"
     rejected["stem_alternate_checkpoint"] = stem_reject(sign_stem("alternate-checkpoint", inputs[2], change,
         alternate_message, MESSAGE_RECEIVE, alternate_votes), source_mismatch)
@@ -524,6 +527,21 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
                               native_owner, 0, incoming_body)
     rejected["stem_receive_cross_network"] = stem_reject(sign_stem("inbound-foreign", inputs[2], change,
         foreign_receive, MESSAGE_RECEIVE, composed_votes), "receiver or network mismatch")
+    def reject_observation_votes(label, votes, reason):
+        path = args.output / f"intercell-{label}-approvals.json"
+        write_json(path, votes)
+        result = subprocess.run([args.binary, "bridge", "attach-references", "--genesis", spec_path,
+            "--transaction", args.output / "intercell-inbound-foreign-draft.json", "--observations", path],
+            text=True, capture_output=True)
+        assert result.returncode and reason in result.stderr, result
+        return result.stderr
+
+    whole = json.loads(composed_votes.read_text())
+    separate = json.loads(wrong_votes.read_text())
+    rejected["guardian_mixed_sets"] = reject_observation_votes("mixed-sets", [whole[0], *separate[1:]],
+                                                               "different L1 reference sets")
+    rejected["guardian_erased_record"] = reject_observation_votes("erased-record",
+        [dict(vote, records=vote["records"][:-1]) for vote in whole], "Signature")
     forged_tx = bytearray(binary(sign_stem("inbound", inputs[2], change, incoming, MESSAGE_RECEIVE, approvals)))
     signature = binary(json.loads(approvals.read_text())[0]["signature"])
     forged_tx[forged_tx.index(signature)] ^= 1
@@ -535,6 +553,8 @@ def intercell_round(args, l1, fixture, vault, spec, spec_path, mint, clients, re
     receipt_query = client.query("/stem/execution", data=hex_bytes(le(location["index"], 4)),
                                  height=location["height"], prove=True)
     receipt = json.loads(bytes.fromhex(receipt_query["value"]))
+    receipt["height"] = location["height"]
+    receipt["finality"] = client.finality(location["height"])["proof"]
     assert binary(incoming["id"]) in binary(receipt["receipt"])
     received_cell = signing_cell(client, point("0x" + delivered["hash"], 0))
     assert binary(received_cell["cell"]).endswith(binary(incoming["record"]))

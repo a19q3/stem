@@ -457,28 +457,13 @@ impl Transaction {
             "Transaction exceeds byte limit"
         );
         let raw = encoded.raw();
-        let l1_references = encoded.l1_references();
-        ensure!(
-            l1_references.len() <= protocol::l1_reference::MAX_REFERENCES,
-            "too many L1 Cell references"
-        );
-        if !l1_references.is_empty() {
+        if let Some(certificate) = encoded.l1_reference_certificate().to_opt() {
             ensure!(
                 raw.protocol().to_opt().is_none() && raw.lineage_command().to_opt().is_none(),
                 "L1 references require an ordinary Cell transaction"
             );
-            let mut previous = None::<OutPoint>;
-            for certificate in l1_references {
-                let certificate = Certificate::decode(certificate)?;
-                let record = protocol::l1_reference::L1Reference::decode(&certificate.body())?;
-                ensure!(
-                    previous
-                        .as_ref()
-                        .is_none_or(|last| last.as_slice() < record.out_point.as_slice()),
-                    "L1 references must be ordered by unique OutPoint"
-                );
-                previous = Some(record.out_point);
-            }
+            let certificate = Certificate::decode(certificate)?;
+            protocol::l1_reference::decode_reference_set(&certificate.body())?;
         }
         check_count(
             raw.cell_deps().len(),
@@ -695,18 +680,11 @@ impl Transaction {
     }
 
     pub fn id(&self, network_id: &Byte32) -> Byte32 {
-        let references = self.encoded.l1_references();
+        let references = self.encoded.l1_reference_certificate();
         hash(
             b"Stem transaction ID\0",
             network_id,
-            &[
-                self.encoded.raw().as_slice(),
-                if references.is_empty() {
-                    &[]
-                } else {
-                    references.as_slice()
-                },
-            ],
+            &[self.encoded.raw().as_slice(), references.as_slice()],
         )
     }
 
@@ -1113,14 +1091,14 @@ impl Transaction {
             .map(Certificate::validated_entity)
     }
 
-    pub fn l1_references(&self) -> impl ExactSizeIterator<Item = Certificate> {
+    pub fn l1_reference_certificate(&self) -> Option<Certificate> {
         self.encoded
-            .l1_references()
-            .into_iter()
+            .l1_reference_certificate()
+            .to_opt()
             .map(Certificate::validated_entity)
     }
 
-    pub fn with_l1_references(&self, certificates: Vec<Certificate>) -> Result<Self> {
+    pub fn with_l1_reference_certificate(&self, certificate: Certificate) -> Result<Self> {
         ensure!(
             self.witnesses().all(|witness| witness.seal.is_empty()),
             "attach L1 references before collecting seals"
@@ -1129,9 +1107,9 @@ impl Transaction {
             self.encoded
                 .clone()
                 .as_builder()
-                .l1_references(
-                    wire::L1ReferenceVec::new_builder()
-                        .set(certificates.iter().map(Certificate::encode).collect())
+                .l1_reference_certificate(
+                    wire::CertificateOpt::new_builder()
+                        .set(Some(certificate.encode()))
                         .build(),
                 )
                 .build(),
@@ -1397,7 +1375,7 @@ impl IntentScope {
         if tx.operation().is_some()
             || tx.has_lineage_command()
             || tx.keeper_action().is_some()
-            || tx.l1_references().len() != 0
+            || tx.l1_reference_certificate().is_some()
         {
             return None;
         }
@@ -1439,7 +1417,7 @@ impl ResolvedTransaction {
         ensure!(
             transaction.operation().is_none()
                 && !transaction.has_lineage_command()
-                && transaction.l1_references().len() == 0,
+                && transaction.l1_reference_certificate().is_none(),
             "transaction requires its authenticated execution path"
         );
         Self::resolve_with_capacity(

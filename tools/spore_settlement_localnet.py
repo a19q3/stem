@@ -2,7 +2,7 @@
 
 import json
 
-from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
+from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, output,
                              packed_script, point, script, script_hash, transaction, wallet_group)
 from localnet import run, write_json
 from native_bridge_localnet import cell, signing_cell
@@ -186,8 +186,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             "--previous-hash", prior_anchor["hash"], "--height", str(height)], journal="anchor")
         anchor = commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", approvals)))
         reference = args.output / f"spore-{label}-reference-request.json"
-        write_json(reference, {"out_point": point(deposit_["hash"], 0), "anchor_height": height,
-                              "anchor_hash": ckb_header["hash"], "live_at_anchor": False})
+        write_json(reference, l1_reference_request(height, ckb_header["hash"], (point(deposit_["hash"], 0), False)))
         approved = attest("attest-reference", f"{label}-reference", ["--request", reference], journal="reference")
         return anchor, approved
 

@@ -200,7 +200,7 @@ impl Transaction {
         ensure!(
             self.operation().is_none()
                 && self.keeper_action().is_none()
-                && self.l1_references().len() == 0
+                && self.l1_reference_certificate().is_none()
                 && !self.has_lineage_command(),
             "paired intents cannot authorize this transaction's controls or L1 references"
         );
