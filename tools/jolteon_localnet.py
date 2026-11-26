@@ -92,6 +92,8 @@ def genesis_and_payments(args, keys, weights, *, fee_calibration=False):
         "development_cells": [{"out_point": code, "cell": code_cell}]
         + [{"out_point": out, "cell": pay} for out, pay in zip(inputs, spending)],
     }
+    if getattr(args, "vm_crypto_v1", False):
+        genesis["vm_crypto_v1"] = True
     if fee_calibration:
         genesis["fees"] = PAYMENT_FEES
     spec = args.output / "genesis.json"
@@ -359,6 +361,7 @@ def main():
     parser.add_argument("--offered", type=float, default=16)
     parser.add_argument("--checkpoint-proofs", type=int, choices=range(0, 5), default=0,
                         help="save verified consecutive exact-height proofs from the live archive")
+    parser.add_argument("--vm-crypto-v1", action="store_true", help="activate crypto syscall 2131 in the fixture genesis")
     parser.add_argument("--fee-calibration", action="store_true")
     parser.add_argument("--require-relay-retry", action="store_true",
                         help="submit one payment when both of its initial relay targets are offline")

@@ -23,6 +23,8 @@ struct Network {
     network_id: H256,
     genesis_time_ms: u64,
     capacity: StorageBond,
+    #[serde(default)]
+    vm_crypto_v1: bool,
     limits: Limits,
     #[serde(default)]
     fees: ResourceFees,
@@ -172,6 +174,7 @@ pub fn load(path: &Path) -> Result<Spec> {
             bond_per_byte: config.capacity.bond_per_byte,
             state_overhead: config.capacity.state_overhead,
         },
+        vm_crypto_v1: config.vm_crypto_v1,
         limits: config.limits,
         fees: config.fees,
         development_cells,

@@ -75,6 +75,15 @@ pub struct ContextData {
 }
 
 pub fn run(program: &Bytes, context: ContextData, max_cycles: u64) -> Result<(Vec<Output>, u64)> {
+    run_with_crypto(program, context, max_cycles, false)
+}
+
+pub fn run_with_crypto(
+    program: &Bytes,
+    context: ContextData,
+    max_cycles: u64,
+    crypto_v1: bool,
+) -> Result<(Vec<Output>, u64)> {
     let outputs = Arc::new(Mutex::new(vec![None; context.inputs.len()]));
     let host = Executor {
         context,
@@ -85,10 +94,13 @@ pub fn run(program: &Bytes, context: ContextData, max_cycles: u64) -> Result<(Ve
         VERSION2,
         max_cycles,
     );
-    let mut machine = DefaultMachineBuilder::new(core)
+    let mut builder = DefaultMachineBuilder::new(core)
         .instruction_cycle_func(Box::new(estimate_cycles))
-        .syscall(Box::new(host))
-        .build();
+        .syscall(Box::new(host));
+    if crypto_v1 {
+        builder = builder.syscall(Box::new(crate::crypto::V1));
+    }
+    let mut machine = builder.build();
     let loaded = machine.load_program(program, std::iter::empty())?;
     machine.add_cycles(transferred_byte_cycles(loaded))?;
     let exit = machine.run()?;

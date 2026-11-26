@@ -151,6 +151,17 @@ Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_he
 
 标准锁在 RISC-V 内校验恢复的压缩公钥哈希，通过 syscall 2121 进行 secp256k1 恢复。恢复接受低 S 的 65 字节签名，计算结果与原 k256 锁进行差分验证。每次调用在读取 VM 内存前计入 1,900,000 cycles。节点可以本地复用相同完整签名和摘要对应的成功恢复结果。命中缓存时计费相同，Lock Script 仍验证公钥对应的授权。CKB L1 合约维持 CKB 原生 ABI。
 
+创世配置可设置 `"vm_crypto_v1": true`，以系统记录 `vm/crypto-abi = 0x01` 将 ABI 版本绑定到 Genesis Header。省略或设为 false 使用原创世编码。启用时，Lock、Type Script、子 VM 及 Lineage Executor 可调用 RISC-V syscall 2131。a0 为操作号，a1/a2 为输入地址和字节数，a3 为哈希输出地址。返回 a0 为 0 表示成功，4 表示操作、长度或签名无效。非法内存或超出 cycles 预算按 VM 错误处理。
+
+| a0 | 输入与输出 | 额外 cycles |
+| --- | --- | --- |
+| 0 | 0 至 1 MiB 原始字节，写入 32 字节 CKB 个性化 BLAKE2b-256 | 每输入字节 128 |
+| 1 | 1 至 64 条定长 129 字节记录，每条依次为 33 字节压缩 secp256k1 公钥、32 字节摘要和 64 字节低 S 紧凑 ECDSA 签名 | 每条 2,200,000 |
+| 2 | 1 至 64 条定长 128 字节记录，每条依次为 32 字节 Ed25519 公钥、32 字节消息和 64 字节签名，使用严格验证 | 每条 3,200,000 |
+
+每次调用先计 25,000 cycles。长度合法的批次在读内存前按全批计费。每条签名独立验证，整批通过才返回成功。脚本可根据网络的交易或 Executor 预算使用更小的批次。计费标定、完整 ELF 验证与四副本创世重启实测见[原始记录](benchmarks/2026-11-27-crypto-v1.json.xz)。
+
+
 ### Stem Header 与时间
 
 原生 Stem Header 编码高度、共识时间、父 Header ID、状态承诺和执行承诺。运行交易前，以高度、共识时间、父 Header ID 和交易根计算独立的区块上下文 ID，用于认证同块新建 Cell 的创建信息。完整 Header ID 在状态与执行承诺得出后计算。Jolteon 投票认证完整 Stem 执行 Header。Stem 原生 Header 没有 CKB PoW nonce、compact target、难度、Uncle 承诺或 DAO 字段。交易执行删除 NC-Max Proposal Window、Cellbase、Cellbase Maturity、一级与二级发行、矿工奖励和 Nervos DAO 的特殊验证、取款补偿与容量例外。CKB PoW、DAO 等 L1 字段可用于核验真正的 L1 数据，L1 协议继续独立运行。 [CKB L1 区块结构](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0027-block-structure/0027-block-structure.md)

@@ -61,6 +61,7 @@ impl Fixture {
         ));
         Ok(Self {
             spec: Spec {
+                vm_crypto_v1: false,
                 chain_id: "stem-native-storage-test".into(),
                 development_validators: vec![],
                 stake: None,
@@ -673,5 +674,23 @@ fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> R
     assert!(store.live_cell(&parent_output)?.is_none());
     assert!(store.prove_cell(&parent_output)?.0.is_none());
 
+    Ok(())
+}
+
+#[test]
+fn vm_crypto_activation_changes_genesis_and_reopen_checks_it() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let old_path = tempfile::tempdir()?;
+    let new_path = tempfile::tempdir()?;
+    let open = |path: &std::path::Path, spec: &Spec| Store::open(path, spec, Retention::Archive);
+    let old = open(old_path.path(), &fixture.spec)?.genesis_id().clone();
+    fixture.spec.vm_crypto_v1 = true;
+    let new = open(new_path.path(), &fixture.spec)?.genesis_id().clone();
+    assert_ne!(old, new);
+    assert!(open(old_path.path(), &fixture.spec).is_err());
+    assert_eq!(open(new_path.path(), &fixture.spec)?.genesis_id(), &new);
+    fixture.spec.vm_crypto_v1 = false;
+    assert!(open(new_path.path(), &fixture.spec).is_err());
+    assert_eq!(open(old_path.path(), &fixture.spec)?.genesis_id(), &old);
     Ok(())
 }

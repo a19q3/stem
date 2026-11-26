@@ -3727,6 +3727,7 @@ dependencies = [
  "ckb-script",
  "ckb-types",
  "ckb-vm",
+ "ed25519-dalek",
  "k256",
  "lru",
  "rayon",

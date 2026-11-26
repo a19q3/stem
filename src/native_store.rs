@@ -176,6 +176,7 @@ impl ResourceFees {
 }
 
 pub struct Spec {
+    pub vm_crypto_v1: bool,
     pub chain_id: String,
     pub development_validators: Vec<([u8; 32], i64)>,
     pub stake: Option<StakeGenesis>,
@@ -556,6 +557,11 @@ impl Store {
             params.extend_from_slice(public_key);
             params.extend_from_slice(&power.to_le_bytes());
         }
+        if spec.vm_crypto_v1 {
+            let id = system.record_key(b"vm/crypto-abi");
+            system_edit.set(id, Some(system.value_hash(&[1])))?;
+            batch.put(state_key(STATE_RECORD, Namespace::System, &id), [1]);
+        }
         let id = system.record_key(PARAMETER_KEY);
         system_edit.set(id, Some(system.value_hash(&params)))?;
         batch.put(state_key(STATE_RECORD, Namespace::System, &id), params);
@@ -691,7 +697,7 @@ impl Store {
             limits: spec.limits,
             fees: spec.fees,
             live_cache: Arc::default(),
-            cache: Arc::new(VerificationCache::new(4096)),
+            cache: Arc::new(VerificationCache::for_genesis(4096, spec.vm_crypto_v1)),
             branch: Vec::new(),
         })
     }

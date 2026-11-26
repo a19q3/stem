@@ -404,7 +404,7 @@ pub(super) fn materialize(
         // derive effects from the signed actors and terms, not the payer.
         Byte32::default()
     };
-    let run = executor::run(
+    let run = executor::run_with_crypto(
         &executor_code.data(),
         executor::ContextData {
             height: block.candidate().height,
@@ -415,6 +415,7 @@ pub(super) fn materialize(
             inputs,
         },
         command.executor_cycles,
+        store.cache.crypto_v1_enabled(),
     );
     let run = run.and_then(|(results, cycles)| {
         let successors = successors(&loaded, &command.targets, results)?;

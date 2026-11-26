@@ -1720,3 +1720,8 @@ both chains. Use `--metatype-composed-selective partial` to redeem
 Use `--metatype-composed-selective exhaust` to redeem all 160 units of
 the first asset and then redeem the second via the next CKB mailbox
 sequence. The runner checks rejection of an all-zero representation.
+
+
+### 创世时启用 StemVM 密码学 ABI v1
+
+新网络可在顶层 genesis JSON 中加入 `"vm_crypto_v1": true`，并让所有节点核对 `stem genesis-hash --genesis genesis.json --header` 的结果。节点会拒绝用另一种配置打开原数据库。现有网络沿用已有配置。开发网脚本 `tools/jolteon_localnet.py --vm-crypto-v1` 可用相同的权限规则演练停机追赶。接口、返回码和预算见 [StemVM 协议](STEM-PROTOCOL.md)。

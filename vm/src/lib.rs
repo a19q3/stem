@@ -3,7 +3,7 @@
 mod crypto;
 pub mod executor;
 
-pub use crypto::{SECP256K1_RECOVER, SECP256K1_RECOVERY_CYCLES};
+pub use crypto::{CRYPTO_V1, SECP256K1_RECOVER, SECP256K1_RECOVERY_CYCLES};
 
 use std::sync::{
     Arc, Mutex,
@@ -169,13 +169,22 @@ impl DataSource<DataPieceId> for GroupContext {
 /// Verify the automatically derived Lock and Type Script Groups.
 /// The same transaction cycle budget applies whether groups run serially or in parallel.
 pub fn verify(tx: Arc<ResolvedTransaction>, max_cycles: u64, parallel: bool) -> Result<u64> {
-    verify_groups(tx, max_cycles, parallel, &Arc::default(), &[], |_, _| {})
+    verify_groups(
+        tx,
+        max_cycles,
+        parallel,
+        false,
+        &Arc::default(),
+        &[],
+        |_, _| {},
+    )
 }
 
 fn verify_groups(
     tx: Arc<ResolvedTransaction>,
     max_cycles: u64,
     parallel: bool,
+    crypto_v1: bool,
     parent_read: &Arc<AtomicBool>,
     estimates: &[Option<u64>],
     mut observe: impl FnMut(usize, u64),
@@ -187,6 +196,7 @@ fn verify_groups(
             &transaction_id,
             group,
             limit,
+            crypto_v1,
             Arc::clone(parent_read),
         )
     };
@@ -238,6 +248,7 @@ fn verify_groups(
 
 /// Caches verified transactions and remembers recent Script Group costs for scheduling.
 pub struct VerificationCache {
+    crypto_v1: bool,
     verified: Mutex<LruCache<Byte32, CachedVerification>>,
     estimates: Mutex<LruCache<(u8, Byte32), u64>>,
 }
@@ -249,10 +260,20 @@ struct CachedVerification {
 
 impl VerificationCache {
     pub fn new(capacity: usize) -> Self {
+        Self::for_genesis(capacity, false)
+    }
+
+    /// A cache belongs to one immutable set of genesis VM rules.
+    pub fn for_genesis(capacity: usize, crypto_v1: bool) -> Self {
         Self {
+            crypto_v1,
             verified: Mutex::new(LruCache::new(capacity)),
             estimates: Mutex::new(LruCache::new(capacity)),
         }
+    }
+
+    pub fn crypto_v1_enabled(&self) -> bool {
+        self.crypto_v1
     }
 
     pub fn verify(
@@ -281,7 +302,15 @@ impl VerificationCache {
 
         let parent_read = Arc::new(AtomicBool::new(false));
         let cycles = if tx.groups().len() < 2 {
-            verify_groups(tx, max_cycles, parallel, &parent_read, &[], |_, _| {})?
+            verify_groups(
+                tx,
+                max_cycles,
+                parallel,
+                self.crypto_v1,
+                &parent_read,
+                &[],
+                |_, _| {},
+            )?
         } else {
             let groups: Vec<_> = tx
                 .groups()
@@ -299,6 +328,7 @@ impl VerificationCache {
                 tx,
                 max_cycles,
                 parallel,
+                self.crypto_v1,
                 &parent_read,
                 &estimated,
                 |index, cost| {
@@ -335,6 +365,7 @@ fn execute_group(
     transaction_id: &Byte32,
     index: usize,
     limit: u64,
+    crypto_v1: bool,
     parent_read: Arc<AtomicBool>,
 ) -> Result<u64> {
     let group = &tx.groups()[index];
@@ -349,7 +380,7 @@ fn execute_group(
         script_hash: script_hash.clone(),
         parent_read,
     };
-    let mut scheduler = scheduler(context, syscalls, ());
+    let mut scheduler = scheduler(context, syscalls, crypto_v1);
     let result = scheduler
         .run(RunMode::LimitCycles(limit))
         .with_context(|| format!("{kind:?} Script Group {script_hash:#x}"))?;
@@ -365,9 +396,9 @@ fn syscalls<M: SupportMachine>(
     id: &VmId,
     group: &GroupContext,
     context: &VmContext<GroupContext>,
-    _: &(),
+    crypto_v1: &bool,
 ) -> Vec<Box<dyn Syscalls<M>>> {
-    vec![
+    let mut calls: Vec<Box<dyn Syscalls<M>>> = vec![
         Box::new(LoadContext(group.clone())),
         Box::new(crypto::Recover),
         Box::new(LoadCellData::new(context)),
@@ -382,7 +413,11 @@ fn syscalls<M: SupportMachine>(
         Box::new(Read::new(id, context)),
         Box::new(InheritedFd::new(id, context)),
         Box::new(Close::new(id, context)),
-    ]
+    ];
+    if *crypto_v1 {
+        calls.push(Box::new(crypto::V1));
+    }
+    calls
 }
 
 struct LoadContext(GroupContext);

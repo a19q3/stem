@@ -4,7 +4,7 @@ use ckb_script::runtime::SUCCESS;
 use ckb_vm::{
     Error, Register, SupportMachine, Syscalls,
     memory::Memory,
-    registers::{A0, A1, A2, A7},
+    registers::{A0, A1, A2, A3, A7},
 };
 use lru::LruCache;
 use secp256k1::{
@@ -24,7 +24,16 @@ thread_local! {
         RefCell::new(LruCache::new(RECOVERY_CACHE_ENTRIES));
 }
 
+pub const CRYPTO_V1: u64 = 2131;
+pub const CRYPTO_BASE_CYCLES: u64 = 25_000;
+pub const HASH_CYCLES_PER_BYTE: u64 = 128;
+const SECP256K1_VERIFY_CYCLES: u64 = 2_200_000;
+const ED25519_VERIFY_CYCLES: u64 = 3_200_000;
+pub const MAX_BATCH: u64 = 64;
+pub const MAX_HASH_BYTES: u64 = 1 << 20;
+
 pub(crate) struct Recover;
+pub(crate) struct V1;
 
 impl<M: SupportMachine> Syscalls<M> for Recover {
     fn initialize(&mut self, _: &mut M) -> Result<(), Error> {
@@ -55,6 +64,93 @@ impl<M: SupportMachine> Syscalls<M> for Recover {
     }
 }
 
+impl<M: SupportMachine> Syscalls<M> for V1 {
+    fn initialize(&mut self, _: &mut M) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn ecall(&mut self, machine: &mut M) -> Result<bool, Error> {
+        if machine.registers()[A7].to_u64() != CRYPTO_V1 {
+            return Ok(false);
+        }
+        crypto_v1(machine)
+    }
+}
+
+/// A0 selects the operation, A1/A2 describe the source span and A3 is
+/// the output pointer for the fixed 32-byte hash. Batch input holds complete
+/// key/digest/signature records. Charge every record before reading memory.
+fn crypto_v1<M: SupportMachine>(machine: &mut M) -> Result<bool, Error> {
+    let operation = machine.registers()[A0].to_u64();
+    let source = machine.registers()[A1].to_u64();
+    let bytes = machine.registers()[A2].to_u64();
+    let destination = machine.registers()[A3].to_u64();
+    machine.add_cycles(CRYPTO_BASE_CYCLES)?;
+    let status = match operation {
+        0 if bytes <= MAX_HASH_BYTES => {
+            machine.add_cycles(bytes * HASH_CYCLES_PER_BYTE)?;
+            let input = machine.memory_mut().load_bytes(source, bytes)?;
+            let hash = ckb_hash::blake2b_256(&input);
+            machine.memory_mut().store_bytes(destination, &hash)?;
+            SUCCESS
+        }
+        1 | 2 => {
+            let width = if operation == 1 { 129 } else { 128 };
+            let count = bytes / width;
+            if !(1..=MAX_BATCH).contains(&count) || !bytes.is_multiple_of(width) {
+                INVALID_SIGNATURE
+            } else {
+                let cost = if operation == 1 {
+                    SECP256K1_VERIFY_CYCLES
+                } else {
+                    ED25519_VERIFY_CYCLES
+                };
+                machine.add_cycles(count * cost)?;
+                let input = machine.memory_mut().load_bytes(source, bytes)?;
+                let valid = if operation == 1 {
+                    input.chunks_exact(129).all(verify_secp256k1)
+                } else {
+                    input.chunks_exact(128).all(verify_ed25519)
+                };
+                if valid { SUCCESS } else { INVALID_SIGNATURE }
+            }
+        }
+        _ => INVALID_SIGNATURE,
+    };
+    machine.set_register(A0, M::REG::from_u8(status));
+    Ok(true)
+}
+
+fn verify_secp256k1(record: &[u8]) -> bool {
+    let Ok(key) = secp256k1::PublicKey::from_slice(&record[..33]) else {
+        return false;
+    };
+    let digest = Message::from_digest(record[33..65].try_into().expect("32-byte digest"));
+    let Ok(sig) = secp256k1::ecdsa::Signature::from_compact(&record[65..]) else {
+        return false;
+    };
+    // libsecp256k1 verification accepts only a low-S signature.
+    verification_context()
+        .verify_ecdsa(&digest, &sig, &key)
+        .is_ok()
+}
+
+fn verify_ed25519(record: &[u8]) -> bool {
+    let Ok(key) =
+        ed25519_dalek::VerifyingKey::from_bytes(record[..32].try_into().expect("32-byte key"))
+    else {
+        return false;
+    };
+    let sig =
+        ed25519_dalek::Signature::from_bytes(record[64..].try_into().expect("64-byte signature"));
+    key.verify_strict(&record[32..64], &sig).is_ok()
+}
+
+fn verification_context() -> &'static Secp256k1<VerifyOnly> {
+    static CONTEXT: OnceLock<Secp256k1<VerifyOnly>> = OnceLock::new();
+    CONTEXT.get_or_init(Secp256k1::verification_only)
+}
+
 /// Local reuse of successful, pure recoveries. Current-cell and group
 /// authorization still run in the caller, and the syscall always charges.
 pub(super) fn recover_cached(seal: [u8; 65], digest: [u8; 32]) -> Option<[u8; 33]> {
@@ -79,9 +175,7 @@ fn recover(seal: &[u8], digest: &Message) -> Option<[u8; 33]> {
     if original != normalized {
         return None;
     }
-    static CONTEXT: OnceLock<Secp256k1<VerifyOnly>> = OnceLock::new();
-    let key = CONTEXT
-        .get_or_init(Secp256k1::verification_only)
+    let key = verification_context()
         .recover_ecdsa(digest, &signature)
         .ok()?;
     Some(key.serialize())
@@ -179,6 +273,66 @@ mod tests {
             "recovery samples={SAMPLES} uncached_ns={:?} miss_ns={:?} hit_ns={:?} fixed_cycles={SECP256K1_RECOVERY_CYCLES}",
             percentiles[0], percentiles[1], percentiles[2],
         );
+    }
+
+    #[test]
+    #[ignore = "calibrate crypto ABI against uncached native recovery on a pinned CPU"]
+    fn measure_crypto_v1() {
+        use ed25519_dalek::Signer;
+        use std::{hint::black_box, time::Instant};
+        let key = SigningKey::from_bytes((&[17; 32]).into()).unwrap();
+        let ed = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
+        let mut cases = Vec::new();
+        for i in 0..128u16 {
+            let digest = ckb_hash::blake2b_256(i.to_le_bytes());
+            let seal = sign(&key, &digest);
+            let secp = [
+                key.verifying_key().to_encoded_point(true).as_bytes(),
+                &digest,
+                &seal[..64],
+            ]
+            .concat();
+            let ed_record = [
+                &ed.verifying_key().to_bytes()[..],
+                &digest,
+                &ed.sign(&digest).to_bytes(),
+            ]
+            .concat();
+            cases.push((Message::from_digest(digest), seal, secp, ed_record));
+        }
+        let sizes = [0, 32, 256, 4096, 65_536, 1_048_576];
+        let data = vec![3u8; sizes[5]];
+        for trial in 0..18 {
+            // Rotate the three signature loops to distribute transient host effects.
+            for index in 0..3 {
+                let op = (index + trial) % 3;
+                let start = Instant::now();
+                for (digest, seal, secp, ed) in black_box(&cases) {
+                    assert!(match op {
+                        0 => recover(black_box(seal), digest).is_some(),
+                        1 => verify_secp256k1(black_box(secp)),
+                        _ => verify_ed25519(black_box(ed)),
+                    });
+                }
+                println!(
+                    "CAL {trial} {} 1 {} {}",
+                    ["recover", "secp", "ed"][op],
+                    cases.len(),
+                    start.elapsed().as_nanos()
+                );
+            }
+            for size in sizes {
+                let repeats = (2_097_152 / size.max(1)).clamp(8, 2048);
+                let start = Instant::now();
+                for _ in 0..repeats {
+                    black_box(ckb_hash::blake2b_256(black_box(&data[..size])));
+                }
+                println!(
+                    "CAL {trial} hash {size} {repeats} {}",
+                    start.elapsed().as_nanos()
+                );
+            }
+        }
     }
 
     #[test]

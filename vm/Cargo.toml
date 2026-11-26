@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 ckb-script = { workspace = true, default-features = false, features = ["detect-asm", "vm-reuse"] }
+ckb-hash.workspace = true
+ed25519-dalek.workspace = true
 ckb-types.workspace = true
 ckb-vm.workspace = true
 stem-ledger = { path = "../ledger" }
@@ -18,6 +20,5 @@ secp256k1 = { version = "=0.30.0", features = ["recovery"] }
 
 [dev-dependencies]
 ckb-crypto.workspace = true
-ckb-hash.workspace = true
 k256 = { version = "=0.13.4", default-features = false, features = ["ecdsa"] }
 tempfile.workspace = true
