@@ -1,0 +1,48 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 62156f0..332b6a0 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3660,6 +3660,7 @@ dependencies = [
+  "clap",
+  "ed25519-dalek",
+  "hex",
++ "linked-hash-map",
+  "prost",
+  "rayon",
+  "reqwest",
+diff --git a/Cargo.toml b/Cargo.toml
+index 13a4f7a..93eb13f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -12,6 +12,7 @@ publish = false
+ comet-benchmark = []
+
+ [dependencies]
++linked-hash-map = "=0.5.6"
+ anyhow.workspace = true
+ base64.workspace = true
+ bytes.workspace = true
+diff --git a/src/jolteon/mempool.rs b/src/jolteon/mempool.rs
+index afa8c8d..fd33bd5 100644
+--- a/src/jolteon/mempool.rs
++++ b/src/jolteon/mempool.rs
+@@ -1,8 +1,9 @@
+ use std::{
+-    collections::{BTreeMap, BTreeSet},
++    collections::BTreeSet,
+     time::{Duration, Instant},
+ };
+
++use linked_hash_map::LinkedHashMap;
+ use stem_ledger::{
+     Transaction,
+     keeper::{Action, Trigger, decode_command},
+@@ -40,7 +41,7 @@ impl Deadline {
+
+ #[derive(Default)]
+ pub(super) struct Mempool {
+-    entries: BTreeMap<Hash32, Entry>,
++    entries: LinkedHashMap<Hash32, Entry>,
+     heights: BTreeSet<(u64, Hash32)>,
+     parent_times: BTreeSet<(u64, Hash32)>,
+     relays: BTreeSet<(Instant, Hash32)>,

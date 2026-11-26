@@ -1,0 +1,38 @@
+diff --git a/src/jolteon.rs b/src/jolteon.rs
+index 1dca196..123dc52 100644
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -1165,7 +1165,7 @@ impl Replica {
+             let started = Instant::now();
+             let (transactions, execution) = self.workers.install(|| {
+                 self.store.on_branch(&batches, |state| {
+-                    state.build_proposal(self.mempool.transactions(), at, MAX_PROPOSAL_BYTES)
++                    state.build_proposal(self.mempool.transactions(parent_header.context.height), at, MAX_PROPOSAL_BYTES)
+                 })
+             })?;
+             self.execution.proposal.observe(started.elapsed());
+diff --git a/src/jolteon/mempool.rs b/src/jolteon/mempool.rs
+index afa8c8d..06e8d59 100644
+--- a/src/jolteon/mempool.rs
++++ b/src/jolteon/mempool.rs
+@@ -72,8 +72,18 @@ impl Mempool {
+         self.bytes
+     }
+
+-    pub(super) fn transactions(&self) -> impl Iterator<Item = &Transaction> {
+-        self.entries.values().map(|entry| &entry.tx)
++    pub(super) fn transactions(&self, parent_height: u64) -> impl Iterator<Item = &Transaction> {
++        // Rotate the start of the existing ordered index. Reversing the low
++        // eight height bits spreads consecutive starts over the hash space.
++        let mut start = [0; 32];
++        // Leave three proposals per group on the original low-latency order.
++        if parent_height % 4 == 3 {
++            start[0] = ((parent_height / 4) as u8).reverse_bits();
++        }
++        self.entries
++            .range(start..)
++            .chain(self.entries.range(..start))
++            .map(|(_, entry)| &entry.tx)
+     }
+
+     pub(super) fn insert(&mut self, id: Hash32, tx: Transaction) -> anyhow::Result<()> {
