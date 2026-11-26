@@ -564,6 +564,7 @@ def main():
     parser.add_argument("--stem-transaction-cycles", type=int, default=20_000_000,
                         help="explicit per-transaction cycle limit in the Stem development genesis")
     parser.add_argument("--fee-funds", action="store_true")
+    parser.add_argument("--spore-immortal", action="store_true", help="use the published Spore V2 immortal lifecycle")
     parser.add_argument("--checkpoint-fee-fund", type=lambda path: Path(path).resolve(),
                         help="use restricted checkpoint Lock for the PoW Security Fund")
     for name in ("export-udt", "asset-escrow", "ckb-stem-udt"):
@@ -618,6 +619,8 @@ def main():
             not all((args.export_udt, args.intercell_mailbox))
             or not (all(portable_udt) or all((args.asset_escrow, args.ckb_stem_udt)))):
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
+    if args.spore_immortal and not args.spore_v2:
+        parser.error("--spore-immortal requires the original Spore V2 settlement fixture")
     if any((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.spore_cluster_v2)) and (
             not all((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
             or args.export_udt):

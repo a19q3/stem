@@ -24,24 +24,31 @@ pub struct SporeTransfer<'a> {
 
 impl<'a> SporeTransfer<'a> {
     pub fn decode(payload: &'a [u8]) -> Option<Self> {
+        Self::read(payload, false)
+    }
+
+    /// Stem-issued objects use the plain content profile.
+    pub fn decode_plain(payload: &'a [u8]) -> Option<Self> {
+        Self::read(payload, true)
+    }
+
+    fn read(payload: &'a [u8], plain: bool) -> Option<Self> {
         let (header, data) = payload.split_at_checked(TRANSFER_HEADER)?;
         let original_type = header[..32].try_into().ok()?;
         let recipient = header[32..].try_into().ok()?;
         if original_type == [0; 32] || recipient == [0; 32] {
             return None;
         }
+        let parsed = SporeData::decode(data)?;
+        if plain && !parsed.is_plain() {
+            return None;
+        }
         Some(Self {
             original_type,
             recipient,
             data,
-            cluster_id: SporeData::decode(data)?.cluster_id,
+            cluster_id: parsed.cluster_id,
         })
-    }
-
-    /// Stem-issued objects use the plain content profile.
-    pub fn decode_plain(payload: &'a [u8]) -> Option<Self> {
-        let transfer = Self::decode(payload)?;
-        transfer.cluster_id.is_none().then_some(transfer)
     }
 }
 
@@ -56,9 +63,11 @@ pub fn plain_spore(data: &[u8]) -> bool {
 
 pub(crate) fn plain_spore_fields(data: &[u8]) -> Option<(&[u8], &[u8])> {
     let data = SporeData::decode(data)?;
-    data.cluster_id
-        .is_none()
-        .then_some((data.content_type, data.content))
+    data.is_plain().then_some((data.content_type, data.content))
+}
+
+fn basic_content_type(mime: &[u8]) -> bool {
+    matches!(mime, b"text/plain" | b"application/octet-stream")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,6 +78,10 @@ pub struct SporeData<'a> {
 }
 
 impl<'a> SporeData<'a> {
+    fn is_plain(&self) -> bool {
+        self.cluster_id.is_none() && basic_content_type(self.content_type)
+    }
+
     pub fn decode(data: &'a [u8]) -> Option<Self> {
         let (header, _) = data.split_at_checked(16)?;
         let [total, mime, content, cluster] = header.as_chunks::<4>().0 else {
@@ -94,12 +107,16 @@ impl<'a> SporeData<'a> {
                 Some(id)
             }
         };
-        (matches!(content_type, b"text/plain" | b"application/octet-stream") && !content.is_empty())
-            .then_some(Self {
-                content_type,
-                content,
-                cluster_id,
-            })
+        // Custody preserves the original Cell through deposits and returns.
+        // An immortal Spore cannot be melted; its mapped Cell redeems only by releasing that original.
+        let mime = content_type
+            .strip_suffix(b";immortal=true")
+            .unwrap_or(content_type);
+        (basic_content_type(mime) && !content.is_empty()).then_some(Self {
+            content_type,
+            content,
+            cluster_id,
+        })
     }
 }
 
@@ -111,6 +128,30 @@ fn molecule_bytes(raw: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn immortal_custody_does_not_extend_the_plain_native_profile() {
+        for mime in [
+            b"text/plain;immortal=true".as_slice(),
+            b"application/octet-stream;immortal=true",
+        ] {
+            let content = 20u32 + mime.len() as u32;
+            let end = content + 5;
+            let mut data = [end, 16, content, end, mime.len() as u32]
+                .map(u32::to_le_bytes)
+                .concat();
+            data.extend_from_slice(mime);
+            data.extend_from_slice(&[1, 0, 0, 0, b'x']);
+            let mut message = [[1; 32], [2; 32]].concat();
+            message.extend_from_slice(&data);
+            assert_eq!(SporeData::decode(&data).unwrap().content_type, mime);
+            assert!(SporeTransfer::decode(&message).is_some());
+            assert!(SporeTransfer::decode_plain(&message).is_none());
+            assert!(!plain_spore(&data));
+            data[content as usize - 1] = b'X';
+            assert!(SporeData::decode(&data).is_none());
+        }
+    }
 
     #[test]
     fn canonical_spore_accepts_only_a_complete_optional_cluster_id() {

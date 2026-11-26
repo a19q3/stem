@@ -28,9 +28,11 @@ def molecule_bytes(data):
 
 
 def cobuild(object_type, object_id, source, target, *, data=None, cluster=False):
-    to = le(0, 4) + packed_script(target)
+    to = le(0, 4) + packed_script(target) if target is not None else None
     tag = 3 if cluster else 0
-    if source is None:
+    if target is None:
+        detail = le(tag + 2, 4) + table(object_id, le(0, 4) + packed_script(source))
+    elif source is None:
         detail = le(tag, 4) + table(object_id, to, ckb_hash(data))
     else:
         detail = le(tag + 1, 4) + table(object_id, le(0, 4) + packed_script(source), to)
@@ -114,7 +116,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     object_type = script(hex_bytes(SPORE_CODE), hex_bytes(object_id), "data1")
     original = script_hash(object_type)
     def spore_data(id_):
-        return table(molecule_bytes(b"text/plain"), molecule_bytes(b"One Spore across two networks"),
+        mime = b"text/plain;immortal=true" if args.spore_immortal else b"text/plain"
+        return table(molecule_bytes(mime), molecule_bytes(b"One Spore across two networks"),
                      molecule_bytes(id_) if id_ else b"")
 
     data = spore_data(cluster_id)
@@ -142,6 +145,12 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             assert SPORE_CODE.hex() in rejected[f"ckb_{label}"], rejected[f"ckb_{label}"]
     minted = submit_ckb(mint_spore("mint"))
     object_point = point(minted["hash"], 0)
+    if args.spore_immortal:
+        melt = transaction([object_point], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"], deps)
+        melt["witnesses"] = ["0x", cobuild(object_type, object_id, fixture.owner_lock, None)]
+        rejected["ckb_immortal_melt"] = ckb_reject(
+            fixture.sign("spore-immortal-melt", melt, [wallet_group(0, [fixture.owner])]), 65)
+        assert SPORE_CODE.hex() in rejected["ckb_immortal_melt"]
     sequencer_id = type_id(mint_source + 1)
     checkpoint_code, checkpoint_id = binary(vault["anchor"]["hash"]), vault["anchor"]["id"]
     endpoint = script(stem_spore_code, hex_bytes(original + binary(genesis) + mailbox_code
@@ -404,7 +413,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         return {**json.loads(bytes.fromhex(response["value"])), "height": height,
                 "finality": client.finality(height)["proof"]}
 
-    return {"id": hex_bytes(object_id), "original_type": object_type, "mapped_type": mapped_type, "cluster": cluster,
+    return {"id": hex_bytes(object_id), "immortal": args.spore_immortal, "original_type": object_type, "mapped_type": mapped_type, "cluster": cluster,
             "mailbox_creation": l1.prove_committed(created), "mailbox": mailbox, "endpoint": endpoint,
             "minted": minted, "held": held, "anchor": anchor, "imported": imported,
             "transferred": transferred, "burned": burned, "released": released, "final_ckb": final,
