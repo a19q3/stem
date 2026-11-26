@@ -18,7 +18,7 @@ use ckb_types::{
 mod encoding_tests;
 #[allow(dead_code)]
 mod strand;
-use strand::prelude::{Builder as WireBuilder, Entity as WireEntity};
+use strand::prelude::{Builder as WireBuilder, Entity as WireEntity, Reader as WireReader};
 
 mod authorization;
 pub mod block;
@@ -93,6 +93,7 @@ impl Default for CapacityPolicy {
 pub const MAX_TYPE_SCRIPTS: usize = 32;
 pub const MAX_SCRIPT_GROUPS: usize = 8_192;
 pub const MAX_SCRIPT_BYTES: usize = 16 * 1024;
+const CKB_SCRIPT_TABLE_HEADER_BYTES: usize = 4 * (1 + Script::FIELD_COUNT);
 pub const MAX_TYPE_SCRIPT_BYTES: usize = 64 * 1024;
 pub const MAX_TRANSACTION_BYTES: usize = 512 * 1024;
 // Genesis may carry the 1 MiB secp256k1 precomputation table plus Cell overhead.
@@ -128,10 +129,10 @@ impl Cell {
             type_scripts.len() <= MAX_TYPE_SCRIPTS,
             "too many Type Scripts"
         );
-        validate_script(&lock)?;
+        validate_script(lock.as_slice().len(), lock.hash_type().as_slice()[0])?;
         let mut script_bytes = 0;
         for script in &type_scripts {
-            validate_script(script)?;
+            validate_script(script.as_slice().len(), script.hash_type().as_slice()[0])?;
             script_bytes += script.as_slice().len();
         }
         ensure!(
@@ -166,32 +167,35 @@ impl Cell {
     }
 
     fn from_entity(encoded: wire::Cell) -> Result<Self> {
-        let cell = Self::validated_entity(encoded);
+        Self::validate(encoded.as_reader())?;
+        Ok(Self::validated_entity(encoded))
+    }
+
+    fn validate(cell: wire::CellReader<'_>) -> Result<()> {
         ensure!(
             cell.as_slice().len() <= MAX_CELL_BYTES,
             "Cell exceeds byte limit"
         );
-        validate_script(&cell.lock())?;
-        let types = cell.encoded.type_scripts();
+        validate_wire_script(cell.lock())?;
+        let types = cell.type_scripts();
         ensure!(types.len() <= MAX_TYPE_SCRIPTS, "too many Type Scripts");
-        let mut previous: Option<wire::Script> = None;
+        let mut previous = None;
         let mut script_bytes = 0;
-        for current in types {
-            validate_script(&decode_script(&current))?;
-            script_bytes += current.as_slice().len();
+        for current in types.iter() {
+            validate_wire_script(current)?;
+            let bytes = current.as_slice();
+            script_bytes += bytes.len();
             ensure!(
-                previous
-                    .as_ref()
-                    .is_none_or(|last| last.as_slice() < current.as_slice()),
+                previous.is_none_or(|last| last < bytes),
                 "Type Script set is out of order or contains a duplicate"
             );
-            previous = Some(current);
+            previous = Some(bytes);
         }
         ensure!(
             script_bytes <= MAX_TYPE_SCRIPT_BYTES,
             "Type Script set exceeds byte limit"
         );
-        Ok(cell)
+        Ok(())
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -287,12 +291,17 @@ fn decode_script(script: &wire::Script) -> Script {
         .build()
 }
 
-fn validate_script(script: &Script) -> Result<()> {
-    ensure!(
-        script.as_slice().len() <= MAX_SCRIPT_BYTES,
-        "Script exceeds byte limit"
-    );
-    match ScriptHashType::try_from(script.hash_type())? {
+fn validate_wire_script(script: wire::ScriptReader<'_>) -> Result<()> {
+    // CKB packs the same fields with an additional Molecule table header.
+    validate_script(
+        script.as_slice().len() + CKB_SCRIPT_TABLE_HEADER_BYTES,
+        script.hash_type().as_slice()[0],
+    )
+}
+
+fn validate_script(packed_len: usize, hash_type: u8) -> Result<()> {
+    ensure!(packed_len <= MAX_SCRIPT_BYTES, "Script exceeds byte limit");
+    match ScriptHashType::try_from(hash_type)? {
         ScriptHashType::Data | ScriptHashType::Type => Ok(()),
         _ => bail!("unsupported Script hash type"),
     }
@@ -644,31 +653,39 @@ impl Transaction {
             );
             previous = Some(witness.group_index);
         }
+        let inputs = raw.inputs();
+        let check_unique_inputs = inputs.len() > 1;
         let mut spent = HashSet::new();
-        for input in raw.inputs() {
+        for input in inputs {
             let input = CellInput::decode(input)?;
             ensure!(!input.previous_output.is_null(), "null input OutPoint");
             ensure!(
-                spent.insert(input.previous_output),
+                !check_unique_inputs || spent.insert(input.previous_output),
                 "duplicate input OutPoint"
             );
         }
+        let deps = tx.cell_deps();
+        let check_unique_deps = deps.len() > 1;
         let mut dep_keys = HashSet::new();
-        for dep in tx.cell_deps() {
+        for dep in deps {
             DepType::try_from(dep.dep_type())?;
             ensure!(!dep.out_point().is_null(), "null Cell Dep OutPoint");
             ensure!(
-                dep_keys.insert(dep.out_point()),
+                !check_unique_deps || dep_keys.insert(dep.out_point()),
                 "duplicate Cell Dep OutPoint"
             );
         }
+        let header_deps = raw.as_reader().header_deps();
         let mut headers = HashSet::new();
         ensure!(
-            tx.header_deps().all(|header| headers.insert(header)),
+            header_deps.len() <= 1
+                || header_deps
+                    .iter()
+                    .all(|header| headers.insert(header.as_slice())),
             "duplicate header dependency"
         );
-        for output in raw.outputs() {
-            Cell::from_entity(output)?;
+        for output in raw.as_reader().outputs().iter() {
+            Cell::validate(output)?;
         }
         Ok(tx)
     }
@@ -1981,6 +1998,68 @@ mod tests {
 
         let ckb = ckb_types::packed::Transaction::default();
         assert!(Transaction::from_slice(ckb.as_slice()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn validates_wire_output_scripts_at_the_packed_size_limit() -> Result<()> {
+        let max_args = MAX_SCRIPT_BYTES - Script::default().as_slice().len();
+        let sized_script = |length, address| {
+            script(1)
+                .as_builder()
+                .hash_type(address)
+                .args(Bytes::from(vec![0; length]))
+                .build()
+        };
+        let exact = sized_script(max_args, ScriptHashType::Data);
+        assert_eq!(exact.as_slice().len(), MAX_SCRIPT_BYTES);
+        let cell = Cell::new(1, exact.clone(), vec![exact], Bytes::new())?;
+        let tx = Transaction::new(
+            vec![],
+            vec![],
+            vec![CellInput::new(OutPoint::new([1; 32].pack(), 0), None)],
+            vec![cell.clone()],
+            vec![],
+        )?;
+        assert!(Transaction::from_slice(tx.as_slice()).is_ok());
+        for bad in [
+            sized_script(max_args + 1, ScriptHashType::Data),
+            sized_script(0, ScriptHashType::Data1),
+        ] {
+            let bad = encode_script(bad);
+            let bad_lock = cell.encoded.as_builder().lock(bad.clone()).build();
+            let bad_type = cell
+                .encoded
+                .as_builder()
+                .type_scripts(wire::ScriptVec::new_builder().set(vec![bad]).build())
+                .build();
+            for output in [bad_lock, bad_type] {
+                assert!(Cell::from_slice(output.as_slice()).is_err());
+                let raw = tx
+                    .encoded
+                    .raw()
+                    .as_builder()
+                    .outputs(wire::CellVec::new_builder().set(vec![output]).build())
+                    .build();
+                let invalid_tx = tx.encoded.as_builder().raw(raw).build();
+                assert!(Transaction::from_slice(invalid_tx.as_slice()).is_err());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_duplicate_inputs_and_dependencies() -> Result<()> {
+        let input = CellInput::new(OutPoint::new([1; 32].pack(), 0), None);
+        let dep = CellDep::new_builder()
+            .out_point(OutPoint::new([2; 32].pack(), 0))
+            .build();
+        let header = [3; 32].pack();
+        let make = |deps, headers, inputs| Transaction::new(deps, headers, inputs, vec![], vec![]);
+        make(vec![dep.clone()], vec![header.clone()], vec![input.clone()])?;
+        assert!(make(vec![], vec![], vec![input.clone(), input.clone()]).is_err());
+        assert!(make(vec![dep.clone(), dep], vec![], vec![input.clone()]).is_err());
+        assert!(make(vec![], vec![header.clone(), header], vec![input]).is_err());
         Ok(())
     }
 

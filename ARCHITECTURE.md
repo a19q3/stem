@@ -102,6 +102,12 @@ An inspected Header Dep, a protocol operation, an atomic Lineage batch
 or Keeper work uses full proposal preparation with the final context.
 Other voters replay the selected transactions against the signed Header.
 
+Transaction decoding checks output Scripts directly in the verified
+Strand byte ranges. It enforces the packed Script length limit and the
+canonical Type Script order before constructing any Cell used during
+execution. Input, Cell Dep and Header Dep collections with multiple
+entries go through the duplicate scan.
+
 ## CKB-VM host
 
 The [StemVM crate](vm) owns the native ABI, verification cache and Group execution. Its RISC-V backend derives from CKB-VM v0.24.15 at `7199b96d9f24b51c4c5eba358d64cd4d9bcf8150`, with upstream Git history and license retained. Stem uses a fixed VM 2 configuration and reuses the process scheduler and assembly allocation pool. A host-only bitmap records populated instruction traces. Reset and pool reuse invalidate their lengths before loading different code. Installing a trace overwrites its entire payload, and both assembly backends check for a nonzero length before dispatch. After fetching instruction bytes with executable-page checks, the standard decoder dispatches by RISC-V instruction width and uses the configured ISA extensions. On a built-in miss, it tries user-registered factories in insertion order. Spawn and Exec see the same read-only Script Group context. [Upstream source](https://github.com/nervosnetwork/ckb-vm/tree/v0.24.15)
