@@ -5474,3 +5474,72 @@ handoff. The Rust workspace passed 493 tests with 22 ignored.
 Go proof tests and the CometBFT comparison build check passed.
 
 [Recovery requests and results, CKB restarts and reorg, signed transactions and proof checks](benchmarks/2026-11-26-stem-metatype-ceiling-recovery.json.xz).
+
+## On-demand VM code dependency indexing
+
+Baseline `5c8f8bf` and candidate `4a84463` used release builds with
+Rust 1.95.0 on one i9-13900H. Cell and dependency resolution still
+validates live references and commits their contents before checking
+the VM cache. A single expanded Code dependency uses direct lookup.
+Several Code dependencies share an index initialized on first Script
+lookup. Cache hits retain their recorded cycles and need no index.
+
+The pinned-core resolver probe alternated binaries over seven rounds
+of 200,000 resolutions per configuration. Both binaries used the same
+Cell records. The single-dependency fixture was a signed payment and
+its actual RISC-V Lock dependency from the network run. The synthetic
+eight-dependency fixture adds seven typed Code Cells. The probe computes
+the VM cache key in every case and optionally resolves each program.
+It does not execute the RISC-V programs or include database reads.
+
+| Resolver work | Baseline median | Candidate median | Reduction |
+| --- | ---: | ---: | ---: |
+| One Code dependency, through cache key | 4.91 µs | 4.79 µs | 2.5% |
+| One Code dependency, including lookup | 5.02 µs | 4.78 µs | 4.7% |
+| Eight Code dependencies, through cache key | 11.84 µs | 8.04 µs | 32.1% |
+| Eight Code dependencies, including lookups | 12.76 µs | 12.41 µs | 2.7% |
+
+The payment experiment used four Jolteon replicas, 250 ms proposal
+cadence, a 2 billion cycle block limit, two VM workers per replica and
+64 client senders. Each rate used the same signed transaction bytes,
+genesis and test executable for both revisions. The 20-second windows
+below are the paired reruns. Every offered transaction became visible
+on all four nodes during the run or its 12-second drain.
+
+| Planned TPS | Build | Offered TPS | Admitted TPS | All-replica visible TPS | With drain TPS | p50 / p95 / p99 | Client drops |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | ---: |
+| 1,000 | Baseline | 989.30 | 989.30 | 956.55 | 965.47 | 0.788 / 1.253 / 1.365 s | 214 |
+| 1,000 | Candidate | 992.90 | 992.90 | 959.75 | 973.06 | 0.747 / 1.100 / 1.315 s | 142 |
+| 2,000 | Baseline | 1,647.10 | 1,647.05 | 1,568.85 | 1,607.83 | 1.042 / 1.370 / 1.515 s | 7,058 |
+| 2,000 | Candidate | 1,594.95 | 1,594.90 | 1,520.15 | 1,550.11 | 1.067 / 1.431 / 1.551 s | 8,101 |
+
+At the 1,000 TPS target the replicas consumed 44.44 and 43.51 CPU seconds,
+wrote 255.65 and 269.61 MB at the process level, and moved 60.37 and
+62.58 MB over the network, baseline first. Maximum sampled per-replica
+RSS was 124.95 and 124.31 MiB. The first 1,000 TPS candidate run coincided
+with a separate host process using roughly 11 logical cores and offered
+only 460.40 TPS. The archive retains those runs and host pressure samples.
+The payment pairs show no consistent end-to-end throughput improvement.
+
+The same four-replica setup offered all 2,880 signed distributed AMM
+commands at 160 TPS in an 18-second comparison. Both builds finalized
+every command. All-replica visible throughput was 152.94 and 153.83 TPS,
+with p99 of 0.855 and 0.967 seconds. Serial replay verified the receipts
+and 5,760 Lineage head updates in each run. The 65 final Lineage IDs,
+versions and canonical Cell contents agreed across builds. Each build
+charged 11,295,925,110 total VM cycles and 5,760,000 shannons.
+
+A mixed four-replica network finalized all 96 signed payments with one
+replica offline and later verified a common Header and two-chain proof
+after restart. Real CKB devnet runs covered fee payouts, xUDT and Spore
+round trips, funded committee handoff, Intercell messaging and shared
+Metatype ceiling recovery. The archive includes commands, signed inputs,
+proofs, raw measurements and failed setup attempts.
+
+`cargo test --locked --release --workspace` passed 494 tests with 22
+ignored after recompiling the vendored CKB test harness at the new
+checkout path. The initial shared-build run used the previous absolute
+fixture path and its failures are retained. `go -C tools/proof test
+-count=1 ./...` and the release `comet-benchmark` feature check passed.
+
+[Resolver samples, four-replica measurements and CKB devnet evidence](benchmarks/2026-11-26-stem-program-resolution.json.xz).
