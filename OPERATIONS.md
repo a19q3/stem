@@ -1367,6 +1367,23 @@ as a separate CKB definition Cell and use its hash in the custody
 representation. The same fixture then rejects an import that omits
 that dependency.
 
+Add `--metatype-revisable-object` to the Metatype command to issue a
+revisable object. The fixture starts at revision 0, confirms revision 1
+on Stem, exports it, and authorizes revisions 2 and 4 on CKB. It returns
+the object at revision 4 and checks the original Capacity and both
+Type Scripts. The same fixture rejects missing approval, a same-version
+edit, rollback and stale return state. Run with and without
+`--metatype-shared-manifest` for the two storage layouts. Use a distinct
+output directory and fresh ports for each layout.
+
+Add `--metatype-revision-topup` to test an update that exceeds the
+original Stem Cell's storage budget. The original asset holds 8 CKB.
+The signed return adds 5 CKB and keeps the exact authenticated state
+and both original Type Scripts. The CKB fixture starts with a
+1,000 CKB mailbox and tops it up to 3,300 CKB on import. The gate
+rejects an authenticated import leaving insufficient capacity for its
+largest valid return. Mailbox funding remains locked in the mailbox.
+
 ### Exercise cap-bound Metatype fungible custody
 
 Build and run the fungible Metatype profile against CKB devnet with

@@ -1,6 +1,7 @@
 """Export a native two-Type object, enforce its policy on CKB and return it."""
 
 import json
+import time
 
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
                              packed_script, point, script, script_hash, transaction, wallet_group)
@@ -26,14 +27,19 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     owner, buyer, authority = native_scripts
     metatype = args.metatype_dispatcher is not None
     shared_manifest = args.metatype_shared_manifest
+    revisable = args.metatype_revisable_object
+    topup = args.metatype_revision_topup
+    profile = bytes([3 if revisable else 1])
     mailbox_bin = args.intercell_mailbox.read_bytes()
     gate_bin = (args.metatype_mailbox_lock if metatype else args.ckb_stem_object).read_bytes()
     mailbox_code, ckb_code = map(ckb_hash, (mailbox_bin, gate_bin))
     native_object = hex_bytes(ckb_hash(args.stem_native_object.read_bytes()))
     policy_code = hex_bytes(ckb_hash(args.object_policy.read_bytes()))
     secp = vault["secp"]
-    mailbox_cap, authority_funds = 1000 * CKB, (2500 if metatype else 1200) * CKB
-    token_cap = (900 if metatype else 360) * CKB
+    mailbox_cap = 1_000 * CKB
+    funded_mailbox_cap = 3_300 * CKB if revisable else mailbox_cap
+    authority_funds = (5_000 if revisable else 2_500 if metatype else 1_200) * CKB
+    token_cap = (1_200 if topup else 900 if metatype else 360) * CKB
     codes = [mailbox_bin, gate_bin]
     if metatype:
         codes.extend(path.read_bytes() for path in (args.metatype_dispatcher,
@@ -58,9 +64,13 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     def ckb_submit(signed):
         cycles = int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
+        start = time.monotonic()
         tx = l1.send(signed)
+        committed_ms = (time.monotonic() - start) * 1000
         return {"hash": tx, "proof": l1.prove_committed(tx), "cycles": cycles,
-                "bytes": len(binary(signed["molecule"]))}
+                "bytes": len(binary(signed["molecule"])),
+                "raw_witness_bytes": sum(len(binary(item)) for item in signed["json"]["witnesses"]),
+                "submit_through_local_mining_ms": committed_ms}
 
     def reject_ckb(signed, *codes):
         result = l1.reject(signed)
@@ -123,17 +133,25 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         return reply["height"], json.loads(bytes.fromhex(reply["value"]))
 
     seed_cap, auth_cap, object_cap, bond_cap = [capacity * CKB for capacity in (450, 200, 200, 120)]
+    if topup:
+        object_cap = 8 * CKB
+    return_topup = 5 * CKB if topup else 0
     remainder = mint["payment_capacity"] - seed_cap - auth_cap - FEE
     separated = commit(native_sign("split", [(mint["payment"], owner, owner_key)],
                                    [cell(seed_cap, owner), cell(auth_cap, authority), cell(remainder, owner)]))
     seed, native_authority, native_fee = [at(separated, i) for i in range(3)]
     object_id = ckb_hash(b"Stem object identity\0" + binary(network) + packed(seed) + le(0, 4))
     identity = script(native_object, hex_bytes(object_id + script_hash(authority)
-        + authority_id + binary(policy_code)), "data")
+        + authority_id + binary(policy_code) + (b"\x01" if revisable else b"")), "data")
     identity_hash = script_hash(identity)
     policy = script(policy_code, hex_bytes(identity_hash + script_hash(authority)), "data")
     types = [identity, policy]
-    data = table(molecule_bytes(b"text/plain"), molecule_bytes(b"Stem object with two Type Groups"), b"")
+    def object_data(content, revision=0):
+        raw = table(molecule_bytes(b"text/plain"), molecule_bytes(content), b"")
+        return le(revision, 8) + raw if revisable else raw
+
+    data = object_data(b"Stem object with two Type Groups")
+    revisions = {}
     definition = None
     definition_dep = None
     shared_evidence = None
@@ -152,7 +170,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         custody = mailbox_code + type_id + ckb_code + manifest + identity_hash
         adapter_entries = sorted([binary(native_object) + b"\0" + ckb_hash(codes[3]),
                                   binary(policy_code) + b"\0" + ckb_hash(codes[4])])
-        adapter_table = bytes([2]) + b"".join(adapter_entries) + bytes([1]) + custody
+        adapter_table = bytes([2]) + b"".join(adapter_entries) + profile + custody
         table_capacity = (len(adapter_table) + 100) * CKB
         table_outputs = [output(table_capacity, fixture.standard)]
         table_data = [hex_bytes(adapter_table)]
@@ -178,9 +196,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             + ckb_hash(b"Stem Metatype local fixture\0" + identity_hash) + ckb_hash(adapter_table)), "data2")
         wrapper_hash = script_hash(wrapper)
         endpoint = script(hex_bytes(ckb_hash(args.stem_metatype_escrow.read_bytes())),
-            hex_bytes(binary(genesis) + wrapper_hash + anchor_code + anchor_id + bytes([1]) + custody), "data")
+            hex_bytes(binary(genesis) + wrapper_hash + anchor_code + anchor_id + profile + custody), "data")
         endpoint_id = script_hash(endpoint)
-        ckb_owner = script(hex_bytes(ckb_code), hex_bytes(bytes([1]) + endpoint_id + wrapper_hash
+        ckb_owner = script(hex_bytes(ckb_code), hex_bytes(profile + endpoint_id + wrapper_hash
             + mailbox_code + type_id + manifest + identity_hash), "data2")
     else:
         manifest = identity_hash
@@ -200,7 +218,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     live_mailbox = point(l1.send(fixture.sign("object-create-mailbox", initial,
         [wallet_group(0, [fixture.faucet])])), 0)
 
-    def packet(label, from_stem, recipient, nonce, content=data, scripts=manifest):
+    def packet(label, from_stem, recipient, nonce, content=None, scripts=manifest):
+        if content is None:
+            content = data
         source, destination, sender, receiver = ((network, genesis, endpoint_id, mailbox_id) if from_stem
                                                  else (genesis, network, mailbox_id, endpoint_id))
         request = args.output / f"object-{label}-message.json"
@@ -221,10 +241,29 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     wrong_policy = dict(policy, args=hex_bytes(script_hash(wrong) + script_hash(authority)))
     rejected["stem_forged_id"] = reject_stem(native_sign("forged-object", [(seed, owner, owner_key), auth_input],
         [cell(object_cap, owner, data, [wrong, wrong_policy]), *issued_outputs[1:]]), "exited with 117")
+    if revisable:
+        rejected["stem_mint_at_nonzero_revision"] = reject_stem(native_sign("nonzero-revision",
+            [(seed, owner, owner_key), auth_input],
+            [cell(object_cap, owner, object_data(b"nonzero revision", 1), types), *issued_outputs[1:]]),
+            "exited with 117")
     issued = commit(native_sign("issue", [(seed, owner, owner_key), auth_input], issued_outputs))
     wrapped_input = at(issued, 0)
     bond = at(issued, 1)
     native_authority = at(issued, 3)
+    native_auth_capacity = auth_cap
+    if revisable:
+        previous = [(wrapped_input, owner, owner_key), (native_authority, authority, authority_key)]
+        native_update = object_data(b"Stem authorized revision", 1)
+        cheaper_auth = cell(auth_cap - FEE, authority)
+        rejected["stem_edit_without_revision"] = reject_stem(native_sign("edit-without-revision", previous,
+            [cell(object_cap, owner, object_data(b"edited under revision zero"), types), cheaper_auth]),
+            "exited with 117")
+        revised = commit(native_sign("revise-in-stem", previous,
+            [cell(object_cap, owner, native_update, types), cheaper_auth]))
+        revisions["native"] = revised
+        wrapped_input, native_authority = [at(revised, i) for i in range(2)]
+        data = native_update
+        native_auth_capacity -= FEE
     nonce_domain = b"Stem Metatype escrow nonce\0" if metatype else b"Stem Spore return nonce\0"
     out_nonce = int.from_bytes(ckb_hash(nonce_domain + packed(bond))[:8], "little")
     outbound = packet("export", True, script_hash(fixture.owner_lock), out_nonce)
@@ -236,17 +275,26 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     escrow_invalid = 53 if metatype else 118
     rejected["stem_export_to_mailbox_lock"] = reject_stem(native_sign("export-to-mailbox",
         route_inputs + [(native_authority, authority, authority_key)],
-        route_outputs + [cell(auth_cap - FEE, authority)], endpoint=endpoint,
+        route_outputs + [cell(native_auth_capacity - FEE, authority)], endpoint=endpoint,
         message=packet("export-to-mailbox", True, script_hash(ckb_owner), out_nonce)), f"exited with {escrow_invalid}")
     if metatype:
         wrong_manifest = bytes([1]) * 32
         rejected["stem_export_wrong_manifest"] = reject_stem(native_sign("export-wrong-manifest",
             route_inputs + [(native_authority, authority, authority_key)],
-            route_outputs + [cell(auth_cap - FEE, authority)], endpoint=endpoint,
+            route_outputs + [cell(native_auth_capacity - FEE, authority)], endpoint=endpoint,
             message=packet("export-wrong-manifest", True, script_hash(fixture.owner_lock),
                            out_nonce, scripts=wrong_manifest)), "exited with 53")
+    if revisable:
+        forged = object_data(b"edit while entering escrow", 2)
+        rejected["stem_export_changes_revision"] = reject_stem(native_sign("export-revising",
+            route_inputs + [(native_authority, authority, authority_key)],
+            [route_outputs[0], cell(object_cap, endpoint, forged, types),
+             cell(native_auth_capacity - FEE, authority)],
+            endpoint=endpoint, message=packet("export-revising", True, script_hash(fixture.owner_lock),
+                                              out_nonce, content=forged)),
+            "exited with 54")
     exported = commit(native_sign("export", route_inputs + [(native_authority, authority, authority_key)],
-        route_outputs + [cell(auth_cap - FEE, authority)], endpoint=endpoint, message=outbound))
+        route_outputs + [cell(native_auth_capacity - FEE, authority)], endpoint=endpoint, message=outbound))
     bond, original, native_authority = [at(exported, i) for i in range(3)]
     def certified_cell(outpoint):
         point_bytes = hex_bytes(packed(outpoint))
@@ -269,14 +317,17 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     next_nonce = 0
 
     def mint_ckb(label, recipient=fixture.owner_lock, contents=data, *, include_checkpoint=True,
-                 include_policy=True, output_type=wrapper, approve=True, include_definition=True):
+                 include_policy=True, output_type=wrapper, approve=True, include_definition=True,
+                 fund_mailbox=True):
         input_point, amount, signer, fee_lock = (authority_point, authority_funds, authority_key, ckb_authority)
         if not approve:
             input_point, amount = point(table_deployed, fee_index), table_change
             signer, fee_lock = fixture.faucet, fixture.standard
         deps = ckb_deps if include_definition else [dep for dep in ckb_deps if dep != definition_dep]
-        tx = transaction([live_mailbox, input_point], [output(mailbox_cap, ckb_owner, mailbox),
-            output(token_cap, recipient, output_type), output(amount - token_cap - FEE, fee_lock)],
+        mailbox_output_cap = funded_mailbox_cap if fund_mailbox else mailbox_cap
+        fee_change = amount - token_cap - (mailbox_output_cap - mailbox_cap) - FEE
+        tx = transaction([live_mailbox, input_point], [output(mailbox_output_cap, ckb_owner, mailbox),
+            output(token_cap, recipient, output_type), output(fee_change, fee_lock)],
             [hex_bytes(le(next_nonce, 8) + root), hex_bytes(projected(contents) if include_policy
                 else metatype_data([(packed_script(identity), contents)])), "0x"],
             deps + ([checkpoint] if include_checkpoint else []))
@@ -307,15 +358,19 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         if shared_manifest:
             rejected["ckb_import_without_manifest_definition"] = reject_ckb(
                 mint_ckb("no-manifest-definition", include_definition=False), 43, gate_invalid)
+    if revisable:
+        rejected["ckb_import_unfunded_return_reserve"] = reject_ckb(
+            mint_ckb("unfunded-return-reserve", fund_mailbox=False), gate_invalid)
     ckb_minted = ckb_submit(mint_ckb("mint"))
     live_mailbox, wrapped_point, authority_point = [point(ckb_minted["hash"], i) for i in range(3)]
-    authority_funds -= token_cap + FEE
+    authority_funds -= token_cap + (funded_mailbox_cap - mailbox_cap) + FEE
+    mailbox_cap = funded_mailbox_cap
 
-    def transfer(label, authority_consent=True, include_policy=True):
+    def transfer(label, authority_consent=True, include_policy=True, contents=data, from_key=fixture.owner):
         inputs = [wrapped_point]
         outputs = [output(token_cap - (0 if authority_consent else FEE), fixture.friend_lock, wrapper)]
-        keys = [wallet_group(0, [fixture.owner])]
-        body = [hex_bytes(projected(data) if include_policy else metatype_data([(packed_script(identity), data)]))]
+        keys = [wallet_group(0, [from_key])]
+        body = [hex_bytes(projected(contents) if include_policy else metatype_data([(packed_script(identity), contents)]))]
         if authority_consent:
             inputs.append(authority_point)
             outputs.append(output(authority_funds - FEE, ckb_authority))
@@ -330,11 +385,32 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     rejected["ckb_transfer_without_approval"] = reject_ckb(transfer("no-transfer-approval", False), approval_invalid)
     if metatype:
         rejected["ckb_transfer_policy_removed"] = reject_ckb(transfer("transfer-without-policy", include_policy=False), 48)
-    transferred = ckb_submit(transfer("transfer"))
+    return_state = data
+    if revisable:
+        ckb_update = object_data(b"CKB authorized ownership transfer", 2)
+        rejected["ckb_edit_without_revision"] = reject_ckb(
+            transfer("edit-without-revision", contents=object_data(b"same revision tamper", 1)), 48)
+        rejected["ckb_revision_without_approval"] = reject_ckb(
+            transfer("revision-without-approval", False, contents=ckb_update), approval_invalid)
+        transferred = ckb_submit(transfer("transfer-and-revise", contents=ckb_update))
+    else:
+        transferred = ckb_submit(transfer("transfer"))
     wrapped_point, authority_point = [point(transferred["hash"], i) for i in range(2)]
     authority_funds -= FEE
 
-    inbound = packet("return", False, script_hash(buyer), 0)
+    if revisable:
+        rejected["ckb_revision_rollback"] = reject_ckb(
+            transfer("revision-rollback", contents=data, from_key=fixture.friend), 48)
+        content = b"CKB authorized revision before return"
+        if topup:
+            content = content.ljust(630, b".")
+        return_state = object_data(content, 4)
+        updated = ckb_submit(transfer("revise-on-ckb", contents=return_state, from_key=fixture.friend))
+        revisions["ckb"] = updated
+        wrapped_point, authority_point = [point(updated["hash"], i) for i in range(2)]
+        authority_funds -= FEE
+
+    inbound = packet("return", False, script_hash(buyer), 0, content=return_state)
     def return_ckb(label, *, consume=True, message=inbound, approve=True):
         inputs = [live_mailbox]
         outputs = [output(mailbox_cap, ckb_owner, mailbox)]
@@ -360,6 +436,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         message=packet("return-to-escrow", False, endpoint_id, 0)), gate_invalid)
     if metatype:
         rejected["ckb_return_without_approval"] = reject_ckb(return_ckb("no-return-approval", approve=False), 46)
+    if revisable:
+        rejected["ckb_return_stale_state"] = reject_ckb(return_ckb("return-stale-state",
+            message=packet("return-stale-state", False, script_hash(buyer), 0, content=data)), gate_invalid)
     burned = ckb_submit(return_ckb("burn"))
     live_mailbox, authority_point = [point(burned["hash"], i) for i in (0, 2)]
     authority_funds -= FEE
@@ -389,16 +468,33 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     certified = attest("attest-reference", "return", ["--request", observation])
 
     release_inputs = [(bond, endpoint, None), (original, endpoint, None)]
-    release = [cell(bond_cap, endpoint), cell(object_cap, buyer, data, types)]
+    release = [cell(bond_cap, endpoint), cell(object_cap + return_topup, buyer, return_state, types)]
     with_approval = release_inputs + [(native_authority, authority, authority_key)]
     rejected["stem_return_without_policy_approval"] = reject_stem(native_sign("return-no-consent",
-        release_inputs + [(native_fee, owner, owner_key)], release + [cell(remainder - FEE, owner)],
+        release_inputs + [(native_fee, owner, owner_key)], release + [cell(remainder - FEE - return_topup, owner)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 115")
     rejected["stem_return_policy_removed"] = reject_stem(native_sign("return-without-policy",
-        with_approval, [release[0], cell(object_cap, buyer, data, [identity]), cell(auth_cap - 2 * FEE, authority)],
+        with_approval, [release[0], cell(object_cap + return_topup, buyer, return_state, [identity]),
+                        cell(native_auth_capacity - 2 * FEE - return_topup, authority)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified),
         "exited with 54" if metatype else "exited with 117")
-    redeemed = commit(native_sign("redeem", with_approval, release + [cell(auth_cap - 2 * FEE, authority)],
+    if revisable:
+        rejected["stem_return_stale_state"] = reject_stem(native_sign("return-stale-state",
+            with_approval, [release[0], cell(object_cap, buyer, data, types),
+                            cell(native_auth_capacity - 2 * FEE, authority)],
+            endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
+    if topup:
+        rejected["stem_return_without_required_topup"] = reject_stem(native_sign("return-underfunded",
+            with_approval, [release[0], cell(object_cap, buyer, return_state, types),
+                            cell(native_auth_capacity - 2 * FEE, authority)],
+            endpoint=endpoint, message=inbound, receive=True, votes=certified), "insufficient occupied Capacity")
+    elif revisable:
+        rejected["stem_return_drains_asset_capacity"] = reject_stem(native_sign("return-reduces-capacity",
+            with_approval, [release[0], cell(object_cap - 1, buyer, return_state, types),
+                            cell(native_auth_capacity - 2 * FEE + 1, authority)],
+            endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
+    redeemed = commit(native_sign("redeem", with_approval,
+        release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified))
     restored = signing_cell(client, at(redeemed, 1))
     assert restored["cell"] == release[1]
@@ -407,7 +503,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     assert spent_escrow["cell"] is None and spent_escrow["proof"]
     reject_query = native_sign("repeat-release",
         [(at(redeemed, 0), endpoint, None), (at(redeemed, 1), buyer, buyer_key),
-         (at(redeemed, 2), authority, authority_key)], release + [cell(auth_cap - 3 * FEE, authority)],
+         (at(redeemed, 2), authority, authority_key)], release + [cell(native_auth_capacity - 3 * FEE - return_topup, authority)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified)
     rejected["stem_replay_release"] = reject_stem(reject_query, "nonce already used")
 
@@ -420,9 +516,13 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
             "shared_manifest": shared_evidence,
+            "revisions": ({**revisions, "exported": hex_bytes(data), "returned": hex_bytes(return_state),
+                           "topup_capacity": return_topup,
+                           "native_execution": execution(revisions["native"])} if revisable else None),
             "ckb_occupied_shannons": ckb_occupied(fixture.owner_lock, wrapper, projected(data)),
             "identity_type": identity, "policy_type": policy, "wrapper_type": wrapper,
-            "escrow": endpoint, "mailbox": mailbox, "issued": issued, "exported": exported,
+            "escrow": endpoint, "mailbox": mailbox, "mailbox_capacity": mailbox_cap,
+            "issued": issued, "exported": exported,
             "ckb_minted": ckb_minted, "ckb_transferred": transferred, "ckb_burned": burned,
             "anchor": advanced, "redeemed": redeemed, "restored": restored,
             "escrowed": escrowed, "spent_escrow": spent_escrow, "restored_proof": restored_proof,

@@ -321,6 +321,14 @@ Mailbox Type ID, an exact original Manifest and a designated data
 Script. The generic Stem escrow and CKB gate enforce complete
 projection, verified mint and burn, and recipient binding. The
 portable object and approval groups still execute at each boundary.
+Revisable custody uses the same escrow, gate and adapters. The
+native and portable identity Scripts share the monotonic revision
+rule. Export seals the current state, and return restores the exact
+state authenticated by the CKB burn. Both chains require the
+separate authority and ownership checks. The CKB import reserves
+mailbox Capacity for the largest permitted return. Stem accepts an
+authorized storage top-up without releasing any of the original
+principal.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and

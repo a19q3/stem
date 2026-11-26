@@ -19,8 +19,11 @@ use ckb_std::{
 use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
     metatype::{
-        LogicalScript, MAX_SCRIPT_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE, MAX_TYPE_SCRIPTS,
-        custody::{Custody, Gate, Principal, Transfer, escrow_nonce, manifest_id, positive_amount},
+        LogicalScript, MAX_SCRIPT_BYTES, MAX_STATE_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE,
+        MAX_TYPE_SCRIPTS,
+        custody::{
+            Custody, Gate, Principal, Profile, Transfer, escrow_nonce, manifest_id, positive_amount,
+        },
     },
 };
 use stem_contracts::metatype::bounded_data;
@@ -123,7 +126,7 @@ fn verify() -> Result<(), i8> {
         _ => return Err(53),
     };
     match asset.principal {
-        Principal::Immutable(data) => verify_object(
+        Principal::Object(data) => verify_object(
             &custody,
             &escrow,
             data,
@@ -157,13 +160,17 @@ fn verify_object(
     outbound: bool,
     nonce: u64,
 ) -> Result<(), i8> {
-    let before = inspect(Source::Input, custody, escrow, data)?;
-    let after = inspect(Source::Output, custody, escrow, data)?;
+    let before = inspect(Source::Input, custody, escrow)?;
+    let after = inspect(Source::Output, custody, escrow)?;
     if outbound {
         check_nonce(before.bond_index, nonce)?;
     }
+    let allow_topup = !outbound && custody.profile == Profile::Revisable;
     if before.bond_capacity != after.bond_capacity
-        || before.asset_capacity != after.asset_capacity
+        || after.asset_capacity < before.asset_capacity
+        || (!allow_topup && after.asset_capacity != before.asset_capacity)
+        || after.data != data
+        || !custody.authorize_object_state(&before.data, &after.data, outbound)
         || (outbound && (&before.asset_lock == escrow || &after.asset_lock != escrow))
         || (!outbound && (&before.asset_lock != escrow || &after.asset_lock != recipient))
     {
@@ -281,14 +288,10 @@ struct Assets {
     bond_capacity: u64,
     asset_capacity: u64,
     asset_lock: Identity,
+    data: Vec<u8>,
 }
 
-fn inspect(
-    source: Source,
-    custody: &Custody,
-    escrow: &Identity,
-    data: &[u8],
-) -> Result<Assets, i8> {
+fn inspect(source: Source, custody: &Custody, escrow: &Identity) -> Result<Assets, i8> {
     let mut bond = None;
     let mut asset = None;
     for index in 0..=MAX_TRANSACTION_CELLS_PER_SIDE {
@@ -307,14 +310,14 @@ fn inspect(
         .0
         {
             0 => {
-                if scripts(source, index)? != custody.manifest
-                    || bounded_data(index, source, data.len()).map_err(|_| 54)? != data
-                    || asset
-                        .replace((load_cell_capacity(index, source).map_err(|_| 54)?, lock))
-                        .is_some()
-                {
+                if scripts(source, index)? != custody.manifest || asset.is_some() {
                     return Err(54);
                 }
+                asset = Some((
+                    load_cell_capacity(index, source).map_err(|_| 54)?,
+                    lock,
+                    bounded_data(index, source, MAX_STATE_BYTES).map_err(|_| 54)?,
+                ));
             }
             ITEM_MISSING if lock == *escrow => {
                 if load(LOAD_TYPE, source as u64, index, 0, &mut []).0 != INDEX_OUT_OF_BOUND
@@ -331,12 +334,13 @@ fn inspect(
         }
     }
     let (bond_index, bond_capacity) = bond.ok_or(54)?;
-    let (asset_capacity, asset_lock) = asset.ok_or(54)?;
+    let (asset_capacity, asset_lock, data) = asset.ok_or(54)?;
     Ok(Assets {
         bond_index,
         bond_capacity,
         asset_capacity,
         asset_lock,
+        data,
     })
 }
 

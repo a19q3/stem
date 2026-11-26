@@ -9,15 +9,15 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_lock_hash, load_cell_type, load_script, load_script_hash,
-        load_witness_args,
+        load_cell_capacity, load_cell_lock_hash, load_cell_occupied_capacity, load_cell_type,
+        load_script, load_script_hash, load_witness_args,
     },
 };
 use stem_bridge_wire::{
-    intercell::{Delivery, MailboxState, Message},
+    intercell::{Delivery, MESSAGE_HEADER, MailboxState, Message},
     metatype::{
-        MAX_LIVE_DATA,
-        custody::{Boundary, Gate, Transfer},
+        MAX_LIVE_DATA, MAX_STATE_BYTES,
+        custody::{Boundary, Gate, Profile, Transfer},
     },
 };
 use stem_contracts::{
@@ -25,6 +25,9 @@ use stem_contracts::{
     metatype_custody::{find_unique, mailbox_policy},
 };
 use stem_stake::Hash32;
+
+const SHANNONS_PER_BYTE: u64 = 100_000_000;
+const LARGEST_RETURN: u64 = (MESSAGE_HEADER + Transfer::HEADER + MAX_STATE_BYTES) as u64;
 
 entry!(main);
 default_alloc!();
@@ -51,9 +54,10 @@ fn verify() -> Result<(), i8> {
     }
     let mailbox_hash: Hash32 = mailbox.calc_script_hash().unpack();
     let successor = find_unique(Source::Output, &mailbox_hash)?.ok_or(50)?;
+    let old_capacity = load_cell_capacity(0, Source::GroupInput).map_err(|_| 50)?;
+    let new_capacity = load_cell_capacity(successor, Source::Output).map_err(|_| 50)?;
     if load_cell_lock_hash(successor, Source::Output).map_err(|_| 50)? != self_hash
-        || load_cell_capacity(successor, Source::Output).map_err(|_| 50)?
-            != load_cell_capacity(0, Source::GroupInput).map_err(|_| 50)?
+        || new_capacity < old_capacity
     {
         return Err(50);
     }
@@ -64,6 +68,19 @@ fn verify() -> Result<(), i8> {
     )
     .map_err(|_| 50)?;
     let next = MailboxState::decode(&next).ok_or(50)?;
+    if gate.custody.profile == Profile::Revisable && next.outgoing.is_empty() {
+        // An imported object may later grow to the portable state limit.
+        // Reserve the bytes for its largest possible return before minting it.
+        let occupied = load_cell_occupied_capacity(successor, Source::Output).map_err(|_| 51)?;
+        let required = occupied
+            .checked_add(LARGEST_RETURN * SHANNONS_PER_BYTE)
+            .ok_or(51)?;
+        if new_capacity < required {
+            return Err(51);
+        }
+    } else if new_capacity != old_capacity {
+        return Err(50);
+    }
     let mut manifests = ManifestResolver::default();
     let mut remaining = MAX_LIVE_DATA;
     let (_, inputs) = manifests

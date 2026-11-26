@@ -1,13 +1,17 @@
 //! Shared identities and principal projection for Metatype custody.
 
 use super::{Hash, MAX_STATE_BYTES, ManifestCell, MetatypeManifest};
-use crate::hash;
+use crate::{
+    hash,
+    object::{revision, valid_revision_transition},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Profile {
     Immutable = 1,
     Fungible = 2,
+    Revisable = 3,
 }
 
 impl Profile {
@@ -15,6 +19,15 @@ impl Profile {
         match tag {
             1 => Some(Self::Immutable),
             2 => Some(Self::Fungible),
+            3 => Some(Self::Revisable),
+            _ => None,
+        }
+    }
+
+    fn object_state(self, data: &[u8]) -> Option<&[u8]> {
+        match self {
+            Self::Immutable if data.len() <= MAX_STATE_BYTES => Some(data),
+            Self::Revisable if revision(data).is_some() => Some(data),
             _ => None,
         }
     }
@@ -70,20 +83,35 @@ impl Custody {
         data
     }
 
+    pub fn authorize_object_state(&self, before: &[u8], after: &[u8], exporting: bool) -> bool {
+        match self.profile {
+            Profile::Immutable => before == after,
+            Profile::Revisable if exporting => before == after && revision(before).is_some(),
+            Profile::Revisable => valid_revision_transition(before, after),
+            Profile::Fungible => false,
+        }
+    }
+
     pub fn transition<'a>(
         &self,
         inputs: &[ManifestCell<'a>],
         outputs: &[ManifestCell<'a>],
     ) -> Option<(Boundary, Principal<'a>)> {
         match self.profile {
-            Profile::Immutable => {
+            Profile::Immutable | Profile::Revisable => {
                 let direction = Boundary::for_cardinality(inputs.len(), outputs.len())?;
-                let manifest = match (inputs, outputs) {
-                    ([(_, before)], [(_, after)]) if before == after => before,
-                    ([], [(_, data)]) | ([(_, data)], []) => data,
+                let data = match (inputs, outputs) {
+                    ([(_, before)], [(_, after)]) => {
+                        let previous = self.data(before)?;
+                        let next = self.data(after)?;
+                        self.authorize_object_state(previous, next, false)
+                            .then_some(next)?
+                    }
+                    ([], [(_, data)]) | ([(_, data)], []) => self.data(data)?,
                     _ => return None,
                 };
-                Some((direction, Principal::Immutable(self.data(manifest)?)))
+                self.profile.object_state(data)?;
+                Some((direction, Principal::Object(data)))
             }
             Profile::Fungible => {
                 let total = |cells: &[ManifestCell<'_>]| {
@@ -146,7 +174,7 @@ pub fn escrow_nonce(outpoint: &[u8; 36]) -> u64 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Principal<'a> {
-    Immutable(&'a [u8]),
+    Object(&'a [u8]),
     Fungible(u128),
 }
 
@@ -161,12 +189,15 @@ pub struct Transfer<'a> {
 }
 
 impl<'a> Transfer<'a> {
+    pub const HEADER: usize = 2 * 32;
+
     pub fn decode(profile: Profile, raw: &'a [u8]) -> Option<Self> {
         let (manifest, raw) = raw.split_first_chunk::<32>()?;
         let (recipient, data) = raw.split_first_chunk::<32>()?;
         let principal = match profile {
-            Profile::Immutable if data.len() <= MAX_STATE_BYTES => Principal::Immutable(data),
-            Profile::Immutable => return None,
+            Profile::Immutable | Profile::Revisable => {
+                Principal::Object(profile.object_state(data)?)
+            }
             Profile::Fungible => Principal::Fungible(positive_amount(data)?),
         };
         (*manifest != [0; 32] && *recipient != [0; 32]).then_some(Self {

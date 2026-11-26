@@ -10,9 +10,9 @@ The standalone CKB dispatcher, adapter table and virtual group ABI
 run independently deployed UDT, transfer policy, object identity
 and object approval adapters. Standalone object cases run against
 both CKB Metatype and four native Stem Polytype replicas. The
-custody profiles cover immutable objects and a fungible UDT with
-an independent per-Cell amount limit. Both can store repeated
-Script sets in a shared dependency. [Implementation status](STEM-EVOLUTION.md)
+custody profiles cover immutable objects, revisable objects and a
+fungible UDT with an independent per-Cell amount limit. Each profile
+can store repeated Script sets in a shared dependency. [Implementation status](STEM-EVOLUTION.md)
 
 ## Historical sources
 
@@ -104,8 +104,9 @@ Molecule Script encoding is exact, with no trailing fields.
 
 Adapter table records are ordered by logical code hash and addressing
 mode. The one-byte custody tag is zero for a standalone deployment,
-one for immutable custody and two for fungible custody. Custody
-tags one and two carry the same five fields in the adapter table.
+one for immutable custody, two for fungible custody and three for
+revisable custody. All three custody tags carry the same five
+fields in the adapter table.
 The dispatcher derives the boundary value from the authenticated
 deployment and actual input and output state. Boundary values
 are 0 for standalone, 1 for custody transfer, 2 for CKB import and
@@ -311,6 +312,48 @@ execute on release and can deny it. The bond and original asset
 Capacity are preserved. The CKB representation has independently
 funded storage Capacity.
 
+### Revisable objects
+
+This profile pins an original identity Script with one extra mode
+byte, `0x01`, after the four immutable identity fields. The mode
+is part of the full logical Script hash, and the exact approval
+Script continues to commit that hash. State is an eight-byte
+little-endian revision followed by canonical plain object content.
+The entire state is limited to 2,048 bytes. Native creation starts at
+revision zero.
+
+A transition with the same revision must preserve all state bytes.
+Changing the state requires a strictly higher revision. Revisions
+can skip numbers so an eventual return can apply multiple verified
+CKB transitions at once. The native identity and the Metatype identity
+adapter use the same validation predicate. Both keep one live head and
+require the independent approval Script. Native and CKB owners still
+satisfy the respective consumption Locks. The approval groups check an
+input signed by the configured authority for each chain.
+
+Stem export preserves the exact current state across the owner-to-escrow
+transition. The CKB mailbox authenticates a finalized export and its
+payload binds the imported state, recipient and Manifest. Each CKB
+transfer or revision runs the identity and approval adapters. The
+return message commits the exact consumed CKB state. Stem consumes the
+authenticated message, compares its state against the escrowed revision,
+and executes both original Type Groups over the restoration. The
+restored Cell retains both original Scripts and at least the original
+Capacity. If the authenticated state needs more storage, a normal
+authorized Stem input can fund the difference. The bond and asset
+principal in escrow cannot be reduced. On CKB, the import must fund
+the mailbox for its largest permitted return record. The funding is
+Capacity in the mailbox Cell, and future transitions retain it. This
+keeps a larger revision redeemable under the same mailbox. The
+two-chain checkpoint, CKB guardians and one-time mailbox rules are the
+same as in the immutable profile.
+
+This profile covers application state whose portable rule is a
+well-formed, strictly increasing revision with independent approval.
+Rules that depend on every intermediate state, dynamic authority
+changes or external data require their own portable validation and
+authenticated context.
+
 ### Cap-bound fungible UDT
 
 The native UDT args are the issuer Lock hash and series hash,
@@ -349,7 +392,7 @@ The two chains use their existing finality, anchor and replay
 verification paths.
 
 These profiles establish correspondence for the specified source
-rules. Other asset classes, mutable state and external dependencies
+rules. Other asset classes, state transition rules and external dependencies
 need their own adapter profiles and differential verification.
 Source upgrades require an authorized settlement at the old
 deployment and a new approved table. Available live dependencies,
@@ -372,7 +415,7 @@ commitments, and the participating owners' Locks.
 | Physical Type to virtual groups | A constraint is omitted, duplicated, or split across manifests | Derive the union and membership from every matching real input and output. Run each logical group once. |
 | Group to adapter | A similar Script substitutes its arguments, code, or source indices | Bind full encoding, scope and data-authenticated program. Verify closed and bounded canonical traversal. |
 | Group witness to authorization | A builder swaps approvals or carries a seal to a different group, output, chain or raw transaction | Address rows by full deployment and group. Compare actual recipient and content. Verify the genesis dependency and strict Ed25519 seal over the domain-separated digest. |
-| Existing state to output state | A transfer removes a freeze, approval, identity or supply rule | Run all consumed groups and all created groups. Original policy decides whether retirement or migration is authorized. |
+| Existing state to output state | A transfer removes a freeze, approval, identity or supply rule | Run all consumed groups and all created groups. Original policy decides whether retirement or migration is authorized. Revisable custody rejects rollback, same-revision edits and substituting stale data at the return boundary. |
 | Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |

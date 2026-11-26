@@ -570,6 +570,8 @@ def main():
                  "metatype-udt-adapter", "metatype-amount-cap-adapter"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--metatype-shared-manifest", action="store_true")
+    parser.add_argument("--metatype-revisable-object", action="store_true")
+    parser.add_argument("--metatype-revision-topup", action="store_true")
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--finish-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
@@ -599,6 +601,10 @@ def main():
     if (any(object_adapters) and (not metatype_object or args.ckb_stem_object)
             or any(base) and not (metatype_object or all(portable_udt))):
         parser.error("Metatype settlement needs a complete object or fungible route")
+    if args.metatype_revisable_object and not metatype_object:
+        parser.error("--metatype-revisable-object requires the Metatype object route")
+    if args.metatype_revision_topup and not args.metatype_revisable_object:
+        parser.error("--metatype-revision-topup requires a revisable object")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

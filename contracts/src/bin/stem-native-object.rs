@@ -1,4 +1,4 @@
-//! Native immutable object identity and escrow for its CKB representation.
+//! Native object identity and escrow for the dedicated immutable route.
 
 #![no_std]
 #![no_main]
@@ -17,9 +17,12 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
-    object::creation_id,
-    spore::{SporeTransfer, plain_spore, return_nonce},
+    metatype::MAX_STATE_BYTES,
+    object::{ObjectArgs, creation_id, revision},
+    spore::{MAX_SPORE_DATA, SporeTransfer, return_nonce},
 };
+
+use stem_contracts::metatype::bounded_data;
 
 entry!(main);
 default_alloc!();
@@ -49,41 +52,41 @@ fn main() -> i8 {
 fn verify() -> Result<(), i8> {
     let script = load_script().map_err(|_| 116)?;
     let args = script.args().raw_data();
-    let (fields, rest) = args.as_chunks::<32>();
-    if u8::from(script.hash_type()) != ScriptHashType::Data as u8
-        || !rest.is_empty()
-        || fields.contains(&[0; 32])
-    {
+    if u8::from(script.hash_type()) != ScriptHashType::Data as u8 {
         return Err(116);
     }
     let mut network = [0; 32];
     if load(LOAD_NETWORK, 0, 0, 0, &mut network) != (0, 32) {
         return Err(116);
     }
-    match fields {
-        [id, authority, _, policy_code] => identity(id, authority, policy_code, &network),
-        fields => escrow(&script, fields.try_into().map_err(|_| 116)?, &network),
+    if let Some(object) = ObjectArgs::decode(&args) {
+        return identity(&object, &network);
     }
+    let (fields, rest) = args.as_chunks::<32>();
+    if !rest.is_empty() || fields.contains(&[0; 32]) {
+        return Err(116);
+    }
+    escrow(&script, fields.try_into().map_err(|_| 116)?, &network)
 }
 
-fn identity(
-    id: &Identity,
-    authority: &Identity,
-    policy_code: &Identity,
-    network: &Identity,
-) -> Result<(), i8> {
+fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
     let original = load_script_hash().map_err(|_| 116)?;
-    let args = [original.as_slice(), authority].concat();
+    let args = [original.as_slice(), object.native_authority].concat();
     let policy = Script::new_builder()
-        .code_hash(policy_code.pack())
+        .code_hash(object.policy_code.pack())
         .hash_type(ScriptHashType::Data)
         .args(args.pack())
         .build()
         .calc_script_hash();
+    let limit = if object.revisable {
+        MAX_STATE_BYTES
+    } else {
+        MAX_SPORE_DATA
+    };
     let read = |source| -> Result<_, i8> {
-        match load_cell_data(0, source) {
+        match bounded_data(0, source, limit) {
             Ok(data)
-                if plain_spore(&data)
+                if object.valid_state(&data)
                     && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
                     && load(
                         FIND_TYPE,
@@ -103,8 +106,8 @@ fn identity(
         }
     };
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
-        (Some(input), Some(output)) if input == output => Ok(()),
-        (None, Some(_)) => {
+        (Some(input), Some(output)) if object.permits(&input, &output) => Ok(()),
+        (None, Some(output)) if !object.revisable || revision(&output) == Some(0) => {
             let input = load_input_out_point(0, Source::Input).map_err(|_| 117)?;
             let mut output = [0u8; 4];
             if load(
@@ -118,7 +121,7 @@ fn identity(
                     network,
                     input.as_slice().try_into().map_err(|_| 117)?,
                     u32::from_le_bytes(output),
-                ) != *id
+                ) != *object.id
             {
                 return Err(117);
             }

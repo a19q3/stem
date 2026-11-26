@@ -4,7 +4,7 @@
 #![no_main]
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
-use stem_bridge_wire::metatype::custody::Boundary;
+use stem_bridge_wire::{metatype::custody::Boundary, object::ObjectArgs};
 use stem_contracts::metatype::{authorized, with_invocation};
 
 entry!(main);
@@ -36,20 +36,15 @@ fn main() -> i8 {
                     .entries()
                     .iter()
                     .find(|entry| &entry.script.id() == object)?;
-                let (fields, rest) = identity.script.args().as_chunks::<32>();
-                let [_, native, ckb, policy_code] = fields else {
-                    return None;
-                };
-                if !rest.is_empty()
-                    || fields.contains(&[0; 32])
-                    || native != native_authority
-                    || policy_code != group.script.code().0
+                let identity = ObjectArgs::decode(identity.script.args())?;
+                if identity.native_authority != native_authority
+                    || identity.policy_code != group.script.code().0
                     || !manifest.state_for(group.script)?.is_empty()
-                    || authority.is_some_and(|seen| seen != *ckb)
+                    || authority.is_some_and(|seen| seen != *identity.ckb_authority)
                 {
                     return None;
                 }
-                authority = Some(*ckb);
+                authority = Some(*identity.ckb_authority);
             }
         }
         authorized(&authority?).then_some(())
