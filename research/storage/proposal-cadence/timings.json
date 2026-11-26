@@ -1,0 +1,1127 @@
+{
+  "540k.json.xz": {
+    "write_to_common_us": {
+      "p50": 1294334,
+      "p95": 135156422,
+      "p99": 187152245
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 90400,
+        "acknowledged": 90400,
+        "in_window": 77461,
+        "confirmed": 90400
+      },
+      "127.0.0.12:28890": {
+        "written": 90466,
+        "acknowledged": 90466,
+        "in_window": 77331,
+        "confirmed": 90466
+      },
+      "127.0.0.13:28890": {
+        "written": 90385,
+        "acknowledged": 90385,
+        "in_window": 77326,
+        "confirmed": 90385
+      },
+      "127.0.0.14:28890": {
+        "written": 90456,
+        "acknowledged": 90456,
+        "in_window": 77602,
+        "confirmed": 90456
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 521,
+    "cadence_ms": 250,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 361707,
+    "acknowledged": 361707,
+    "dropped_before_write": 178293,
+    "in_window": 309720,
+    "confirmed": 361707,
+    "window_tps": 1720.6666666666667,
+    "in_window_by_minute": [
+      100824,
+      105472,
+      103424
+    ],
+    "after_window": 51987,
+    "window_nonempty_blocks": 303,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 302,
+    "window_block_sizes": {
+      "p50": 1024,
+      "p95": 1024,
+      "p99": 1024
+    },
+    "window_header_gap_us": {
+      "p50": 599000,
+      "p95": 661000,
+      "p99": 701000
+    },
+    "ack_after_header": 29,
+    "clock_offset_change_us": null,
+    "clock_sampling_span_us": null,
+    "all": {
+      "acknowledged_and_visible": 361707,
+      "write_to_ack_us": {
+        "p50": 301,
+        "p95": 143730,
+        "p99": 220601
+      },
+      "ack_to_header_us": {
+        "p50": 211129,
+        "p95": 133788267,
+        "p99": 185753988
+      },
+      "header_to_common_us": {
+        "p50": 1067468,
+        "p95": 1414433,
+        "p99": 1473945
+      },
+      "write_to_common_us": {
+        "p50": 1294334,
+        "p95": 135156422,
+        "p99": 187152245
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 309720,
+      "write_to_ack_us": {
+        "p50": 301,
+        "p95": 143742,
+        "p99": 220873
+      },
+      "ack_to_header_us": {
+        "p50": 189842,
+        "p95": 596773,
+        "p99": 2085090
+      },
+      "header_to_common_us": {
+        "p50": 1038064,
+        "p95": 1166457,
+        "p99": 1247241
+      },
+      "write_to_common_us": {
+        "p50": 1244183,
+        "p95": 1728203,
+        "p99": 3105573
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 51987,
+      "write_to_ack_us": {
+        "p50": 301,
+        "p95": 143459,
+        "p99": 218722
+      },
+      "ack_to_header_us": {
+        "p50": 105394249,
+        "p95": 190523446,
+        "p99": 205872682
+      },
+      "header_to_common_us": {
+        "p50": 1371595,
+        "p95": 1478776,
+        "p99": 1514370
+      },
+      "write_to_common_us": {
+        "p50": 106790227,
+        "p95": 191933923,
+        "p99": 207329401
+      }
+    }
+  },
+  "c100.json.xz": {
+    "write_to_common_us": {
+      "p50": 810646,
+      "p95": 1115307,
+      "p99": 1324381
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 94104,
+        "acknowledged": 94104,
+        "in_window": 93659,
+        "confirmed": 94104
+      },
+      "127.0.0.12:28890": {
+        "written": 94065,
+        "acknowledged": 94065,
+        "in_window": 93623,
+        "confirmed": 94065
+      },
+      "127.0.0.13:28890": {
+        "written": 93962,
+        "acknowledged": 93962,
+        "in_window": 93518,
+        "confirmed": 93962
+      },
+      "127.0.0.14:28890": {
+        "written": 94027,
+        "acknowledged": 94027,
+        "in_window": 93591,
+        "confirmed": 94027
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 1217,
+    "cadence_ms": 100,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 376158,
+    "acknowledged": 376158,
+    "dropped_before_write": 163842,
+    "in_window": 374391,
+    "confirmed": 376158,
+    "window_tps": 2079.95,
+    "in_window_by_minute": [
+      123872,
+      125308,
+      125211
+    ],
+    "after_window": 1767,
+    "window_nonempty_blocks": 532,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 0,
+    "window_block_sizes": {
+      "p50": 706,
+      "p95": 762,
+      "p99": 781
+    },
+    "window_header_gap_us": {
+      "p50": 339000,
+      "p95": 390000,
+      "p99": 432000
+    },
+    "ack_after_header": 822,
+    "clock_offset_change_us": -1.5,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 376158,
+      "write_to_ack_us": {
+        "p50": 630,
+        "p95": 128694,
+        "p99": 162507
+      },
+      "ack_to_header_us": {
+        "p50": 82242,
+        "p95": 337817,
+        "p99": 375645
+      },
+      "header_to_common_us": {
+        "p50": 660176,
+        "p95": 848788,
+        "p99": 1111320
+      },
+      "write_to_common_us": {
+        "p50": 810646,
+        "p95": 1115307,
+        "p99": 1324381
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 374391,
+      "write_to_ack_us": {
+        "p50": 632,
+        "p95": 128528,
+        "p99": 162412
+      },
+      "ack_to_header_us": {
+        "p50": 82177,
+        "p95": 337518,
+        "p99": 375728
+      },
+      "header_to_common_us": {
+        "p50": 660256,
+        "p95": 848788,
+        "p99": 1111320
+      },
+      "write_to_common_us": {
+        "p50": 810960,
+        "p95": 1115741,
+        "p99": 1325086
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 1767,
+      "write_to_ack_us": {
+        "p50": 475,
+        "p95": 149786,
+        "p99": 173771
+      },
+      "ack_to_header_us": {
+        "p50": 208859,
+        "p95": 357841,
+        "p99": 371810
+      },
+      "header_to_common_us": {
+        "p50": 551010,
+        "p95": 706714,
+        "p99": 706714
+      },
+      "write_to_common_us": {
+        "p50": 759417,
+        "p95": 1056791,
+        "p99": 1080458
+      }
+    }
+  },
+  "repeat100.json.xz": {
+    "write_to_common_us": {
+      "p50": 802433,
+      "p95": 1101102,
+      "p99": 1250786
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 94937,
+        "acknowledged": 94937,
+        "in_window": 94470,
+        "confirmed": 94937
+      },
+      "127.0.0.12:28890": {
+        "written": 94896,
+        "acknowledged": 94896,
+        "in_window": 94442,
+        "confirmed": 94896
+      },
+      "127.0.0.13:28890": {
+        "written": 94968,
+        "acknowledged": 94968,
+        "in_window": 94527,
+        "confirmed": 94968
+      },
+      "127.0.0.14:28890": {
+        "written": 94950,
+        "acknowledged": 94950,
+        "in_window": 94497,
+        "confirmed": 94950
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 1207,
+    "cadence_ms": 100,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 379751,
+    "acknowledged": 379751,
+    "dropped_before_write": 160249,
+    "in_window": 377936,
+    "confirmed": 379751,
+    "window_tps": 2099.6444444444446,
+    "in_window_by_minute": [
+      123783,
+      126690,
+      127463
+    ],
+    "after_window": 1815,
+    "window_nonempty_blocks": 538,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 0,
+    "window_block_sizes": {
+      "p50": 702,
+      "p95": 764,
+      "p99": 778
+    },
+    "window_header_gap_us": {
+      "p50": 331000,
+      "p95": 390000,
+      "p99": 429000
+    },
+    "ack_after_header": 703,
+    "clock_offset_change_us": -1.0,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 1
+    },
+    "all": {
+      "acknowledged_and_visible": 379751,
+      "write_to_ack_us": {
+        "p50": 743,
+        "p95": 125469,
+        "p99": 159823
+      },
+      "ack_to_header_us": {
+        "p50": 82242,
+        "p95": 334618,
+        "p99": 371816
+      },
+      "header_to_common_us": {
+        "p50": 655848,
+        "p95": 851384,
+        "p99": 1022664
+      },
+      "write_to_common_us": {
+        "p50": 802433,
+        "p95": 1101102,
+        "p99": 1250786
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 377936,
+      "write_to_ack_us": {
+        "p50": 735,
+        "p95": 125300,
+        "p99": 159810
+      },
+      "ack_to_header_us": {
+        "p50": 82138,
+        "p95": 334284,
+        "p99": 371678
+      },
+      "header_to_common_us": {
+        "p50": 655848,
+        "p95": 851384,
+        "p99": 1022664
+      },
+      "write_to_common_us": {
+        "p50": 802664,
+        "p95": 1101503,
+        "p99": 1251121
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 1815,
+      "write_to_ack_us": {
+        "p50": 4269,
+        "p95": 144990,
+        "p99": 162491
+      },
+      "ack_to_header_us": {
+        "p50": 114170,
+        "p95": 361064,
+        "p99": 375422
+      },
+      "header_to_common_us": {
+        "p50": 556378,
+        "p95": 701184,
+        "p99": 701184
+      },
+      "write_to_common_us": {
+        "p50": 753657,
+        "p95": 1045369,
+        "p99": 1069370
+      }
+    }
+  },
+  "repeat250.json.xz": {
+    "write_to_common_us": {
+      "p50": 1305696,
+      "p95": 130897807,
+      "p99": 184696093
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 88781,
+        "acknowledged": 88781,
+        "in_window": 76461,
+        "confirmed": 88781
+      },
+      "127.0.0.12:28890": {
+        "written": 88670,
+        "acknowledged": 88670,
+        "in_window": 76286,
+        "confirmed": 88670
+      },
+      "127.0.0.13:28890": {
+        "written": 88771,
+        "acknowledged": 88771,
+        "in_window": 76562,
+        "confirmed": 88771
+      },
+      "127.0.0.14:28890": {
+        "written": 88626,
+        "acknowledged": 88626,
+        "in_window": 76375,
+        "confirmed": 88626
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 534,
+    "cadence_ms": 250,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 354848,
+    "acknowledged": 354848,
+    "dropped_before_write": 185152,
+    "in_window": 305684,
+    "confirmed": 354848,
+    "window_tps": 1698.2444444444445,
+    "in_window_by_minute": [
+      99860,
+      103424,
+      102400
+    ],
+    "after_window": 49164,
+    "window_nonempty_blocks": 299,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 298,
+    "window_block_sizes": {
+      "p50": 1024,
+      "p95": 1024,
+      "p99": 1024
+    },
+    "window_header_gap_us": {
+      "p50": 600000,
+      "p95": 680000,
+      "p99": 740000
+    },
+    "ack_after_header": 144,
+    "clock_offset_change_us": -1.5,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 354848,
+      "write_to_ack_us": {
+        "p50": 302,
+        "p95": 149136,
+        "p99": 225822
+      },
+      "ack_to_header_us": {
+        "p50": 209084,
+        "p95": 129530567,
+        "p99": 183332935
+      },
+      "header_to_common_us": {
+        "p50": 1064321,
+        "p95": 1344820,
+        "p99": 1452991
+      },
+      "write_to_common_us": {
+        "p50": 1305696,
+        "p95": 130897807,
+        "p99": 184696093
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 305684,
+      "write_to_ack_us": {
+        "p50": 302,
+        "p95": 148864,
+        "p99": 226037
+      },
+      "ack_to_header_us": {
+        "p50": 188298,
+        "p95": 604974,
+        "p99": 2298465
+      },
+      "header_to_common_us": {
+        "p50": 1043442,
+        "p95": 1200588,
+        "p99": 1298926
+      },
+      "write_to_common_us": {
+        "p50": 1258345,
+        "p95": 1754711,
+        "p99": 3339833
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 49164,
+      "write_to_ack_us": {
+        "p50": 304,
+        "p95": 150948,
+        "p99": 224644
+      },
+      "ack_to_header_us": {
+        "p50": 103482301,
+        "p95": 188235614,
+        "p99": 202554846
+      },
+      "header_to_common_us": {
+        "p50": 1282844,
+        "p95": 1463095,
+        "p99": 1467386
+      },
+      "write_to_common_us": {
+        "p50": 104786047,
+        "p95": 189611394,
+        "p99": 203964093
+      }
+    }
+  },
+  "send128.json.xz": {
+    "write_to_common_us": {
+      "p50": 1422106,
+      "p95": 2007577,
+      "p99": 3251781
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 106218,
+        "acknowledged": 100708,
+        "in_window": 99897,
+        "confirmed": 100708
+      },
+      "127.0.0.12:28890": {
+        "written": 106210,
+        "acknowledged": 100839,
+        "in_window": 99980,
+        "confirmed": 100839
+      },
+      "127.0.0.13:28890": {
+        "written": 106160,
+        "acknowledged": 100955,
+        "in_window": 100182,
+        "confirmed": 100955
+      },
+      "127.0.0.14:28890": {
+        "written": 106233,
+        "acknowledged": 101222,
+        "in_window": 100371,
+        "confirmed": 101222
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 1087,
+    "cadence_ms": 100,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 128,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 424821,
+    "acknowledged": 403724,
+    "dropped_before_write": 115179,
+    "in_window": 400430,
+    "confirmed": 403724,
+    "window_tps": 2224.6111111111113,
+    "in_window_by_minute": [
+      131207,
+      135898,
+      133325
+    ],
+    "after_window": 3294,
+    "window_nonempty_blocks": 408,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 198,
+    "window_block_sizes": {
+      "p50": 1019,
+      "p95": 1024,
+      "p99": 1024
+    },
+    "window_header_gap_us": {
+      "p50": 437000,
+      "p95": 530000,
+      "p99": 571000
+    },
+    "ack_after_header": 192,
+    "clock_offset_change_us": -3.0,
+    "clock_sampling_span_us": {
+      "end": 7,
+      "start": 1
+    },
+    "all": {
+      "acknowledged_and_visible": 403724,
+      "write_to_ack_us": {
+        "p50": 5323,
+        "p95": 197664,
+        "p99": 253778
+      },
+      "ack_to_header_us": {
+        "p50": 326194,
+        "p95": 562204,
+        "p99": 2053126
+      },
+      "header_to_common_us": {
+        "p50": 1089844,
+        "p95": 1495758,
+        "p99": 1536452
+      },
+      "write_to_common_us": {
+        "p50": 1422106,
+        "p95": 2007577,
+        "p99": 3251781
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 400430,
+      "write_to_ack_us": {
+        "p50": 5408,
+        "p95": 197446,
+        "p99": 253283
+      },
+      "ack_to_header_us": {
+        "p50": 325220,
+        "p95": 560436,
+        "p99": 1956692
+      },
+      "header_to_common_us": {
+        "p50": 1090578,
+        "p95": 1495758,
+        "p99": 1540058
+      },
+      "write_to_common_us": {
+        "p50": 1421544,
+        "p95": 2005050,
+        "p99": 3123339
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 3294,
+      "write_to_ack_us": {
+        "p50": 469,
+        "p95": 247230,
+        "p99": 270831
+      },
+      "ack_to_header_us": {
+        "p50": 461830,
+        "p95": 5180260,
+        "p99": 7743486
+      },
+      "header_to_common_us": {
+        "p50": 1021266,
+        "p95": 1189192,
+        "p99": 1189192
+      },
+      "write_to_common_us": {
+        "p50": 1510299,
+        "p95": 5878587,
+        "p99": 8429913
+      }
+    }
+  },
+  "shard128.json.xz": {
+    "write_to_common_us": {
+      "p50": 1483062,
+      "p95": 3260857,
+      "p99": 77399040
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 99962,
+        "acknowledged": 99962,
+        "in_window": 97487,
+        "confirmed": 99962
+      },
+      "127.0.0.12:28890": {
+        "written": 100425,
+        "acknowledged": 100425,
+        "in_window": 97892,
+        "confirmed": 100425
+      },
+      "127.0.0.13:28890": {
+        "written": 101119,
+        "acknowledged": 101119,
+        "in_window": 98580,
+        "confirmed": 101119
+      },
+      "127.0.0.14:28890": {
+        "written": 100962,
+        "acknowledged": 100962,
+        "in_window": 98413,
+        "confirmed": 100962
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 1026,
+    "cadence_ms": 100,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 128,
+    "per_endpoint_pools": true,
+    "scheduled": 540000,
+    "written": 402468,
+    "acknowledged": 402468,
+    "dropped_before_write": 137532,
+    "in_window": 392372,
+    "confirmed": 402468,
+    "window_tps": 2179.8444444444444,
+    "in_window_by_minute": [
+      129204,
+      131072,
+      132096
+    ],
+    "after_window": 10096,
+    "window_nonempty_blocks": 387,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 356,
+    "window_block_sizes": {
+      "p50": 1024,
+      "p95": 1024,
+      "p99": 1024
+    },
+    "window_header_gap_us": {
+      "p50": 459000,
+      "p95": 542000,
+      "p99": 638000
+    },
+    "ack_after_header": 204,
+    "clock_offset_change_us": -2.5,
+    "clock_sampling_span_us": {
+      "end": 5,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 402468,
+      "write_to_ack_us": {
+        "p50": 2244,
+        "p95": 199177,
+        "p99": 253194
+      },
+      "ack_to_header_us": {
+        "p50": 361070,
+        "p95": 1904766,
+        "p99": 76215992
+      },
+      "header_to_common_us": {
+        "p50": 1101895,
+        "p95": 1510496,
+        "p99": 1585086
+      },
+      "write_to_common_us": {
+        "p50": 1483062,
+        "p95": 3260857,
+        "p99": 77399040
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 392372,
+      "write_to_ack_us": {
+        "p50": 2319,
+        "p95": 199130,
+        "p99": 253084
+      },
+      "ack_to_header_us": {
+        "p50": 355551,
+        "p95": 1693421,
+        "p99": 11230825
+      },
+      "header_to_common_us": {
+        "p50": 1099519,
+        "p95": 1510496,
+        "p99": 1585086
+      },
+      "write_to_common_us": {
+        "p50": 1473623,
+        "p95": 2853914,
+        "p99": 12269631
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 10096,
+      "write_to_ack_us": {
+        "p50": 654,
+        "p95": 201435,
+        "p99": 255105
+      },
+      "ack_to_header_us": {
+        "p50": 50128478,
+        "p95": 149420848,
+        "p99": 159386485
+      },
+      "header_to_common_us": {
+        "p50": 1219452,
+        "p95": 1265293,
+        "p99": 1265293
+      },
+      "write_to_common_us": {
+        "p50": 51348314,
+        "p95": 150630257,
+        "p99": 160454372
+      }
+    }
+  },
+  "wide100.json.xz": {
+    "write_to_common_us": {
+      "p50": 835026,
+      "p95": 1167859,
+      "p99": 1385896
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 92287,
+        "acknowledged": 92287,
+        "in_window": 91894,
+        "confirmed": 92287
+      },
+      "127.0.0.12:28890": {
+        "written": 92315,
+        "acknowledged": 92315,
+        "in_window": 91937,
+        "confirmed": 92315
+      },
+      "127.0.0.13:28890": {
+        "written": 92276,
+        "acknowledged": 92276,
+        "in_window": 91896,
+        "confirmed": 92276
+      },
+      "127.0.0.14:28890": {
+        "written": 92304,
+        "acknowledged": 92304,
+        "in_window": 91932,
+        "confirmed": 92304
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 1190,
+    "cadence_ms": 100,
+    "block_transactions": 2048,
+    "block_cycles": 4000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 369182,
+    "acknowledged": 369182,
+    "dropped_before_write": 170818,
+    "in_window": 367659,
+    "confirmed": 369182,
+    "window_tps": 2042.55,
+    "in_window_by_minute": [
+      123393,
+      122347,
+      121919
+    ],
+    "after_window": 1523,
+    "window_nonempty_blocks": 528,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 0,
+    "window_block_sizes": {
+      "p50": 696,
+      "p95": 760,
+      "p99": 778
+    },
+    "window_header_gap_us": {
+      "p50": 340000,
+      "p95": 400000,
+      "p99": 430000
+    },
+    "ack_after_header": 446,
+    "clock_offset_change_us": -1.0,
+    "clock_sampling_span_us": {
+      "end": 4,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 369182,
+      "write_to_ack_us": {
+        "p50": 963,
+        "p95": 130209,
+        "p99": 165101
+      },
+      "ack_to_header_us": {
+        "p50": 82309,
+        "p95": 344407,
+        "p99": 384381
+      },
+      "header_to_common_us": {
+        "p50": 676625,
+        "p95": 976824,
+        "p99": 1089377
+      },
+      "write_to_common_us": {
+        "p50": 835026,
+        "p95": 1167859,
+        "p99": 1385896
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 367659,
+      "write_to_ack_us": {
+        "p50": 954,
+        "p95": 130201,
+        "p99": 165125
+      },
+      "ack_to_header_us": {
+        "p50": 82266,
+        "p95": 344370,
+        "p99": 384265
+      },
+      "header_to_common_us": {
+        "p50": 676625,
+        "p95": 976824,
+        "p99": 1089377
+      },
+      "write_to_common_us": {
+        "p50": 835484,
+        "p95": 1168483,
+        "p99": 1386228
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 1523,
+      "write_to_ack_us": {
+        "p50": 4718,
+        "p95": 132231,
+        "p99": 156615
+      },
+      "ack_to_header_us": {
+        "p50": 96223,
+        "p95": 366291,
+        "p99": 391057
+      },
+      "header_to_common_us": {
+        "p50": 457632,
+        "p95": 750053,
+        "p99": 750053
+      },
+      "write_to_common_us": {
+        "p50": 780366,
+        "p95": 1079695,
+        "p99": 1100026
+      }
+    }
+  },
+  "wide250.json.xz": {
+    "write_to_common_us": {
+      "p50": 1306735,
+      "p95": 1815571,
+      "p99": 1900440
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 85230,
+        "acknowledged": 85230,
+        "in_window": 84536,
+        "confirmed": 85230
+      },
+      "127.0.0.12:28890": {
+        "written": 85234,
+        "acknowledged": 85234,
+        "in_window": 84547,
+        "confirmed": 85234
+      },
+      "127.0.0.13:28890": {
+        "written": 85298,
+        "acknowledged": 85298,
+        "in_window": 84616,
+        "confirmed": 85298
+      },
+      "127.0.0.14:28890": {
+        "written": 85301,
+        "acknowledged": 85301,
+        "in_window": 84622,
+        "confirmed": 85301
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 602,
+    "cadence_ms": 250,
+    "block_transactions": 2048,
+    "block_cycles": 4000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 341063,
+    "acknowledged": 341063,
+    "dropped_before_write": 198937,
+    "in_window": 338321,
+    "confirmed": 341063,
+    "window_tps": 1879.5611111111111,
+    "in_window_by_minute": [
+      110703,
+      113640,
+      113978
+    ],
+    "after_window": 2742,
+    "window_nonempty_blocks": 286,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 0,
+    "window_block_sizes": {
+      "p50": 1185,
+      "p95": 1231,
+      "p99": 1248
+    },
+    "window_header_gap_us": {
+      "p50": 628000,
+      "p95": 698000,
+      "p99": 810000
+    },
+    "ack_after_header": 416,
+    "clock_offset_change_us": -0.5,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 341063,
+      "write_to_ack_us": {
+        "p50": 291,
+        "p95": 158086,
+        "p99": 249344
+      },
+      "ack_to_header_us": {
+        "p50": 185068,
+        "p95": 613387,
+        "p99": 668117
+      },
+      "header_to_common_us": {
+        "p50": 1087106,
+        "p95": 1240562,
+        "p99": 1402798
+      },
+      "write_to_common_us": {
+        "p50": 1306735,
+        "p95": 1815571,
+        "p99": 1900440
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 338321,
+      "write_to_ack_us": {
+        "p50": 291,
+        "p95": 157751,
+        "p99": 249360
+      },
+      "ack_to_header_us": {
+        "p50": 184896,
+        "p95": 613452,
+        "p99": 668390
+      },
+      "header_to_common_us": {
+        "p50": 1088717,
+        "p95": 1240562,
+        "p99": 1402798
+      },
+      "write_to_common_us": {
+        "p50": 1307824,
+        "p95": 1816562,
+        "p99": 1900680
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 2742,
+      "write_to_ack_us": {
+        "p50": 291,
+        "p95": 194608,
+        "p99": 245443
+      },
+      "ack_to_header_us": {
+        "p50": 206999,
+        "p95": 598414,
+        "p99": 638415
+      },
+      "header_to_common_us": {
+        "p50": 859509,
+        "p95": 1074545,
+        "p99": 1074545
+      },
+      "write_to_common_us": {
+        "p50": 1143206,
+        "p95": 1620204,
+        "p99": 1656861
+      }
+    }
+  }
+}

@@ -9,10 +9,15 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use ckb_types::{packed::Byte32, prelude::*};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use stem::jolteon::Client;
-use stem_ledger::{Transaction, block::Header, light::FinalityVerifier, proof::Tree};
+use stem_ledger::{
+    Transaction,
+    block::{Header, Receipt},
+    light::FinalityVerifier,
+    proof::{InclusionProof, Tree},
+};
 use stem_stake::Member;
 
 use super::{Fixture, Load, statuses};
@@ -203,12 +208,44 @@ impl Snapshot {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+pub(super) struct SampleExecution {
+    transaction: String,
+    receipt: String,
+    proof: String,
+}
+
+impl SampleExecution {
+    pub(super) fn verify(&self, network: &Byte32, header: &Header, ids: &[String]) -> Result<()> {
+        let tx = Transaction::from_slice(&hex::decode(&self.transaction)?)?;
+        let receipt = Receipt::decode(&hex::decode(&self.receipt)?)?;
+        let raw = hex::decode(self.proof.strip_prefix("0x").unwrap_or(&self.proof))?;
+        let (payment, execution) = InclusionProof::decode_execution_pair(&raw)?;
+        ensure!(
+            payment.count as usize == ids.len()
+                && ids.get(payment.position as usize)
+                    == Some(&hex::encode(tx.id(network).as_slice()))
+                && payment.verify_execution(
+                    network,
+                    &header.execution(),
+                    &tx,
+                    &execution,
+                    &receipt
+                ),
+            "sampled execution differs from the certified block"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Deserialize)]
 struct Block {
     seen_us: u64,
     header: String,
     ids: Option<Vec<String>>,
     positions: Option<Vec<usize>>,
+    #[serde(default)]
+    receipts: Vec<SampleExecution>,
 }
 
 impl Block {
@@ -313,6 +350,9 @@ pub(super) fn verify_report(
                 &ids,
                 &by_id,
             )?;
+            for receipt in &block.receipts {
+                receipt.verify(network, &next, &ids)?;
+            }
             if elapsed <= load.seconds * 1_000_000 {
                 window += ids.len();
             }

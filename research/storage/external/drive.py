@@ -26,8 +26,11 @@ def main():
     prepare.add_argument("--rate", type=int, required=True)
     prepare.add_argument("--seconds", type=int, required=True)
     prepare.add_argument("--senders", type=int, default=64)
+    prepare.add_argument("--shard-senders", action="store_true", help="reserve an equal sender pool and queue per endpoint")
     prepare.add_argument("--drain", type=int, default=15)
     prepare.add_argument("--data-bytes", type=int, default=0)
+    prepare.add_argument("--block-transactions", type=int, default=1024)
+    prepare.add_argument("--block-cycles", type=int, default=2_000_000_000)
     prepare.add_argument("--complete-volume", action="store_true")
     prepare.add_argument("--reuse-submissions", action="store_true")
     measure = phases.add_parser("measure")
@@ -48,7 +51,8 @@ def main():
                     "CADENCE": config["proposal_interval_ms"], "VM_WORKERS": config.get("vm_workers", 2),
                     "PAYMENT_DATA_BYTES": args.data_bytes, "COMPLETE_VOLUME": int(args.complete_volume),
                     "REPLICAS": len(config["peers"]), "PREFUND_PAYMENTS": 1,
-                    "REUSE_SUBMISSIONS": int(args.reuse_submissions)}
+                    "REUSE_SUBMISSIONS": int(args.reuse_submissions),
+                    "SHARD_SENDERS": int(args.shard_senders), "BLOCK_TRANSACTIONS": args.block_transactions, "BLOCK_CYCLES": args.block_cycles}
         plan = {"storage_settings": settings, "harness_sha256": harness_hash, "lock_sha256": lock_hash,
                 "topology_sha256": digest(topology)}
     else:

@@ -8,7 +8,7 @@ use std::{
     process::Command,
     sync::{Mutex, mpsc},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::ensure;
@@ -36,9 +36,11 @@ struct Load {
     seconds: u64,
     drain: u64,
     senders: usize,
+    shard_senders: bool,
     cadence_ms: u64,
     vm_workers: usize,
     block_cycles: u64,
+    block_transactions: u32,
     retention: u64,
     measured: bool,
     reuse_submissions: bool,
@@ -63,9 +65,11 @@ impl Load {
             seconds: read("STEM_STORAGE_SECONDS", 45)?,
             drain: read("STEM_STORAGE_DRAIN", 12)?,
             senders: read("STEM_STORAGE_SENDERS", 24)?.try_into()?,
+            shard_senders: read("STEM_STORAGE_SHARD_SENDERS", 0)? != 0,
             cadence_ms: read("STEM_STORAGE_CADENCE", 250)?,
             vm_workers: read("STEM_STORAGE_VM_WORKERS", 2)?.try_into()?,
             block_cycles: read("STEM_STORAGE_BLOCK_CYCLES", 2_000_000_000)?,
+            block_transactions: read("STEM_STORAGE_BLOCK_TRANSACTIONS", 1024)?.try_into()?,
             retention: read("STEM_STORAGE_RETENTION", 64)?,
             measured: read("STEM_STORAGE_METRICS", 1)? != 0,
             reuse_submissions: read("STEM_STORAGE_REUSE_SUBMISSIONS", 0)? != 0,
@@ -79,7 +83,8 @@ impl Load {
                 && (1..=if load.prefund_payments { 10_000 } else { 5_000 }).contains(&load.rate)
                 && (1..=3600).contains(&load.seconds)
                 && (2..=45).contains(&load.drain)
-                && (1..=64).contains(&load.senders)
+                && (1..=if load.prefund_payments { 256 } else { 64 }).contains(&load.senders)
+                && (!load.shard_senders || load.senders.is_multiple_of(load.replicas))
                 && (50..=1000).contains(&load.cadence_ms)
                 && (1..=16).contains(&load.vm_workers)
                 && (32..=512).contains(&load.retention)
@@ -94,6 +99,7 @@ impl Load {
                 && load.payment_chains <= 100_000
                 && load.payment_chains <= load.rate * load.seconds as usize
                 && !(load.prefund_payments && load.payment_chains != 0)
+                && load.block_transactions > 0
                 && load.block_cycles >= 20_000_000
                 && load.payment_data_bytes <= 16_384,
             "invalid sustained storage experiment settings"
@@ -189,6 +195,13 @@ fn capture(replicas: &[Process], clients: &[Client], measured: bool) -> Result<C
     })
 }
 
+// Bracket a wall-clock reading with the same monotonic clock as the dispatch trace.
+fn clock_sample(start: Instant) -> Result<Value> {
+    let before_us = micros(start);
+    let unix_us = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros())?;
+    Ok(json!({"before_us":before_us,"unix_us":unix_us,"after_us":micros(start)}))
+}
+
 fn micros(start: Instant) -> u64 {
     start.elapsed().as_micros() as u64
 }
@@ -214,7 +227,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         ("stem-storage-load".into(), [137; 32].pack())
     };
     let limits = &mut fixture.spec.limits;
-    limits.transaction_count = 1024;
+    limits.transaction_count = load.block_transactions;
     limits.transaction_bytes = 2 * 1024 * 1024;
     limits.transaction_cycles = 20_000_000;
     limits.block_cycles = load.block_cycles;
@@ -360,6 +373,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         .context("no replicas")?;
     fs::write(output.join("before.json"), serde_json::to_vec(&before)?)?;
     let start = Instant::now();
+    let clock_start = clock_sample(start)?;
     let offer_us = load.seconds * 1_000_000;
     let end_us = (load.seconds + load.drain) * 1_000_000;
     let dispatch_deadline = if load.complete_volume {
@@ -367,8 +381,13 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     } else {
         offer_us
     };
-    let (dispatch, pending) = mpsc::sync_channel::<(usize, Delivery)>(load.senders);
-    let pending = Mutex::new(pending);
+    let queues = if load.shard_senders { load.replicas } else { 1 };
+    let (dispatch, pending): (Vec<_>, Vec<_>) = (0..queues)
+        .map(|_| {
+            let (sender, requests) = mpsc::sync_channel::<(usize, Delivery)>(load.senders / queues);
+            (sender, Mutex::new(requests))
+        })
+        .unzip();
     let (deliveries, samples, failures) = thread::scope(|scope| {
         let observer = scope.spawn(|| {
             let mut samples = Vec::new();
@@ -393,11 +412,14 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             (samples, failures)
         });
         let senders: Vec<_> = (0..load.senders)
-            .map(|_| {
-                scope.spawn(|| {
+            .map(|worker| {
+                let queue = &pending[worker % queues];
+                let clients = &clients;
+                let jobs = &jobs;
+                scope.spawn(move || {
                     let mut rows = Vec::new();
                     loop {
-                        let request = pending.lock().expect("dispatch queue").recv();
+                        let request = queue.lock().expect("dispatch queue").recv();
                         let Ok((index, mut row)) = request else {
                             break;
                         };
@@ -430,11 +452,12 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
                 rows.push(row);
             } else {
                 row.queued_us = Some(now);
+                let sender = &dispatch[index % queues];
                 if load.complete_volume {
-                    assert!(dispatch.send((index, row)).is_ok(), "no load senders");
+                    assert!(sender.send((index, row)).is_ok(), "no load senders");
                     continue;
                 }
-                match dispatch.try_send((index, row)) {
+                match sender.try_send((index, row)) {
                     Ok(()) => {}
                     Err(mpsc::TrySendError::Full((_, mut row))) => {
                         row.queued_us = None;
@@ -454,6 +477,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         (rows, samples, failures)
     });
     ensure!(deliveries.len() == work, "incomplete client dispatch trace");
+    let clock_end = clock_sample(start)?;
     let after = capture(&replicas, &clients, load.measured)?;
     let common_height = samples
         .last()
@@ -474,6 +498,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
 
     let mut seen = HashMap::new();
     let mut sampled_blocks = Vec::new();
+    let mut sampled_execution = false;
     let mut cursor = first_height + 1;
     // The measurement scans blocks after the timed observer stops. Rebuild each external
     // archive root from the actual signed workload and link it to certified finality.
@@ -499,6 +524,21 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             let mut block = json!({"height": cursor, "seen_us": sample.at_us, "ids": ids});
             if let Some(previous) = &mut parent {
                 let header = archive.header(cursor)?;
+                if !sampled_execution && sample.at_us >= offer_us / 2 && !ids.is_empty() {
+                    let mut indices = vec![0, ids.len() / 2, ids.len() - 1];
+                    indices.dedup();
+                    let mut receipts = Vec::new();
+                    for index in indices {
+                        let data = u32::try_from(index)?.to_le_bytes();
+                        let query = archive.query("/stem/execution", cursor, &data, true)?;
+                        let receipt: external::SampleExecution =
+                            serde_json::from_slice(&query.value)?;
+                        receipt.verify(&fixture.spec.network, &header, &ids)?;
+                        receipts.push(receipt);
+                    }
+                    block["receipts"] = json!(receipts);
+                    sampled_execution = true;
+                }
                 external::check_block(
                     &fixture.spec.network,
                     &header,
@@ -611,6 +651,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             "summary": summary, "before": before, "after": after,
             "samples": samples, "blocks": sampled_blocks, "deliveries": deliveries, "observation_errors": failures,
             "start_header": start_header.map(|h| hex::encode(h.encode())),
+            "driver_clock": {"start":clock_start,"end":clock_end},
             "external_endpoints": topology.as_ref().map(|t| t.addresses()),
             "agreed_height": common_height, "header": hex::encode(final_header.encode()),
             "finality": hex::encode(certificate.proof), "network": hex::encode(fixture.spec.network.as_slice()),

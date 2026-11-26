@@ -4,6 +4,8 @@ The [historical benchmark record](HISTORICAL-BENCHMARKS.md) and its raw artefact
 
 Stem measurements record the executable, workload, configured limits, offered and acknowledged submissions, successful finalizations and replica visibility.
 
+The three-minute signed payment study compares two proposal intervals, two block capacity profiles and sender allocation on four local validators. Its archives replay to a certified Header and include sampled execution receipts. A separate pair of disposable CKB and Stem devnets exercised a published Lua Mutant from both asset origins. [Payment experiments](research/storage/proposal-cadence/README.md) · [Mutant lifecycle and proofs](research/spore-permit/upstream/beta2/README.md)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two

@@ -47,6 +47,8 @@ stem run --initialize --home "$node_home" --configuration trial/replicas.json \
   --genesis trial/genesis.json --key-file "$validator_key" --history-window 64 --storage-metrics
 ```
 
+The optional `--block-transactions` and `--block-cycles` settings are part of genesis. A different profile requires fresh validator databases. `--senders` and `--shard-senders` apply to the client. Per-endpoint pools divide the same sender count and bounded queue capacity equally among the replicas. The sender count must divide evenly across the configured peers in this mode. [Measured cadence, capacity and client configurations](../proposal-cadence/README.md)
+
 ## Measure and replay
 
 Once every validator has finalized at least three blocks, start the driver. It checks the genesis and committee before submitting funding transactions. The raw output includes socket stages, acknowledgements, per-replica height samples, storage metrics and the finality proof. The archive validator serves the block history over the network. The driver does not need a local replica database or the operators' private keys. An interrupted measurement that already spent fixture inputs requires a fresh trial database to repeat that workload.
@@ -59,7 +61,7 @@ python3 research/storage/external/drive.py --harness "$harness" --contracts "$co
   verify --trial trial --report report.json.xz
 ```
 
-Replay runs with the validators stopped. It regenerates the exact signed bytes and workload digest, checks each payment list against its native transaction root, follows every Header to the pinned committee's certificate, and recomputes writes, acknowledgements, common confirmations and offer-window TPS. The timestamps and per-replica heights come from the driver. A certificate authenticates a block, while timing accuracy depends on the observer's polling cadence and RPC latency. External mode leaves the per-snapshot PID resource array empty. Distinct socket addresses establish connectivity. Identifying physical hosts and their storage devices requires the deployment inventory.
+Replay runs with the validators stopped. It regenerates the exact signed bytes and workload digest, checks each payment list against its native transaction root, follows every Header to the pinned committee's certificate, and recomputes writes, acknowledgements, common confirmations and offer-window TPS. On new runs the archive also supplies paired transaction and execution-receipt proofs for up to three payments from one nonempty block after the midpoint. Both measurement and replay match them to the Header and the signed payment position. The timestamps and per-replica heights come from the driver. A certificate authenticates a block, while timing accuracy depends on the observer's polling cadence and RPC latency. External mode leaves the per-snapshot PID resource array empty. Distinct socket addresses establish connectivity. Identifying physical hosts and their storage devices requires the deployment inventory.
 
 ## Workstation rehearsal
 
