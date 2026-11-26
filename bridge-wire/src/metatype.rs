@@ -7,6 +7,7 @@ use alloc::{collections::BTreeMap, vec::Vec};
 use crate::HASH_SIZE;
 
 pub mod custody;
+pub mod fungible;
 pub mod witness;
 use custody::{Boundary, Custody, manifest_id};
 use witness::{GroupWitness, MAX_FIELDS_BYTES};
@@ -20,7 +21,8 @@ pub const MAX_STATE_BYTES: usize = 2048;
 pub const MAX_MANIFEST_BYTES: usize = 8192;
 pub const MAX_MANIFEST_DEFINITION_BYTES: usize = 1 + MAX_TYPE_SCRIPTS * (4 + MAX_SCRIPT_BYTES);
 pub const MAX_ADAPTERS: usize = 64;
-pub const MAX_ADAPTER_TABLE_BYTES: usize = 2 + 65 * MAX_ADAPTERS + Custody::SIZE;
+pub const MAX_ADAPTER_TABLE_BYTES: usize = 1 + 65 * MAX_ADAPTERS + Custody::SIZE;
+pub const MAX_LIVE_DATA: usize = 128 * 1024;
 
 type Hash = [u8; HASH_SIZE];
 
@@ -233,8 +235,7 @@ impl<'a> MetatypeAdapterTable<'a> {
         }
         let custody = match tail {
             [0] => None,
-            [1, raw @ ..] => Some(Custody::decode(raw)?),
-            _ => return None,
+            raw => Some(Custody::decode(raw)?),
         };
         Some(Self { entries, custody })
     }

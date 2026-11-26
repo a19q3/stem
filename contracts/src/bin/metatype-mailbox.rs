@@ -1,4 +1,4 @@
-//! The same custody gate for any approved immutable Metatype deployment.
+//! The same custody gate for any approved Metatype deployment.
 
 #![no_std]
 #![no_main]
@@ -15,10 +15,13 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Delivery, MailboxState, Message},
-    metatype::custody::{Gate, ImmutableTransfer},
+    metatype::{
+        MAX_LIVE_DATA,
+        custody::{Boundary, Gate, Transfer},
+    },
 };
 use stem_contracts::{
-    metatype::{ManifestResolver, bounded_data},
+    metatype::{ManifestResolver, borrowed, bounded_data},
     metatype_custody::{find_unique, mailbox_policy},
 };
 use stem_stake::Hash32;
@@ -61,47 +64,69 @@ fn verify() -> Result<(), i8> {
     )
     .map_err(|_| 50)?;
     let next = MailboxState::decode(&next).ok_or(50)?;
-    let input = find_unique(Source::Input, &gate.metatype)?;
-    let output = find_unique(Source::Output, &gate.metatype)?;
-    let (source, index, manifest, content) = if next.outgoing.is_empty() {
-        let (None, Some(index)) = (input, output) else {
+    let mut manifests = ManifestResolver::default();
+    let mut remaining = MAX_LIVE_DATA;
+    let (_, inputs) = manifests
+        .cells(Source::Input, &gate.metatype, &mut remaining)
+        .map_err(|_| 51)?;
+    let (_, outputs) = manifests
+        .cells(Source::Output, &gate.metatype, &mut remaining)
+        .map_err(|_| 51)?;
+    let (boundary, principal) = gate
+        .custody
+        .transition(&borrowed(&inputs), &borrowed(&outputs))
+        .ok_or(51)?;
+    let incoming;
+    let message = if next.outgoing.is_empty() {
+        if boundary != Boundary::Import {
             return Err(51);
-        };
-        let witness = load_witness_args(0, Source::GroupInput).map_err(|_| 51)?;
-        let delivery = witness.input_type().to_opt().ok_or(51)?.raw_data();
-        let delivery = Delivery::decode(&delivery).ok_or(51)?;
+        }
+        incoming = load_witness_args(0, Source::GroupInput)
+            .map_err(|_| 51)?
+            .input_type()
+            .to_opt()
+            .ok_or(51)?
+            .raw_data();
+        let delivery = Delivery::decode(&incoming).ok_or(51)?;
         let message = Message::decode(delivery.record).ok_or(51)?;
-        let asset = ImmutableTransfer::decode(message.payload).ok_or(51)?;
         if message.sender != gate.stem_escrow
             || message.source != policy.stem_network
             || message.receiver != mailbox_hash
             || message.destination != policy.ckb_genesis
-            || asset.recipient == self_hash
-            || load_cell_lock_hash(index, Source::Output).map_err(|_| 51)? != asset.recipient
         {
             return Err(51);
         }
-        (Source::Output, index, asset.manifest, asset.data.to_vec())
+        message
     } else {
-        let (Some(index), None) = (input, output) else {
+        if boundary != Boundary::Return {
             return Err(51);
-        };
+        }
         let message = Message::decode(next.outgoing).ok_or(51)?;
-        let asset = ImmutableTransfer::decode(message.payload).ok_or(51)?;
         if message.receiver != gate.stem_escrow
             || message.destination != policy.stem_network
             || message.sender != mailbox_hash
             || message.source != policy.ckb_genesis
-            || asset.recipient == gate.stem_escrow
         {
             return Err(51);
         }
-        (Source::Input, index, asset.manifest, asset.data.to_vec())
+        message
     };
-    let state = ManifestResolver::default()
-        .manifest_data(index as u16, source)
-        .ok_or(51)?;
-    if manifest != gate.custody.manifest || gate.custody.data(&state) != Some(content.as_slice()) {
+    let transfer = Transfer::decode(gate.custody.profile, message.payload).ok_or(51)?;
+    if transfer.manifest != gate.custody.manifest || transfer.principal != principal {
+        return Err(51);
+    }
+    if boundary == Boundary::Import {
+        if transfer.recipient == self_hash {
+            return Err(51);
+        }
+        for (index, _) in outputs {
+            if load_cell_lock_hash(usize::from(index), Source::Output).map_err(|_| 51)?
+                != transfer.recipient
+            {
+                return Err(51);
+            }
+        }
+    } else if transfer.recipient == gate.stem_escrow {
         return Err(51);
     }
     Ok(())

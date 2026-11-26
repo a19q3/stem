@@ -1,4 +1,4 @@
-//! Stem custody of the exact Type Script set and immutable data of a Cell.
+//! Stem custody of an exact Type Script set and its application principal.
 
 #![no_std]
 #![no_main]
@@ -20,7 +20,7 @@ use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
     metatype::{
         LogicalScript, MAX_SCRIPT_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE, MAX_TYPE_SCRIPTS,
-        custody::{Custody, Gate, ImmutableTransfer, escrow_nonce, manifest_id},
+        custody::{Custody, Gate, Principal, Transfer, escrow_nonce, manifest_id, positive_amount},
     },
 };
 use stem_contracts::metatype::bounded_data;
@@ -55,14 +55,14 @@ fn verify() -> Result<(), i8> {
         return Err(52);
     }
     let args = script.args().raw_data();
-    let (fields, tail) = args.as_chunks::<32>();
-    let [ckb, metatype, checkpoint_code, checkpoint_id, custody @ ..] = fields else {
+    let (route, custody) = args.split_at_checked(4 * 32).ok_or(52)?;
+    let [ckb, metatype, checkpoint_code, checkpoint_id] = route.as_chunks::<32>().0 else {
         return Err(52);
     };
-    if !tail.is_empty() || fields.contains(&[0; 32]) {
+    if route.as_chunks::<32>().0.contains(&[0; 32]) {
         return Err(52);
     }
-    let custody = Custody::decode(custody.as_flattened()).ok_or(52)?;
+    let custody = Custody::decode(custody).ok_or(52)?;
     let mut network = [0; 32];
     if load(LOAD_NETWORK, 0, 0, 0, &mut network) != (0, 32) {
         return Err(52);
@@ -73,7 +73,7 @@ fn verify() -> Result<(), i8> {
         metatype: *metatype,
         custody,
     };
-    let owner = direct_script(custody.guard_code, &gate.args().as_flattened()).calc_script_hash();
+    let owner = direct_script(custody.guard_code, &gate.args()).calc_script_hash();
     let mailbox_args = [
         custody.mailbox_id,
         *ckb,
@@ -97,7 +97,7 @@ fn verify() -> Result<(), i8> {
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().expect("fixed action"));
     let message = Message::decode(&action[12..len]).ok_or(53)?;
-    let asset = ImmutableTransfer::decode(message.payload).ok_or(53)?;
+    let asset = Transfer::decode(custody.profile, message.payload).ok_or(53)?;
     if asset.manifest != custody.manifest {
         return Err(53);
     }
@@ -122,22 +122,150 @@ fn verify() -> Result<(), i8> {
         }
         _ => return Err(53),
     };
-    let before = inspect(Source::Input, &custody, &escrow, asset.data)?;
-    let after = inspect(Source::Output, &custody, &escrow, asset.data)?;
+    match asset.principal {
+        Principal::Immutable(data) => verify_object(
+            &custody,
+            &escrow,
+            data,
+            &asset.recipient,
+            outbound,
+            message.nonce,
+        ),
+        Principal::Fungible(amount) => verify_fungible(
+            &custody,
+            &escrow,
+            amount,
+            &asset.recipient,
+            outbound,
+            message.nonce,
+        ),
+    }
+}
+
+fn check_nonce(index: usize, nonce: u64) -> Result<(), i8> {
+    let seed = load_input_out_point(index, Source::Input).map_err(|_| 53)?;
+    (nonce == escrow_nonce(seed.as_slice().try_into().map_err(|_| 53)?))
+        .then_some(())
+        .ok_or(53)
+}
+
+fn verify_object(
+    custody: &Custody,
+    escrow: &Identity,
+    data: &[u8],
+    recipient: &Identity,
+    outbound: bool,
+    nonce: u64,
+) -> Result<(), i8> {
+    let before = inspect(Source::Input, custody, escrow, data)?;
+    let after = inspect(Source::Output, custody, escrow, data)?;
     if outbound {
-        let seed = load_input_out_point(before.bond_index, Source::Input).map_err(|_| 53)?;
-        if message.nonce != escrow_nonce(seed.as_slice().try_into().map_err(|_| 53)?) {
-            return Err(53);
-        }
+        check_nonce(before.bond_index, nonce)?;
     }
     if before.bond_capacity != after.bond_capacity
         || before.asset_capacity != after.asset_capacity
-        || (outbound && (before.asset_lock == escrow || after.asset_lock != escrow))
-        || (!outbound && (before.asset_lock != escrow || after.asset_lock != asset.recipient))
+        || (outbound && (&before.asset_lock == escrow || &after.asset_lock != escrow))
+        || (!outbound && (&before.asset_lock != escrow || &after.asset_lock != recipient))
     {
         return Err(54);
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct Totals {
+    capacity: u64,
+    held: u128,
+    outside: u128,
+    first_held: Option<usize>,
+}
+
+fn fungible_totals(
+    source: Source,
+    custody: &Custody,
+    escrow: &Identity,
+    recipient: Option<&Identity>,
+) -> Result<Totals, i8> {
+    let mut totals = Totals::default();
+    for index in 0..=MAX_TRANSACTION_CELLS_PER_SIDE {
+        let lock = match load_cell_lock_hash(index, source) {
+            Ok(lock) if index < MAX_TRANSACTION_CELLS_PER_SIDE => lock,
+            Err(SysError::IndexOutOfBound) => return Ok(totals),
+            _ => return Err(54),
+        };
+        let held = &lock == escrow;
+        if held {
+            totals.first_held.get_or_insert(index);
+            totals.capacity = totals
+                .capacity
+                .checked_add(load_cell_capacity(index, source).map_err(|_| 54)?)
+                .ok_or(54)?;
+        }
+        match load(
+            FIND_TYPE,
+            source as u64,
+            index,
+            custody.data_script.as_ptr() as u64,
+            &mut [],
+        )
+        .0
+        {
+            0 => {
+                if scripts(source, index)? != custody.manifest
+                    || (!held && recipient.is_some_and(|expected| expected != &lock))
+                {
+                    return Err(54);
+                }
+                let raw = bounded_data(index, source, 16).map_err(|_| 54)?;
+                let units = positive_amount(&raw).ok_or(54)?;
+                let total = if held {
+                    &mut totals.held
+                } else {
+                    &mut totals.outside
+                };
+                *total = total.checked_add(units).ok_or(54)?;
+            }
+            ITEM_MISSING if held => {
+                if load(LOAD_TYPE, source as u64, index, 0, &mut []).0 != INDEX_OUT_OF_BOUND {
+                    return Err(54);
+                }
+                bounded_data(index, source, 0).map_err(|_| 54)?;
+            }
+            ITEM_MISSING => {}
+            _ => return Err(54),
+        }
+    }
+    unreachable!("bounded Cell enumeration")
+}
+
+fn verify_fungible(
+    custody: &Custody,
+    escrow: &Identity,
+    amount: u128,
+    recipient: &Identity,
+    outbound: bool,
+    nonce: u64,
+) -> Result<(), i8> {
+    let before = fungible_totals(Source::Input, custody, escrow, None)?;
+    let after = fungible_totals(
+        Source::Output,
+        custody,
+        escrow,
+        (!outbound).then_some(recipient),
+    )?;
+    if before.capacity != after.capacity {
+        return Err(54);
+    }
+    let valid = if outbound {
+        check_nonce(before.first_held.ok_or(53)?, nonce)?;
+        after.held.checked_sub(before.held) == Some(amount)
+            && before.outside.checked_sub(after.outside) == Some(amount)
+    } else {
+        before.outside == 0
+            && before.held.checked_sub(after.held) == Some(amount)
+            && after.outside == amount
+    };
+    valid.then_some(()).ok_or(54)
 }
 
 fn direct_script(code_hash: Identity, args: &[u8]) -> Script {

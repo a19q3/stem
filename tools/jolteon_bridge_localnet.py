@@ -566,10 +566,12 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     for name in ("stem-native-object", "object-policy", "ckb-stem-object",
                  "stem-metatype-escrow", "metatype-dispatcher", "metatype-mailbox-lock",
-                 "metatype-bridged-object", "metatype-bridged-approval"):
+                 "metatype-bridged-object", "metatype-bridged-approval", "native-amount-cap",
+                 "metatype-udt-adapter", "metatype-amount-cap-adapter"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--metatype-shared-manifest", action="store_true")
     parser.add_argument("--full-udt-return", action="store_true")
+    parser.add_argument("--finish-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
     parser.add_argument("--exercise-publisher", action="store_true", help="use the sparse publisher for Intercell checkpoints")
     parser.add_argument("--wasm-fixture", action="store_true", help="export live wallet and proof inputs from the generic Intercell round")
@@ -579,22 +581,29 @@ def main():
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
     args = parser.parse_args()
-    if any((args.export_udt, args.asset_escrow, args.ckb_stem_udt)) and not all(
-            (args.export_udt, args.asset_escrow, args.ckb_stem_udt, args.intercell_mailbox)):
-        parser.error("UDT settlement requires --export-udt, --asset-escrow, --ckb-stem-udt and --intercell-mailbox")
+    base = (args.stem_metatype_escrow, args.metatype_dispatcher, args.metatype_mailbox_lock)
+    portable_udt = (args.native_amount_cap, args.metatype_udt_adapter, args.metatype_amount_cap_adapter)
+    object_adapters = (args.metatype_bridged_object, args.metatype_bridged_approval)
+    if any(portable_udt) and (not all((*portable_udt, *base, args.export_udt))
+                             or args.asset_escrow or args.ckb_stem_udt or any(object_adapters)):
+        parser.error("Metatype UDT settlement needs the shared custody scripts and both UDT adapters")
+    if any((args.export_udt, args.asset_escrow, args.ckb_stem_udt)) and (
+            not all((args.export_udt, args.intercell_mailbox))
+            or not (all(portable_udt) or all((args.asset_escrow, args.ckb_stem_udt)))):
+        parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
     if any((args.stem_spore, args.ckb_spore_escrow, args.spore_v2)) and (
             not all((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
             or args.export_udt):
         parser.error("Spore settlement requires its three binaries and the Intercell mailbox")
-    metatype = (args.stem_metatype_escrow, args.metatype_dispatcher, args.metatype_mailbox_lock,
-                args.metatype_bridged_object, args.metatype_bridged_approval)
-    if any(metatype) and (not all(metatype) or args.ckb_stem_object):
-        parser.error("Metatype settlement needs all five portable scripts")
-    if args.metatype_shared_manifest and not all(metatype):
+    metatype_object = all((*base, *object_adapters))
+    if (any(object_adapters) and (not metatype_object or args.ckb_stem_object)
+            or any(base) and not (metatype_object or all(portable_udt))):
+        parser.error("Metatype settlement needs a complete object or fungible route")
+    if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
-    if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *metatype)) and (
+    if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (
             not all((args.stem_native_object, args.object_policy, args.intercell_mailbox))
-            or not (args.ckb_stem_object or all(metatype)) or args.export_udt or args.stem_spore):
+            or not (args.ckb_stem_object or metatype_object) or args.export_udt or args.stem_spore):
         parser.error("Native object settlement needs its Stem scripts and one CKB route")
     if args.wasm_fixture and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
         parser.error("--wasm-fixture uses the generic Intercell mailbox fixture")
@@ -602,6 +611,8 @@ def main():
         parser.error("--exercise-publisher uses the generic Intercell mailbox fixture")
     if args.full_udt_return and not args.export_udt:
         parser.error("--full-udt-return requires the UDT settlement fixture")
+    if args.finish_udt_return and (not all(portable_udt) or args.full_udt_return):
+        parser.error("--finish-udt-return exercises two successive Metatype redemptions")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--intercell-mailbox uses the native CKB lane on its own")
     if args.security_domain and not args.reference_script:

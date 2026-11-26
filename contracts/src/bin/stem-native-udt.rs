@@ -7,19 +7,24 @@ use ckb_std::{
     ckb_constants::Source,
     default_alloc, entry,
     error::SysError,
-    high_level::{load_cell_data, load_cell_lock_hash, load_script},
+    high_level::{load_cell_data, load_cell_lock_hash, load_script, load_script_hash},
 };
+use stem_bridge_wire::metatype::{custody::positive_amount, fungible::Udt};
+use stem_contracts::native_type;
+use stem_stake::Hash32;
 
 entry!(main);
 default_alloc!();
 
-fn total(source: Source) -> Option<u128> {
+fn total(source: Source, required: Option<&Hash32>) -> Option<u128> {
     let mut amount = 0u128;
     for index in 0.. {
         match load_cell_data(index, source) {
             Ok(data) => {
-                let units = u128::from_le_bytes(data.as_slice().try_into().ok()?);
-                if units == 0 {
+                let units = positive_amount(data.as_slice())?;
+                if required
+                    .is_some_and(|hash| native_type::contains(source, index, hash) != Some(true))
+                {
                     return None;
                 }
                 amount = amount.checked_add(units)?;
@@ -34,15 +39,17 @@ fn total(source: Source) -> Option<u128> {
 fn main() -> i8 {
     let Ok(script) = load_script() else { return 90 };
     let args = script.args().raw_data();
-    let (keys, tail) = args.as_chunks::<32>();
-    let [issuer, series] = keys else { return 91 };
-    if !tail.is_empty() || *issuer == [0; 32] || *series == [0; 32] {
+    let Ok(asset) = load_script_hash() else {
+        return 90;
+    };
+    let Some(udt) = Udt::decode(&args, &asset) else {
         return 91;
-    }
-    let Some(input) = total(Source::GroupInput) else {
+    };
+    let policy = udt.policy.as_ref().map(ckb_hash::blake2b_256);
+    let Some(input) = total(Source::GroupInput, policy.as_ref()) else {
         return 92;
     };
-    let Some(output) = total(Source::GroupOutput) else {
+    let Some(output) = total(Source::GroupOutput, policy.as_ref()) else {
         return 92;
     };
     if input == output {
@@ -53,7 +60,7 @@ fn main() -> i8 {
     }
     for index in 0.. {
         match load_cell_lock_hash(index, Source::Input) {
-            Ok(hash) if hash == *issuer => return 0,
+            Ok(hash) if hash == *udt.issuer => return 0,
             Ok(_) => {}
             Err(_) => return 94,
         }

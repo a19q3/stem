@@ -70,6 +70,13 @@ def wait_for(func, label, seconds=20):
     raise RuntimeError(f"timed out waiting for {label}")
 
 
+def application_programs(args):
+    for name in ("export_udt", "asset_escrow", "stem_spore", "stem_native_object",
+                 "object_policy", "stem_metatype_escrow", "native_amount_cap"):
+        if (path := getattr(args, name, None)) is not None:
+            yield path
+
+
 def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=None, *, prefix=""):
     genesis = l1.call("get_block_by_number", "0x0")
     faucet, groups = genesis["transactions"][:2]
@@ -89,11 +96,8 @@ def deploy(args, l1, fixture, network, funding_point=None, checkpoint_anchor=Non
     programs = len(args.native_lock.read_bytes()) + (len(args.wrapped.read_bytes()) if args.xudt else 0)
     if reference:
         programs += len(reference.read_bytes())
-    for extra in (getattr(args, "export_udt", None), getattr(args, "asset_escrow", None),
-                  getattr(args, "stem_spore", None), getattr(args, "stem_native_object", None),
-                  getattr(args, "object_policy", None), getattr(args, "stem_metatype_escrow", None)):
-        if extra:
-            programs += len(extra.read_bytes()) + 500
+    for extra in application_programs(args):
+        programs += len(extra.read_bytes()) + 500
     funding = (programs + 20_000) * CKB
     authorization = 300 * CKB
     change = int(funds["capacity"], 16) - sum(amounts) - funding - authorization - FEE
@@ -217,12 +221,9 @@ def deposit_and_mint(args, l1, fixture, vault, spec, spec_path, lane, comet_rpc,
     if reference:
         code = reference.read_bytes()
         payloads.append(cell((len(code) + 500) * CKB, lock, code))
-    for extra in (getattr(args, "export_udt", None), getattr(args, "asset_escrow", None),
-                  getattr(args, "stem_spore", None), getattr(args, "stem_native_object", None),
-                  getattr(args, "object_policy", None), getattr(args, "stem_metatype_escrow", None)):
-        if extra:
-            code = extra.read_bytes()
-            payloads.append(cell((len(code) + 500) * CKB, lock, code))
+    for extra in application_programs(args):
+        code = extra.read_bytes()
+        payloads.append(cell((len(code) + 500) * CKB, lock, code))
     body = []
     for index, payload in enumerate(payloads):
         path = args.output / f"deposit-cell-{index}.json"

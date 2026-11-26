@@ -178,9 +178,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             + ckb_hash(b"Stem Metatype local fixture\0" + identity_hash) + ckb_hash(adapter_table)), "data2")
         wrapper_hash = script_hash(wrapper)
         endpoint = script(hex_bytes(ckb_hash(args.stem_metatype_escrow.read_bytes())),
-            hex_bytes(binary(genesis) + wrapper_hash + anchor_code + anchor_id + custody), "data")
+            hex_bytes(binary(genesis) + wrapper_hash + anchor_code + anchor_id + bytes([1]) + custody), "data")
         endpoint_id = script_hash(endpoint)
-        ckb_owner = script(hex_bytes(ckb_code), hex_bytes(endpoint_id + wrapper_hash
+        ckb_owner = script(hex_bytes(ckb_code), hex_bytes(bytes([1]) + endpoint_id + wrapper_hash
             + mailbox_code + type_id + manifest + identity_hash), "data2")
     else:
         manifest = identity_hash

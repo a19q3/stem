@@ -8,12 +8,15 @@ use ckb_std::{
     ckb_constants::Source,
     env,
     error::SysError,
-    high_level::{decode_hex, load_cell_data_hash, load_cell_lock_hash, load_script_hash},
+    high_level::{
+        decode_hex, load_cell_data_hash, load_cell_lock_hash, load_cell_type_hash, load_script_hash,
+    },
     syscalls::{load_cell_data, load_witness},
 };
 use stem_bridge_wire::metatype::{
-    Invocation, MAX_INVOCATION_BYTES, MAX_MANIFEST_BYTES, MAX_MANIFEST_DEFINITION_BYTES,
-    MAX_TRANSACTION_CELLS_PER_SIDE, ManifestReference, MetatypeManifest,
+    Invocation, MAX_CELLS_PER_SIDE, MAX_INVOCATION_BYTES, MAX_MANIFEST_BYTES,
+    MAX_MANIFEST_DEFINITION_BYTES, MAX_TRANSACTION_CELLS_PER_SIDE, ManifestReference,
+    MetatypeManifest,
     witness::{MAGIC, MAX_WITNESS_BYTES},
 };
 use stem_stake::Hash32;
@@ -80,7 +83,42 @@ pub struct ManifestResolver {
     definitions: BTreeMap<Hash32, Vec<u8>>,
 }
 
+pub type Cells = Vec<(u16, Vec<u8>)>;
+
+pub fn borrowed(cells: &Cells) -> Vec<(u16, &[u8])> {
+    cells
+        .iter()
+        .map(|(index, data)| (*index, data.as_slice()))
+        .collect()
+}
+
 impl ManifestResolver {
+    pub fn cells(
+        &mut self,
+        source: Source,
+        own_type: &Hash32,
+        remaining: &mut usize,
+    ) -> Result<(usize, Cells), i8> {
+        let mut matched = Vec::new();
+        for index in 0..=MAX_TRANSACTION_CELLS_PER_SIDE {
+            match load_cell_type_hash(index, source) {
+                Ok(ty) if index < MAX_TRANSACTION_CELLS_PER_SIDE => {
+                    if ty.as_ref() == Some(own_type) {
+                        if matched.len() == MAX_CELLS_PER_SIDE {
+                            return Err(43);
+                        }
+                        let data = self.load(index as u16, source, *remaining).ok_or(43)?;
+                        *remaining -= data.len();
+                        matched.push((index as u16, data));
+                    }
+                }
+                Err(SysError::IndexOutOfBound) => return Ok((index, matched)),
+                _ => return Err(43),
+            }
+        }
+        unreachable!("bounded Cell enumeration")
+    }
+
     pub fn dependency_hashes(&mut self) -> Result<&[Hash32], SysError> {
         if self.dependencies.is_none() {
             let mut hashes = Vec::new();

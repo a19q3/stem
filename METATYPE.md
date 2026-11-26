@@ -10,8 +10,8 @@ The standalone CKB dispatcher, adapter table and virtual group ABI
 run independently deployed UDT, transfer policy, object identity
 and object approval adapters. Standalone object cases run against
 both CKB Metatype and four native Stem Polytype replicas. The
-immutable custody profile carries a native Polytype object from
-Stem to CKB Metatype and back. Both profiles can store repeated
+custody profiles cover immutable objects and a fungible UDT with
+an independent per-Cell amount limit. Both can store repeated
 Script sets in a shared dependency. [Implementation status](STEM-EVOLUTION.md)
 
 ## Historical sources
@@ -97,14 +97,17 @@ Molecule Script encoding is exact, with no trailing fields.
 | Shared definition Cell Data | inline encoding of the complete Script set with every state string empty |
 | Adapter table | one-byte entry count, records of logical code hash, one-byte addressing mode and adapter ELF data hash, then custody tag and optional custody policy |
 | Custody policy | mailbox code data hash, mailbox Type ID, gate code data hash, full source Manifest ID and original data-bearing Script hash |
+| Gate args | custody tag, source escrow Lock hash, physical Metatype Type hash, mailbox code data hash, mailbox Type ID, Manifest ID and data-bearing Script hash |
+| Native escrow args | CKB genesis hash, physical Metatype Type hash, checkpoint code data hash, checkpoint Type ID, custody tag and custody policy |
 | Adapter argument | full physical Type hash, one-byte boundary, u16 length and complete logical Script, input and output index lists, then optional group witness fields |
 | Index list | one-byte count and strictly ascending absolute u16 transaction indices |
 
 Adapter table records are ordered by logical code hash and addressing
-mode. The one-byte custody tag is zero for a standalone deployment
-with no following bytes and one for the five-field custody policy.
+mode. The one-byte custody tag is zero for a standalone deployment,
+one for immutable custody and two for fungible custody. Custody
+tags one and two carry the same five fields in the adapter table.
 The dispatcher derives the boundary value from the authenticated
-deployment and actual input/output cardinality. Boundary values
+deployment and actual input and output state. Boundary values
 are 0 for standalone, 1 for custody transfer, 2 for CKB import and
 3 for return to Stem. The dispatcher passes the argument as one hex C string. The
 adapter verifies that the spawned VM sees the same physical Script
@@ -242,12 +245,11 @@ mandatory source constraint.
 
 ## Cross-chain invariant
 
-The immutable custody profile pins the original complete Script set,
+Each custody profile pins the original complete Script set,
 an explicit data-bearing Script, the CKB deployment, and the
 Intercell checkpoint and mailbox. The same escrow and mailbox gate
-ELFs serve each compatible deployment. The supported object pair
-uses independent adapters for source identity and transfer approval.
-A route must pin a reviewed adapter for every source Script.
+ELFs serve each compatible deployment. A route must pin a reviewed
+adapter for every source Script.
 The caller verifies the configured deployment and its committed
 table when choosing the Stem escrow Lock.
 
@@ -255,14 +257,18 @@ The source Manifest ID hashes the ordered sequence of complete
 Molecule Script hashes. The native escrow derives it from actual
 Type Scripts on **both sides** of the transaction. On CKB, the
 same Scripts and arguments are present in the Manifest. The one
-designated Script carries the exact source Cell Data and all other
-entries have empty state. The immutable profile accepts only
-Data-addressed source Scripts. It also rejects multiple physical
-heads within one lane transition and requires identical Manifest
-and state in the complete logical view on a CKB ownership transfer.
-The checkpoint and mailbox commit the logical Manifest ID and
-original Cell Data. Both the gate and the dispatcher resolve shared
-CKB definitions against the actual dependency hashes.
+designated Script carries the source Cell Data and all other entries
+have empty state. The custody profiles use Data-addressed source
+Scripts. Both the gate and the dispatcher resolve shared CKB
+definitions against the actual dependency hashes.
+
+### Immutable objects
+
+This profile requires exactly one represented Cell for an
+ownership transfer, with identical Manifest and state in the
+complete logical view. Its independent adapters enforce the
+source object identity and transfer approval. The checkpoint
+and mailbox commit the logical Manifest ID and original Cell Data.
 
 An escrow consumes and recreates a separate untyped empty bond
 Cell and one identified asset. Export checks the original asset
@@ -303,11 +309,46 @@ execute on release and can deny it. The bond and original asset
 Capacity are preserved. The CKB representation has independently
 funded storage Capacity.
 
-The bridge outcome applies to the immutable profile. It does
-not establish equivalence for arbitrary legacy binary contracts,
-mutable Type Groups, fungible partial redemption, or unfunded
-external state. Other asset classes require an explicit adapter
-profile and differential verification of every source rule.
+### Cap-bound fungible UDT
+
+The native UDT args are the issuer Lock hash and series hash,
+followed by the amount-cap Type code hash and a positive u128
+ceiling. The UDT derives the complete required Data-addressed
+cap Script from its own Script hash and the ceiling. It checks
+membership on each native input and output in its group. The
+separate cap Script uses args `asset Script hash || ceiling`
+and requires each of its members to carry that asset with a
+positive amount at or below the ceiling. The CKB adapters apply
+both checks with the same logical identities. Each Cell holds its
+own u128 amount as the designated Script state.
+
+The native escrow checks the exact Manifest of every input and
+output with the source asset identity. The CKB gate checks every
+representation using the pinned physical Type. Stem export moves
+the specified amount from circulating holdings into escrow while
+preserving total escrow Capacity. Its nonce derives from the
+first consumed escrow input. The fungible Intercell payload
+is `Manifest ID || recipient Lock hash || positive u128 amount`.
+CKB import requires zero inputs in that deployment and output
+amounts summing to the authenticated issuance, all at that recipient.
+Regular CKB transfers preserve the total. A decrease requires the
+configured mailbox, which checks the exact burn difference.
+An increase with existing wrapped inputs is invalid. Checked
+arithmetic covers both sides before every virtual group executes.
+
+Users can burn a portion of the CKB supply and keep the rest in
+Cells with the same full policy. The mailbox advances its outgoing
+nonce, and Stem releases the authenticated difference only to the
+specified Lock with the original complete Type Script set. A partial
+release retains the corresponding native principal in escrow. A
+full release retains the escrow Capacity in untyped empty Cells.
+Every individual output on either chain also satisfies the cap.
+The two chains use their existing finality, anchor and replay
+verification paths.
+
+These profiles establish correspondence for the specified source
+rules. Other asset classes, mutable state and external dependencies
+need their own adapter profiles and differential verification.
 Source upgrades require an authorized settlement at the old
 deployment and a new approved table. Available live dependencies,
 the Jolteon checkpoint assumptions, and guardian validation of

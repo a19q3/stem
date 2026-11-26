@@ -1,10 +1,28 @@
-//! Shared identities and immutable data projection for Metatype custody.
+//! Shared identities and principal projection for Metatype custody.
 
 use super::{Hash, MAX_STATE_BYTES, MetatypeManifest};
 use crate::hash;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum Profile {
+    Immutable = 1,
+    Fungible = 2,
+}
+
+impl Profile {
+    fn decode(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Immutable),
+            2 => Some(Self::Fungible),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Custody {
+    pub profile: Profile,
     pub mailbox_code: Hash,
     pub mailbox_id: Hash,
     pub guard_code: Hash,
@@ -13,14 +31,17 @@ pub struct Custody {
 }
 
 impl Custody {
-    pub const SIZE: usize = 5 * 32;
+    pub const SIZE: usize = 1 + 5 * 32;
 
     pub fn decode(raw: &[u8]) -> Option<Self> {
+        let (&tag, raw) = raw.split_first()?;
+        let profile = Profile::decode(tag)?;
         let (fields, tail) = raw.as_chunks::<32>();
         let [mailbox_code, mailbox_id, guard_code, manifest, data_script] = fields else {
             return None;
         };
         (tail.is_empty() && !fields.contains(&[0; 32])).then_some(Self {
+            profile,
             mailbox_code: *mailbox_code,
             mailbox_id: *mailbox_id,
             guard_code: *guard_code,
@@ -30,7 +51,7 @@ impl Custody {
     }
 
     /// The on-chain projection commits every original Script. One explicitly
-    /// identified Script carries the original immutable Cell Data.
+    /// identified Script carries the original Cell Data.
     pub fn data<'a>(&self, raw: &'a [u8]) -> Option<&'a [u8]> {
         let manifest = MetatypeManifest::decode(raw)?;
         if manifest.id() != self.manifest {
@@ -48,6 +69,40 @@ impl Custody {
             }
         }
         data
+    }
+
+    pub fn transition<'a>(
+        &self,
+        inputs: &[(u16, &'a [u8])],
+        outputs: &[(u16, &'a [u8])],
+    ) -> Option<(Boundary, Principal<'a>)> {
+        match self.profile {
+            Profile::Immutable => {
+                let direction = Boundary::for_cardinality(inputs.len(), outputs.len())?;
+                let raw = match (inputs, outputs) {
+                    ([(_, before)], [(_, after)]) if before == after => *before,
+                    ([], [(_, data)]) | ([(_, data)], []) => *data,
+                    _ => return None,
+                };
+                Some((direction, Principal::Immutable(self.data(raw)?)))
+            }
+            Profile::Fungible => {
+                let total = |cells: &[(u16, &[u8])]| {
+                    cells.iter().try_fold(0u128, |sum, (_, data)| {
+                        sum.checked_add(positive_amount(self.data(data)?)?)
+                    })
+                };
+                let (before, after) = (total(inputs)?, total(outputs)?);
+                let (direction, delta) = match (before, after) {
+                    (0, 0) => return None,
+                    (0, issued) => (Boundary::Import, issued),
+                    (a, b) if a == b => (Boundary::Transfer, 0),
+                    (a, b) if a > b => (Boundary::Return, a - b),
+                    _ => return None,
+                };
+                Some((direction, Principal::Fungible(delta)))
+            }
+        }
     }
 }
 
@@ -90,23 +145,36 @@ pub fn escrow_nonce(outpoint: &[u8; 36]) -> u64 {
     u64::from_le_bytes(raw[..8].try_into().expect("fixed nonce"))
 }
 
-pub struct ImmutableTransfer<'a> {
-    pub manifest: Hash,
-    pub recipient: Hash,
-    pub data: &'a [u8],
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Principal<'a> {
+    Immutable(&'a [u8]),
+    Fungible(u128),
 }
 
-impl<'a> ImmutableTransfer<'a> {
-    pub fn decode(raw: &'a [u8]) -> Option<Self> {
+pub fn positive_amount(data: &[u8]) -> Option<u128> {
+    crate::amount(data).filter(|amount| *amount > 0)
+}
+
+pub struct Transfer<'a> {
+    pub manifest: Hash,
+    pub recipient: Hash,
+    pub principal: Principal<'a>,
+}
+
+impl<'a> Transfer<'a> {
+    pub fn decode(profile: Profile, raw: &'a [u8]) -> Option<Self> {
         let (manifest, raw) = raw.split_first_chunk::<32>()?;
         let (recipient, data) = raw.split_first_chunk::<32>()?;
-        (*manifest != [0; 32] && *recipient != [0; 32] && data.len() <= MAX_STATE_BYTES).then_some(
-            Self {
-                manifest: *manifest,
-                recipient: *recipient,
-                data,
-            },
-        )
+        let principal = match profile {
+            Profile::Immutable if data.len() <= MAX_STATE_BYTES => Principal::Immutable(data),
+            Profile::Immutable => return None,
+            Profile::Fungible => Principal::Fungible(positive_amount(data)?),
+        };
+        (*manifest != [0; 32] && *recipient != [0; 32]).then_some(Self {
+            manifest: *manifest,
+            recipient: *recipient,
+            principal,
+        })
     }
 }
 
@@ -115,28 +183,28 @@ mod tests {
     extern crate alloc;
 
     use super::*;
+    use crate::metatype::LogicalScript;
+    use alloc::vec::Vec;
+
+    fn frame(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
+        let mut raw = alloc::vec![entries.len() as u8];
+        for (script, data) in entries {
+            for field in [script, data] {
+                raw.extend_from_slice(&(field.len() as u16).to_le_bytes());
+                raw.extend_from_slice(field);
+            }
+        }
+        raw
+    }
 
     #[test]
     fn custody_matches_the_complete_immutable_projection() {
-        use crate::metatype::LogicalScript;
-        use alloc::vec::Vec;
-
-        fn frame(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
-            let mut raw = alloc::vec![entries.len() as u8];
-            for (script, data) in entries {
-                for field in [script, data] {
-                    raw.extend_from_slice(&(field.len() as u16).to_le_bytes());
-                    raw.extend_from_slice(field);
-                }
-            }
-            raw
-        }
-
         let identity = LogicalScript::encode(&[1; 32], 0, b"owner").unwrap();
         let policy = LogicalScript::encode(&[2; 32], 0, b"owner").unwrap();
         let identity_id = LogicalScript::decode(&identity).unwrap().id();
         let policy_id = LogicalScript::decode(&policy).unwrap().id();
         let custody = Custody {
+            profile: Profile::Immutable,
             mailbox_code: [3; 32],
             mailbox_id: [4; 32],
             guard_code: [5; 32],
@@ -170,6 +238,55 @@ mod tests {
         assert_eq!(Boundary::for_cardinality(2, 1), None);
         assert_eq!(Boundary::for_cardinality(1, 2), None);
     }
+
+    #[test]
+    fn fungible_projection_sums_all_heads_and_checks_deltas() {
+        let asset = LogicalScript::encode(&[1; 32], 0, b"asset").unwrap();
+        let policy = LogicalScript::encode(&[2; 32], 0, b"limit").unwrap();
+        let asset_id = LogicalScript::decode(&asset).unwrap().id();
+        let custody = Custody {
+            profile: Profile::Fungible,
+            mailbox_code: [3; 32],
+            mailbox_id: [4; 32],
+            guard_code: [5; 32],
+            manifest: manifest_id(&[asset_id, LogicalScript::decode(&policy).unwrap().id()]),
+            data_script: asset_id,
+        };
+        let row = |units: u128| frame(&[(&asset, &units.to_le_bytes()), (&policy, &[])]);
+        let a = row(125);
+        let b = row(100);
+        let outputs = [(2, a.as_slice()), (4, a.as_slice())];
+        assert_eq!(
+            custody.transition(&[], &outputs),
+            Some((Boundary::Import, Principal::Fungible(250)))
+        );
+        assert_eq!(
+            custody.transition(&outputs, &outputs),
+            Some((Boundary::Transfer, Principal::Fungible(0)))
+        );
+        assert_eq!(
+            custody.transition(&outputs, &[(6, &b)]),
+            Some((Boundary::Return, Principal::Fungible(150)))
+        );
+        assert_eq!(
+            custody.transition(&outputs, &[]),
+            Some((Boundary::Return, Principal::Fungible(250)))
+        );
+        assert_eq!(custody.transition(&[(0, &a)], &outputs), None);
+        assert_eq!(custody.transition(&[], &[(0, &row(0))]), None);
+        assert_eq!(
+            custody.transition(&[], &[(0, &row(u128::MAX)), (1, &b)]),
+            None
+        );
+        let stripped = frame(&[(&asset, &125u128.to_le_bytes())]);
+        assert_eq!(custody.transition(&outputs, &[(0, &stripped)]), None);
+        let gate = Gate {
+            stem_escrow: [6; 32],
+            metatype: [7; 32],
+            custody,
+        };
+        assert_eq!(Gate::decode(&gate.args(), custody.guard_code), Some(gate));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,7 +297,11 @@ pub struct Gate {
 }
 
 impl Gate {
+    pub const SIZE: usize = 1 + 6 * 32;
+
     pub fn decode(raw: &[u8], guard_code: Hash) -> Option<Self> {
+        let (&tag, raw) = raw.split_first()?;
+        let profile = Profile::decode(tag)?;
         let (items, tail) = raw.as_chunks::<32>();
         let [
             stem_escrow,
@@ -197,6 +318,7 @@ impl Gate {
             stem_escrow: *stem_escrow,
             metatype: *metatype,
             custody: Custody {
+                profile,
                 mailbox_code: *mailbox_code,
                 mailbox_id: *mailbox_id,
                 guard_code,
@@ -206,14 +328,18 @@ impl Gate {
         })
     }
 
-    pub fn args(self) -> [[u8; 32]; 6] {
-        [
+    pub fn args(self) -> [u8; Self::SIZE] {
+        let fields = [
             self.stem_escrow,
             self.metatype,
             self.custody.mailbox_code,
             self.custody.mailbox_id,
             self.custody.manifest,
             self.custody.data_script,
-        ]
+        ];
+        let mut raw = [0; Self::SIZE];
+        raw[0] = self.custody.profile as u8;
+        raw[1..].copy_from_slice(fields.as_flattened());
+        raw
     }
 }

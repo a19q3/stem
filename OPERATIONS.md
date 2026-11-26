@@ -1360,3 +1360,45 @@ Pass `--metatype-shared-manifest` to publish the original Script set
 as a separate CKB definition Cell and use its hash in the custody
 representation. The same fixture then rejects an import that omits
 that dependency.
+
+### Exercise cap-bound Metatype fungible custody
+
+Build and run the fungible Metatype profile against CKB devnet with
+four Stem replicas.
+
+```sh
+CARGO_TARGET_DIR=target/stem-metatype \
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' \
+cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf \
+  --bin vault-type --bin deposit-lock --bin stem-lock --bin bridge-udt \
+  --bin jolteon-checkpoint --bin intercell-mailbox --bin stem-native-udt \
+  --bin stem-amount-cap --bin stem-metatype-escrow --bin metatype \
+  --bin metatype-mailbox --bin metatype-udt --bin metatype-amount-cap
+
+contract_dir=target/stem-metatype/riscv64imac-unknown-none-elf/release
+python3 tools/jolteon_bridge_localnet.py \
+  --binary target/release/stem --l1 /path/to/ckb \
+  --vault "$contract_dir/vault-type" --deposit-lock "$contract_dir/deposit-lock" \
+  --native-lock "$contract_dir/stem-lock" --wrapped "$contract_dir/bridge-udt" \
+  --direct-checkpoint "$contract_dir/jolteon-checkpoint" \
+  --intercell-mailbox "$contract_dir/intercell-mailbox" \
+  --export-udt "$contract_dir/stem-native-udt" \
+  --native-amount-cap "$contract_dir/stem-amount-cap" \
+  --stem-metatype-escrow "$contract_dir/stem-metatype-escrow" \
+  --metatype-dispatcher "$contract_dir/metatype" \
+  --metatype-mailbox-lock "$contract_dir/metatype-mailbox" \
+  --metatype-udt-adapter "$contract_dir/metatype-udt" \
+  --metatype-amount-cap-adapter "$contract_dir/metatype-amount-cap" \
+  --metatype-shared-manifest --finish-udt-return \
+  --port 33030 --l1-port 33040 --output /tmp/stem-metatype-fungible
+```
+
+The fixture exports 250 units with a 200-unit limit per Cell.
+The standard run returns 150 units. `--finish-udt-return` then returns
+the remaining 100 through the next mailbox nonce. The separate
+`--full-udt-return` run returns all 250 in the first burn. Each
+redemption uses an independently authenticated CKB anchor. Omit
+`--metatype-shared-manifest` for inline script definitions. The report
+contains canonical CKB inclusions, Stem finality and execution proofs,
+and membership or absence proofs for escrowed and released Cells.

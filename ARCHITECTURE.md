@@ -319,6 +319,11 @@ Mailbox Type ID, an exact original Manifest and a designated data
 Script. The generic Stem escrow and CKB gate enforce complete
 projection, verified mint and burn, and recipient binding. The
 portable object and approval groups still execute at each boundary.
+The fungible custody profile reuses the same gate and escrow.
+The source asset Type requires an independent amount-cap Type
+on every Cell. CKB checks the exact issued or burned total and
+runs both adapters. Partial redemption conserves the principal
+still held on Stem and represented on CKB.
 See the [Metatype specification and threat model](METATYPE.md).
 
 ## Historical proofs and CKB checkpoints
