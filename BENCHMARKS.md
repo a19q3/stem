@@ -3993,3 +3993,73 @@ successful retry and the failed start logs are both in the archive.
 
 [Reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
 [Signed transactions, proofs and failed start](benchmarks/2026-11-26-stem-metatype-view.json.xz).
+
+## Revisable Metatype objects across CKB
+
+Revision `1112c23` ran the same Stem node binary with four local
+Jolteon replicas and CKB 0.210.0 devnet. Stem created revision 0 and
+approved revision 1 before export. CKB confirmed changes to revisions
+2 and 4, then burned the wrapped object. Stem restored revision 4,
+verified the existing Type Script set, and consumed the authenticated
+return. Both Manifest layouts completed the full sequence.
+
+| CKB transaction | Revisable inline bytes / cycles | Revisable shared bytes / cycles | Large return fixture, shared bytes / cycles |
+| --- | ---: | ---: | ---: |
+| Import revision 1 | 2,602 / 4,987,460 | 2,266 / 5,036,187 | 2,470 / 5,071,543 |
+| Transfer and revise to 2 | 1,383 / 4,067,102 | 1,149 / 4,116,873 | 1,149 / 4,093,318 |
+| Revise to 4 | 1,387 / 4,053,494 | 1,153 / 4,079,385 | 1,746 / 4,133,020 |
+| Burn revision 4 | 1,749 / 4,147,369 | 1,786 / 4,188,351 | 2,379 / 4,196,232 |
+
+Imports carry real finality-backed mailbox proofs. Their raw witness
+data in these runs was 794, 692 and 896 bytes respectively. Transfer,
+revision and burn each used 170 raw witness bytes. The isolated
+local submission-through-mining samples spanned 311–420 ms in
+the table, including the fixture's block generation cadence.
+These values describe development-chain inclusion. The archive
+preserves the individual samples and actual witness proofs.
+
+The standard inline object occupies 564 CKB. The shared object
+occupies 293 CKB and its reusable definition is funded separately.
+The revisable imports drew the CKB mailbox from 1,000 to 3,300 CKB
+using actual signed funding. That Capacity remains in the mailbox
+and reserves the maximum permitted return payload. The larger
+revision fixture grew the object content to 630 bytes. The original
+Stem object held 8 CKB. Its return at 8 CKB failed the Storage Bond
+check, and the authorized return at 13 CKB succeeded. The standard
+fixture also rejected diverting one shannon from the original object.
+
+The standard shared fixture exercised 33 rejection cases. The
+inline run exercised 32 because it needs no shared dependency.
+The checks include invalid creation revision, same-revision edits,
+rollback, missing independent approval, edits during export,
+underfunded CKB mailbox, stale return data on either chain, group
+removal and message replay. An independent WASM verifier checked
+creation, native revision, export and redemption execution proofs.
+It decoded revision 1 and revision 4 from the proven Cells, verified
+both Type Scripts and checked the conserved Capacity and exact top-up.
+
+The immutable shared control preserved the three transaction sizes
+and all 23 rejection cases from the prior ELFs. Its import, transfer
+and burn used 5,069,382, 4,096,071 and 4,216,032 cycles. The frozen
+baseline samples ranged from 5,066,427–5,078,003,
+4,042,513–4,064,721 and 4,164,529–4,218,180 cycles. The current
+specialized immutable comparison used 2,387, 886 and 1,523 bytes
+at 4,302,499, 3,272,913 and 3,404,804 cycles respectively.
+That fixture supports the dedicated immutable object route.
+
+The archive retains the early compiler failure and both unsuccessful
+long-state fixtures. The first run failed because the CKB mailbox
+Cell could not hold the return record. The second reached Stem and
+its policy-removal control failed the Storage Bond check before
+reaching the intended script check. The final fixture funds that
+control and verifies the two rejection conditions separately.
+
+The locked release workspace passed 478 tests with 19 ignored.
+The RISC-V contract build, Go proofs and frozen CometBFT feature
+check passed. Devnet regressions covered cap-bound fungible
+partial and final return, Spore, funded committee handoff with
+historical Intercell delivery, all four CKB fee payouts, and
+historical and live-at-anchor CKB references.
+
+[Reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
+[Signed transactions, proofs, timings and failed runs](benchmarks/2026-11-26-stem-metatype-revision.json.xz).
