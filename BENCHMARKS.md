@@ -3527,3 +3527,73 @@ CometBFT feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
 [Raw CKB evidence and controls](benchmarks/2026-11-26-stem-metatype-ckb.json.xz).
+
+## Metatype object approvals and Native Polytype comparison
+
+CKB 0.210.0 executed the dispatcher with a genesis-pinned deployment
+and two separately deployed RISC-V adapters. The identity adapter
+verified one live head and immutable content. The approval adapter
+verified independent Ed25519 seals from the group witness envelope.
+Two distinct authorities approved two objects in the same transaction.
+All CKB samples use the stock devnet verification settings.
+
+| CKB operation | Estimated cycles | Transaction bytes | Witness bytes | Metatype envelope |
+| --- | ---: | ---: | ---: | ---: |
+| Issue two objects | 7,330,304 | 2,145 | 508 | 423 B |
+| Transfer two objects atomically | 7,328,877 | 2,249 | 508 | 423 B |
+| Refresh both, with new approvals | 7,375,784 | 2,249 | 508 | 423 B |
+| Transfer one object | 4,537,863 | 1,413 | 308 | 223 B |
+
+The two objects occupy 531 and 516 CKB. The local submissions
+confirmed in 316–424 ms using scripted mining. The fixture checked
+transaction and witness inclusion, rejected 14 negative cases, and
+verified that the authority's valid seal could not override
+immutability. It also rejected missing or foreign genesis, duplicate
+or noncanonical envelope rows, unknown group, crossed approvals,
+wrong recipient or content proof, removals, duplicate objects and
+seals from old OutPoints.
+
+Four native Jolteon replicas exercised eight normalized object
+cases with the same underlying content and authority roles.
+Issuance, atomic transfer, and refresh passed in both protocols.
+Forged identity, missing approval, edited content with approval,
+removed policy, and duplicate identity failed in both. The native
+authority uses a separately signed Cell input. The Metatype
+authority uses a detached seal. The native fixture compared all
+four Headers and live output bytes. The released WASM verifier
+independently authenticated three finality and execution proofs
+and rejected an altered receipt for each.
+
+| Two-object operation | Native encoded bytes | Native receipt cycles |
+| --- | ---: | ---: |
+| Issue | 1,487 | 5,875,076 |
+| Transfer atomically | 1,577 | 5,866,145 |
+| Refresh | 1,577 | 5,866,145 |
+
+The specialized CKB object transfer control used the same 66-byte
+content and an independent approval. It used 3,317,259 cycles and
+886 bytes. Standalone Metatype used 4,537,863 cycles and 1,413 bytes
+for that operation. The specialized Type enforces a fixed object
+mapping and consumes a signed approval Cell. Metatype carries an
+inline Manifest, a group witness and a genesis Header Dep. The
+comparison covers local transfer. A matched Metatype bridge mint
+and burn remains open.
+
+The new genesis-anchored dispatcher also passed the standalone UDT
+matrix. The 16-group split used 9,867,333 cycles and 7,506 bytes,
+against 9,683,231 cycles and 7,378 bytes in the earlier dispatcher.
+The largest Cell now occupies 3,103 CKB, including the genesis hash
+in the physical Type args. Both raw rounds remain available.
+The first native comparison provided a JSON object to a CLI that
+expects a hex proof. The second assumed a single rejection code for
+duplicate identity, which both the native identity and policy can
+reject. The corrected fixture verified all matched cases.
+
+The locked Rust release workspace passed 472 tests with 19 ignored.
+Go proof tests and the frozen CometBFT feature check passed.
+Separate real CKB and four-replica Stem controls passed specialized
+compound object, Spore, native UDT and funded Jolteon handoff with
+historical Intercell delivery.
+
+[Reproduction](OPERATIONS.md#exercise-immutable-objects-and-independent-approvals) ·
+[Signed cases, failures, proofs and exact commands](benchmarks/2026-11-26-stem-metatype-object.json.xz).
