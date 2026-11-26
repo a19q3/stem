@@ -34,9 +34,22 @@ The CKB-origin route minted a new asset, deposited it to Stem, transferred its n
 
 The whole-transaction CKB cycle estimates for the two custody handoffs were 4,724,740 and 4,771,452 for CKB origin, and 4,781,632 and 4,780,707 for Stem origin. These measurements cover one real-world program and the exercised transitions. A separate attempt put the referenced ID in the collection’s own optional Mutant field and included the paid registration as a direct CellDep. The published Cluster program returned code 54 during the node’s cycle estimate. That candidate produced no collection. Other Lua policies and collection-level compatibility remain open. [Collection attempt](collection-attempt.json) · [Earlier collection evidence](../README.md#cluster-membership-and-collection-level-registration)
 
+## Paying a separate beneficiary
+
+Four further devnets used a registration owner with an independent secp256k1 Lock. Each mint spent the beneficiary’s existing 100 CKB Cell and returned one ordinary Cell at the same Lock. The Spore went to a different Lock. One registration added exactly 1,000 shannons to the beneficiary’s balance. Two distinct registrations of the same authenticated program, owned by the same beneficiary, added exactly 2,000. The beneficiary signed the spend of its existing Cell. A wallet using this settlement arrangement therefore needs the beneficiary’s signature at mint. [Four signed settlement histories](separate-payees.json.xz)
+
+| Asset origin | Registrations | Net shannons paid | CKB mint bytes | CKB mint cycles | Ordinary CKB transfer cycles | Common Stem height |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CKB | 1 | 1,000 | 1,491 | 4,609,224 | 4,523,043 | 46 |
+| Stem | 1 | 1,000 | 3,128 | 7,365,933 | 4,519,969 | 45 |
+| CKB | 2 | 2,000 | 1,593 | 4,626,136 | 4,544,312 | 47 |
+| Stem | 2 | 2,000 | 3,397 | 7,451,726 | 4,557,554 | 47 |
+
+The CKB wallet replayed 26 asset states, including two native-title handoff authorizations per asset. The WASM verifier checked 22 certified native executions against the four recorded committees. The payment verifier reads the registration IDs and prices from the referenced outputs, checks the IDs against the Spore MIME field, and reconciles every input and output at the beneficiary’s Lock. These four cases measure the amounts actually paid. They cover one program, an individual Spore, and one beneficiary per mint. [Payment verifier](verify.py) · [Committee trust roots](../committee-trust.json)
+
 ## Reproduce
 
-Run the commands below from the repository root. The first command verifies both public proofs and both local histories. It also extracts the authenticated program to a new file. The two subsequent offline checks verify the CKB authorizations of the native spends and the native receipts. The final command refreshes the historical index against the pinned block bound. [WASM build instructions](../README.md#reproduce)
+Run the commands below from the repository root. The first command verifies both public proofs and the six local histories. It also extracts the authenticated program to a new file. The two subsequent offline checks verify the CKB authorizations of the native spends and the native receipts. The final command refreshes the historical index against the pinned block bound. [WASM build instructions](../README.md#reproduce)
 
 ```sh
 d=research/spore-permit/upstream/beta2/registered-policy
@@ -47,3 +60,5 @@ python3 "$d/public_index.py" --height 23194606 --output index-repeat.json.xz
 ```
 
 For live devnets, use the four-validator beta.2 fixture on fresh stores with the published Spore ELF, interpreter and Lua library. Add `--spore-mutant-program public-policy.lua --spore-mutant-payment 1000 --spore-type-history --spore-handoff`. Choose `--stem-spore` for the import and `--native-spore-origin` for the export. Use the standard native CKB wallet transfer and re-export endpoints for this profile. [Base fixture and binary arguments](../../../../../OPERATIONS.md#exercise-ckb-spore-settlement)
+
+Add `--spore-mutant-separate-payee` to pay the independent beneficiary. To issue with two distinct registrations, pass `--spore-mutant-program public-policy.lua` twice on the same command line.

@@ -2,10 +2,11 @@
 
 import hashlib
 import json
+import secrets
 import subprocess
 
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, output,
-                             packed_script, point, script, script_hash, transaction, wallet_group)
+                             packed_script, point, script, script_hash, transaction, wallet_group, write_key)
 from localnet import run, write_json
 from native_bridge_localnet import cell, signing_cell
 from stake_localnet import witness
@@ -193,14 +194,41 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         permit_index = len(codes) + len(funds)
         funds += [(1000 * CKB, fixture.standard), (150 * CKB, fixture.owner_lock),
                   (600 * CKB, fixture.standard), (150 * CKB, fixture.friend_lock)]
+    registration_owner = fixture.owner_lock
+    if args.spore_mutant_separate_payee:
+        payee_key = write_key(args.output, "registration-payee", secrets.token_bytes(32))
+        registration_owner = {**fixture.standard, "args": fixture.key(payee_key)["blake160"]}
+        payment_total = args.spore_mutant_payment * len(programs)
+        payment_index = len(codes) + len(funds)
+        # The beneficiary already owns an ordinary Cell so a sub-Cell payment is possible.
+        funds.extend([(100 * CKB + payment_total, fixture.standard), (100 * CKB, registration_owner)])
+    change = available - sum(capacities) - sum(amount for amount, _ in funds) - FEE
+    if args.spore_mutant_separate_payee and change < 61 * CKB:
+        raise ValueError("insufficient fixture capacity for the payments and standard change Cell")
     fund = transaction([fund_input],
         [output(amount, fixture.standard) for amount in capacities] +
         [output(amount, lock) for amount, lock in funds] +
-        [output(available - sum(capacities) - sum(amount for amount, _ in funds) - FEE,
-                fixture.standard)],
+        [output(change, fixture.standard)],
         [hex_bytes(binary_) for binary_ in codes] + ["0x"] * (len(funds) + 1), [secp])
     funded = l1.send(fixture.sign("spore-fund", fund, [wallet_group(0, [fixture.faucet])]))
     deps = [secp] + [dependency(point(funded, i)) for i in range(3)]
+
+    def sign_mint(label, tx, group):
+        groups = [group]
+        if args.spore_mutant_separate_payee:
+            index = len(tx["inputs"])
+            tx["inputs"].extend({"previous_output": point(funded, i), "since": "0x0"}
+                                for i in (payment_index, payment_index + 1))
+            tx["outputs"].extend([output(100 * CKB, fixture.standard),
+                                  output(100 * CKB + payment_total, registration_owner)])
+            tx["outputs_data"].extend(["0x", "0x"])
+            tx["witnesses"][index:index] = ["0x", "0x"]
+            if group["keys"] == [str(fixture.faucet)]:
+                group["inputs"].append(index)
+            else:
+                groups.append(wallet_group(index, [fixture.faucet]))
+            groups.append(wallet_group(index + 1, [payee_key]))
+        return fixture.sign(label, tx, groups)
 
     def estimate(signed):
         return int(l1.call("estimate_cycles", signed["json"])["cycles"], 16)
@@ -234,7 +262,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             mutant_ids.append(mutant_id.hex().encode())
             registry = script(hex_bytes(MUTANT_BETA2), hex_bytes(mutant_id + payment), "data1")
             capacity = funds[index - len(codes)][0] - FEE
-            create = transaction([point(funded, index)], [output(capacity, fixture.owner_lock, registry)],
+            create = transaction([point(funded, index)], [output(capacity, registration_owner, registry)],
                                  [hex_bytes(program)], deps)
             name = "register-mutant" if offset == 0 else f"register-mutant-{offset + 1}"
             registered = submit_ckb(fixture.sign(name, create, [wallet_group(0, [fixture.faucet])]))
@@ -331,7 +359,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                     dependencies.append(dependency(cluster_point))
             tx = transaction([point(funded, index)], outputs, payload, dependencies)
             tx["witnesses"] = ["0x", cobuild(type_, id_, None, fixture.owner_lock, data=data)]
-            return fixture.sign(f"spore-{label}", tx, [wallet_group(0, [key])])
+            return sign_mint(f"spore-{label}", tx, wallet_group(0, [key]))
 
         if cluster and not mutant:
             for label, tx in (
@@ -741,7 +769,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             tx["witnesses"] = witnesses + ["0x"]
             if valid_witness:
                 tx["witnesses"].append(cobuild(object_type, object_id, None, recipient, data=content))
-            return fixture.sign(label, tx, [wallet_group(len(inputs)-1, [signer])])
+            return sign_mint(label, tx, wallet_group(len(inputs)-1, [signer]))
 
         rejected["seed_without_mailbox"] = ckb_reject(mint_standard("seed-only", use_mailbox=False), 114)
         rejected["mint_without_checkpoint"] = ckb_reject(mint_standard("no-checkpoint", include_checkpoint=False), 84)

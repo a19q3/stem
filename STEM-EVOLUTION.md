@@ -136,3 +136,5 @@ Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验
 第 10 项将同一签名负载提高到每秒计划 4,000 笔。复用连接时，从 64 增到 128 个发送线程令实际写入从每秒 3,057 增至 3,543 笔，三分钟四副本共同确认从 1,987.32 降至 1,882.19 TPS。新连接模式下，单线程在满池回复后暂停 100 ms，拒绝减少 92.1%，窗口吞吐仅增加 0.21%。四组累计回包等待中，98.60%–99.28% 位于节点开始处理请求之前。下一组应固定实际到达率，分开记录请求排队期间的候选验证、提议和提交。[逐笔归档、设备计数和进程 CPU](research/storage/submission-sessions/README.md)
 
 第 20 项已验证一份由公开测试网 Spore 实际引用的 Lua 程序。17 个注册 ID 有 33 个历史输出，限定的发行窗口内有 11 个 Spore 引用它。钱包在同一 CKB 锚点验证其中一次发行及注册所有权转移，两条本地四副本路线使用相同程序原文和 1,000 shannons 最低付款，分别完成 7 次与 6 次 CKB 状态转换。把该 ID 放入集合自身扩展字段的独立候选仍被发布版 Cluster 程序拒绝。[公开链证明、付款对账及双向结算](research/spore-permit/upstream/beta2/registered-policy/README.md)
+
+第 20 项用独立收款方复验了同一程序的铸造付款。单注册向受益人净付 1,000 shannons，双注册净付 2,000，资产由另一把锁持有。两种首发方向共重放 26 个 CKB 资产状态、8 次托管换手授权和 22 份原生执行记录。[独立收款与逐笔对账](research/spore-permit/upstream/beta2/registered-policy/README.md#paying-a-separate-beneficiary)

@@ -12,6 +12,8 @@ Four further three-minute trials scheduled 4,000 signed payments per second. Acr
 
 A published testnet Lua program with a 1,000-shannon mint payment completed both local asset-origin routes. The two four-validator devnets replayed 13 CKB asset states and 11 certified native executions. An independently checked public mint resolved the same program under its original registration. [Committed assets, payment deltas and offline verification](research/spore-permit/upstream/beta2/registered-policy/README.md)
 
+Four further mints paid a registration owner whose Lock was separate from the Spore recipient. Each route credited exactly 1,000 shannons for one registration or 2,000 for two registrations. Offline replay checked 26 CKB asset states and 22 certified native executions. [Independent beneficiary payments](research/spore-permit/upstream/beta2/registered-policy/README.md#paying-a-separate-beneficiary)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two
