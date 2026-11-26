@@ -2285,19 +2285,7 @@ fn sync_with_consensus(
 ) -> Result<()> {
     let mut raw = WriteBatch::default();
     let mut bytes = measured.map(|_| BatchBytes::new(raw.size_in_bytes()));
-    let mut proposals = BTreeSet::new();
-    for (key, entry) in &batch.writes {
-        if key.starts_with(b"jbody") {
-            proposals.insert(key[1..].as_ref());
-        }
-        match entry {
-            Some(value) => raw.put(key, value)?,
-            None => raw.delete(key)?,
-        }
-        if let Some(bytes) = &mut bytes {
-            bytes.add(key, raw.size_in_bytes());
-        }
-    }
+    // Finality keeps created records first, in the original batch order.
     if let Some((tree, changes)) = live {
         let mut encoded = Vec::new();
         for (point, cell) in changes {
@@ -2311,6 +2299,19 @@ fn sync_with_consensus(
                     bytes.add(&key, raw.size_in_bytes());
                 }
             }
+        }
+    }
+    let mut proposals = BTreeSet::new();
+    for (key, entry) in &batch.writes {
+        if key.starts_with(b"jbody") {
+            proposals.insert(key[1..].as_ref());
+        }
+        match entry {
+            Some(value) => raw.put(key, value)?,
+            None => raw.delete(key)?,
+        }
+        if let Some(bytes) = &mut bytes {
+            bytes.add(key, raw.size_in_bytes());
         }
     }
     for (key, value) in records {
