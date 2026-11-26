@@ -914,6 +914,17 @@ Relay the certified L1 observation through the standard Intercell receive action
 
 With `--native-spore-sync-melt`, four replicas and a local CKB exercised a multipart object and a 96 KiB object. Both native originals were provably spent and both named recipients received the full collateral. The fixture also checked recipient, tag, amount, preservation of the CKB Spore and replay, and reran the approved and immortal routes. [Balances, finality and rejection reports](evidence/2026-11-27-synchronized-spore-melt.json.xz)
 
+#### Large-content execution cost
+
+The native endpoint checks committed content using the indexed Cell data length and its authenticated CKB data hash. The native identity still compares the complete original and successor bytes. It compares aligned words and checks both unaligned ends, with a full byte comparison for unequal alignment. The focused test exercises every alignment, length modulo eight and single-byte difference.
+
+| Native body | Original restore cycles | After removing the redundant content read | After exact word comparison |
+| --- | ---: | ---: | ---: |
+| 256 KiB | 19,221,352 | 18,693,914 | 15,220,335 |
+| 448 KiB | 23,104,360 | 22,183,706 | 16,105,071 |
+
+All three 448 KiB cycle counts came from authenticated receipts at the same 80 million ceiling. The original and intermediate contracts also rejected the return at the ordinary 20 million ceiling. The final version restored it for the same 16,105,071 cycles at that ceiling. The 496 KiB lifecycle succeeded with a 16,326,255-cycle restore. A 500 KiB body produced a 513,072-byte CKB transaction and the local pool enforced its 512,000-byte transaction limit. Actual payload space depends on the locks, witnesses, references and node policy. [Cycle receipts, CKB transactions and size boundaries](evidence/2026-11-27-spore-content-cycles.json.xz)
+
 #### Standard Spore with native approval
 
 Use `--native-spore-approval /path/to/stem-object-policy` with `--native-spore-origin` and the standard Spore options above. The original has two Types, its immutable identity and its approval policy. Append the full reserved CKB Spore Type hash to the four-field native identity. The tagged native escrow starts with byte 2 and appends the CKB approver Lock hash to the standard escrow fields. The CKB mailbox Lock similarly appends that approver to its five existing fields. The certified message names the recipient's ordinary wallet Lock hash.

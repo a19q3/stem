@@ -36,12 +36,18 @@ pub fn verify_workflow_signature(key: &Hash32, digest: &Hash32, signature: &[u8;
     })
 }
 
+pub fn cell_data_length(index: usize, source: Source) -> Result<usize, SysError> {
+    match load_cell_data(&mut [], 0, index, source) {
+        Ok(length) | Err(SysError::LengthNotEnough(length)) => Ok(length),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn bounded_data(index: usize, source: Source, limit: usize) -> Result<Vec<u8>, SysError> {
-    let length = match load_cell_data(&mut [], 0, index, source) {
-        Ok(length) | Err(SysError::LengthNotEnough(length)) if length <= limit => length,
-        Ok(_) | Err(SysError::LengthNotEnough(_)) => return Err(SysError::Encoding),
-        Err(error) => return Err(error),
-    };
+    let length = cell_data_length(index, source)?;
+    if length > limit {
+        return Err(SysError::Encoding);
+    }
     let mut data = alloc::vec![0; length];
     if load_cell_data(&mut data, 0, index, source)? != length {
         return Err(SysError::Encoding);

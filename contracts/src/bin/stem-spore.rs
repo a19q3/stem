@@ -11,8 +11,8 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_data_hash, load_cell_lock,
-        load_cell_lock_hash, load_input_out_point, load_script, load_script_hash,
+        load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash,
+        load_input_out_point, load_script, load_script_hash,
     },
 };
 use stem_bridge_wire::{
@@ -75,7 +75,9 @@ fn object_type(script: &Script, endpoint: &Identity) -> Result<(), i8> {
         }
     };
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
-        (Some(input), Some(output)) if input == output => Ok(()),
+        (Some(input), Some(output)) if stem_contracts::spore::same_content(&input, &output) => {
+            Ok(())
+        }
         (Some(_), None) | (None, Some(_)) => {
             // Only an actual consuming Lock group running this same program can
             // authenticate a mint or return for this representation.
@@ -246,11 +248,8 @@ fn inspect(
         {
             return Err(109);
         }
-        let data = stem_contracts::metatype::bounded_data(index, source, MAX_CELL_SPORE_DATA)
-            .map_err(|_| 109)?;
-        if !transfer
-            .content
-            .matches(&data, || load_cell_data_hash(index, source).ok())
+        if !stem_contracts::spore::matches_content(index, source, transfer.content)
+            .map_err(|_| 109)?
         {
             return Err(109);
         }

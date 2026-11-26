@@ -11,8 +11,8 @@ use ckb_std::{
     default_alloc, entry,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_data_hash, load_cell_lock_hash,
-        load_input_out_point, load_script, load_script_hash,
+        load_cell_capacity, load_cell_data, load_cell_lock_hash, load_input_out_point, load_script,
+        load_script_hash,
     },
 };
 use stem_bridge_wire::{
@@ -152,7 +152,7 @@ fn identity(object: &ObjectArgs<'_>, network: &Identity, standard: bool) -> Resu
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
         (Some(input), Some(output)) => {
             let permitted = if standard {
-                input == output
+                stem_contracts::spore::same_content(&input, &output)
             } else {
                 object.permits(&input, &output)
             };
@@ -201,7 +201,11 @@ fn plain_identity(id: &Identity, network: &Identity) -> Result<(), i8> {
     };
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
         (None, Some(_)) => verify_creation(network, id),
-        (Some(input), Some(output)) if input == output => Ok(()),
+        (Some((input, _)), Some((output, _)))
+            if stem_contracts::spore::same_content(&input, &output) =>
+        {
+            Ok(())
+        }
         (Some((_, false)), None) => Ok(()),
         _ => Err(117),
     }
@@ -417,10 +421,8 @@ fn inspect(
                     || matches!(route, Route::ApprovedStandard(authority) if args.get(64..96) != Some(authority.as_slice()))
                     || load(LOAD_TYPE_HASH, source as u64, index, type_count, &mut []).0
                         != INDEX_OUT_OF_BOUND
-                    || !content.matches(
-                        &bounded_data(index, source, MAX_CELL_SPORE_DATA).map_err(|_| 119)?,
-                        || load_cell_data_hash(index, source).ok(),
-                    )
+                    || !stem_contracts::spore::matches_content(index, source, content)
+                        .map_err(|_| 119)?
                     || asset
                         .replace((load_cell_capacity(index, source).map_err(|_| 119)?, lock))
                         .is_some()

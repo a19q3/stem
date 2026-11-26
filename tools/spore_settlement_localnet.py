@@ -235,7 +235,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
 
     def commit(tx):
         result = client.call("broadcast_tx_commit", tx=tx)
-        assert result["check_tx"]["code"] == 0, result
+        assert result.get("check_tx", {}).get("code") == 0, result
         return result
 
     def stem_reject(tx, reason):
@@ -311,6 +311,15 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         encoded = json.loads(run(args.binary, "intercell", "delivery-witness", "--request", request, "--header", header))
         write_json(args.output / f"spore-{label}-witness.json", encoded)
         return checkpoint, encoded
+
+    def execution(committed):
+        location = client.locations[committed["hash"]]
+        height = location["height"]
+        response = client.query("/stem/execution", height=height,
+                                data=hex_bytes(le(location["index"], 4)), prove=True)
+        return {**json.loads(bytes.fromhex(response["value"])), "height": height,
+                "finality": client.finality(height)["proof"]}
+
 
     def export_native():
         bond_cap = 120 * CKB
@@ -563,7 +572,11 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             held_native = cell_proof(at(relocked, 1))
             assert signing_cell(client, at(relocked, 1))["cell"] == cell(object_cap, endpoint, data, asset_types)
             melt_result = {"transaction": melted, "native_custody": held_native}
-        return {"origin": "stem", "immortal": args.spore_immortal, "spore_id": hex_bytes(object_id), "spore_type": object_type,
+        steps = {"issue": issued, "lock": locked, "restore": restored, "relock": relocked}
+        if args.native_spore_sync_melt:
+            steps["retire"] = retired
+        return {"execution": {label: execution(tx) for label, tx in steps.items()},
+                "origin": "stem", "immortal": args.spore_immortal, "spore_id": hex_bytes(object_id), "spore_type": object_type,
                 "native_type": mapped_type, "native_content": hex_bytes(data), "mailbox": mailbox, "endpoint": endpoint,
                 "reservation": object_point, "issued": issued, "locked": locked, "native_custody": custody,
                 "minted": standard, "ckb_wallet_transfer": moved, "deposited": held, "return_anchor": anchor,
@@ -724,13 +737,6 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         assert cluster["live_after_reimport"]["output"] == output(cluster_cap, fixture.friend_lock, cluster_type)
         assert cluster["live_after_reimport"]["data"]["content"] == hex_bytes(cluster_data)
 
-    def execution(committed):
-        location = client.locations[committed["hash"]]
-        height = location["height"]
-        response = client.query("/stem/execution", height=height,
-                                data=hex_bytes(le(location["index"], 4)), prove=True)
-        return {**json.loads(bytes.fromhex(response["value"])), "height": height,
-                "finality": client.finality(height)["proof"]}
 
     return {"id": hex_bytes(object_id), "immortal": args.spore_immortal, "original_type": object_type, "mapped_type": mapped_type, "cluster": cluster,
             "mailbox_creation": l1.prove_committed(created), "mailbox": mailbox, "endpoint": endpoint,
