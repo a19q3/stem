@@ -1,0 +1,1291 @@
+{
+  "archive": "prefund-3m.json.xz",
+  "jobs": [
+    {
+      "node": "node-0",
+      "job": 6,
+      "input_files": {
+        "0": [
+          "node-0/000015.sst",
+          "node-0/000013.sst",
+          "node-0/000011.sst",
+          "node-0/000009.sst"
+        ]
+      },
+      "output_files": [
+        "node-0/000016.sst",
+        "node-0/000017.sst"
+      ],
+      "input_entries": 1698202,
+      "output_entries": 776902,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 111480140,
+        "consensus_records": 17011,
+        "execution": 813421,
+        "live_cells": 24795108,
+        "metadata": 555336,
+        "mixed": 352125,
+        "proposal_journal": 836317,
+        "headers_and_history": 2171
+      },
+      "output_bytes": {
+        "cell_trie": 56319107,
+        "consensus_records": 21046,
+        "execution": 900346,
+        "headers_and_history": 5558,
+        "live_cells": 27834175,
+        "metadata": 364298,
+        "mixed": 72449,
+        "proposal_journal": 997138
+      }
+    },
+    {
+      "node": "node-0",
+      "job": 11,
+      "input_files": {
+        "0": [
+          "node-0/000025.sst",
+          "node-0/000023.sst",
+          "node-0/000021.sst",
+          "node-0/000019.sst"
+        ],
+        "6": [
+          "node-0/000016.sst",
+          "node-0/000017.sst"
+        ]
+      },
+      "output_files": [
+        "node-0/000026.sst",
+        "node-0/000027.sst",
+        "node-0/000028.sst"
+      ],
+      "input_entries": 2713647,
+      "output_entries": 1343120,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 187323190,
+        "consensus_records": 36304,
+        "execution": 1521077,
+        "live_cells": 45961322,
+        "metadata": 938317,
+        "mixed": 349931,
+        "proposal_journal": 1603782,
+        "headers_and_history": 5558
+      },
+      "output_bytes": {
+        "cell_trie": 97389156,
+        "consensus_records": 34528,
+        "execution": 1363927,
+        "headers_and_history": 12564,
+        "metadata": 624692,
+        "mixed": 132205,
+        "proposal_journal": 1437223,
+        "live_cells": 51048013
+      }
+    },
+    {
+      "node": "node-0",
+      "job": 16,
+      "input_files": {
+        "0": [
+          "node-0/000036.sst",
+          "node-0/000034.sst",
+          "node-0/000032.sst",
+          "node-0/000030.sst"
+        ],
+        "6": [
+          "node-0/000026.sst",
+          "node-0/000027.sst",
+          "node-0/000028.sst"
+        ]
+      },
+      "output_files": [
+        "node-0/000037.sst",
+        "node-0/000038.sst",
+        "node-0/000039.sst"
+      ],
+      "input_entries": 3253858,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 221966661,
+        "consensus_records": 54213,
+        "execution": 4112236,
+        "headers_and_history": 19377,
+        "live_cells": 64572819,
+        "metadata": 1141672,
+        "mixed": 585792,
+        "proposal_journal": 4198480
+      },
+      "output_bytes": {
+        "cell_trie": 117503431,
+        "consensus_records": 34793,
+        "execution": 3231268,
+        "headers_and_history": 13218,
+        "metadata": 753616,
+        "mixed": 104519,
+        "proposal_journal": 3291903,
+        "live_cells": 63192238
+      }
+    },
+    {
+      "node": "node-0",
+      "job": 21,
+      "input_files": {
+        "0": [
+          "node-0/000047.sst",
+          "node-0/000045.sst",
+          "node-0/000043.sst",
+          "node-0/000041.sst"
+        ],
+        "6": [
+          "node-0/000037.sst",
+          "node-0/000038.sst",
+          "node-0/000039.sst"
+        ]
+      },
+      "output_files": [
+        "node-0/000048.sst",
+        "node-0/000049.sst",
+        "node-0/000050.sst"
+      ],
+      "input_entries": 3462499,
+      "output_entries": 1620336,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229741592,
+        "consensus_records": 69797,
+        "execution": 8370292,
+        "headers_and_history": 26529,
+        "live_cells": 73339588,
+        "metadata": 1198269,
+        "mixed": 838282,
+        "proposal_journal": 8439625
+      },
+      "output_bytes": {
+        "cell_trie": 117503244,
+        "consensus_records": 35062,
+        "execution": 5397064,
+        "headers_and_history": 13253,
+        "metadata": 753055,
+        "mixed": 179577,
+        "proposal_journal": 5486230,
+        "live_cells": 64513111
+      }
+    },
+    {
+      "node": "node-0",
+      "job": 26,
+      "input_files": {
+        "0": [
+          "node-0/000058.sst",
+          "node-0/000056.sst",
+          "node-0/000054.sst",
+          "node-0/000052.sst"
+        ],
+        "6": [
+          "node-0/000048.sst",
+          "node-0/000049.sst",
+          "node-0/000050.sst"
+        ]
+      },
+      "output_files": [
+        "node-0/000059.sst",
+        "node-0/000060.sst",
+        "node-0/000061.sst"
+      ],
+      "input_entries": 3463724,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229809641,
+        "consensus_records": 70124,
+        "execution": 10532377,
+        "headers_and_history": 26815,
+        "live_cells": 74663694,
+        "metadata": 1197734,
+        "mixed": 908950,
+        "proposal_journal": 10463586
+      },
+      "output_bytes": {
+        "cell_trie": 117503636,
+        "consensus_records": 35239,
+        "execution": 5392915,
+        "headers_and_history": 13386,
+        "metadata": 751398,
+        "mixed": 181972,
+        "proposal_journal": 5398393,
+        "live_cells": 65339158
+      }
+    },
+    {
+      "node": "node-0",
+      "job": 31,
+      "input_files": {
+        "0": [
+          "node-0/000069.sst",
+          "node-0/000067.sst",
+          "node-0/000065.sst",
+          "node-0/000063.sst"
+        ],
+        "6": [
+          "node-0/000059.sst",
+          "node-0/000060.sst",
+          "node-0/000061.sst"
+        ]
+      },
+      "output_files": [
+        "node-0/000070.sst",
+        "node-0/000071.sst",
+        "node-0/000072.sst"
+      ],
+      "input_entries": 3466208,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229974648,
+        "consensus_records": 70169,
+        "execution": 10532292,
+        "headers_and_history": 26575,
+        "live_cells": 75419219,
+        "metadata": 1196720,
+        "mixed": 909218,
+        "proposal_journal": 10461910
+      },
+      "output_bytes": {
+        "cell_trie": 117503310,
+        "consensus_records": 34918,
+        "execution": 5396353,
+        "headers_and_history": 13147,
+        "metadata": 749572,
+        "mixed": 182307,
+        "proposal_journal": 5401245,
+        "live_cells": 65906168
+      }
+    },
+    {
+      "node": "node-0",
+      "job": 36,
+      "input_files": {
+        "0": [
+          "node-0/000080.sst",
+          "node-0/000078.sst",
+          "node-0/000076.sst",
+          "node-0/000074.sst"
+        ],
+        "6": [
+          "node-0/000070.sst",
+          "node-0/000071.sst",
+          "node-0/000072.sst"
+        ]
+      },
+      "output_files": [
+        "node-0/000081.sst",
+        "node-0/000082.sst",
+        "node-0/000083.sst"
+      ],
+      "input_entries": 3464982,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229919130,
+        "consensus_records": 69767,
+        "execution": 10559585,
+        "headers_and_history": 26507,
+        "live_cells": 75990849,
+        "metadata": 1194637,
+        "mixed": 918272,
+        "proposal_journal": 10490126
+      },
+      "output_bytes": {
+        "cell_trie": 117503608,
+        "consensus_records": 34850,
+        "execution": 5423247,
+        "headers_and_history": 13124,
+        "metadata": 746019,
+        "mixed": 181529,
+        "proposal_journal": 5427694,
+        "live_cells": 66455342,
+        "system_records": 322
+      }
+    },
+    {
+      "node": "node-1",
+      "job": 6,
+      "input_files": {
+        "0": [
+          "node-1/000015.sst",
+          "node-1/000013.sst",
+          "node-1/000011.sst",
+          "node-1/000009.sst"
+        ]
+      },
+      "output_files": [
+        "node-1/000016.sst",
+        "node-1/000017.sst"
+      ],
+      "input_entries": 1698202,
+      "output_entries": 776902,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 111480140,
+        "consensus_records": 17011,
+        "execution": 813421,
+        "live_cells": 24795632,
+        "metadata": 555370,
+        "mixed": 352127,
+        "proposal_journal": 836308,
+        "headers_and_history": 2174
+      },
+      "output_bytes": {
+        "cell_trie": 56319107,
+        "consensus_records": 21046,
+        "execution": 900346,
+        "headers_and_history": 5558,
+        "live_cells": 27834175,
+        "metadata": 364298,
+        "mixed": 72449,
+        "proposal_journal": 997138
+      }
+    },
+    {
+      "node": "node-1",
+      "job": 11,
+      "input_files": {
+        "0": [
+          "node-1/000025.sst",
+          "node-1/000023.sst",
+          "node-1/000021.sst",
+          "node-1/000019.sst"
+        ],
+        "6": [
+          "node-1/000016.sst",
+          "node-1/000017.sst"
+        ]
+      },
+      "output_files": [
+        "node-1/000026.sst",
+        "node-1/000027.sst",
+        "node-1/000028.sst"
+      ],
+      "input_entries": 2713647,
+      "output_entries": 1343120,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 187323190,
+        "consensus_records": 36523,
+        "execution": 1521077,
+        "live_cells": 45961718,
+        "metadata": 938403,
+        "mixed": 349930,
+        "proposal_journal": 1603782,
+        "headers_and_history": 5558
+      },
+      "output_bytes": {
+        "cell_trie": 97389156,
+        "consensus_records": 34459,
+        "execution": 1363927,
+        "headers_and_history": 12564,
+        "metadata": 624729,
+        "mixed": 132205,
+        "proposal_journal": 1437223,
+        "live_cells": 51048013
+      }
+    },
+    {
+      "node": "node-1",
+      "job": 16,
+      "input_files": {
+        "0": [
+          "node-1/000036.sst",
+          "node-1/000034.sst",
+          "node-1/000032.sst",
+          "node-1/000030.sst"
+        ],
+        "6": [
+          "node-1/000026.sst",
+          "node-1/000027.sst",
+          "node-1/000028.sst"
+        ]
+      },
+      "output_files": [
+        "node-1/000037.sst",
+        "node-1/000038.sst",
+        "node-1/000039.sst"
+      ],
+      "input_entries": 3253858,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 221966661,
+        "consensus_records": 54144,
+        "execution": 4112236,
+        "headers_and_history": 19378,
+        "live_cells": 64572742,
+        "metadata": 1141730,
+        "mixed": 585870,
+        "proposal_journal": 4198480
+      },
+      "output_bytes": {
+        "cell_trie": 117503431,
+        "consensus_records": 35089,
+        "execution": 3231268,
+        "headers_and_history": 13218,
+        "metadata": 753661,
+        "mixed": 104519,
+        "proposal_journal": 3291903,
+        "live_cells": 63192238
+      }
+    },
+    {
+      "node": "node-1",
+      "job": 21,
+      "input_files": {
+        "0": [
+          "node-1/000047.sst",
+          "node-1/000045.sst",
+          "node-1/000043.sst",
+          "node-1/000041.sst"
+        ],
+        "6": [
+          "node-1/000037.sst",
+          "node-1/000038.sst",
+          "node-1/000039.sst"
+        ]
+      },
+      "output_files": [
+        "node-1/000048.sst",
+        "node-1/000049.sst",
+        "node-1/000050.sst"
+      ],
+      "input_entries": 3462499,
+      "output_entries": 1620336,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229741592,
+        "consensus_records": 70093,
+        "execution": 8370292,
+        "headers_and_history": 26523,
+        "live_cells": 73339833,
+        "metadata": 1198234,
+        "mixed": 838272,
+        "proposal_journal": 8439625
+      },
+      "output_bytes": {
+        "cell_trie": 117503244,
+        "consensus_records": 35062,
+        "execution": 5397064,
+        "headers_and_history": 13253,
+        "metadata": 753055,
+        "mixed": 179577,
+        "proposal_journal": 5486230,
+        "live_cells": 64513111
+      }
+    },
+    {
+      "node": "node-1",
+      "job": 26,
+      "input_files": {
+        "0": [
+          "node-1/000058.sst",
+          "node-1/000056.sst",
+          "node-1/000054.sst",
+          "node-1/000052.sst"
+        ],
+        "6": [
+          "node-1/000048.sst",
+          "node-1/000049.sst",
+          "node-1/000050.sst"
+        ]
+      },
+      "output_files": [
+        "node-1/000059.sst",
+        "node-1/000060.sst",
+        "node-1/000061.sst"
+      ],
+      "input_entries": 3463724,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229809641,
+        "consensus_records": 70058,
+        "execution": 10532377,
+        "headers_and_history": 26807,
+        "live_cells": 74663886,
+        "metadata": 1197744,
+        "mixed": 908965,
+        "proposal_journal": 10463586
+      },
+      "output_bytes": {
+        "cell_trie": 117503636,
+        "consensus_records": 35173,
+        "execution": 5392915,
+        "headers_and_history": 13386,
+        "metadata": 751459,
+        "mixed": 181972,
+        "proposal_journal": 5398393,
+        "live_cells": 65339158
+      }
+    },
+    {
+      "node": "node-1",
+      "job": 31,
+      "input_files": {
+        "0": [
+          "node-1/000069.sst",
+          "node-1/000067.sst",
+          "node-1/000065.sst",
+          "node-1/000063.sst"
+        ],
+        "6": [
+          "node-1/000059.sst",
+          "node-1/000060.sst",
+          "node-1/000061.sst"
+        ]
+      },
+      "output_files": [
+        "node-1/000070.sst",
+        "node-1/000071.sst",
+        "node-1/000072.sst"
+      ],
+      "input_entries": 3466208,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229974648,
+        "consensus_records": 70036,
+        "execution": 10532292,
+        "headers_and_history": 26575,
+        "live_cells": 75419440,
+        "metadata": 1196842,
+        "mixed": 909217,
+        "proposal_journal": 10461910
+      },
+      "output_bytes": {
+        "cell_trie": 117503310,
+        "consensus_records": 34851,
+        "execution": 5396353,
+        "headers_and_history": 13147,
+        "metadata": 749524,
+        "mixed": 182307,
+        "proposal_journal": 5401245,
+        "live_cells": 65906168
+      }
+    },
+    {
+      "node": "node-1",
+      "job": 36,
+      "input_files": {
+        "0": [
+          "node-1/000080.sst",
+          "node-1/000078.sst",
+          "node-1/000076.sst",
+          "node-1/000074.sst"
+        ],
+        "6": [
+          "node-1/000070.sst",
+          "node-1/000071.sst",
+          "node-1/000072.sst"
+        ]
+      },
+      "output_files": [
+        "node-1/000081.sst",
+        "node-1/000082.sst",
+        "node-1/000083.sst"
+      ],
+      "input_entries": 3464982,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229919130,
+        "consensus_records": 69773,
+        "execution": 10559585,
+        "headers_and_history": 26507,
+        "live_cells": 75990613,
+        "metadata": 1194604,
+        "mixed": 918275,
+        "proposal_journal": 10490126
+      },
+      "output_bytes": {
+        "cell_trie": 117503608,
+        "consensus_records": 34923,
+        "execution": 5423247,
+        "headers_and_history": 13124,
+        "metadata": 745989,
+        "mixed": 181529,
+        "proposal_journal": 5427694,
+        "live_cells": 66455342,
+        "system_records": 322
+      }
+    },
+    {
+      "node": "node-2",
+      "job": 6,
+      "input_files": {
+        "0": [
+          "node-2/000015.sst",
+          "node-2/000013.sst",
+          "node-2/000011.sst",
+          "node-2/000009.sst"
+        ]
+      },
+      "output_files": [
+        "node-2/000016.sst",
+        "node-2/000017.sst"
+      ],
+      "input_entries": 1698202,
+      "output_entries": 776902,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 111480140,
+        "consensus_records": 17078,
+        "execution": 813421,
+        "live_cells": 24795449,
+        "metadata": 555290,
+        "mixed": 352130,
+        "proposal_journal": 836308,
+        "headers_and_history": 2174
+      },
+      "output_bytes": {
+        "cell_trie": 56319107,
+        "consensus_records": 21113,
+        "execution": 900346,
+        "headers_and_history": 5558,
+        "live_cells": 27834175,
+        "metadata": 364263,
+        "mixed": 72449,
+        "proposal_journal": 997138
+      }
+    },
+    {
+      "node": "node-2",
+      "job": 11,
+      "input_files": {
+        "0": [
+          "node-2/000025.sst",
+          "node-2/000023.sst",
+          "node-2/000021.sst",
+          "node-2/000019.sst"
+        ],
+        "6": [
+          "node-2/000016.sst",
+          "node-2/000017.sst"
+        ]
+      },
+      "output_files": [
+        "node-2/000026.sst",
+        "node-2/000027.sst",
+        "node-2/000028.sst"
+      ],
+      "input_entries": 2713647,
+      "output_entries": 1343120,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 187323190,
+        "consensus_records": 36659,
+        "execution": 1521077,
+        "live_cells": 45961753,
+        "metadata": 938190,
+        "mixed": 349861,
+        "proposal_journal": 1603782,
+        "headers_and_history": 5558
+      },
+      "output_bytes": {
+        "cell_trie": 97389156,
+        "consensus_records": 34249,
+        "execution": 1363927,
+        "headers_and_history": 12564,
+        "metadata": 624697,
+        "mixed": 132205,
+        "proposal_journal": 1437223,
+        "live_cells": 51048013
+      }
+    },
+    {
+      "node": "node-2",
+      "job": 16,
+      "input_files": {
+        "0": [
+          "node-2/000036.sst",
+          "node-2/000034.sst",
+          "node-2/000032.sst",
+          "node-2/000030.sst"
+        ],
+        "6": [
+          "node-2/000026.sst",
+          "node-2/000027.sst",
+          "node-2/000028.sst"
+        ]
+      },
+      "output_files": [
+        "node-2/000037.sst",
+        "node-2/000038.sst",
+        "node-2/000039.sst"
+      ],
+      "input_entries": 3253859,
+      "output_entries": 1620336,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 221966661,
+        "consensus_records": 53934,
+        "execution": 4112236,
+        "headers_and_history": 19377,
+        "live_cells": 64572595,
+        "metadata": 1141747,
+        "mixed": 585876,
+        "proposal_journal": 4283417
+      },
+      "output_bytes": {
+        "cell_trie": 117503431,
+        "consensus_records": 35089,
+        "execution": 3231268,
+        "headers_and_history": 13218,
+        "metadata": 753762,
+        "mixed": 104519,
+        "proposal_journal": 3376832,
+        "live_cells": 63192174
+      }
+    },
+    {
+      "node": "node-2",
+      "job": 21,
+      "input_files": {
+        "0": [
+          "node-2/000047.sst",
+          "node-2/000045.sst",
+          "node-2/000043.sst",
+          "node-2/000041.sst"
+        ],
+        "6": [
+          "node-2/000037.sst",
+          "node-2/000038.sst",
+          "node-2/000039.sst"
+        ]
+      },
+      "output_files": [
+        "node-2/000048.sst",
+        "node-2/000049.sst",
+        "node-2/000050.sst"
+      ],
+      "input_entries": 3462499,
+      "output_entries": 1620336,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229741592,
+        "consensus_records": 70093,
+        "execution": 8370292,
+        "headers_and_history": 26524,
+        "live_cells": 73339872,
+        "metadata": 1198510,
+        "mixed": 837354,
+        "proposal_journal": 8440505
+      },
+      "output_bytes": {
+        "cell_trie": 117503244,
+        "consensus_records": 35062,
+        "execution": 5397064,
+        "headers_and_history": 13253,
+        "metadata": 753055,
+        "mixed": 179577,
+        "proposal_journal": 5486230,
+        "live_cells": 64513111
+      }
+    },
+    {
+      "node": "node-2",
+      "job": 26,
+      "input_files": {
+        "0": [
+          "node-2/000058.sst",
+          "node-2/000056.sst",
+          "node-2/000054.sst",
+          "node-2/000052.sst"
+        ],
+        "6": [
+          "node-2/000048.sst",
+          "node-2/000049.sst",
+          "node-2/000050.sst"
+        ]
+      },
+      "output_files": [
+        "node-2/000059.sst",
+        "node-2/000060.sst",
+        "node-2/000061.sst"
+      ],
+      "input_entries": 3463724,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229809641,
+        "consensus_records": 70124,
+        "execution": 10532377,
+        "headers_and_history": 26807,
+        "live_cells": 74663722,
+        "metadata": 1197752,
+        "mixed": 908951,
+        "proposal_journal": 10463586
+      },
+      "output_bytes": {
+        "cell_trie": 117503636,
+        "consensus_records": 35239,
+        "execution": 5392915,
+        "headers_and_history": 13386,
+        "metadata": 751398,
+        "mixed": 181972,
+        "proposal_journal": 5398393,
+        "live_cells": 65339158
+      }
+    },
+    {
+      "node": "node-2",
+      "job": 31,
+      "input_files": {
+        "0": [
+          "node-2/000069.sst",
+          "node-2/000067.sst",
+          "node-2/000065.sst",
+          "node-2/000063.sst"
+        ],
+        "6": [
+          "node-2/000059.sst",
+          "node-2/000060.sst",
+          "node-2/000061.sst"
+        ]
+      },
+      "output_files": [
+        "node-2/000070.sst",
+        "node-2/000071.sst",
+        "node-2/000072.sst"
+      ],
+      "input_entries": 3466208,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229974648,
+        "consensus_records": 70102,
+        "execution": 10532292,
+        "headers_and_history": 26574,
+        "live_cells": 75419353,
+        "metadata": 1196690,
+        "mixed": 909217,
+        "proposal_journal": 10461910
+      },
+      "output_bytes": {
+        "cell_trie": 117503310,
+        "consensus_records": 34851,
+        "execution": 5396353,
+        "headers_and_history": 13147,
+        "metadata": 749524,
+        "mixed": 182307,
+        "proposal_journal": 5401245,
+        "live_cells": 65906168
+      }
+    },
+    {
+      "node": "node-2",
+      "job": 36,
+      "input_files": {
+        "0": [
+          "node-2/000080.sst",
+          "node-2/000078.sst",
+          "node-2/000076.sst",
+          "node-2/000074.sst"
+        ],
+        "6": [
+          "node-2/000070.sst",
+          "node-2/000071.sst",
+          "node-2/000072.sst"
+        ]
+      },
+      "output_files": [
+        "node-2/000081.sst",
+        "node-2/000082.sst",
+        "node-2/000083.sst"
+      ],
+      "input_entries": 3464982,
+      "output_entries": 1620335,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229919130,
+        "consensus_records": 69773,
+        "execution": 10559585,
+        "headers_and_history": 26510,
+        "live_cells": 75990570,
+        "metadata": 1194548,
+        "mixed": 918276,
+        "proposal_journal": 10490126
+      },
+      "output_bytes": {
+        "cell_trie": 117503608,
+        "consensus_records": 34923,
+        "execution": 5423247,
+        "headers_and_history": 13124,
+        "metadata": 745989,
+        "mixed": 181529,
+        "proposal_journal": 5427694,
+        "live_cells": 66455342,
+        "system_records": 322
+      }
+    },
+    {
+      "node": "node-3",
+      "job": 6,
+      "input_files": {
+        "0": [
+          "node-3/000015.sst",
+          "node-3/000013.sst",
+          "node-3/000011.sst",
+          "node-3/000009.sst"
+        ]
+      },
+      "output_files": [
+        "node-3/000016.sst",
+        "node-3/000017.sst"
+      ],
+      "input_entries": 1698202,
+      "output_entries": 776902,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 111480140,
+        "consensus_records": 17075,
+        "execution": 813421,
+        "live_cells": 24795714,
+        "metadata": 555310,
+        "mixed": 352134,
+        "proposal_journal": 836308,
+        "headers_and_history": 2171
+      },
+      "output_bytes": {
+        "cell_trie": 56319107,
+        "consensus_records": 21111,
+        "execution": 900346,
+        "headers_and_history": 5558,
+        "live_cells": 27834175,
+        "metadata": 364273,
+        "mixed": 72447,
+        "proposal_journal": 997138
+      }
+    },
+    {
+      "node": "node-3",
+      "job": 11,
+      "input_files": {
+        "0": [
+          "node-3/000025.sst",
+          "node-3/000023.sst",
+          "node-3/000021.sst",
+          "node-3/000019.sst"
+        ],
+        "6": [
+          "node-3/000016.sst",
+          "node-3/000017.sst"
+        ]
+      },
+      "output_files": [
+        "node-3/000026.sst",
+        "node-3/000027.sst",
+        "node-3/000028.sst"
+      ],
+      "input_entries": 2713589,
+      "output_entries": 1343177,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 187323190,
+        "consensus_records": 36657,
+        "execution": 1521077,
+        "live_cells": 45961343,
+        "metadata": 937114,
+        "mixed": 349205,
+        "proposal_journal": 1603782,
+        "headers_and_history": 5558
+      },
+      "output_bytes": {
+        "cell_trie": 97392648,
+        "consensus_records": 38878,
+        "execution": 1608126,
+        "headers_and_history": 15339,
+        "metadata": 625006,
+        "mixed": 130574,
+        "proposal_journal": 1685561,
+        "live_cells": 51043961
+      }
+    },
+    {
+      "node": "node-3",
+      "job": 16,
+      "input_files": {
+        "0": [
+          "node-3/000036.sst",
+          "node-3/000034.sst",
+          "node-3/000032.sst",
+          "node-3/000030.sst"
+        ],
+        "6": [
+          "node-3/000026.sst",
+          "node-3/000027.sst",
+          "node-3/000028.sst"
+        ]
+      },
+      "output_files": [
+        "node-3/000037.sst",
+        "node-3/000038.sst",
+        "node-3/000039.sst"
+      ],
+      "input_entries": 3253680,
+      "output_entries": 1620627,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 221970153,
+        "consensus_records": 58563,
+        "execution": 4356435,
+        "headers_and_history": 21926,
+        "live_cells": 64569810,
+        "metadata": 1136926,
+        "mixed": 582036,
+        "proposal_journal": 4446818
+      },
+      "output_bytes": {
+        "cell_trie": 117503600,
+        "consensus_records": 64981,
+        "execution": 4561427,
+        "headers_and_history": 25273,
+        "metadata": 754446,
+        "mixed": 134088,
+        "proposal_journal": 4649478,
+        "live_cells": 63183783
+      }
+    },
+    {
+      "node": "node-3",
+      "job": 21,
+      "input_files": {
+        "0": [
+          "node-3/000047.sst",
+          "node-3/000045.sst",
+          "node-3/000043.sst",
+          "node-3/000041.sst"
+        ],
+        "6": [
+          "node-3/000037.sst",
+          "node-3/000038.sst",
+          "node-3/000039.sst"
+        ]
+      },
+      "output_files": [
+        "node-3/000048.sst",
+        "node-3/000049.sst",
+        "node-3/000050.sst",
+        "node-3/000051.sst"
+      ],
+      "input_entries": 3462471,
+      "output_entries": 1620948,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229741696,
+        "consensus_records": 99985,
+        "execution": 9700451,
+        "headers_and_history": 38242,
+        "live_cells": 73331722,
+        "metadata": 1192094,
+        "mixed": 864172,
+        "proposal_journal": 9797200
+      },
+      "output_bytes": {
+        "cell_trie": 117503601,
+        "consensus_records": 100026,
+        "execution": 10044387,
+        "headers_and_history": 38653,
+        "metadata": 756384,
+        "mixed": 71025,
+        "proposal_journal": 10198172,
+        "live_cells": 64509845,
+        "system_records": 322
+      }
+    },
+    {
+      "node": "node-3",
+      "job": 26,
+      "input_files": {
+        "0": [
+          "node-3/000059.sst",
+          "node-3/000057.sst",
+          "node-3/000055.sst",
+          "node-3/000053.sst"
+        ],
+        "6": [
+          "node-3/000048.sst",
+          "node-3/000049.sst",
+          "node-3/000050.sst",
+          "node-3/000051.sst"
+        ]
+      },
+      "output_files": [
+        "node-3/000060.sst",
+        "node-3/000061.sst",
+        "node-3/000062.sst",
+        "node-3/000063.sst"
+      ],
+      "input_entries": 3464016,
+      "output_entries": 1621267,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229809971,
+        "consensus_records": 135088,
+        "execution": 15179701,
+        "headers_and_history": 51698,
+        "live_cells": 74660728,
+        "metadata": 1194097,
+        "mixed": 796904,
+        "proposal_journal": 15175526,
+        "system_records": 322
+      },
+      "output_bytes": {
+        "cell_trie": 117503402,
+        "consensus_records": 134985,
+        "execution": 15523814,
+        "headers_and_history": 55495,
+        "metadata": 757466,
+        "mixed": 133839,
+        "proposal_journal": 15450024,
+        "live_cells": 65342985
+      }
+    },
+    {
+      "node": "node-3",
+      "job": 31,
+      "input_files": {
+        "0": [
+          "node-3/000071.sst",
+          "node-3/000069.sst",
+          "node-3/000067.sst",
+          "node-3/000065.sst"
+        ],
+        "6": [
+          "node-3/000060.sst",
+          "node-3/000061.sst",
+          "node-3/000062.sst",
+          "node-3/000063.sst"
+        ]
+      },
+      "output_files": [
+        "node-3/000072.sst",
+        "node-3/000073.sst",
+        "node-3/000074.sst",
+        "node-3/000075.sst"
+      ],
+      "input_entries": 3466820,
+      "output_entries": 1621587,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229974266,
+        "consensus_records": 169848,
+        "execution": 20663193,
+        "headers_and_history": 68341,
+        "live_cells": 75423800,
+        "metadata": 1195803,
+        "mixed": 857629,
+        "proposal_journal": 20513542
+      },
+      "output_bytes": {
+        "cell_trie": 117504092,
+        "consensus_records": 169820,
+        "execution": 21006841,
+        "headers_and_history": 68669,
+        "metadata": 757224,
+        "mixed": 72478,
+        "proposal_journal": 20912836,
+        "live_cells": 65899307
+      }
+    },
+    {
+      "node": "node-3",
+      "job": 36,
+      "input_files": {
+        "0": [
+          "node-3/000083.sst",
+          "node-3/000081.sst",
+          "node-3/000079.sst",
+          "node-3/000077.sst"
+        ],
+        "6": [
+          "node-3/000072.sst",
+          "node-3/000073.sst",
+          "node-3/000074.sst",
+          "node-3/000075.sst"
+        ]
+      },
+      "output_files": [
+        "node-3/000084.sst",
+        "node-3/000085.sst",
+        "node-3/000086.sst",
+        "node-3/000087.sst"
+      ],
+      "input_entries": 3465914,
+      "output_entries": 1621907,
+      "reasons": "LevelL0FilesNum",
+      "input_bytes": {
+        "cell_trie": 229919831,
+        "consensus_records": 204855,
+        "execution": 26170089,
+        "headers_and_history": 81526,
+        "live_cells": 75984939,
+        "metadata": 1195294,
+        "mixed": 805305,
+        "proposal_journal": 26001717
+      },
+      "output_bytes": {
+        "cell_trie": 117503686,
+        "consensus_records": 204716,
+        "execution": 26517265,
+        "headers_and_history": 81917,
+        "metadata": 755842,
+        "mixed": 71332,
+        "proposal_journal": 26341427,
+        "live_cells": 66457815,
+        "system_records": 322
+      }
+    }
+  ],
+  "input_by_level": {
+    "0": 3881289408,
+    "6": 4105627527
+  },
+  "output_by_level": {
+    "6": 4930919140
+  },
+  "compaction_input_by_namespace": {
+    "cell_trie": 5760864253,
+    "consensus_records": 1884857,
+    "execution": 217728207,
+    "live_cells": 1738957833,
+    "metadata": 29674977,
+    "mixed": 19194276,
+    "proposal_journal": 217942170,
+    "headers_and_history": 670040,
+    "system_records": 322
+  },
+  "compaction_output_by_namespace": {
+    "cell_trie": 2964906612,
+    "consensus_records": 1426082,
+    "execution": 161477566,
+    "headers_and_history": 543654,
+    "live_cells": 1617136422,
+    "metadata": 18998694,
+    "mixed": 3789457,
+    "proposal_journal": 162639043,
+    "system_records": 1610
+  },
+  "sst_bytes_written_per_flush_byte": {
+    "cell_trie": 1.8494147048818783,
+    "consensus_records": 2.6981816449742193,
+    "execution": 2.436715914017289,
+    "headers_and_history": 2.9809936779200905,
+    "live_cells": 4.964524849895269,
+    "metadata": 2.3051771693707446,
+    "mixed": 1.2142638526870246,
+    "proposal_journal": 2.461566637190727
+  },
+  "input_entries": 86094053,
+  "output_entries": 40891510
+}
