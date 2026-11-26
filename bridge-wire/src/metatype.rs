@@ -18,6 +18,7 @@ pub const MAX_TRANSACTION_CELLS_PER_SIDE: usize = 128;
 pub const MAX_SCRIPT_BYTES: usize = 256;
 pub const MAX_STATE_BYTES: usize = 2048;
 pub const MAX_MANIFEST_BYTES: usize = 8192;
+pub const MAX_MANIFEST_DEFINITION_BYTES: usize = 1 + MAX_TYPE_SCRIPTS * (4 + MAX_SCRIPT_BYTES);
 pub const MAX_ADAPTERS: usize = 64;
 pub const MAX_ADAPTER_TABLE_BYTES: usize = 2 + 65 * MAX_ADAPTERS + Custody::SIZE;
 
@@ -156,6 +157,55 @@ impl<'a> MetatypeManifest<'a> {
     pub fn id(&self) -> Hash {
         let ids: Vec<_> = self.entries.iter().map(|entry| entry.script.id()).collect();
         manifest_id(&ids)
+    }
+}
+
+/// A Cell's state vector and a commitment to its shared Script set.
+/// Zero is reserved for references in the Cell Data discriminant.
+pub struct ManifestReference<'a> {
+    pub definition_hash: Hash,
+    states: &'a [u8],
+}
+
+impl<'a> ManifestReference<'a> {
+    pub fn decode(raw: &'a [u8]) -> Option<Self> {
+        let (&tag, rest) = raw.split_first()?;
+        let (definition_hash, states) = rest.split_first_chunk::<HASH_SIZE>()?;
+        (tag == 0 && *definition_hash != [0; HASH_SIZE] && raw.len() <= MAX_MANIFEST_BYTES)
+            .then_some(Self {
+                definition_hash: *definition_hash,
+                states,
+            })
+    }
+
+    /// Rebuild the canonical logical manifest from a dependency whose data
+    /// hash the host has checked against `definition_hash`.
+    pub fn expand(&self, definition: &[u8], limit: usize) -> Option<Vec<u8>> {
+        if definition.len() > MAX_MANIFEST_DEFINITION_BYTES {
+            return None;
+        }
+        let definition_view = MetatypeManifest::decode(definition)?;
+        let entries = definition_view.entries();
+        let length = definition
+            .len()
+            .checked_add(self.states.len().checked_sub(2 * entries.len())?)?;
+        if length > MAX_MANIFEST_BYTES.min(limit) {
+            return None;
+        }
+        let mut raw = Vec::with_capacity(length);
+        raw.push(entries.len() as u8);
+        let mut states = self.states;
+        for entry in entries {
+            let state = take_bytes(&mut states)?;
+            if !entry.state.is_empty() || state.len() > MAX_STATE_BYTES {
+                return None;
+            }
+            for bytes in [entry.script.as_slice(), state] {
+                raw.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+                raw.extend_from_slice(bytes);
+            }
+        }
+        states.is_empty().then_some(raw)
     }
 }
 
@@ -402,6 +452,66 @@ mod tests {
         assert!(project(&[(1, &ab), (1, &ab)], &[]).is_none());
         ab.push(0);
         assert!(MetatypeManifest::decode(&ab).is_none());
+    }
+
+    #[test]
+    fn shared_script_sets_expand_into_the_complete_group_view() {
+        let [a, b] = [script(1, 0), script(2, 0)];
+        let definition = manifest(&[&a, &b]);
+        let hash = ckb_hash::blake2b_256(&definition);
+        let mut reference = alloc::vec![0];
+        reference.extend_from_slice(&hash);
+        reference.extend_from_slice(b"\x03\x00one\x03\x00two");
+        let parsed = ManifestReference::decode(&reference).unwrap();
+        assert_eq!(parsed.definition_hash, hash);
+        let expanded = parsed.expand(&definition, MAX_MANIFEST_BYTES).unwrap();
+        let view = MetatypeManifest::decode(&expanded).unwrap();
+        assert_eq!(
+            view.id(),
+            MetatypeManifest::decode(&definition).unwrap().id()
+        );
+        assert_eq!(view.entries()[0].state, b"one");
+        assert_eq!(view.entries()[1].state, b"two");
+        let groups = project(&[(1, &expanded), (7, &definition)], &[(4, &expanded)]).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert!(
+            groups
+                .iter()
+                .all(|group| { group.input_indices == [1, 7] && group.output_indices == [4] })
+        );
+        assert!(
+            ManifestReference::decode(&reference)
+                .unwrap()
+                .expand(&definition, expanded.len() - 1)
+                .is_none()
+        );
+        assert!(
+            ManifestReference::decode(&reference)
+                .unwrap()
+                .expand(&expanded, MAX_MANIFEST_BYTES)
+                .is_none()
+        );
+        assert!(
+            ManifestReference::decode(&reference)
+                .unwrap()
+                .expand(&reference, MAX_MANIFEST_BYTES)
+                .is_none()
+        );
+        for invalid in [&reference[..reference.len() - 1], &reference[..33]] {
+            assert!(
+                ManifestReference::decode(invalid)
+                    .unwrap()
+                    .expand(&definition, MAX_MANIFEST_BYTES)
+                    .is_none()
+            );
+        }
+        reference.extend_from_slice(&0_u16.to_le_bytes());
+        assert!(
+            ManifestReference::decode(&reference)
+                .unwrap()
+                .expand(&definition, MAX_MANIFEST_BYTES)
+                .is_none()
+        );
     }
 
     #[test]

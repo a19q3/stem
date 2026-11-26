@@ -5,7 +5,9 @@ import json
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, le, output,
                              packed_script, point, script, script_hash, transaction, wallet_group)
 from localnet import run, write_json
-from metatype_localnet import capacity as ckb_occupied, metatype_data
+from metatype_localnet import (
+    capacity as ckb_occupied, manifest_definition, metatype_data, metatype_reference,
+)
 from native_bridge_localnet import cell, signing_cell
 from spore_settlement_localnet import molecule_bytes, table
 from stake_localnet import witness
@@ -23,6 +25,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                       for key in (owner_key, buyer_key, authority_key)]
     owner, buyer, authority = native_scripts
     metatype = args.metatype_dispatcher is not None
+    shared_manifest = args.metatype_shared_manifest
     mailbox_bin = args.intercell_mailbox.read_bytes()
     gate_bin = (args.metatype_mailbox_lock if metatype else args.ckb_stem_object).read_bytes()
     mailbox_code, ckb_code = map(ckb_hash, (mailbox_bin, gate_bin))
@@ -131,10 +134,17 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     policy = script(policy_code, hex_bytes(identity_hash + script_hash(authority)), "data")
     types = [identity, policy]
     data = table(molecule_bytes(b"text/plain"), molecule_bytes(b"Stem object with two Type Groups"), b"")
+    definition = None
+    definition_dep = None
+    shared_evidence = None
+
     def projected(contents):
         if not metatype:
             return contents
-        return metatype_data([(packed_script(identity), contents), (packed_script(policy), b"")])
+        components = [(packed_script(identity), contents), (packed_script(policy), b"")]
+        if definition is not None:
+            return metatype_reference(components, definition)
+        return metatype_data(components)
 
     if metatype:
         script_ids = b"".join(ckb_hash(item) for item in sorted(map(packed_script, types)))
@@ -144,11 +154,26 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                                   binary(policy_code) + b"\0" + ckb_hash(codes[4])])
         adapter_table = bytes([2]) + b"".join(adapter_entries) + bytes([1]) + custody
         table_capacity = (len(adapter_table) + 100) * CKB
+        table_outputs = [output(table_capacity, fixture.standard)]
+        table_data = [hex_bytes(adapter_table)]
+        table_change = funding_change - table_capacity - FEE
+        if shared_manifest:
+            definition = manifest_definition([(packed_script(item), b"") for item in types])
+            definition_capacity = (61 + len(definition)) * CKB
+            table_outputs.append(output(definition_capacity, fixture.standard))
+            table_data.append(hex_bytes(definition))
+            table_change -= definition_capacity
+        fee_index = len(table_outputs)
         table_tx = transaction([point(funded, change_index)],
-            [output(table_capacity, fixture.standard), output(funding_change - table_capacity - FEE, fixture.standard)],
-            [hex_bytes(adapter_table), "0x"], [secp])
+            [*table_outputs, output(table_change, fixture.standard)], [*table_data, "0x"], [secp])
         table_deployed = l1.send(fixture.sign("object-adapter-table", table_tx, [wallet_group(0, [fixture.faucet])]))
         ckb_deps.append(dependency(point(table_deployed, 0)))
+        if shared_manifest:
+            definition_dep = dependency(point(table_deployed, 1))
+            ckb_deps.append(definition_dep)
+            shared_evidence = {"hash": hex_bytes(ckb_hash(definition)), "bytes": len(definition),
+                               "occupied_shannons": definition_capacity, "cell_dep": definition_dep,
+                               "proof": l1.prove_committed(table_deployed)}
         wrapper = script(hex_bytes(ckb_hash(codes[2])), hex_bytes(binary(genesis)
             + ckb_hash(b"Stem Metatype local fixture\0" + identity_hash) + ckb_hash(adapter_table)), "data2")
         wrapper_hash = script_hash(wrapper)
@@ -244,16 +269,17 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     next_nonce = 0
 
     def mint_ckb(label, recipient=fixture.owner_lock, contents=data, *, include_checkpoint=True,
-                 include_policy=True, output_type=wrapper, approve=True):
+                 include_policy=True, output_type=wrapper, approve=True, include_definition=True):
         input_point, amount, signer, fee_lock = (authority_point, authority_funds, authority_key, ckb_authority)
         if not approve:
-            input_point, amount = point(table_deployed, 1), funding_change - table_capacity - FEE
+            input_point, amount = point(table_deployed, fee_index), table_change
             signer, fee_lock = fixture.faucet, fixture.standard
+        deps = ckb_deps if include_definition else [dep for dep in ckb_deps if dep != definition_dep]
         tx = transaction([live_mailbox, input_point], [output(mailbox_cap, ckb_owner, mailbox),
             output(token_cap, recipient, output_type), output(amount - token_cap - FEE, fee_lock)],
             [hex_bytes(le(next_nonce, 8) + root), hex_bytes(projected(contents) if include_policy
                 else metatype_data([(packed_script(identity), contents)])), "0x"],
-            ckb_deps + ([checkpoint] if include_checkpoint else []))
+            deps + ([checkpoint] if include_checkpoint else []))
         tx["witnesses"] = [witness(path)]
         if metatype:
             tx["header_deps"] = [genesis]
@@ -278,6 +304,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         rejected["ckb_import_foreign_deployment"] = reject_ckb(
             mint_ckb("foreign-deployment", output_type=foreign), gate_invalid, 48)
         rejected["ckb_import_without_approval"] = reject_ckb(mint_ckb("no-import-approval", approve=False), 46)
+        if shared_manifest:
+            rejected["ckb_import_without_manifest_definition"] = reject_ckb(
+                mint_ckb("no-manifest-definition", include_definition=False), 43, gate_invalid)
     ckb_minted = ckb_submit(mint_ckb("mint"))
     live_mailbox, wrapped_point, authority_point = [point(ckb_minted["hash"], i) for i in range(3)]
     authority_funds -= token_cap + FEE
@@ -390,6 +419,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                 "height": location["height"], "finality": client.finality(location["height"])["proof"]}
 
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
+            "shared_manifest": shared_evidence,
             "ckb_occupied_shannons": ckb_occupied(fixture.owner_lock, wrapper, projected(data)),
             "identity_type": identity, "policy_type": policy, "wrapper_type": wrapper,
             "escrow": endpoint, "mailbox": mailbox, "issued": issued, "exported": exported,

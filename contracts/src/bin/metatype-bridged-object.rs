@@ -8,13 +8,13 @@ use stem_bridge_wire::{
     metatype::{LogicalScript, MetatypeManifest, custody::Boundary},
     spore::plain_spore,
 };
-use stem_contracts::metatype::{manifest_data, with_invocation};
+use stem_contracts::metatype::with_invocation;
 
 entry!(main);
 default_alloc!();
 
 fn main() -> i8 {
-    with_invocation(|invocation| {
+    with_invocation(|invocation, manifests| {
         let group = invocation.group;
         let (args, tail) = group.script.args().as_chunks::<32>();
         let [_, native_authority, _, policy_code] = args else {
@@ -35,7 +35,7 @@ fn main() -> i8 {
             (Source::Output, group.output_indices),
         ] {
             for index in indices {
-                let raw = manifest_data(index, source)?;
+                let raw = manifests.manifest_data(index, source)?;
                 let manifest = MetatypeManifest::decode(&raw)?;
                 if manifest.entries().len() != 2
                     || !manifest.state_for(policy)?.is_empty()

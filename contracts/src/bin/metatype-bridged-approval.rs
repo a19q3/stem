@@ -5,13 +5,13 @@
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
 use stem_bridge_wire::metatype::{MetatypeManifest, custody::Boundary};
-use stem_contracts::metatype::{authorized, manifest_data, with_invocation};
+use stem_contracts::metatype::{authorized, with_invocation};
 
 entry!(main);
 default_alloc!();
 
 fn main() -> i8 {
-    with_invocation(|invocation| {
+    with_invocation(|invocation, manifests| {
         let group = invocation.group;
         let (args, tail) = group.script.args().as_chunks::<32>();
         let [object, native_authority] = args else {
@@ -30,7 +30,7 @@ fn main() -> i8 {
             (Source::Output, group.output_indices),
         ] {
             for index in indices {
-                let raw = manifest_data(index, source)?;
+                let raw = manifests.manifest_data(index, source)?;
                 let manifest = MetatypeManifest::decode(&raw)?;
                 let identity = manifest
                     .entries()

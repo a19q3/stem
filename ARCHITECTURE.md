@@ -301,8 +301,11 @@ Release restores the original Stem Cell data, both complete Type Scripts and the
 ### Metatype on CKB
 
 One Data2 Type Script owns a Metatype deployment. Its args pin an
-immutable adapter table and CKB genesis. Distinct manifests live in Cell Data under
-the same physical Type identity. The dispatcher derives a union of
+immutable adapter table and CKB genesis. Cell Data either includes
+the complete Manifest or commits a shared definition by CKB data
+hash and carries its own state strings. The dispatcher, adapters
+and custody gate resolve definitions from actual Cell Deps. The
+dispatcher meters expanded bytes and derives a union of
 logical Scripts and absolute input and output indices from the
 actual transaction, and spawns each pinned RISC-V adapter once for
 its complete group. The existing CKB Locks authorize consumption.

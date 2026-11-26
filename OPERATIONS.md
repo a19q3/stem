@@ -1274,6 +1274,15 @@ and local submission-to-mining timing. The current fixture uses a
 standalone CKB deployment. See the [Metatype specification](METATYPE.md)
 for limits, adapter review and the cross-chain requirements.
 
+Repeat with `--shared-manifests`, a fresh output directory and a
+different L1 port to measure the same inputs and outputs using
+shared definitions. The fixture publishes the definitions, spends
+one to replace it at a new OutPoint, and verifies a mixed-layout
+atomic transfer. It includes negative controls for unavailable or
+malformed definitions and the expanded transaction budget. Retain
+the exact definition bytes to republish them if a live dependency
+disappears.
+
 ### Exercise immutable objects and independent approvals
 
 Include the following ELFs in the RISC-V build:
@@ -1346,3 +1355,8 @@ independent approval fixture. Use a fresh output directory and
 ports for every run. The output includes the original and returned
 Cell proofs, each CKB transaction and witness inclusion proof, and
 all accepted and rejected signed transactions.
+
+Pass `--metatype-shared-manifest` to publish the original Script set
+as a separate CKB definition Cell and use its hash in the custody
+representation. The same fixture then rejects an import that omits
+that dependency.

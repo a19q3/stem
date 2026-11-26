@@ -15,13 +15,10 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Delivery, MailboxState, Message},
-    metatype::{
-        MAX_MANIFEST_BYTES,
-        custody::{Gate, ImmutableTransfer},
-    },
+    metatype::custody::{Gate, ImmutableTransfer},
 };
 use stem_contracts::{
-    metatype::bounded_data,
+    metatype::{ManifestResolver, bounded_data},
     metatype_custody::{find_unique, mailbox_policy},
 };
 use stem_stake::Hash32;
@@ -101,7 +98,9 @@ fn verify() -> Result<(), i8> {
         }
         (Source::Input, index, asset.manifest, asset.data.to_vec())
     };
-    let state = bounded_data(index, source, MAX_MANIFEST_BYTES).map_err(|_| 51)?;
+    let state = ManifestResolver::default()
+        .manifest_data(index as u16, source)
+        .ok_or(51)?;
     if manifest != gate.custody.manifest || gate.custody.data(&state) != Some(content.as_slice()) {
         return Err(51);
     }

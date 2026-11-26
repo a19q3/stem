@@ -11,7 +11,8 @@ run independently deployed UDT, transfer policy, object identity
 and object approval adapters. Standalone object cases run against
 both CKB Metatype and four native Stem Polytype replicas. The
 immutable custody profile carries a native Polytype object from
-Stem to CKB Metatype and back. [Implementation status](STEM-EVOLUTION.md)
+Stem to CKB Metatype and back. Both profiles can store repeated
+Script sets in a shared dependency. [Implementation status](STEM-EVOLUTION.md)
 
 ## Historical sources
 
@@ -91,7 +92,9 @@ Molecule Script encoding is exact, with no trailing fields.
 | Record | Reference encoding |
 | --- | --- |
 | Type args | 32-byte CKB genesis hash, 32-byte deployment namespace, 32-byte adapter table data hash |
-| Cell Data | one-byte entry count, then each logical Molecule Script and state byte string, each prefixed by its own u16 length |
+| Inline Cell Data | one-byte entry count from 1 to 16, then each logical Molecule Script and state byte string, each prefixed by its own u16 length |
+| Shared Cell Data | zero byte, 32-byte CKB data hash of the definition, then one u16-length-prefixed state string per definition entry |
+| Shared definition Cell Data | inline encoding of the complete Script set with every state string empty |
 | Adapter table | one-byte entry count, records of logical code hash, one-byte addressing mode and adapter ELF data hash, then custody tag and optional custody policy |
 | Custody policy | mailbox code data hash, mailbox Type ID, gate code data hash, full source Manifest ID and original data-bearing Script hash |
 | Adapter argument | full physical Type hash, one-byte boundary, u16 length and complete logical Script, input and output index lists, then optional group witness fields |
@@ -108,24 +111,33 @@ adapter verifies that the spawned VM sees the same physical Script
 hash. The logical addressing modes are Stem Data (0) and Type (1).
 The physical dispatcher and resolved adapter binaries use CKB Data2.
 
-A Metatype Cell contains 1–16 constraints and at most 8,192 Cell Data
-bytes. Script and per-entry state sizes are limited to 256 and 2,048
-bytes. A transaction permits at most 32 virtual groups, 128 actual
-Cells on each side, 64 matching Cells on each side, 128 KiB of
-matching input plus output Cell Data, and 128 resolved Cell Deps.
-The adapter table contains 1–64 entries.
+A Metatype Cell contains 1–16 constraints and at most 8,192 bytes in
+the complete inline view. Script and per-entry state sizes are
+limited to 256 and 2,048 bytes. A transaction permits at most 32
+virtual groups, 128 actual Cells on each side, 64 matching Cells on
+each side, 128 KiB of expanded matching input plus output Cell Data,
+and 128 resolved Cell Deps. The adapter table contains 1–64 entries.
 
-The reference layout carries all live manifest and state bytes in
-Cell Data. The adapter table and programs are separately reusable
-dependencies. A state commitment without an available preimage
-cannot be spent. Witnesses carry current transaction material and
-have a separate size budget. The initial live layout avoids
-requiring a spender to retrieve an old witness. The shared adapter
-table and programs still need live dependency copies. Their data-hash
-addresses let a relayer republish identical bytes at new OutPoints.
-A shared immutable manifest Cell Dep could reduce Capacity for commonly used sets but
-would require durable availability, non-equivocation, and explicit
-resolution charges before adoption.
+The dispatcher and adapters authenticate a shared definition by the
+data hash of an actual resolved CKB Cell Dep. The definition has at
+most 4,161 bytes and must use the canonical inline shape. Each
+referencing Cell supplies exactly one state string per definition
+entry, in Script order. The state strings always live in the
+referencing Cell. Validation rejects a missing definition, a
+definition that itself references another dependency, nonempty
+definition state and invalid state cardinality. A definition can be
+republished at a new OutPoint with identical bytes. A reference
+requires a live copy of its preimage at spend time. Applications
+retain and publish those bytes as needed, along with the adapter
+table and program dependencies.
+
+The two storage forms resolve to the same logical Manifest and can
+participate in the same virtual group. The dispatcher counts the
+full expanded length for per-Cell and transaction limits before
+spawning any adapter. Each executing VM reads its actual
+dependencies and caches the definition bytes locally. CKB cycles
+meter that work. Witnesses carry current transaction material under
+a separate size limit.
 
 The dispatcher reads the actual inputs and outputs from CKB,
 matches the full deployment Type hash, and decodes every matching
@@ -247,7 +259,10 @@ designated Script carries the exact source Cell Data and all other
 entries have empty state. The immutable profile accepts only
 Data-addressed source Scripts. It also rejects multiple physical
 heads within one lane transition and requires identical Manifest
-and state bytes on a CKB ownership transfer.
+and state in the complete logical view on a CKB ownership transfer.
+The checkpoint and mailbox commit the logical Manifest ID and
+original Cell Data. Both the gate and the dispatcher resolve shared
+CKB definitions against the actual dependency hashes.
 
 An escrow consumes and recreates a separate untyped empty bond
 Cell and one identified asset. Export checks the original asset
@@ -315,7 +330,8 @@ commitments, and the participating owners' Locks.
 | Group to adapter | A similar Script substitutes its arguments, code, or source indices | Bind full encoding, scope and data-authenticated program. Verify closed and bounded canonical traversal. |
 | Group witness to authorization | A builder swaps approvals or carries a seal to a different group, output, chain or raw transaction | Address rows by full deployment and group. Compare actual recipient and content. Verify the genesis dependency and strict Ed25519 seal over the domain-separated digest. |
 | Existing state to output state | A transfer removes a freeze, approval, identity or supply rule | Run all consumed groups and all created groups. Original policy decides whether retirement or migration is authorized. |
-| Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Store required manifest and state preimages in live Cells. Use authenticated context that states what was proven at the pinned anchor. |
+| Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
+| Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |
 | Guest and dependency bounds | Recursive execution, malformed lengths, or excessive combinations consume resources | Use bounded lists and byte reads, immutable reviewed adapters, sequential spawn and CKB cycles. Reject unknown dependencies and failed child results. |
 

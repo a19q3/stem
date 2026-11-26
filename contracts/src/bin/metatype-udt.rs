@@ -4,13 +4,13 @@
 #![no_main]
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
-use stem_contracts::metatype::{authorized, total, with_invocation};
+use stem_contracts::metatype::{authorized, with_invocation};
 
 entry!(main);
 default_alloc!();
 
 fn main() -> i8 {
-    with_invocation(|invocation| {
+    with_invocation(|invocation, manifests| {
         let group = invocation.group;
         let (args, rest) = group.script.args().as_chunks::<32>();
         let [issuer, series] = args else { return None };
@@ -20,8 +20,8 @@ fn main() -> i8 {
         let amount = |manifest: &stem_bridge_wire::metatype::MetatypeManifest<'_>, _| {
             stem_bridge_wire::amount(manifest.state_for(group.script)?)
         };
-        let input = total(&group.input_indices, Source::Input, amount)?;
-        let output = total(&group.output_indices, Source::Output, amount)?;
+        let input = manifests.total(&group.input_indices, Source::Input, amount)?;
+        let output = manifests.total(&group.output_indices, Source::Output, amount)?;
         (input == output || (output > input && authorized(issuer))).then_some(())
     })
 }

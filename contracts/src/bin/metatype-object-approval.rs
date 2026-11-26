@@ -11,18 +11,19 @@ use ckb_std::{
 };
 use ed25519_dalek::{Signature, VerifyingKey};
 use stem_bridge_wire::metatype::{LogicalScript, MetatypeManifest};
-use stem_contracts::metatype::{manifest_data, with_invocation};
+use stem_contracts::metatype::{ManifestResolver, with_invocation};
 
 entry!(main);
 default_alloc!();
 
 fn read(
+    manifests: &mut ManifestResolver,
     source: Source,
     index: u16,
     approval: LogicalScript<'_>,
     object: &[u8; 32],
 ) -> Option<Vec<u8>> {
-    let bytes = manifest_data(index, source)?;
+    let bytes = manifests.manifest_data(index, source)?;
     let manifest = MetatypeManifest::decode(&bytes)?;
     if !manifest.state_for(approval)?.is_empty() {
         return None;
@@ -35,7 +36,7 @@ fn read(
 }
 
 fn main() -> i8 {
-    with_invocation(|invocation| {
+    with_invocation(|invocation, manifests| {
         let group = invocation.group;
         let (args, tail) = group.script.args().as_chunks::<32>();
         let [object, authority] = args else {
@@ -47,7 +48,7 @@ fn main() -> i8 {
         let producing = match group.input_indices.as_slice() {
             [] => true,
             [index] => {
-                read(Source::Input, *index, group.script, object)?;
+                read(manifests, Source::Input, *index, group.script, object)?;
                 false
             }
             _ => return None,
@@ -55,7 +56,7 @@ fn main() -> i8 {
         let [output] = group.output_indices.as_slice() else {
             return None;
         };
-        let state = read(Source::Output, *output, group.script, object)?;
+        let state = read(manifests, Source::Output, *output, group.script, object)?;
         let witness = invocation.witness?;
         let action = if producing { 1 } else { 2 };
         if witness.action != action

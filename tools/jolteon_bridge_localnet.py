@@ -568,6 +568,7 @@ def main():
                  "stem-metatype-escrow", "metatype-dispatcher", "metatype-mailbox-lock",
                  "metatype-bridged-object", "metatype-bridged-approval"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
+    parser.add_argument("--metatype-shared-manifest", action="store_true")
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--intercell-mailbox", type=lambda path: Path(path).resolve())
     parser.add_argument("--exercise-publisher", action="store_true", help="use the sparse publisher for Intercell checkpoints")
@@ -589,6 +590,8 @@ def main():
                 args.metatype_bridged_object, args.metatype_bridged_approval)
     if any(metatype) and (not all(metatype) or args.ckb_stem_object):
         parser.error("Metatype settlement needs all five portable scripts")
+    if args.metatype_shared_manifest and not all(metatype):
+        parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *metatype)) and (
             not all((args.stem_native_object, args.object_policy, args.intercell_mailbox))
             or not (args.ckb_stem_object or all(metatype)) or args.export_udt or args.stem_spore):
