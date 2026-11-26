@@ -856,12 +856,20 @@ other consensus records, execution, Headers and history, Live Cells, system
 records, both Patricia node namespaces and batch framing. Bootstrap, journal
 writes, finality commits and snapshot restoration have separate counters.
 Sync buckets use powers of two microseconds. Bucket zero covers zero and
-one microsecond. RocksDB reports WAL bytes and syncs plus bytes written
-to flush and compaction files. Check the RocksDB `EVENT_LOG_v1`
-`table_file_creation` entries when measuring SST output. The pinned
-RocksDB build can leave a flush ticker at zero while writing files.
-WAL, SSTs and file-system activity are shared across key families in
-the atomic store.
+one microsecond. RocksDB reports WAL bytes and syncs. The bundled
+CKB RocksDB build disables IOStatsContext, so flush and compaction
+byte tickers can stay at zero during table writes. WAL, SSTs and
+file-system activity are shared across the key families in the atomic
+store. Use the table creation events from a completed, fresh fixture
+directory to measure actual SST output:
+
+```sh
+python3 tools/rocksdb_sst_report.py /tmp/stem-storage-measurements/stem-storage-RUN
+```
+
+The output includes current and retained rotated logs, classifies
+flush, compaction and recovery jobs, and covers database startup
+through the last available log event.
 
 Run the sustained fixture with the local filesystem used for the test:
 
@@ -881,6 +889,16 @@ the certified Header and a separate history-index process measurement.
 Set `STEM_STORAGE_REPLICAS`, `STEM_STORAGE_VM_WORKERS`,
 `STEM_STORAGE_BLOCK_CYCLES`, `STEM_STORAGE_CADENCE` or
 `STEM_STORAGE_RETENTION` to make an explicit comparison.
+Use `STEM_TEST_REPLICA_BIN` to compare node releases with the same
+fixture executable and a fresh evidence directory for each run.
+For the fixed Patricia editor probe, run:
+
+```sh
+STEM_PATRICIA_REPORT=/tmp/stem-patricia-editor.json \
+cargo test --locked --release --lib measure_patricia_node_storage \
+  -- --ignored --nocapture
+```
+
 
 ### Measure sustained Lineage commands
 

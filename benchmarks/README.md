@@ -88,5 +88,6 @@ available. Published network evidence contains public genesis and proof data.
 | Jolteon leader-directed transaction relay | [Report](../BENCHMARKS.md#jolteon-leader-directed-transaction-relay), [matched workloads, overload controls and fault evidence](2026-11-26-stem-jolteon-leader-relay.json.xz) |
 | Sustained submission and admission latency | [Report](../BENCHMARKS.md#sustained-submission-and-admission-latency), [matched AMM controls, payments and per-stage timing](2026-11-26-stem-load-dispatch.json.xz) |
 | Reuse of staged proposal execution | [Report](../BENCHMARKS.md#reuse-of-staged-proposal-execution), [exact Header comparison, network traces and regressions](2026-11-26-stem-proposal-reuse.json.xz) |
+| Compact Patricia branch storage | [Report](../BENCHMARKS.md#compact-patricia-branch-storage), [paired timing, signed workloads, WAL counters and regressions](2026-11-26-stem-patricia-storage.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

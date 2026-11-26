@@ -3322,3 +3322,80 @@ The Go proof suite and frozen CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Raw samples, signed workloads and regression logs](benchmarks/2026-11-26-stem-proposal-reuse.json.xz).
+
+## Compact Patricia branch storage
+
+RocksDB stores only the significant prefix bytes of each compressed
+Patricia branch. The editor and proof verifier receive canonical node
+bytes. The fixed RocksDB fixture seeds 8,192 leaves and then replaces
+512 leaves in a single edit. It measures 11 alternating warm trials
+per layout, reconstructs the same root and compares all canonical
+node mutations.
+
+| Fixed editor sample, median | Full prefix | Compact prefix |
+| --- | ---: | ---: |
+| Node reads | 4,120 | 4,120 |
+| Node value bytes read | 376,370 | 277,207 |
+| Serialized node WriteBatch bytes | 599,346 | 503,521 |
+| RocksDB fetch | 1.859 ms | 1.829 ms |
+| Copy or restore canonical bytes | 0.058 ms | 0.100 ms |
+| Entire tree edit | 5.082 ms | 5.198 ms |
+| Rehash of newly written canonical nodes | 0.861 ms | 0.868 ms |
+| WriteBatch builder | 0.317 ms | 0.318 ms |
+
+The rehash probe measures a separate pass over the newly produced
+nodes. The total edit time also includes validation of loaded nodes.
+
+The payment comparisons use a pinned load driver and four replicas
+on one host, 64 submission workers, two VM workers per replica, a
+250 ms proposal interval and a two-billion-cycle block budget. Each
+pair uses byte-identical signed workloads and genesis with fresh
+replica databases and a 12-second drain allowance. The baseline node
+is `22fc5a6` and the compact node is `79cb103`.
+
+| Offer window, planned TPS, layout | Written / admitted / common visible TPS in offer window | Visible by end | p99 | Cell trie batch bytes | WAL bytes | Process write bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 s, 1,000, full | 1,000.00 / 998.10 / 939.30 | 20,000 | 1.221 s | 133.67 MB | 193.25 MB | 345.39 MB |
+| 20 s, 1,000, compact | 1,000.00 / 1,000.00 / 957.70 | 20,000 | 1.313 s | 110.63 MB | 170.17 MB | 244.91 MB |
+| 20 s, 2,000, full | 1,339.30 / 1,336.10 / 1,230.25 | 26,786 | 2.028 s | 178.48 MB | 257.60 MB | 408.28 MB |
+| 20 s, 2,000, compact | 1,326.15 / 1,322.95 / 1,222.75 | 26,523 | 2.054 s | 148.65 MB | 227.01 MB | 382.26 MB |
+| 60 s, 1,000, full | 808.58 / 807.52 / 780.10 | 48,515 | 7.448 s | 414.12 MB | 557.52 MB | 969.23 MB |
+| 60 s, 1,000, compact | 809.15 / 808.80 / 786.05 | 48,549 | 3.707 s | 334.17 MB | 477.54 MB | 787.42 MB |
+
+The 20-second 1,000 TPS pair reduced serialized Cell trie writes by
+17.23% and WAL bytes by 11.94%. Aggregate replica CPU was 44.65 and
+45.63 seconds. In the 60-second pair, the generator dropped 11,485
+and 11,451 offers before writing, every written payment confirmed,
+and aggregate replica CPU was 155.00 and 193.25 seconds. The two
+long runs provide one matched sample of write volume and lag.
+
+The bundled RocksDB build disables IOStatsContext. Its flush and
+compaction byte tickers stayed at zero in these runs. The table below
+sums actual SST file sizes from retained RocksDB creation events,
+including rotated logs. This covers database startup through the end
+of each run. The full-prefix 20-second 1,000 TPS fixture also reopened
+its archive and generated a separate 1.96 MB recovery SST. Linux
+process-write counts cover all writes charged to replica processes.
+
+| Offer window and planned TPS | Full-prefix flush SSTs | Compact flush SSTs |
+| --- | ---: | ---: |
+| 20 s, 1,000 | 4 files, 76.88 MB | 0 files |
+| 20 s, 2,000 | 4 files, 92.36 MB | 4 files, 94.92 MB |
+| 60 s, 1,000 | 12 files, 306.68 MB | 8 files, 210.37 MB |
+
+No compaction SST creation appeared in these runs. Longer runs are
+needed to measure sustained compaction and device-level writes.
+
+The branch codec test round-trips all 256 prefix lengths and rejects
+malformed lengths. A mixed four-replica network used two executables
+with each layout, confirmed 96 payments and restarted a compact
+replica. All four compared the same execution Header, and the new
+executable verified the finality proof served by the full-prefix
+archive. Opening an old database returned the expected layout
+error. A separate CKB devnet run completed a funded handoff at
+Stem height 40 and delivered a historical Intercell proof. The
+locked release workspace passed 466 tests with 19 ignored. The Go
+proof tests and frozen CometBFT feature check passed.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw writes, timing, signed workloads and regressions](benchmarks/2026-11-26-stem-patricia-storage.json.xz).
