@@ -8,6 +8,8 @@ Stem 是一条以 CKB 计价、由加权 Jolteon 最终确认的 Cell 网络。S
 
 对象可附加独立的状态长度约束。第三个 Type Script 承诺原对象 Script 及一个规则来源。固定规则按内容哈希从两链实际 Cell Dep 读取，可在新 OutPoint 重新发布相同字节。可更新规则按完整 CKB Type ID 注册表 Script 哈希寻址。CKB 合约强制保留同一 Type 与 Lock，只允许提高长度上限。CKB 从实际 Cell Dep 读取，Stem 从已提交锚点的 guardian 存活认证读取。返程恢复原始约束集合、资产本金及获认证的对象状态。降低上限、改变授权或要求验证每个中间状态的应用需要独立的结算语义。
 
+可修订对象还可组合独立的只追加约束。它绑定完整对象身份，要求后继保持原状态，或在递增版本时保留 MIME 类型并严格扩展内容前缀。CKB Adapter 和 Stem 原生组使用同一验证谓词。前缀关系可传递，返程可直接验证托管状态到认证销毁状态的变化，并继续执行身份、审批及长度约束。
+
 每个网络用全新的 genesis、数据库、签名域和桥实例启动。网络身份由 canonical network spec 和一次性网络盐导出。该预部署 spec 包含 CKB genesis、初始权限与经济配置，排除依赖网络身份才能部署的 Registry Type ID、金库 Type ID、Checkpoint Type ID 及初始化签名。部署完成后，Stem genesis 再固定这些 L1 合约身份和第一份已认证的完整质押快照。CKB Checkpoint Cell 的身份与初始认证方也由 genesis 固定。链身份与创世 Header 承诺进入 Jolteon 签名域。所有交易、证明和链间认证都明确绑定该网络。
 
 | 组件 | 权责 |

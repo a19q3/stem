@@ -10,8 +10,9 @@ The standalone CKB dispatcher, adapter table and virtual group ABI
 run independently deployed UDT, transfer policy, object identity
 and object approval adapters. Standalone object cases run against
 both CKB Metatype and four native Stem Polytype replicas. The
-custody profiles cover immutable objects, revisable objects and a
-fungible UDT with an independent per-Cell amount limit. Each profile
+custody profiles cover immutable objects, revisable objects with
+composable state constraints, and a fungible UDT with an independent
+per-Cell amount limit. Each profile
 can store repeated Script sets in a shared dependency. [Implementation status](STEM-EVOLUTION.md)
 
 ## Historical sources
@@ -409,6 +410,42 @@ confirmation model. Decreasing a limit, changing issuer authorization
 or enforcing arbitrary external transition history needs a different
 profile with its own settlement guarantees.
 
+### Append-only revisions
+
+An independent Type Script can bind an object's full identity
+Script hash as its 32-byte args and require append-only updates.
+Its Manifest entry has empty state. The object identity entry
+continues to hold the canonical revision and content. Both hosts
+use the same predicate. A successor either preserves the exact
+encoded state or increases the revision, preserves the MIME type
+and strictly extends the content byte prefix. The rule inspects
+the decoded content, since the canonical length fields change
+when content grows.
+
+Native execution requires one output in the group with the bound
+identity. An output-only group requires revision zero. Once the
+rule is present, the input group requires a valid successor and
+rejects removal. On CKB a local transfer checks the same relation
+over the group's one input and one output. The authenticated import
+and return boundaries check the canonical state on the represented
+side. The dispatcher and mailbox gate bind those boundaries to the
+full Manifest and exact message state.
+
+For standalone use, the adapter accepts revision-zero creation
+and a single-head transfer. Its deployment must pair it with an
+appropriate identity constraint. The append-only devnet fixture
+exercises the revisable custody route.
+
+The relation is transitive. A sequence of strict byte-prefix
+extensions preserves every earlier prefix, and ownership-only
+steps preserve the exact state. Stem can check the relation from
+the escrowed state to the authenticated return state after multiple
+CKB revisions. The independent ownership, approval, and optional
+length groups still execute. This predicate uses bounded state
+reads and needs no additional cross-chain observation. A rule
+requiring a particular intermediate event or one approval per
+revision at the source would need authenticated transition history.
+
 ### Cap-bound fungible UDT
 
 The native UDT args are the issuer Lock hash and series hash,
@@ -474,6 +511,7 @@ commitments, and the participating owners' Locks.
 | Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
 | Rule record to object | A relayer replaces it with a looser rule, or spends the published copy | Resolve the pinned data hash in actual dependencies on both chains. Reject changed bytes and oversized states. Keep the original bytes available for publication at a new OutPoint. |
 | Live rule registry | An updater forks or removes the registry, reduces the limit after a transfer, or supplies an obsolete CKB observation to Stem | Enforce Type ID and a same-Lock successor with a strict increase. Resolve one current CKB dependency or one guardian-certified live reference at Stem's committed anchor. |
+| Append-only revision | An approval authorizes a rewrite, truncation, MIME change, or removal of the constraint | Bind the full identity Script, require a valid successor, and compare the exact revision relationship and decoded content prefix on both chains. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |
 | Guest and dependency bounds | Recursive execution, malformed lengths, or excessive combinations consume resources | Use bounded lists and byte reads, immutable reviewed adapters, sequential spawn and CKB cycles. Reject unknown dependencies and failed child results. |

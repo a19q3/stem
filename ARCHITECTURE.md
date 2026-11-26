@@ -378,6 +378,11 @@ Type hash and a strictly increasing ceiling. Stem reads the registry
 through an authenticated live reference at the committed CKB anchor.
 The portable adapter reads it directly as a CKB dependency. This rule
 can expand while a represented object remains on CKB.
+An independent append-only group binds the complete object identity
+and checks one old and one new state on either host. It preserves the
+MIME type and content prefix when the revision increases. Prefix
+extension composes across multiple CKB transfers, so the original
+Stem group can verify the aggregate change on restoration.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and

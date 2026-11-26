@@ -1,6 +1,11 @@
 //! Shared identity and state rules for objects first issued on Stem.
 
-use crate::{hash, intercell::Identity, metatype::MAX_STATE_BYTES, spore::plain_spore};
+use crate::{
+    hash,
+    intercell::Identity,
+    metatype::MAX_STATE_BYTES,
+    spore::{plain_spore, plain_spore_fields},
+};
 
 pub fn creation_id(network: &Identity, input: &[u8; 36], output_index: u32) -> Identity {
     hash(
@@ -57,8 +62,17 @@ impl<'a> ObjectArgs<'a> {
 /// A revision is followed by canonical plain object content. The length
 /// bound also fits the same state into one portable Manifest entry.
 pub fn revision(raw: &[u8]) -> Option<u64> {
+    let (revision, _, _) = revision_fields(raw)?;
+    Some(revision)
+}
+
+fn revision_fields(raw: &[u8]) -> Option<(u64, &[u8], &[u8])> {
+    if raw.len() > MAX_STATE_BYTES {
+        return None;
+    }
     let (number, content) = raw.split_first_chunk()?;
-    (raw.len() <= MAX_STATE_BYTES && plain_spore(content)).then(|| u64::from_le_bytes(*number))
+    let (mime, content) = plain_spore_fields(content)?;
+    Some((u64::from_le_bytes(*number), mime, content))
 }
 
 pub fn valid_revision_transition(before: &[u8], after: &[u8]) -> bool {
@@ -66,6 +80,22 @@ pub fn valid_revision_transition(before: &[u8], after: &[u8]) -> bool {
         return false;
     };
     next > previous || (next == previous && before == after)
+}
+
+pub fn valid_append_only_transition(before: &[u8], after: &[u8]) -> bool {
+    let Some((previous, previous_mime, prefix)) = revision_fields(before) else {
+        return false;
+    };
+    if before == after {
+        return true;
+    }
+    let Some((next, mime, content)) = revision_fields(after) else {
+        return false;
+    };
+    next > previous
+        && mime == previous_mime
+        && content.len() > prefix.len()
+        && content.starts_with(prefix)
 }
 
 #[cfg(test)]
@@ -105,5 +135,40 @@ mod tests {
             &original
         ));
         assert!(valid_revision_transition(&original, &state(u64::MAX, b'x')));
+    }
+
+    #[test]
+    fn append_only_revisions_compose_across_skipped_revisions() {
+        let state = |version: u64, mime: &[u8], content: &[u8]| {
+            let mut raw = version.to_le_bytes().to_vec();
+            let content_offset = 20 + mime.len() as u32;
+            let total = content_offset + 4 + content.len() as u32;
+            for field in [total, 16, content_offset, total, mime.len() as u32] {
+                raw.extend_from_slice(&field.to_le_bytes());
+            }
+            raw.extend_from_slice(mime);
+            raw.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            raw.extend_from_slice(content);
+            raw
+        };
+        let plain = |version, content| state(version, b"text/plain", content);
+        let original = plain(3, b"one");
+        let intermediate = plain(4, b"one two");
+        let current = plain(18, b"one two three");
+        assert!(valid_append_only_transition(&original, &original));
+        assert!(valid_append_only_transition(&original, &intermediate));
+        assert!(valid_append_only_transition(&intermediate, &current));
+        assert!(valid_append_only_transition(&original, &current));
+        assert!(!valid_append_only_transition(&current, &intermediate));
+        for invalid in [
+            plain(18, b"twone"),
+            plain(18, b"on"),
+            plain(18, b"one"),
+            plain(3, b"one two three"),
+            state(18, b"application/octet-stream", b"one two three"),
+        ] {
+            assert!(!valid_append_only_transition(&original, &invalid));
+        }
+        assert!(!valid_append_only_transition(b"malformed", b"malformed"));
     }
 }

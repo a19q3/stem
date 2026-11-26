@@ -43,12 +43,14 @@ pub fn return_nonce(input: &[u8; 36]) -> u64 {
 }
 
 pub fn plain_spore(data: &[u8]) -> bool {
-    let Some((header, _)) = data.split_at_checked(16) else {
-        return false;
-    };
+    plain_spore_fields(data).is_some()
+}
+
+pub(crate) fn plain_spore_fields(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let (header, _) = data.split_at_checked(16)?;
     let (words, _) = header.as_chunks::<4>();
     let [total, mime, content, cluster] = words else {
-        return false;
+        return None;
     };
     let content = u32::from_le_bytes(*content) as usize;
     if data.len() > MAX_SPORE_DATA
@@ -56,18 +58,13 @@ pub fn plain_spore(data: &[u8]) -> bool {
         || u32::from_le_bytes(*mime) != 16
         || u32::from_le_bytes(*cluster) as usize != data.len()
     {
-        return false;
+        return None;
     }
-    let Some((mime, content)) = content
-        .checked_sub(16)
-        .and_then(|offset| data[16..].split_at_checked(offset))
-    else {
-        return false;
-    };
-    matches!(
-        molecule_bytes(mime),
-        Some(b"text/plain" | b"application/octet-stream")
-    ) && molecule_bytes(content).is_some_and(|bytes| !bytes.is_empty())
+    let (mime, content) = data[16..].split_at_checked(content.checked_sub(16)?)?;
+    let mime = molecule_bytes(mime)?;
+    let content = molecule_bytes(content)?;
+    (matches!(mime, b"text/plain" | b"application/octet-stream") && !content.is_empty())
+        .then_some((mime, content))
 }
 
 fn molecule_bytes(raw: &[u8]) -> Option<&[u8]> {

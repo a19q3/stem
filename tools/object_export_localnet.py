@@ -31,6 +31,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     revisable = args.metatype_revisable_object
     topup = args.metatype_revision_topup
     live_rule = args.metatype_rule_registry is not None
+    append_only = args.native_object_append_only is not None
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
     next_limit = 200 if live_rule else state_limit
@@ -44,13 +45,16 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     mailbox_cap = 1_000 * CKB
     funded_mailbox_cap = 3_300 * CKB if revisable else mailbox_cap
     authority_funds = (5_000 if revisable else 2_500 if metatype else 1_200) * CKB
-    token_cap = (1_200 if topup else 900 if metatype else 360) * CKB
+    token_cap = (1_200 if topup else 1_000 if live_rule else 900 if metatype else 360) * CKB
     codes = [mailbox_bin, gate_bin]
     if metatype:
         codes.extend(path.read_bytes() for path in (args.metatype_dispatcher,
                      args.metatype_bridged_object, args.metatype_bridged_approval))
     if state_limit:
         codes.append(args.metatype_object_state_limit.read_bytes())
+    if append_only:
+        append_adapter = args.metatype_object_append_only.read_bytes()
+        codes.append(append_adapter)
     if live_rule:
         codes.append(args.metatype_rule_registry.read_bytes())
     ckb_items = codes + ([b""] if live_rule else rule_records)
@@ -71,10 +75,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     ckb_deps = [secp, *[dependency(point(funded, i)) for i in range(len(codes))]]
     native_deps = [mint["lock_dep"], point(mint["mint_id"], 2), point(mint["mint_id"], 3)]
     authority_point = point(funded, auth_index)
-    if metatype:
-        native_deps.append(point(mint["mint_id"], 4))
-    if state_limit:
-        native_deps.append(point(mint["mint_id"], 5))
+    for index in range(sum((metatype, state_limit is not None, append_only))):
+        native_deps.append(point(mint["mint_id"], 4 + index))
     if state_limit and not live_rule:
         l1_rule_point = point(funded, len(codes))
         l1_rule_dep = dependency(l1_rule_point)
@@ -166,9 +168,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         assert result["check_tx"]["code"] == 0, result
         return result
 
-    def reject_stem(tx, cause):
+    def reject_stem(tx, *causes):
         result = client.call("broadcast_tx_sync", tx=tx)
-        assert result["code"] == 1 and cause in result["log"], result
+        assert result["code"] == 1 and any(cause in result["log"] for cause in causes), result
         return result["log"]
 
     def at(tx, index):
@@ -215,6 +217,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     identity_hash = script_hash(identity)
     policy = script(policy_code, hex_bytes(identity_hash + script_hash(authority)), "data")
     types = [identity, policy]
+    if append_only:
+        append_code = ckb_hash(args.native_object_append_only.read_bytes())
+        append_script = script(hex_bytes(append_code), hex_bytes(identity_hash), "data")
+        types.append(append_script)
     if state_limit:
         rule_hash = script_hash(rule_types[0]) if live_rule else ckb_hash(rule_records[0])
         substitute_hash = script_hash(rule_types[1]) if live_rule else ckb_hash(rule_records[1])
@@ -232,11 +238,20 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         else:
             native_rule_point, native_other_rule_point = [at(separated, i) for i in (3, 4)]
             native_deps.append(native_rule_point)
-    def object_data(content, revision=0):
-        raw = table(molecule_bytes(b"text/plain"), molecule_bytes(content), b"")
+    def object_data(content, revision=0, mime=b"text/plain"):
+        raw = table(molecule_bytes(mime), molecule_bytes(content), b"")
         return le(revision, 8) + raw if revisable else raw
 
-    data = object_data(b"Stem object with an external rule" if state_limit else b"Stem object with two Type Groups")
+    initial_content = b"Stem object" if revisable else b"Stem object with two Type Groups"
+    stem_content = initial_content + b"; revised on Stem"
+    ckb_content = stem_content + b"; transferred on CKB"
+    data = object_data(initial_content)
+    append_probes = {
+        "rewrite": object_data(b"X" + stem_content[1:] + b".", 2),
+        "truncate": object_data(stem_content[:-1], 2),
+        "unchanged_content": object_data(stem_content, 2),
+        "mime_change": object_data(stem_content + b".", 2, b"application/octet-stream"),
+    } if append_only else {}
     revisions = {}
     definition = None
     definition_dep = None
@@ -259,6 +274,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                            binary(policy_code) + b"\0" + ckb_hash(codes[4])]
         if state_limit:
             adapter_entries.append(state_limit_code + b"\0" + ckb_hash(codes[5]))
+        if append_only:
+            adapter_entries.append(append_code + b"\0" + ckb_hash(append_adapter))
         adapter_table = bytes([len(adapter_entries)]) + b"".join(sorted(adapter_entries)) + profile + custody
         table_capacity = (len(adapter_table) + 100) * CKB
         table_outputs = [output(table_capacity, fixture.standard)]
@@ -331,10 +348,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     rejected["stem_forged_id"] = reject_stem(native_sign("forged-object", [(seed, owner, owner_key), auth_input],
         [cell(object_cap, owner, data, [wrong, wrong_policy]), *issued_outputs[1:]]), "exited with 117")
     if revisable:
+        revision_errors = ("exited with 117", "exited with 58") if append_only else ("exited with 117",)
         rejected["stem_mint_at_nonzero_revision"] = reject_stem(native_sign("nonzero-revision",
             [(seed, owner, owner_key), auth_input],
             [cell(object_cap, owner, object_data(b"nonzero revision", 1), types), *issued_outputs[1:]]),
-            "exited with 117")
+            *revision_errors)
     issued = commit(native_sign("issue", [(seed, owner, owner_key), auth_input], issued_outputs))
     wrapped_input = at(issued, 0)
     bond = at(issued, 1)
@@ -342,11 +360,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     native_auth_capacity = auth_cap
     if revisable:
         previous = [(wrapped_input, owner, owner_key), (native_authority, authority, authority_key)]
-        native_update = object_data(b"Stem authorized revision", 1)
+        native_update = object_data(stem_content, 1)
         cheaper_auth = cell(auth_cap - FEE, authority)
         rejected["stem_edit_without_revision"] = reject_stem(native_sign("edit-without-revision", previous,
             [cell(object_cap, owner, object_data(b"edited under revision zero"), types), cheaper_auth]),
-            "exited with 117")
+            *revision_errors)
         if state_limit:
             valid_update = [cell(object_cap, owner, native_update, types), cheaper_auth]
             absent = dict(votes=[]) if live_rule else dict(deps=native_deps[:-1])
@@ -368,15 +386,23 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rejected["stem_revision_replaces_state_limit"] = reject_stem(native_sign("replace-state-limit", previous,
                 [cell(object_cap, owner, native_update, [*types[:-1], substitute]), cheaper_auth],
                 **both), "exited with 56")
+        if append_only:
+            retained = [item for item in types if item != append_script]
+            rejected["stem_revision_removes_append_only"] = reject_stem(native_sign("remove-append-only", previous,
+                [cell(object_cap, owner, native_update, retained), cheaper_auth]), "exited with 58")
         revised = commit(native_sign("revise-in-stem", previous,
             [cell(object_cap, owner, native_update, types), cheaper_auth]))
         revisions["native"] = revised
         wrapped_input, native_authority = [at(revised, i) for i in range(2)]
         data = native_update
         native_auth_capacity -= FEE
+        previous = [(wrapped_input, owner, owner_key), (native_authority, authority, authority_key)]
+        for label, invalid in append_probes.items():
+            rejected[f"stem_append_{label}"] = reject_stem(native_sign(f"append-{label}", previous,
+                [cell(object_cap, owner, invalid, types), cell(native_auth_capacity - FEE, authority)]),
+                "exited with 58")
         if state_limit:
-            over_limit = object_data(b"x" * state_limit, 2)
-            previous = [(wrapped_input, owner, owner_key), (native_authority, authority, authority_key)]
+            over_limit = object_data(stem_content.ljust(state_limit, b"x"), 2)
             rejected["stem_revision_exceeds_external_limit"] = reject_stem(native_sign("external-rule-limit", previous,
                 [cell(object_cap + return_topup, owner, over_limit, types),
                  cell(native_auth_capacity - FEE - return_topup, authority)]),
@@ -409,7 +435,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
              cell(native_auth_capacity - FEE, authority)], endpoint=endpoint, message=outbound),
             "exited with 119")
     if revisable:
-        forged = object_data(b"edit while entering escrow", 2)
+        forged = object_data(stem_content + b"; edit in escrow", 2)
         rejected["stem_export_changes_revision"] = reject_stem(native_sign("export-revising",
             route_inputs + [(native_authority, authority, authority_key)],
             [route_outputs[0], cell(object_cap, endpoint, forged, types),
@@ -512,11 +538,18 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         rejected["ckb_transfer_policy_removed"] = reject_ckb(transfer("transfer-without-policy", include_policy=False), 48)
     return_state = data
     if revisable:
-        ckb_update = object_data(b"CKB authorized ownership transfer", 2)
+        ckb_update = object_data(ckb_content, 2)
         rejected["ckb_edit_without_revision"] = reject_ckb(
             transfer("edit-without-revision", contents=object_data(b"same revision tamper", 1)), 48)
         rejected["ckb_revision_without_approval"] = reject_ckb(
             transfer("revision-without-approval", False, contents=ckb_update), approval_invalid)
+        for label, invalid in append_probes.items():
+            rejected[f"ckb_append_{label}"] = reject_ckb(
+                transfer(f"append-{label}", contents=invalid), 46)
+        if append_only:
+            retained = [item for item in types if item != append_script]
+            rejected["ckb_revision_removes_append_only"] = reject_ckb(
+                transfer("remove-append-only", contents=ckb_update, selected=retained), 48)
         if state_limit:
             without_rule = [dep for dep in ckb_deps if dep != l1_rule_dep]
             rejected["ckb_revision_exceeds_external_limit"] = reject_ckb(
@@ -578,7 +611,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if revisable:
         rejected["ckb_revision_rollback"] = reject_ckb(
             transfer("revision-rollback", contents=data, from_key=fixture.friend), 48)
-        content = b"CKB authorized revision before return"
+        content = ckb_content + b"; return"
         if state_limit:
             content = content.ljust(next_limit - len(object_data(b"", 4)), b".")
         elif topup:
@@ -694,6 +727,13 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
          (at(redeemed, 2), authority, authority_key)], release + [cell(native_auth_capacity - 3 * FEE - return_topup, authority)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified)
     rejected["stem_replay_release"] = reject_stem(reject_query, "nonce already used")
+    if append_only:
+        rewritten = object_data(b"X" + content[1:], 5)
+        rejected["stem_rewrite_after_return"] = reject_stem(native_sign("rewrite-after-return",
+            [(at(redeemed, 1), buyer, buyer_key), (at(redeemed, 2), authority, authority_key)],
+            [cell(object_cap + return_topup, buyer, rewritten, types),
+             cell(native_auth_capacity - 3 * FEE - return_topup, authority)], votes=certified),
+            "exited with 58")
 
     def execution(committed):
         location = client.locations[committed["hash"]]
@@ -705,6 +745,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
             "shared_manifest": shared_evidence,
             "external_rule": rule_evidence,
+            "append_only": ({"type": append_script, "input": hex_bytes(data),
+                             "rejected_outputs": {name: hex_bytes(raw) for name, raw in append_probes.items()}}
+                            if append_only else None),
             "revisions": ({**revisions, "exported": hex_bytes(data), "returned": hex_bytes(return_state),
                            "topup_capacity": return_topup,
                            "native_execution": execution(revisions["native"])} if revisable else None),

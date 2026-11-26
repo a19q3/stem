@@ -563,7 +563,8 @@ def main():
     for name in ("stem-native-object", "object-policy", "ckb-stem-object",
                  "stem-metatype-escrow", "metatype-dispatcher", "metatype-mailbox-lock",
                  "metatype-bridged-object", "metatype-bridged-approval", "native-object-state-limit",
-                 "metatype-object-state-limit", "metatype-rule-registry", "native-amount-cap",
+                 "metatype-object-state-limit", "metatype-rule-registry", "native-object-append-only",
+                 "metatype-object-append-only", "native-amount-cap",
                  "metatype-udt-adapter", "metatype-amount-cap-adapter"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--metatype-shared-manifest", action="store_true")
@@ -607,6 +608,9 @@ def main():
         parser.error("The state limit fixture requires both Type Script binaries and a revisable Metatype object")
     if args.metatype_rule_registry and (not all(state_limit) or args.metatype_revision_topup):
         parser.error("The live rule fixture requires the state limit scripts and uses its own capacity profile")
+    append_only = (args.native_object_append_only, args.metatype_object_append_only)
+    if any(append_only) and not all((*append_only, metatype_object, args.metatype_revisable_object)):
+        parser.error("The append-only fixture requires both Type Script binaries and a revisable Metatype object")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

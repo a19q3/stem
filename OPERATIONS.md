@@ -1503,6 +1503,27 @@ cannot authorize a return under the new anchor. The historical mailbox
 record and live registry record share one certificate, so the return
 fits the usual 20-million-cycle transaction limit.
 
+Build `stem-object-append-only` and `metatype-object-append-only`
+and add the following options to the revisable object command.
+Keep the two state-limit options and the registry option to test all
+four constraints together.
+
+```sh
+--native-object-append-only "$contract_dir/stem-object-append-only" \
+--metatype-object-append-only "$contract_dir/metatype-object-append-only"
+```
+
+The fixture appends content through revisions 1, 2 and 4, then
+verifies the restored object and exact original Type Script set.
+It submits matched rewrite, truncation, MIME-change and version-only
+controls to Stem and CKB before export and before the first CKB
+revision. The report preserves the common state inputs and outputs
+under `native_object.append_only`. Run with and without
+`--metatype-shared-manifest`, using distinct output directories
+and ports. Omit the two append-only binaries for a matching
+three-constraint control with the same valid content and revision
+trajectory.
+
 ### Exercise cap-bound Metatype fungible custody
 
 Build and run the fungible Metatype profile against CKB devnet with

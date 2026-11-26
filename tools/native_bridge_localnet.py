@@ -72,7 +72,8 @@ def wait_for(func, label, seconds=20):
 
 def application_programs(args):
     for name in ("export_udt", "asset_escrow", "stem_spore", "stem_native_object",
-                 "object_policy", "stem_metatype_escrow", "native_amount_cap", "native_object_state_limit"):
+                 "object_policy", "stem_metatype_escrow", "native_amount_cap", "native_object_state_limit",
+                 "native_object_append_only"):
         if (path := getattr(args, name, None)) is not None:
             yield path
 
