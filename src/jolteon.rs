@@ -1420,7 +1420,8 @@ impl Replica {
         let tx = Transaction::from_slice(raw)?;
         self.admission.checks = self.admission.checks.saturating_add(1);
         let started = Instant::now();
-        let checked = self.workers.install(|| self.store.check(&tx));
+        // Admission is serial. The VM pool is used for parallel block work.
+        let checked = self.store.check(&tx);
         self.admission.verification_us = self
             .admission
             .verification_us

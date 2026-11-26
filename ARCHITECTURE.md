@@ -195,7 +195,8 @@ after 256 submissions or one second without a complete next frame.
 Submission connections use the existing connection limit and the
 application queue. Query and peer paths use their existing streams.
 
-Admission checks individual transactions against the finalized tip.
+Admission checks individual transactions against the finalized tip
+on the replica thread. Parallel block execution uses the VM pool.
 The receiver computes the full witnessed wire digest once and reuses
 it for deduplication and the client reply. An admitted client
 transaction goes to the current and next Leader. The receiving replica

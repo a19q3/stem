@@ -75,12 +75,15 @@ fn measure_lineage_admission_groups() -> Result<()> {
     };
     let sequential = store("single-request")?;
     let grouped = store("grouped")?;
+    let direct = store("direct")?;
     assert_eq!(sequential.tip(), grouped.tip());
+    assert_eq!(sequential.tip(), direct.tip());
     let workers = || rayon::ThreadPoolBuilder::new().num_threads(2).build();
     let one_at_a_time = workers()?;
     let parallel = workers()?;
     let mut single_samples = Vec::new();
     let mut group_samples = Vec::new();
+    let mut direct_samples = Vec::new();
     let measure_single = || -> Result<_> {
         let start = Instant::now();
         let receipts = commands
@@ -102,20 +105,36 @@ fn measure_lineage_admission_groups() -> Result<()> {
         }
         Ok((receipts, start.elapsed().as_micros()))
     };
+    let measure_direct = || -> Result<_> {
+        let start = Instant::now();
+        let receipts = commands
+            .iter()
+            .map(|tx| direct.check(tx))
+            .collect::<Result<Vec<_>>>()?;
+        Ok((receipts, start.elapsed().as_micros()))
+    };
     for sample in 0..11 {
-        let ((serial, a), (batched, b)) = if sample % 2 == 0 {
-            (measure_single()?, measure_grouped()?)
-        } else {
-            let group = measure_grouped()?;
-            (measure_single()?, group)
+        let ((serial, a), (batched, b), (inline, c)) = match sample % 3 {
+            0 => (measure_single()?, measure_grouped()?, measure_direct()?),
+            1 => {
+                let grouped = measure_grouped()?;
+                let direct = measure_direct()?;
+                (measure_single()?, grouped, direct)
+            }
+            _ => {
+                let direct = measure_direct()?;
+                (measure_single()?, measure_grouped()?, direct)
+            }
         };
         assert_eq!(serial, batched);
+        assert_eq!(serial, inline);
         assert!(serial.iter().all(|receipt| {
             Outcome::decode(&receipt.protocol_result)
                 .is_ok_and(|outcome| outcome == Outcome::Applied)
         }));
         single_samples.push(a);
         group_samples.push(b);
+        direct_samples.push(c);
     }
     let raw = commands
         .iter()
@@ -126,7 +145,7 @@ fn measure_lineage_admission_groups() -> Result<()> {
         "commands": COUNT, "group_width": WIDTH, "workers": 2,
         "signed_workload_id": hex::encode(ckb_hash::blake2b_256(raw)),
         "header": hex::encode(sequential.tip().encode()),
-        "single_us": single_samples, "grouped_us": group_samples,
+        "single_us": single_samples, "grouped_us": group_samples, "direct_us": direct_samples,
     });
     if let Some(path) = std::env::var_os("STEM_ADMISSION_REPORT") {
         std::fs::write(path, serde_json::to_vec(&report)?)?;
