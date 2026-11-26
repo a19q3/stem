@@ -415,6 +415,14 @@ Stem and the CKB adapter verify a fresh untyped payment output on
 Lock changes. The output marker binds the full royalty Script and
 the deployment scope. Stem applies the rule to export and release,
 and CKB applies it to transfers of the mapped object.
+The rotating approval Type Script binds a live CKB Type ID registry
+and the original object Script. The CKB Adapter and Stem Type Group
+use the same canonical quorum decoder and verify the selected
+Ed25519 signatures over network-scoped transaction IDs. A new
+registry generation can change the signer roster, threshold or
+freeze state under the registry owner Lock. Stem uses the live
+record authenticated at its committed CKB anchor. A frozen grant
+keeps the burn message unconsumed and the original object in custody.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and

@@ -11,7 +11,7 @@ use ckb_std::{
 };
 use stem_bridge_wire::metatype::{
     custody::Boundary,
-    rotating_approval::{Approval, Authority, witness_signature},
+    rotating_approval::{Approval, Authority, witness_proof},
 };
 use stem_contracts::metatype::{typed_dependency_data, verify_workflow_signature, with_invocation};
 
@@ -45,8 +45,8 @@ fn main() -> i8 {
                 }
             }
         }
-        let authority =
-            Authority::decode(&typed_dependency_data(approval.registry, Authority::SIZE)?)?;
+        let record = typed_dependency_data(approval.registry, Authority::MAX_RECORD_BYTES)?;
+        let authority = Authority::decode(&record)?;
         if authority.frozen {
             return None;
         }
@@ -57,11 +57,10 @@ fn main() -> i8 {
             &group.script.id(),
             &load_tx_hash().ok()?,
         );
-        verify_workflow_signature(
-            &authority.public_key,
-            &digest,
-            witness_signature(invocation.witness?)?,
-        )
-        .then_some(())
+        authority
+            .authorize(witness_proof(invocation.witness?)?, |key, signature| {
+                verify_workflow_signature(key, &digest, signature)
+            })
+            .then_some(())
     })
 }

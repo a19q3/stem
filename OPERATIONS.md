@@ -1487,11 +1487,18 @@ and `metatype-object-rotating-approval` with the same RISC-V command.
 Pass their paths via `--metatype-approval-registry`,
 `--native-object-rotating-approval` and
 `--metatype-object-rotating-approval`. The runner registers an
-Ed25519 key on CKB, advances Stem's anchor and exports with that key.
-It rotates the key while the object is on CKB, then transfers, burns
-and releases using the next generation. It captures both registry
-transactions in `native_object.approval_rotation`. The same fixture
-can include a live capacity rule on a revisable object.
+Ed25519 quorum on CKB, advances Stem's anchor and exports with
+that quorum. It rotates the roster while the object is on CKB,
+then transfers, burns and releases using the next generation.
+It captures the registry transactions in `native_object.approval_rotation`.
+The same fixture can include a live capacity rule on a revisable object.
+
+Use `--metatype-approval-quorum 2 3 --stem-transaction-cycles 28000000`
+to exercise two signatures from a three-key roster. The runner also
+checks insufficient, repeated, out-of-order and wrong-network signatures
+on both chains. Use the same explicit genesis limit in the one-signer
+control with `--metatype-approval-quorum 1 1`. The runner's default
+transaction limit is 20,000,000 cycles.
 
 Add `--metatype-object-freeze` to the rotating approval fixture.
 It freezes the object before a CKB burn, thaws for the burn, then

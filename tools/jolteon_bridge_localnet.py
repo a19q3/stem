@@ -26,6 +26,8 @@ from native_bridge_localnet import (bridge_configuration, cell, deploy, deploy_t
                                     reconcile_backing, redeem_withdrawal, signing_cell, start, stem_id,
                                     vault_operations, verify_l1_output, wait_for, withdraw_and_settle, xudt_round_trip)
 
+BLOCK_CYCLES = 400_000_000
+
 
 class Client:
     """Adapter for the shared bridge fixture, using only finalized native queries."""
@@ -446,7 +448,8 @@ def bridge_round(args, l1, fixture, children):
     spec = {"chain_id": "stem-jolteon-ckb-local", "network_id": network, "genesis_time_ms": 1_735_689_600_000,
             "capacity": {"bond_per_byte": 1_000_000, "state_overhead": 80},
             "limits": {"transaction_count": 64, "transaction_bytes": 2 * 1024 * 1024,
-                       "transaction_cycles": 20_000_000, "block_cycles": 400_000_000, "cell_reads": 1024,
+                       "transaction_cycles": args.stem_transaction_cycles, "block_cycles": BLOCK_CYCLES,
+                       "cell_reads": 1024,
                        "cell_read_bytes": 64 * 1024 * 1024, "cell_write_bytes": 4 * 1024 * 1024, "header_dep_age": 64},
             "development_validators": members, "bridge": bridge}
     spec_path = args.output / "stem.json"
@@ -558,6 +561,8 @@ def main():
     for name in ("xudt", "xudt-gate"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--validators", type=int, default=4)
+    parser.add_argument("--stem-transaction-cycles", type=int, default=20_000_000,
+                        help="explicit per-transaction cycle limit in the Stem development genesis")
     parser.add_argument("--fee-funds", action="store_true")
     parser.add_argument("--checkpoint-fee-fund", type=lambda path: Path(path).resolve(),
                         help="use restricted checkpoint Lock for the PoW Security Fund")
@@ -588,6 +593,7 @@ def main():
     parser.add_argument("--metatype-revision-topup", action="store_true")
     parser.add_argument("--metatype-workflow-early-return", action="store_true")
     parser.add_argument("--metatype-object-freeze", action="store_true")
+    parser.add_argument("--metatype-approval-quorum", nargs=2, type=int, metavar=("THRESHOLD", "KEYS"))
     parser.add_argument("--metatype-decrease-ceiling", action="store_true")
     parser.add_argument("--full-udt-return", action="store_true")
     parser.add_argument("--finish-udt-return", action="store_true")
@@ -600,6 +606,8 @@ def main():
     parser.add_argument("--port", type=int, default=22200)
     parser.add_argument("--l1-port", type=int, default=22210)
     args = parser.parse_args()
+    if not 1 <= args.stem_transaction_cycles <= BLOCK_CYCLES:
+        parser.error("--stem-transaction-cycles must be positive and fit in the block budget")
     base = (args.stem_metatype_escrow, args.metatype_dispatcher, args.metatype_mailbox_lock)
     portable_udt = (args.native_amount_cap, args.metatype_udt_adapter, args.metatype_amount_cap_adapter)
     object_adapters = (args.metatype_bridged_object, args.metatype_bridged_approval)
@@ -647,6 +655,9 @@ def main():
         parser.error("The rotation fixture requires its registry, both adapters and the Metatype object route")
     if args.metatype_object_freeze and not all(rotation):
         parser.error("The freeze fixture requires both approval adapters and the registry")
+    if args.metatype_approval_quorum and (not all(rotation)
+            or not 1 <= args.metatype_approval_quorum[0] <= args.metatype_approval_quorum[1] <= 8):
+        parser.error("The approval quorum requires a registry and 1 <= THRESHOLD <= KEYS <= 8")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

@@ -1,4 +1,4 @@
-//! CKB Type ID registry for a rotating Metatype approval key and freeze state.
+//! CKB Type ID registry for a rotating Metatype approval quorum and freeze state.
 
 #![no_std]
 #![no_main]
@@ -29,12 +29,22 @@ fn verify() -> Option<()> {
     }
     validate_type_id(&id).ok()?;
     let owner = load_cell_lock_hash(0, Source::GroupOutput).ok()?;
-    let read = |source| Authority::decode(&bounded_data(0, source, Authority::SIZE).ok()?);
-    let next = read(Source::GroupOutput)?;
-    workflow_key(&next.public_key)?;
+    let read = |source| bounded_data(0, source, Authority::MAX_RECORD_BYTES).ok();
+    let record = read(Source::GroupOutput)?;
+    let next = Authority::decode(&record)?;
+    for key in next.keys() {
+        let point = workflow_key(key)?.to_edwards();
+        if point.compress().as_bytes() != key || !point.is_torsion_free() {
+            return None;
+        }
+    }
     match load_cell_lock_hash(0, Source::GroupInput) {
         Err(SysError::IndexOutOfBound) if next.generation == 0 => Some(()),
-        Ok(before) if before == owner && next.is_successor(&read(Source::GroupInput)?) => Some(()),
+        Ok(before) if before == owner => {
+            let record = read(Source::GroupInput)?;
+            next.is_successor(&Authority::decode(&record)?)
+                .then_some(())
+        }
         _ => None,
     }
 }

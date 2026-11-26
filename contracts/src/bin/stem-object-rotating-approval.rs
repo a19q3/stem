@@ -1,4 +1,4 @@
-//! Native object approval using the key at Stem's committed CKB anchor.
+//! Native object approval using the quorum at Stem's committed CKB anchor.
 
 #![no_std]
 #![no_main]
@@ -11,20 +11,20 @@ use ckb_std::{
     error::SysError,
     high_level::{load_cell_lock_hash, load_script, load_script_hash, load_tx_hash},
 };
-use stem_bridge_wire::metatype::rotating_approval::{Approval, Authority};
+use stem_bridge_wire::metatype::rotating_approval::{Approval, Authority, MAX_PROOF_BYTES};
 use stem_contracts::{metatype::verify_workflow_signature, native_type};
 
 entry!(main);
 default_alloc!();
 
-fn load<const NUMBER: u64>(buffer: &mut [u8]) -> Option<()> {
+fn load<const NUMBER: u64>(buffer: &mut [u8]) -> Option<usize> {
     let mut length = buffer.len() as u64;
     let mut status = buffer.as_mut_ptr() as u64;
     unsafe {
         asm!("ecall", inout("a0") status, in("a1") &mut length, in("a2") 0u64,
             in("a3") 0u64, in("a4") 0u64, in("a5") 0u64, in("a7") NUMBER);
     }
-    (status == 0 && length == buffer.len() as u64).then_some(())
+    (status == 0 && length <= buffer.len() as u64).then_some(length as usize)
 }
 
 fn verify() -> Option<()> {
@@ -43,21 +43,29 @@ fn verify() -> Option<()> {
     };
     check(Source::GroupInput)?;
     check(Source::GroupOutput)?;
-    let raw = native_type::live_ckb_data::<{ 32 + Authority::SIZE }>(approval.registry)?;
-    let authority = Authority::decode(&raw[32..])?;
+    let (raw, length) = native_type::live_ckb_data_bounded::<{ 32 + Authority::MAX_RECORD_BYTES }>(
+        approval.registry,
+    )?;
+    let authority = Authority::decode(&raw[32..length])?;
     if authority.frozen {
         return None;
     }
-    let (mut network, mut signature) = ([0; 32], [0; 64]);
-    load::<2116>(&mut network)?;
-    load::<2117>(&mut signature)?;
+    let (mut network, mut proof) = ([0; 32], [0; MAX_PROOF_BYTES]);
+    if load::<2116>(&mut network)? != network.len() {
+        return None;
+    }
+    let length = load::<2117>(&mut proof)?;
     let digest = authority.digest(
         &network,
         None,
         &load_script_hash().ok()?,
         &load_tx_hash().ok()?,
     );
-    verify_workflow_signature(&authority.public_key, &digest, &signature).then_some(())
+    authority
+        .authorize(&proof[..length], |key, signature| {
+            verify_workflow_signature(key, &digest, signature)
+        })
+        .then_some(())
 }
 
 fn main() -> i8 {

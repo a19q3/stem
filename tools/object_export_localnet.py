@@ -252,8 +252,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             if rule in types_in_tx:
                 group = len(locks) + sorted(types_in_tx).index(rule)
                 tx_id = stem_id(args, network, json.loads(built.read_text()))
-                generation = rotation.generation if rotation_signature is None else rotation_signature
-                proof = rotation.sign(tx_id, generation)
+                proof = rotation.proof(tx_id, rotation_signature)
                 request["proofs"] = sorted([*request.get("proofs", []),
                     {"group_index": group, "proof_data": hex_bytes(proof)}], key=lambda row: row["group_index"])
                 built = build()
@@ -276,7 +275,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     def commit(tx):
         result = client.call("broadcast_tx_commit", tx=tx)
-        assert result["check_tx"]["code"] == 0, result
+        assert result.get("check_tx", {}).get("code") == 0, result
         return result
 
     def reject_stem(tx, *causes):
@@ -313,7 +312,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         return attest("attest-reference", label, ["--request", request])
 
     if use_rotation:
-        rotation = Rotation(fixture, genesis, network, ckb_hash(rotation_code), deployed(rotation_seed_index))
+        rotation = Rotation(fixture, genesis, network, ckb_hash(rotation_code),
+                            deployed(rotation_seed_index), args.metatype_approval_quorum)
         rotation_birth = ckb_submit(rotation.update("birth", 0, ckb_deps))
         rotation.applied(rotation_birth["hash"], 0)
         old_registry_point = rotation.location
@@ -781,13 +781,24 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         set_ceiling("restore-before-edit", state_limit)
     if use_rotation:
         registry_deps = [dep for dep in ckb_deps if dep != old_registry_dep]
-        for label, update in (
+        record = rotation.record(1)
+        keys = [record[index:index + 32] for index in range(9, len(record) - 1, 32)]
+        weak = sorted([b"\x01" + bytes(31), *keys[1:]])
+        invalid_registry = [
             ("repeat_key", dict(data=le(1, 8) + rotation.record(0)[8:])),
             ("skip_generation", dict(data=le(2, 8) + rotation.record(1)[8:])),
             ("change_owner", dict(lock=fixture.owner_lock)),
             ("invalid_key", dict(data=le(1, 8) + bytes(33))),
-            ("invalid_freeze", dict(data=rotation.record(1)[:-1] + b"\x02")),
-        ):
+            ("weak_key", dict(data=record[:9] + b"".join(weak) + record[-1:])),
+            ("invalid_freeze", dict(data=record[:-1] + b"\x02")),
+            ("invalid_threshold", dict(data=record[:8] + bytes([len(keys) + 1]) + record[9:])),
+        ]
+        if len(keys) > 1:
+            invalid_registry.extend([
+                ("duplicate_roster_key", dict(data=record[:9] + keys[0] + keys[0] + record[73:])),
+                ("unsorted_roster", dict(data=record[:9] + b"".join(reversed(keys)) + record[-1:])),
+            ])
+        for label, update in invalid_registry:
             rejected[f"ckb_rotation_{label}"] = reject_ckb(
                 rotation.update(label, 1, registry_deps, **update), 61)
         retire_registry = transaction([rotation.location],
@@ -834,6 +845,14 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         rejected["ckb_transfer_policy_removed"] = reject_ckb(transfer("transfer-without-policy", include_policy=False), 48)
     if use_rotation:
         next_content = object_data(ckb_content, 2) if revisable else data
+        quorum_controls = ["short", "wrong_network"]
+        if rotation.threshold > 1:
+            quorum_controls.extend(("duplicate", "unsorted"))
+        if rotation.key_count < 8:
+            quorum_controls.append("outside_roster")
+        for control in quorum_controls:
+            rejected[f"ckb_quorum_{control}"] = reject_ckb(transfer(f"transfer-quorum-{control}",
+                contents=next_content, rotation_signature=control), 46)
         rejected["ckb_transfer_retired_key"] = reject_ckb(transfer("transfer-retired-key",
             contents=next_content, rotation_signature=0), 46)
         expired = transfer("transfer-spent-registry", contents=next_content,
@@ -1226,8 +1245,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
     if use_rotation:
         restored_with_payment = [*restored_outputs, cell(royalty, stem_payee, stem_tag)] if use_royalty else restored_outputs
-        for label, votes, signer in (("retired-key", certified, 0), ("historical-record", old_approval_history, 0),
-                                     ("missing-seal", certified, False)):
+        controls = [("retired-key", certified, 0), ("historical-record", old_approval_history, 0),
+                    ("missing-seal", certified, False)]
+        controls.extend((f"quorum-{control}", certified, control) for control in quorum_controls)
+        for label, votes, signer in controls:
             rejected[f"stem_return_rotating_approval_{label}"] = reject_stem(native_sign(f"return-{label}",
                 with_approval, restored_with_payment, endpoint=endpoint, message=inbound, receive=True,
                 votes=votes, workflow_proof=return_proof, rotation_signature=signer), "exited with 62")
@@ -1330,6 +1351,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             "approval_rotation": ({"type": rotation_type, "registry": rotation.registry,
                 "birth": rotation_birth, "rotation": rotated, "birth_stem_anchor": rotation_initial_anchor,
                 "records": [hex_bytes(rotation.record(generation)) for generation in range(rotation.generation + 1)],
+                "threshold": rotation.threshold, "key_count": rotation.key_count,
                 "birth_votes": rotation_votes, "return_votes": certified} if use_rotation else None),
             "freeze": freeze_evidence,
             "ceiling_decrease": ceiling_evidence,

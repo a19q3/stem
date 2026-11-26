@@ -58,6 +58,12 @@ pub fn output_is_untyped(index: usize) -> Option<bool> {
 
 /// Return the exact type-hash-prefixed native projection of one L1 record.
 pub fn live_ckb_data<const N: usize>(hash: &Hash32) -> Option<[u8; N]> {
+    let (data, length) = live_ckb_data_bounded(hash)?;
+    (length == N).then_some(data)
+}
+
+/// Return one live record and its full length within the supplied buffer bound.
+pub fn live_ckb_data_bounded<const N: usize>(hash: &Hash32) -> Option<([u8; N], usize)> {
     let mut found = None;
     for index in 0u64..4 {
         let mut data = [0; N];
@@ -71,7 +77,9 @@ pub fn live_ckb_data<const N: usize>(hash: &Hash32) -> Option<[u8; N]> {
             1 => break,
             2 => continue,
             0 if data.get(..32)? != hash => continue,
-            0 if len == N as u64 && found.is_none() => found = Some(data),
+            0 if (32..=N as u64).contains(&len) && found.is_none() => {
+                found = Some((data, len as usize));
+            }
             _ => return None,
         }
     }

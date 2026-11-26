@@ -457,7 +457,7 @@ proof bytes and the historical ceiling at the burn. The Stem wallet
 still attaches a guardian-authenticated live registry observation at
 the anchor currently committed by Stem.
 
-### Rotating object approval and freeze
+### Rotating object approval quorum and freeze
 
 An independent approval Type Script binds the full object Script
 hash and the full Type hash of a CKB approval registry. Its Manifest
@@ -466,13 +466,17 @@ approval Script alongside its bound object. It adds an approval role
 to the object's existing ownership and Type Group checks.
 
 The registry uses a CKB Type ID and a persistent owner Lock. Its
-41-byte data contains a little-endian u64 generation, a 32-byte
-Ed25519 public key and one byte of freeze state. Zero is active
-and one is frozen. Creation uses generation zero. Updates require
-the same Lock, the exact next generation, a valid nonweak key and
-a change to the key or freeze state. The registry always recreates
-its Type ID. The consumed owner Lock authorizes updates
-independently of the approval key.
+data contains a little-endian u64 generation, a one-byte threshold,
+one to eight strictly byte-sorted distinct 32-byte Ed25519 public
+keys, and a one-byte freeze flag. The length determines the roster
+size. The threshold must be between one and the roster size inclusive.
+Zero is active and one is frozen. The registry contract requires
+canonical, nonweak, prime-order public keys. Creation starts at
+generation zero. Each update recreates the Type ID under the same
+Lock, increments the generation by exactly one, and changes the
+roster, threshold or freeze flag. The consumed owner Lock controls
+updates independently of the quorum. A one-key registry uses this
+same encoding and verification rule.
 
 CKB resolves the actual typed Cell Dep. Stem resolves a guardian-
 authenticated typed live reference at its committed CKB anchor.
@@ -484,23 +488,31 @@ generation authenticated at its committed anchor, so activation there
 depends on confirmation and anchor advancement. The owner Lock can
 freeze every object using that registry.
 
-The 64-byte Ed25519 signature covers the CKB hash of
-`"Stem Metatype rotating approval\0" || network || deployment ||
-approval_script_hash || generation_le64 || public_key || freeze_state ||
-transaction_id`.
+Each approval signature covers the CKB hash of
+`"Stem Metatype quorum approval\0" || network || deployment ||
+approval_script_hash || canonical_registry_data || transaction_id`.
 CKB uses its genesis hash, physical Metatype Type hash and raw
 transaction hash. Stem uses its network ID, a zero deployment
 field and its transaction ID, including the attached L1 certificate.
-An approval is collected after all committed transaction data and
-L1 attestations are fixed. CKB carries it as the seal in action 1
-of the group witness, with empty message and proof. Stem carries
-it in the native Type Group's Proof Data before Lock signing.
-Issuance, transfer, import, burn, export and release each require
-an active record and a seal for that exact transaction. A freeze
+The proof starts with a one-byte bitmap of roster indices and follows
+with exactly one 64-byte signature per set bit in ascending index
+order. The bitmap must select exactly the configured threshold and
+all selected indices must be in the roster. The proof is 65 bytes for
+one signer and at most 513 bytes for eight. Both hosts verify each
+signature against the corresponding key. Different valid subsets can
+approve the same transaction without changing its transaction ID.
+
+Collect approvals after fixing all committed transaction data and L1
+attestations. CKB carries the approvals in the Proof Data of action 1
+with empty Message and Seal. Stem carries them in the native Type
+Group's Proof Data before Lock signing. Issuance, transfer, import,
+burn, export and release each require an active record and a quorum
+for that exact transaction. A freeze
 blocks these operations, including release of an already burned object.
 The native escrow and the unconsumed return message remain available
-until a confirmed thaw and a fresh seal permit release. The original
-lock, approval and custody checks remain mandatory.
+until a confirmed thaw and a fresh quorum permit release. The original
+Lock, approval and custody checks remain mandatory. All signature
+checks count toward the usual transaction and block budgets.
 
 ### Append-only revisions
 
@@ -731,7 +743,7 @@ commitments, and the participating owners' Locks.
 | Shared definition to Manifest | Missing or substituted preimage, nesting, ambiguous state alignment or excessive expansion | Match the actual Cell Dep data hash, accept only canonical definitions with empty states, verify exact state cardinality and meter expanded bytes. Keep republishable preimages. |
 | Rule record to object | A relayer replaces it with a looser rule, or spends the published copy | Resolve the pinned data hash in actual dependencies on both chains. Reject changed bytes and oversized states. Keep the original bytes available for publication at a new OutPoint. |
 | Live ceiling | An updater forks the registry or a transfer uses grandfathering to create or rewrite an oversized state | Enforce Type ID and a same-Lock successor. Apply the current ceiling to changed states and check the proven custody code path for oversized cross-chain settlement. |
-| Rotating approval and freeze | A spender uses a superseded key or record, or supplies a valid signature while frozen | Require an active current registry, an exact-generation strict Ed25519 seal and the same object and approval identities. Keep the CKB registry Lock responsible for rotation and freezes. |
+| Rotating approval and freeze | A spender reuses a signature, uses a superseded roster or threshold, or submits a valid quorum while frozen | Require an active current registry, a canonical bitmap and strict Ed25519 signatures from the exact-generation quorum. Preserve the object and approval identities. The CKB registry Lock controls roster, threshold and freeze changes. |
 | Append-only revision | An approval authorizes a rewrite, truncation, MIME change, or removal of the constraint | Bind the full identity Script, require a valid successor, and compare the exact revision relationship and decoded content prefix on both chains. |
 | Signed workflow history | A return omits a review or substitutes, reorders or replays approval from another subject or chain | Verify each role's signature over the preceding head and exact step. Bind the fully replayed head to the authenticated return state. |
 | Object royalty | A transfer omits payment, reuses a marker from another group or deployment, or replaces the rule | Require a fresh matching untyped output with sufficient Capacity and the same royalty Script on the successor. Run the original rule on Stem custody Lock changes. |

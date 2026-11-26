@@ -23,13 +23,17 @@ def type_scripts(cell):
 
 
 class Rotation:
-    def __init__(self, fixture, genesis, stem, code, seed):
+    def __init__(self, fixture, genesis, stem, code, seed, quorum):
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
         self.fixture = fixture
         self.genesis = binary(genesis)
         self.stem = binary(stem)
-        self.keys = [Ed25519PrivateKey.from_private_bytes(bytes([index]) * 32) for index in (41, 42)]
+        self.threshold, self.key_count = quorum or (1, 1)
+        self.rosters = [sorted((Ed25519PrivateKey.from_private_bytes(bytes([seed]) * 32)
+                                for seed in range(start, start + self.key_count)),
+                               key=lambda key: key.public_key().public_bytes_raw())
+                        for start in (41, 57)]
         identity = ckb_hash(le(0, 8) + binary(seed["tx_hash"]) + le(int(seed["index"], 16), 4) + le(0, 8))
         self.registry = script(hex_bytes(code), hex_bytes(identity), "data2")
         self.generation = 0
@@ -40,8 +44,9 @@ class Rotation:
     def record(self, generation, frozen=None):
         if frozen is None:
             frozen = self.freeze_by_generation[generation]
-        key = self.keys[int(generation != 0)]
-        return le(generation, 8) + key.public_key().public_bytes_raw() + bytes([frozen])
+        keys = self.rosters[int(generation != 0)]
+        return (le(generation, 8) + bytes([self.threshold])
+                + b"".join(key.public_key().public_bytes_raw() for key in keys) + bytes([frozen]))
 
     def update(self, label, generation, deps, *, data=None, lock=None, frozen=None):
         transfer = transaction([self.location],
@@ -56,12 +61,28 @@ class Rotation:
         self.freeze_by_generation[generation] = frozen
         self.capacity -= FEE
 
-    def sign(self, transaction_id, generation, *, deployment=None):
+    def proof(self, transaction_id, selected=None, *, deployment=None):
+        generation = selected if isinstance(selected, int) else self.generation
         network = self.stem if deployment is None else self.genesis
         scope = bytes(32) if deployment is None else deployment
-        digest = ckb_hash(b"Stem Metatype rotating approval\0" + network + scope
+        if selected == "wrong_network":
+            network = self.genesis if deployment is None else self.stem
+        digest = ckb_hash(b"Stem Metatype quorum approval\0" + network + scope
                           + script_hash(self.rule) + self.record(generation) + binary(transaction_id))
-        return self.keys[int(generation != 0)].sign(digest)
+        keys = self.rosters[int(generation != 0)]
+        first = binary(transaction_id)[0] % len(keys)
+        indices = sorted((first + offset) % len(keys) for offset in range(self.threshold))
+        if selected == "short":
+            indices.pop()
+        seals = [keys[index].sign(digest) for index in indices]
+        bitmap = sum(1 << index for index in indices)
+        if selected == "duplicate":
+            seals[-1] = seals[0]
+        if selected == "unsorted":
+            seals.reverse()
+        if selected == "outside_roster":
+            bitmap ^= (1 << indices[-1]) | (1 << len(keys))
+        return bytes([bitmap]) + b"".join(seals)
 
     def ckb_sign(self, label, tx, signers, deployment, selected, workflow_row=()):
         from metatype_object_localnet import encode
@@ -70,9 +91,8 @@ class Rotation:
         draft = self.fixture.sign(f"{name}-approval-draft", tx, [])
         rows = list(workflow_row)
         if selected is not False:
-            generation = self.generation if selected is None else selected
-            rows.append((deployment, script_hash(self.rule), 1, b"", b"",
-                         self.sign(draft["hash"], generation, deployment=deployment)))
+            proof = self.proof(draft["hash"], selected, deployment=deployment)
+            rows.append((deployment, script_hash(self.rule), 1, b"", proof, b""))
         witnesses = tx.get("witnesses", [])
         tx["witnesses"] = [*witnesses, *(["0x"] * (len(tx["inputs"]) - len(witnesses)))]
         if rows:
