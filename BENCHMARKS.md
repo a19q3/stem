@@ -4527,3 +4527,59 @@ and the Metatype return with a signed Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw checks, signed workloads, per-run host samples and CKB proofs](benchmarks/2026-11-26-stem-inline-admission.json.xz).
+
+## Stake Registry loading during admission
+
+Revision `cd488ea` loads the staged Stake Registry only for a
+Stake Snapshot during single-transaction admission. Revision
+`754b1ef` loads it before each admission check. Block preparation
+still loads staking state for height-driven committee and reward
+updates, including blocks with no Stake Snapshot.
+
+The fixed-tip probe checks 128 distinct signed payments against a
+stopped Stake-backed Jolteon replica. The payments vary the fee
+and each independently spends the same live Capacity output from
+a confirmed CKB deposit. They exercise individual admission on one
+committed view. A single block cannot include the conflicting
+payments together. The test compares complete receipts on each
+repetition and across revisions. Four alternating process runs
+reopen the Store for each trial, time the first pass with a fresh
+Store verification cache, then time an identical pass using that
+cache. The process-local VM caches can persist across trials.
+
+| Funded committee | Tip height | First pass baseline / candidate | Repeated pass baseline / candidate |
+| --- | ---: | ---: | ---: |
+| 4 members | 55 | 19.748 / 19.995 ms | 1.655 / 1.295 ms |
+| 128 members | 57 | 21.320 / 20.909 ms | 2.020 / 1.321 ms |
+
+Each cell in the table is the median of 24 batches after excluding
+the first trial of each process. The repeated checks reduced
+median time by 21.8% for four members and 34.6% for 128 members.
+The first passes moved by +1.25% and −1.92%, respectively. These
+are Store check timings. The live regression covers validity,
+committee activation and recovery.
+
+An observer restored the four-member probe state from a pinned
+locally exported Header ID, snapshot and Jolteon certificates.
+It reproduced the exact Header and receipt digest. Both probe
+states come from local networks with CKB-confirmed deposits.
+The raw archive includes both authenticated snapshots, guardian
+observations, signed workloads and finality certificates.
+
+The release workspace passed 480 tests with 21 ignored. The stake
+test admits a valid snapshot at its signing anchor, compares the
+admission receipt with block preparation, and rejects stale or
+unauthorized snapshots. Go proof tests and the frozen CometBFT
+feature check passed. The mixed four-replica test finalized 96
+signed payments through an offline validator and recovery.
+
+Real CKB devnets confirmed four- and 128-member committee
+handoffs and accepted historical Intercell deliveries. The wide
+case used 129 Stem processes, applied the handoff at height 40,
+and agreed at height 44 after one continuing voter restarted.
+Separate devnets verified historical and live-at-anchor Cell
+references and the revisable Metatype return. The archive
+retains the initial probe-launch and signing-context failures.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw timings, both funded snapshots and CKB proofs](benchmarks/2026-11-26-stem-staked-admission.json.xz).

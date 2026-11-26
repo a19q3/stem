@@ -105,5 +105,6 @@ available. Published network evidence contains public genesis and proof data.
 | Fixed-buffer Patricia reads | [Report](../BENCHMARKS.md#fixed-buffer-patricia-reads), [editor timings, signed loads and CKB proofs](2026-11-26-stem-patricia-inline-read.json.xz) |
 | Reused RocksDB point-read options | [Report](../BENCHMARKS.md#reusing-rocksdb-point-read-options), [storage probes, signed loads and CKB proofs](2026-11-26-stem-patricia-point-reads.json.xz) |
 | Serial admission dispatch | [Report](../BENCHMARKS.md#serial-admission-dispatch), [receipt controls, signed loads and CKB proofs](2026-11-26-stem-inline-admission.json.xz) |
+| Stake Registry loading during admission | [Report](../BENCHMARKS.md#stake-registry-loading-during-admission), [funded states, signed reads and CKB proofs](2026-11-26-stem-staked-admission.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

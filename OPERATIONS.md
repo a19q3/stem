@@ -968,6 +968,28 @@ cargo test --locked --release --test native_store \
   measure_lineage_admission_groups -- --ignored --nocapture
 ```
 
+To measure Stake Registry loading during admission, use a stopped
+Stake-backed replica or restore the archived fixture snapshot to a
+new observer. Extract the genesis, guardian observations, signed
+transactions, snapshot and finality certificate from the benchmark
+archive. The genesis and its referenced trust and observation files
+must be in the same directory. Point the probe at the observer's
+`db` directory after checking the snapshot Header ID.
+
+```sh
+STEM_FUNDED_ADMISSION_GENESIS=/tmp/stem-admission/stem-genesis.json \
+STEM_FUNDED_ADMISSION_DB=/tmp/stem-admission/observer/db \
+STEM_FUNDED_ADMISSION_WORKLOAD=/tmp/stem-admission/signed-payments.json \
+STEM_FUNDED_ADMISSION_REPORT=/tmp/stem-admission/timings.json \
+cargo test --locked --release --bin stem measure_funded_admission \
+  -- --ignored --nocapture
+```
+
+For the baseline comparison, add only the probe from
+`src/native_spec.rs` at `cd488ea` to a separate worktree at
+`754b1ef`. The archived commands preserve the probe order and
+fingerprints.
+
 ### Measure sustained Lineage commands
 
 Run the native load fixture with real Lineage registration, signed fee
