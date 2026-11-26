@@ -5432,3 +5432,45 @@ splits the deployment into two transactions under the same pool
 limits.
 
 [Registry updates, signed transfers, route proofs, finality and failed runs](benchmarks/2026-11-26-stem-metatype-ceiling.json.xz).
+
+## Recovering Metatype ceiling proofs from CKB
+
+Four Jolteon replicas and a real CKB devnet used
+`stem ckb-wallet recover-metatype-ceiling` to build the proof for
+each oversized return. The CLI authenticated the burn and the
+consumed Metatype output against the supplied CKB anchor. It
+verified the mailbox record and recovered the physical Script,
+actual adapter table and ceiling dependency from CKB. The returned
+proof matched the independently constructed bytes and was used to
+sign and finalize the Stem return.
+
+| Fixture | Proof size | First recovery | After restarting CKB | Stem return bytes / cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Inline | 666 B | 29.1 ms | 31.9 ms | 4,246 / 14,228,091 |
+| Shared with rotating approval and freeze | 731 B | 31.7 ms | 36.9 ms | 4,900 / 16,415,275 |
+
+The times are individual local CLI calls, including process start
+and CKB RPC. Each real CKB restart yielded identical proof bytes.
+In the shared case the first call used the frozen anchor and the
+second used the thawed anchor. The same 200-byte state and mailbox
+record survived both. The CLI recovered the 120-byte ceiling used
+by the burn. Stem used the later live ceiling of 100 bytes and
+accepted a subsequent 68-byte revision.
+
+The CLI rejected an anchor preceding the burn, a different output
+in the actual burn transaction, an unrelated Stem network, and an
+absent ceiling Script. An actual CKB reorg removed the inline
+fixture's previously trusted anchor. Recovery rejected the orphaned
+branch even though the Stem release had already finalized.
+
+Independent verification checked 19 CKB output inclusions,
+recovered route preimages and the exact object and mailbox bytes.
+WASM checked both releases, all original Type Groups, the frozen
+Inbox state and the final 68-byte revisions. Eleven further devnet
+runs covered the shared workflow recovery implementation, live
+ceiling increases, key rotation, royalties, fungible and selective
+Metatype, Intercell, CKB/xUDT, Spore, fee payouts and funded
+handoff. The Rust workspace passed 493 tests with 22 ignored.
+Go proof tests and the CometBFT comparison build check passed.
+
+[Recovery requests and results, CKB restarts and reorg, signed transactions and proof checks](benchmarks/2026-11-26-stem-metatype-ceiling-recovery.json.xz).
