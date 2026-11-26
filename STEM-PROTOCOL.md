@@ -16,6 +16,8 @@ Stem 是一条以 CKB 计价、由加权 Jolteon 最终确认的 Cell 网络。S
 
 同一 Polytype Cell 可用完整资产 Script 哈希为键分别记录多项数量。CKB Metatype 将数量放入各自的 Manifest 项，托管同时绑定完整约束和资产键集合。导出、转移、销毁和返程逐资产核对守恒与数量差额。返程可选择任意非空资产子集。零数量保留原有资产键及全部验证义务，剩余资产可用后续 Mailbox 消息返程。Cell 可在 Stem 本地组合和拆分，沿用原有资产 Script 身份。
 
+对象可附加固定 Capacity 版税 Type Script。支付 Cell 绑定完整规则和目标部署，收款 Lock 由规则分别指定。Stem 的所有权变更及托管导出和释放、CKB 的映射对象所有权变更分别检查各自链上的实际支付输出。
+
 每个网络用全新的 genesis、数据库、签名域和桥实例启动。网络身份由 canonical network spec 和一次性网络盐导出。该预部署 spec 包含 CKB genesis、初始权限与经济配置，排除依赖网络身份才能部署的 Registry Type ID、金库 Type ID、Checkpoint Type ID 及初始化签名。部署完成后，Stem genesis 再固定这些 L1 合约身份和第一份已认证的完整质押快照。CKB Checkpoint Cell 的身份与初始认证方也由 genesis 固定。链身份与创世 Header 承诺进入 Jolteon 签名域。所有交易、证明和链间认证都明确绑定该网络。
 
 | 组件 | 权责 |

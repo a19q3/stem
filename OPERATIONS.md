@@ -1469,6 +1469,17 @@ edit, rollback and stale return state. Run with and without
 `--metatype-shared-manifest` for the two storage layouts. Use a distinct
 output directory and fresh ports for each layout.
 
+Build `stem-object-royalty` and `metatype-object-royalty` with
+the same RISC-V command. Add
+`--native-object-royalty "$contract_dir/stem-object-royalty"` and
+`--metatype-object-royalty "$contract_dir/metatype-object-royalty"`
+to the Metatype custody fixture. The fixed payment is 110 CKB in
+this experiment. The fixture confirms a paid Lock change on each
+chain and verifies the three Stem payments for transfer, export and
+release. Run again with a shared Manifest or a revisable object.
+Inspect `native_object.royalty` for the payee Locks, payment
+markers, finality proofs and CKB output index.
+
 Add `--metatype-revision-topup` to test an update that exceeds the
 original Stem Cell's storage budget. The original asset holds 8 CKB.
 The signed return adds 5 CKB and keeps the exact authenticated state

@@ -393,6 +393,11 @@ Stem escrow Cell supplied by the caller. It verifies CKB transaction
 and witness proofs against parent Header hashes, follows actual
 OutPoints, and prepares the proof for that same native Type Group.
 This runs off chain using read-only CKB RPC.
+A royalty Type Script pins an object and both chains' payee Locks.
+Stem and the CKB adapter verify a fresh untyped payment output on
+Lock changes. The output marker binds the full royalty Script and
+the deployment scope. Stem applies the rule to export and release,
+and CKB applies it to transfers of the mapped object.
 The fungible custody profile reuses the same gate and escrow.
 The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and

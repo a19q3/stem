@@ -570,6 +570,7 @@ def main():
                  "metatype-bridged-object", "metatype-bridged-approval", "native-object-state-limit",
                  "metatype-object-state-limit", "metatype-rule-registry", "native-object-append-only",
                  "metatype-object-append-only", "native-object-workflow", "metatype-object-workflow",
+                 "native-object-royalty", "metatype-object-royalty",
                  "native-amount-cap",
                  "metatype-udt-adapter", "metatype-amount-cap-adapter"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
@@ -629,6 +630,9 @@ def main():
         parser.error("The workflow fixture requires both binaries and its own revisable Metatype profile")
     if args.metatype_workflow_early_return and not all(workflow):
         parser.error("An early workflow return requires both workflow binaries")
+    royalties = (args.native_object_royalty, args.metatype_object_royalty)
+    if any(royalties) and not all((*royalties, metatype_object)):
+        parser.error("The royalty fixture requires both binaries and the Metatype object route")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

@@ -39,3 +39,19 @@ pub fn contains(source: Source, index: usize, hash: &Hash32) -> Option<bool> {
         _ => None,
     }
 }
+
+pub fn output_is_untyped(index: usize) -> Option<bool> {
+    let mut size = 0u64;
+    let mut status = 0u64;
+    unsafe {
+        asm!("ecall", inout("a0") status, in("a1") &mut size, in("a2") 0u64,
+             in("a3") index as u64, in("a4") Source::Output as u64,
+             in("a5") 0u64, in("a7") 2111u64);
+    }
+    // The caller resolved this output before asking for its first Type Script.
+    match status {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}

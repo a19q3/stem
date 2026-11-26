@@ -33,6 +33,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     live_rule = args.metatype_rule_registry is not None
     append_only = args.native_object_append_only is not None
     use_workflow = args.native_object_workflow is not None
+    use_royalty = args.native_object_royalty is not None
     early_return = args.metatype_workflow_early_return
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
@@ -60,6 +61,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if use_workflow:
         workflow_adapter = args.metatype_object_workflow.read_bytes()
         codes.append(workflow_adapter)
+    if use_royalty:
+        royalty_adapter = args.metatype_object_royalty.read_bytes()
+        codes.append(royalty_adapter)
     if live_rule:
         codes.append(args.metatype_rule_registry.read_bytes())
     ckb_items = codes + ([b""] if live_rule else rule_records)
@@ -80,7 +84,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     ckb_deps = [secp, *[dependency(point(funded, i)) for i in range(len(codes))]]
     native_deps = [mint["lock_dep"], point(mint["mint_id"], 2), point(mint["mint_id"], 3)]
     authority_point = point(funded, auth_index)
-    for index in range(sum((metatype, state_limit is not None, append_only, use_workflow))):
+    for index in range(sum((metatype, state_limit is not None, append_only, use_workflow, use_royalty))):
         native_deps.append(point(mint["mint_id"], 4 + index))
     if state_limit and not live_rule:
         l1_rule_point = point(funded, len(codes))
@@ -212,6 +216,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         return attest("attest-reference", label, ["--request", request])
 
     seed_cap, auth_cap, object_cap, bond_cap = [capacity * CKB for capacity in (450, 200, 200, 120)]
+    if use_royalty:
+        auth_cap = 500 * CKB
     if topup:
         object_cap = (9 if state_limit else 8) * CKB
     return_topup = 5 * CKB if topup else 0
@@ -286,6 +292,16 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         "mime_change": object_data(stem_content + b".", 2, b"application/octet-stream"),
     } if append_only else {}
     revisions = {}
+    royalty = 110 * CKB if use_royalty else 0
+    if use_royalty:
+        royalty_code = ckb_hash(args.native_object_royalty.read_bytes())
+        payee_arg = fixture.key(fixture.l1_keys[1])["blake160"]
+        stem_payee, ckb_payee = script(native_code, payee_arg, "data"), dict(fixture.standard, args=payee_arg)
+        royalty_type = script(hex_bytes(royalty_code), hex_bytes(identity_hash
+            + script_hash(stem_payee) + script_hash(ckb_payee) + le(royalty, 8)), "data")
+        types.append(royalty_type)
+        tag = lambda scope: ckb_hash(b"Stem Metatype royalty payment\0" + scope + script_hash(royalty_type))
+        stem_tag = tag(empty)
     definition = None
     definition_dep = None
     shared_evidence = None
@@ -311,6 +327,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             adapter_entries.append(append_code + b"\0" + ckb_hash(append_adapter))
         if use_workflow:
             adapter_entries.append(workflow_code + b"\0" + ckb_hash(workflow_adapter))
+        if use_royalty:
+            adapter_entries.append(royalty_code + b"\0" + ckb_hash(royalty_adapter))
         adapter_table = bytes([len(adapter_entries)]) + b"".join(sorted(adapter_entries)) + profile + custody
         table_capacity = (len(adapter_table) + 100) * CKB
         table_outputs = [output(table_capacity, fixture.standard)]
@@ -336,6 +354,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         wrapper = script(hex_bytes(ckb_hash(codes[2])), hex_bytes(binary(genesis)
             + ckb_hash(b"Stem Metatype local fixture\0" + identity_hash) + ckb_hash(adapter_table)), "data2")
         wrapper_hash = script_hash(wrapper)
+        if use_royalty:
+            ckb_tag = tag(wrapper_hash)
         endpoint = script(hex_bytes(ckb_hash(args.stem_metatype_escrow.read_bytes())),
             hex_bytes(binary(genesis) + wrapper_hash + anchor_code + anchor_id + profile + custody), "data")
         endpoint_id = script_hash(endpoint)
@@ -460,7 +480,33 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     nonce_domain = b"Stem Metatype escrow nonce\0" if metatype else b"Stem Spore return nonce\0"
     out_nonce = int.from_bytes(ckb_hash(nonce_domain + packed(bond))[:8], "little")
     outbound = packet("export", True, script_hash(fixture.owner_lock), out_nonce)
-    route_inputs = [(bond, endpoint, None), (wrapped_input, owner, owner_key)]
+    stem_holder, stem_holder_key = owner, owner_key
+    if use_royalty:
+        source = [(wrapped_input, owner, owner_key), (native_authority, authority, authority_key)]
+
+        def royalty_move(label, payments, selected=types):
+            return native_sign(label, source, [cell(object_cap, buyer, data, selected),
+                cell(native_auth_capacity - FEE - sum(amount for amount, _, _ in payments), authority),
+                *(cell(amount, payee, marker) for amount, payee, marker in payments)])
+
+        full_payment = (royalty, stem_payee, stem_tag)
+        payment_controls = (
+            ("missing", []),
+            ("underpaid", [(royalty - 1, stem_payee, stem_tag)]),
+            ("wrong_recipient", [(royalty, owner, stem_tag)]),
+            ("wrong_scope", [(royalty, stem_payee, ckb_tag)]),
+            ("duplicate", [full_payment, full_payment]),
+        )
+        for label, payments in payment_controls:
+            rejected[f"stem_royalty_{label}"] = reject_stem(royalty_move(f"royalty-{label}", payments),
+                                                           "exited with 60")
+        rejected["stem_royalty_removed"] = reject_stem(royalty_move("royalty-removed",
+            [full_payment], [item for item in types if item != royalty_type]), "exited with 60")
+        moved = commit(royalty_move("royalty-transfer", [full_payment]))
+        wrapped_input, native_authority = at(moved, 0), at(moved, 1)
+        native_auth_capacity -= FEE + royalty
+        stem_holder, stem_holder_key = buyer, buyer_key
+    route_inputs = [(bond, endpoint, None), (wrapped_input, stem_holder, stem_holder_key)]
     route_outputs = [cell(bond_cap, endpoint), cell(object_cap, endpoint, data, types)]
     rejected["stem_export_without_approval"] = reject_stem(native_sign("no-export-approval",
         route_inputs + [(native_fee, owner, owner_key)], route_outputs + [cell(remainder - FEE, owner)],
@@ -493,8 +539,14 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             endpoint=endpoint, message=packet("export-revising", True, script_hash(fixture.owner_lock),
                                               out_nonce, content=forged)),
             "exited with 54")
-    exported = commit(native_sign("export", route_inputs + [(native_authority, authority, authority_key)],
-        route_outputs + [cell(native_auth_capacity - FEE, authority)], endpoint=endpoint, message=outbound))
+    export_inputs = route_inputs + [(native_authority, authority, authority_key)]
+    export_outputs = route_outputs + [cell(native_auth_capacity - FEE - royalty, authority)]
+    if use_royalty:
+        rejected["stem_export_missing_royalty"] = reject_stem(native_sign("no-export-royalty", export_inputs,
+            export_outputs, endpoint=endpoint, message=outbound), "exited with 60")
+        export_outputs.append(cell(royalty, stem_payee, stem_tag))
+    exported = commit(native_sign("export", export_inputs, export_outputs, endpoint=endpoint, message=outbound))
+    native_auth_capacity -= royalty
     bond, original, native_authority = [at(exported, i) for i in range(3)]
     def certified_cell(outpoint):
         point_bytes = hex_bytes(packed(outpoint))
@@ -567,16 +619,23 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     mailbox_cap = funded_mailbox_cap
 
     def transfer(label, authority_consent=True, include_policy=True, contents=data,
-                 from_key=fixture.owner, *, selected=None, deps=None, workflow_proof=b"", recipient=None):
+                 from_key=fixture.owner, *, selected=None, deps=None, workflow_proof=b"", recipient=None,
+                 payment=None):
         inputs = [wrapped_point]
-        outputs = [output(token_cap - (0 if authority_consent else FEE),
-                          recipient or fixture.friend_lock, wrapper)]
+        recipient = recipient or fixture.friend_lock
+        outputs = [output(token_cap - (0 if authority_consent else FEE), recipient, wrapper)]
         keys = [wallet_group(0, [from_key])]
         body = [hex_bytes(projected(contents, selected if include_policy else [identity]))]
         if authority_consent:
             inputs.append(authority_point)
-            outputs.append(output(authority_funds - FEE, ckb_authority))
+            if payment is None:
+                payment = [(royalty, ckb_payee, ckb_tag)] if use_royalty and recipient != (
+                    fixture.owner_lock if from_key == fixture.owner else fixture.friend_lock) else []
+            outputs.append(output(authority_funds - FEE - sum(amount for amount, _, _ in payment), ckb_authority))
             body.append("0x")
+            for amount, payee, marker in payment:
+                outputs.append(output(amount, payee))
+                body.append(hex_bytes(marker))
             keys.append(wallet_group(1, [authority_key]))
         tx = transaction(inputs, outputs, body, ckb_deps if deps is None else deps)
         if metatype:
@@ -590,6 +649,19 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     rejected["ckb_transfer_without_approval"] = reject_ckb(transfer("no-transfer-approval", False), approval_invalid)
     if metatype:
         rejected["ckb_transfer_policy_removed"] = reject_ckb(transfer("transfer-without-policy", include_policy=False), 48)
+    if use_royalty:
+        ckb_payment = (royalty, ckb_payee, ckb_tag)
+        payment_controls = (
+            ("missing", []),
+            ("underpaid", [(royalty - 1, ckb_payee, ckb_tag)]),
+            ("wrong_recipient", [(royalty, fixture.owner_lock, ckb_tag)]),
+            ("wrong_scope", [(royalty, ckb_payee, stem_tag)]),
+            ("duplicate", [ckb_payment, ckb_payment]),
+        )
+        for label, payments in payment_controls:
+            rejected[f"ckb_royalty_{label}"] = reject_ckb(transfer(f"royalty-{label}", payment=payments), 46)
+        rejected["ckb_royalty_removed"] = reject_ckb(transfer("royalty-removed",
+            selected=[item for item in types if item != royalty_type]), 48)
     return_state = data
     if revisable:
         ckb_update = workflow_states[2] if use_workflow else object_data(ckb_content, 2)
@@ -635,13 +707,13 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     else:
         transferred = ckb_submit(transfer("transfer"))
     wrapped_point, authority_point = [point(transferred["hash"], i) for i in range(2)]
-    authority_funds -= FEE
+    authority_funds -= FEE + royalty
     return_owner, return_lock = fixture.friend, fixture.friend_lock
     if use_workflow:
         ownership_only = ckb_submit(transfer("workflow-ownership-only", contents=ckb_update,
             from_key=fixture.friend, recipient=fixture.owner_lock))
         wrapped_point, authority_point = [point(ownership_only["hash"], i) for i in range(2)]
-        authority_funds -= FEE
+        authority_funds -= FEE + royalty
         return_owner, return_lock = fixture.owner, fixture.owner_lock
 
     rule_evidence = None
@@ -699,7 +771,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                                           workflow_proof=workflow_proofs[2] if use_workflow else b""))
             revisions["ckb"] = updated
             wrapped_point, authority_point = [point(updated["hash"], i) for i in range(2)]
-            authority_funds -= FEE
+            authority_funds -= FEE + (royalty if return_owner == fixture.owner else 0)
             return_owner, return_lock = fixture.friend, fixture.friend_lock
 
     inbound = packet("return", False, script_hash(buyer), 0, content=return_state)
@@ -832,7 +904,12 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             with_approval, [release[0], cell(object_cap - 1, buyer, return_state, types),
                             cell(native_auth_capacity - 2 * FEE + 1, authority)],
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
-    restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)]
+    restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup - royalty, authority)]
+    if use_royalty:
+        rejected["stem_return_missing_royalty"] = reject_stem(native_sign("no-return-royalty", with_approval,
+            restored_outputs, endpoint=endpoint, message=inbound, receive=True,
+            votes=certified, workflow_proof=return_proof), "exited with 60")
+        restored_outputs.append(cell(royalty, stem_payee, stem_tag))
     if use_workflow:
         invalid_proofs = [("omitted", b""), ("tampered", bytes([return_proof[0] ^ 1]) + return_proof[1:])]
         if not early_return:
@@ -843,6 +920,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                 votes=certified, workflow_proof=evidence), "exited with 59")
     redeemed = commit(native_sign("redeem", with_approval, restored_outputs,
         endpoint=endpoint, message=inbound, receive=True, votes=certified, workflow_proof=return_proof))
+    native_auth_capacity -= royalty
     restored = signing_cell(client, at(redeemed, 1))
     assert restored["cell"] == release[1]
     spent_escrow = certified_cell(original)
@@ -878,7 +956,15 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         return {**json.loads(bytes.fromhex(response["value"])),
                 "height": location["height"], "finality": client.finality(location["height"])["proof"]}
 
+    royalty_evidence = None
+    if use_royalty:
+        stem_payments = [certified_cell(at(tx, i)) for tx, i in ((moved, 2), (exported, 3), (redeemed, 3))]
+        royalty_evidence = {"type": royalty_type, "amount": royalty, "stem_tag": hex_bytes(stem_tag),
+                            "ckb_tag": hex_bytes(ckb_tag), "stem_payee": stem_payee, "ckb_payee": ckb_payee,
+                            "transfer": moved, "execution": execution(moved), "stem_payments": stem_payments,
+                            "ckb_payment_index": 2}
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
+            "royalty": royalty_evidence,
             "shared_manifest": shared_evidence,
             "external_rule": rule_evidence,
             "append_only": ({"type": append_script, "input": hex_bytes(data),

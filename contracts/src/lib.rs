@@ -5,6 +5,7 @@ pub mod metatype;
 pub mod metatype_custody;
 #[cfg(target_arch = "riscv64")]
 pub mod native_type;
+pub mod royalty;
 
 use ckb_std::{
     ckb_constants::Source,

@@ -9,6 +9,7 @@ use crate::HASH_SIZE;
 pub mod custody;
 pub mod fungible;
 pub mod object_policy;
+pub mod royalty;
 pub mod witness;
 pub mod workflow;
 use custody::{Boundary, Custody, Profile, manifest_id};

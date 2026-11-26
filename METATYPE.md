@@ -507,6 +507,35 @@ Data. The CLI requires retained CKB transactions and witnesses.
 Additional workflow cycles and proof bytes enter the ordinary
 Stem resource budget.
 
+### Fixed Capacity royalty
+
+An immutable or revisable object can bind an independent royalty
+Type Script. Its 104-byte args contain the full object Script hash,
+the Stem payee Lock hash, the CKB payee Lock hash and a positive
+little-endian u64 amount in shannons. The Manifest entry has empty
+state. Both implementations check the bound object's presence in
+every royalty group Cell. A deployed rule requires a same-rule
+successor and keeps its amount and payees fixed.
+
+A transition that changes the object's Lock needs one fresh, untyped
+payment Cell to the corresponding payee with at least the required
+Capacity. Its 32-byte Cell Data is the CKB hash of
+`"Stem Metatype royalty payment\0" || scope || royalty_script_hash`.
+Stem uses the zero scope. CKB uses the full physical deployment Type
+hash. Within the transaction this identifies a payment for exactly
+one royalty group in one deployment. The proof of payment is the
+actual output. The check is bounded to 128 outputs. The payment
+Cell also needs enough Capacity to satisfy the destination ledger's
+occupied Capacity rule.
+
+Issuance and same-Lock updates require no royalty. A Stem export or
+release changes the Lock, so each pays on Stem. CKB import and burn
+use the already authenticated custody boundaries. The portable
+adapter charges on CKB transfers between Locks. The amount is a
+fixed protocol parameter for the individual rule. Payment does not
+depend on a sale, an exchange rate or the identity of the person
+controlling a Lock.
+
 ### Cap-bound fungible UDT
 
 The native UDT args are the issuer Lock hash and series hash,
@@ -619,6 +648,7 @@ commitments, and the participating owners' Locks.
 | Live rule registry | An updater forks or removes the registry, reduces the limit after a transfer, or supplies an obsolete CKB observation to Stem | Enforce Type ID and a same-Lock successor with a strict increase. Resolve one current CKB dependency or one guardian-certified live reference at Stem's committed anchor. |
 | Append-only revision | An approval authorizes a rewrite, truncation, MIME change, or removal of the constraint | Bind the full identity Script, require a valid successor, and compare the exact revision relationship and decoded content prefix on both chains. |
 | Signed workflow history | A return omits a review or substitutes, reorders or replays approval from another subject or chain | Verify each role's signature over the preceding head and exact step. Bind the fully replayed head to the authenticated return state. |
+| Object royalty | A transfer omits payment, reuses a marker from another group or deployment, or replaces the rule | Require a fresh matching untyped output with sufficient Capacity and the same royalty Script on the successor. Run the original rule on Stem custody Lock changes. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
 | Asset map to custody | A transfer reassigns quantities between asset identities while preserving their combined total | Pin the complete Script set and ordered asset keys. Authenticate and compare every quantity independently at both boundaries. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |
