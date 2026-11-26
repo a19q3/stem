@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Result, ensure};
 use prost::Message;
 
@@ -19,6 +21,8 @@ pub const HEADER: u32 = 23;
 pub const HANDOFF_PROOF: u32 = 24;
 pub const QUERY: u32 = 25;
 pub const CLIENT: u32 = u32::MAX;
+pub const SUBMIT_SESSION_REQUESTS: usize = 256;
+pub const SUBMIT_IDLE: Duration = Duration::from_secs(1);
 pub const MAX_FRAME: usize = 24 * 1024 * 1024;
 
 #[derive(Clone, Message)]

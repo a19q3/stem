@@ -108,6 +108,35 @@ fn concurrent_admission_checks_each_signed_wire_identity() -> Result<()> {
         admission.checks <= 7,
         "valid duplicates should use the admitted entry"
     );
+
+    let mut clients = clients.into_iter();
+    let pooled = clients
+        .next()
+        .context("missing replica")?
+        .with_submission_reuse();
+    let next_point = OutPoint::new(signed.id(&fixture.spec.network), 0);
+    let next = fixture.signed(next_point, None, super::FUND - 2 * FEE, None)?;
+    let mut progress = SubmissionProgress::default();
+    assert!(
+        pooled
+            .submit_with_progress(&next.with_witnesses(vec![])?, &mut progress)
+            .is_err()
+    );
+    assert!(!progress.reused_connection);
+    assert!(progress.response_read_at.is_some());
+    assert_eq!(
+        pooled.submit_with_progress(&next, &mut progress)?,
+        ckb_hash::blake2b_256(next.as_slice())
+    );
+    assert!(progress.reused_connection);
+    let clients = std::iter::once(pooled).chain(clients).collect::<Vec<_>>();
+    poll("pooled submission finality", WAIT, || {
+        let values = statuses(&clients)?;
+        Ok(values
+            .iter()
+            .all(|status| status.committed_transactions == 2)
+            .then_some(()))
+    })?;
     Ok(())
 }
 

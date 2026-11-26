@@ -3,6 +3,7 @@
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -15,14 +16,26 @@ use stem_stake::Hash32;
 
 use super::wire;
 
+const IDLE_SUBMISSION_CONNECTIONS: usize = 4;
+
 pub struct Client {
     address: SocketAddr,
     timeout: Duration,
+    submissions: Option<Mutex<Vec<SubmissionSocket>>>,
+}
+
+struct SubmissionSocket {
+    socket: TcpStream,
+    sent: usize,
+    last_reply: Instant,
 }
 
 /// Local transport milestones for one submission, including failed requests.
 #[derive(Debug, Default)]
 pub struct SubmissionProgress {
+    /// Whether the request used a socket with a previous reply.
+    pub reused_connection: bool,
+    /// When a socket was ready to write, including a reused socket.
     pub connected_at: Option<Instant>,
     pub frame_written_at: Option<Instant>,
     pub response_read_at: Option<Instant>,
@@ -134,7 +147,18 @@ enum Response<T> {
 
 impl Client {
     pub fn new(address: SocketAddr, timeout: Duration) -> Self {
-        Self { address, timeout }
+        Self {
+            address,
+            timeout,
+            submissions: None,
+        }
+    }
+
+    /// Reuse up to four idle submission sockets to a current Stem replica.
+    /// Transport errors return to the caller without an automatic resubmission.
+    pub fn with_submission_reuse(mut self) -> Self {
+        self.submissions = Some(Mutex::default());
+        self
     }
 
     pub fn status(&self) -> Result<Status> {
@@ -214,34 +238,71 @@ impl Client {
         }
         .encode_to_vec();
         ensure!(frame.len() <= wire::MAX_FRAME, "oversized request");
-        let mut socket = TcpStream::connect_timeout(&self.address, self.timeout)?;
+        let pool = self.submissions.as_ref().filter(|_| kind == wire::SUBMIT);
+        let previous = pool.and_then(|pool| {
+            let mut idle = pool.lock().expect("submission pool");
+            idle.retain(|connection| connection.last_reply.elapsed() < wire::SUBMIT_IDLE / 2);
+            idle.pop()
+        });
+        let (mut socket, sent) = match previous {
+            Some(connection) => (connection.socket, connection.sent),
+            None => {
+                let socket = TcpStream::connect_timeout(&self.address, self.timeout)?;
+                socket.set_write_timeout(Some(self.timeout))?;
+                socket.set_read_timeout(Some(self.timeout))?;
+                if pool.is_some() {
+                    socket.set_nodelay(true)?;
+                }
+                (socket, 0)
+            }
+        };
         if let Some(progress) = progress.as_deref_mut() {
             progress.connected_at = Some(Instant::now());
+            progress.reused_connection = sent != 0;
         }
-        socket.set_write_timeout(Some(self.timeout))?;
-        socket.set_read_timeout(Some(self.timeout))?;
-        socket.write_all(&(frame.len() as u32).to_be_bytes())?;
-        socket.write_all(&frame)?;
-        if let Some(progress) = progress.as_deref_mut() {
-            progress.frame_written_at = Some(Instant::now());
+        let response = exchange(&mut socket, &frame, progress)?;
+        if let Some(pool) = pool
+            && sent + 1 < wire::SUBMIT_SESSION_REQUESTS
+        {
+            let mut idle = pool.lock().expect("submission pool");
+            if idle.len() < IDLE_SUBMISSION_CONNECTIONS {
+                idle.push(SubmissionSocket {
+                    socket,
+                    sent: sent + 1,
+                    last_reply: Instant::now(),
+                });
+            }
         }
-        let mut length = [0; 4];
-        socket.read_exact(&mut length)?;
-        let length = u32::from_be_bytes(length) as usize;
-        ensure!(
-            (1..=wire::MAX_FRAME).contains(&length),
-            "invalid response length"
-        );
-        let mut bytes = vec![0; length];
-        socket.read_exact(&mut bytes)?;
-        if let Some(progress) = progress {
-            progress.response_read_at = Some(Instant::now());
-        }
-        match serde_json::from_slice(&bytes).context("invalid replica response")? {
+        match response {
             Response::Failure { error } => bail!("{error}"),
             Response::Success(response) => Ok(response),
         }
     }
+}
+
+fn exchange<T: DeserializeOwned>(
+    socket: &mut TcpStream,
+    frame: &[u8],
+    mut progress: Option<&mut SubmissionProgress>,
+) -> Result<Response<T>> {
+    socket.write_all(&(frame.len() as u32).to_be_bytes())?;
+    socket.write_all(frame)?;
+    if let Some(progress) = progress.as_deref_mut() {
+        progress.frame_written_at = Some(Instant::now());
+    }
+    let mut length = [0; 4];
+    socket.read_exact(&mut length)?;
+    let length = u32::from_be_bytes(length) as usize;
+    ensure!(
+        (1..=wire::MAX_FRAME).contains(&length),
+        "invalid response length"
+    );
+    let mut bytes = vec![0; length];
+    socket.read_exact(&mut bytes)?;
+    if let Some(progress) = progress {
+        progress.response_read_at = Some(Instant::now());
+    }
+    serde_json::from_slice(&bytes).context("invalid replica response")
 }
 
 fn unhex<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Vec<u8>, D::Error> {

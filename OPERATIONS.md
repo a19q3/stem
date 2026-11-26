@@ -89,6 +89,14 @@ payments. The admission reply reports an in-memory entry. Keep the
 signed transaction until finality so the client can resubmit after
 failure or a process restart.
 
+Repeated submissions from a Rust client can use
+`Client::new(address, timeout).with_submission_reuse()`. The SDK keeps
+up to four idle sockets per client and drops them from the pool before
+reuse if the last reply is at least 500 ms old. Each socket has one
+request in flight. A transport failure is returned to the caller, who
+can check finality or submit the same signed transaction on a new
+socket. Status and proof queries continue to open their own sockets.
+
 Use synchronized realtime clocks on validators. A Jolteon vote authenticates
 an execution timestamp within 30 seconds behind or 1 second ahead of the
 local clock. The `last_untimely_view` status field shows the latest rejection.
@@ -891,6 +899,13 @@ Set `STEM_STORAGE_REPLICAS`, `STEM_STORAGE_VM_WORKERS`,
 `STEM_STORAGE_RETENTION` to make an explicit comparison.
 Use `STEM_TEST_REPLICA_BIN` to compare node releases with the same
 fixture executable and a fresh evidence directory for each run.
+To compare submission connections, set `STEM_STORAGE_REUSE_SUBMISSIONS=0`
+for fresh sockets, then set it to `1` against the same node binary.
+The report counts per-payment socket reuse and measures socket readiness
+and reply latency alongside replica admission queue and service time.
+Use `STEM_STORAGE_SENDERS=64 STEM_STORAGE_RATE=2000 STEM_STORAGE_SECONDS=20`
+for the short high-rate comparison.
+
 For the fixed Patricia editor probe, run:
 
 ```sh
@@ -898,7 +913,6 @@ STEM_PATRICIA_REPORT=/tmp/stem-patricia-editor.json \
 cargo test --locked --release --lib measure_patricia_node_storage \
   -- --ignored --nocapture
 ```
-
 
 ### Measure sustained Lineage commands
 

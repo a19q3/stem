@@ -206,12 +206,24 @@ async fn receive(
     incoming: IncomingQueues,
     traffic: Arc<Traffic>,
 ) -> Result<()> {
+    let mut submissions = 0;
     loop {
-        let raw = timeout(IO_TIMEOUT, read(&mut stream)).await??;
+        let frame_timeout = if submissions == 0 {
+            IO_TIMEOUT
+        } else {
+            wire::SUBMIT_IDLE
+        };
+        let raw = timeout(frame_timeout, read(&mut stream)).await??;
         traffic
             .received
             .fetch_add(4 + raw.len() as u64, Ordering::Relaxed);
         let frame: Frame = wire::canonical(&raw)?;
+        if submissions != 0 {
+            ensure!(
+                frame.sender == wire::CLIENT && frame.kind == wire::SUBMIT,
+                "submission connection expects SUBMIT"
+            );
+        }
         if frame.sender == wire::CLIENT {
             ensure!(
                 matches!(
@@ -225,8 +237,14 @@ async fn receive(
                 ),
                 "unsupported client request"
             );
-            let (sender, receiver) = oneshot::channel();
             let submit_received_at = (frame.kind == wire::SUBMIT).then(Instant::now);
+            if submit_received_at.is_some() {
+                if submissions == 0 {
+                    stream.set_nodelay(true)?;
+                }
+                submissions += 1;
+            }
+            let (sender, receiver) = oneshot::channel();
             incoming
                 .application
                 .send(Incoming {
@@ -237,7 +255,10 @@ async fn receive(
                 .await?;
             let response = timeout(IO_TIMEOUT, receiver).await??;
             timeout(IO_TIMEOUT, write(&mut stream, &response)).await??;
-            return Ok(());
+            if submit_received_at.is_none() || submissions == wire::SUBMIT_SESSION_REQUESTS {
+                return Ok(());
+            }
+            continue;
         }
         ensure!(
             matches!(frame.kind, wire::PROPOSAL..=wire::REPLAY),
@@ -349,6 +370,54 @@ mod tests {
             wire::VOTE
         );
         assert!(inbox.recv().await.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn submission_sessions_are_sequential_and_bounded() -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let (control, _control_queue) = mpsc::channel(1);
+        let (application, mut requests) = mpsc::channel(1);
+        let mut client = TcpStream::connect(listener.local_addr()?).await?;
+        client.set_nodelay(true)?;
+        let (server, _) = listener.accept().await?;
+        let receive = tokio::spawn(receive(
+            server,
+            IncomingQueues {
+                control,
+                application,
+            },
+            Arc::new(Traffic::default()),
+        ));
+        let replies = tokio::spawn(async move {
+            for index in 0..wire::SUBMIT_SESSION_REQUESTS {
+                let request = requests.recv().await.context("missing submission")?;
+                assert_eq!(request.frame.body, index.to_le_bytes());
+                request
+                    .reply
+                    .context("missing submission reply")?
+                    .send(index.to_be_bytes().to_vec())
+                    .expect("client is waiting for a response");
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+        timeout(IO_TIMEOUT, async {
+            for index in 0..wire::SUBMIT_SESSION_REQUESTS {
+                let frame = Frame {
+                    sender: wire::CLIENT,
+                    kind: wire::SUBMIT,
+                    body: index.to_le_bytes().to_vec(),
+                    epoch: 0,
+                };
+                write(&mut client, &frame.encode_to_vec()).await?;
+                assert_eq!(read(&mut client).await?, index.to_be_bytes());
+            }
+            assert_eq!(client.read(&mut [0]).await?, 0);
+            Ok::<_, anyhow::Error>(())
+        })
+        .await??;
+        receive.await??;
+        replies.await??;
         Ok(())
     }
 

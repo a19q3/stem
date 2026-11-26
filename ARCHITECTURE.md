@@ -171,6 +171,13 @@ application event. Both share the replica's execution loop. The
 transport still uses the canonical Frame and the replica verifies the
 same signatures and state transitions.
 
+A client connection can carry sequential `SUBMIT` requests using the
+same Frame and admission reply as a fresh connection. The replica
+replies before reading the next request and retires the connection
+after 256 submissions or one second without a complete next frame.
+Submission connections use the existing connection limit and the
+application queue. Query and peer paths use their existing streams.
+
 Admission checks individual transactions against the finalized tip.
 The receiver computes the full witnessed wire digest once and reuses
 it for deduplication and the client reply. An admitted client

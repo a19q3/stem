@@ -38,6 +38,7 @@ struct Load {
     block_cycles: u64,
     retention: u64,
     measured: bool,
+    reuse_submissions: bool,
 }
 
 impl Load {
@@ -60,6 +61,7 @@ impl Load {
             block_cycles: read("STEM_STORAGE_BLOCK_CYCLES", 2_000_000_000)?,
             retention: read("STEM_STORAGE_RETENTION", 64)?,
             measured: read("STEM_STORAGE_METRICS", 1)? != 0,
+            reuse_submissions: read("STEM_STORAGE_REUSE_SUBMISSIONS", 0)? != 0,
         };
         ensure!(
             (4..=16).contains(&load.replicas)
@@ -85,6 +87,7 @@ struct Delivery {
     queued_us: Option<u64>,
     started_us: Option<u64>,
     connected_us: Option<u64>,
+    reused_connection: bool,
     offered_us: Option<u64>,
     response_us: Option<u64>,
     acknowledged_us: Option<u64>,
@@ -109,6 +112,7 @@ impl Delivery {
         let result = client.submit_with_progress(tx, &mut progress);
         let elapsed = |at: Instant| at.duration_since(start).as_micros() as u64;
         self.connected_us = progress.connected_at.map(elapsed);
+        self.reused_connection = progress.reused_connection;
         self.offered_us = progress.frame_written_at.map(elapsed);
         self.response_us = progress.response_read_at.map(elapsed);
         match result {
@@ -231,6 +235,14 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             storage_metrics: load.measured,
         },
     )?;
+    let clients = if load.reuse_submissions {
+        clients
+            .into_iter()
+            .map(Client::with_submission_reuse)
+            .collect()
+    } else {
+        clients
+    };
     if let Some(lineage) = &lineage {
         let registration = lineage.register(&fixture, &clients)?;
         fs::write(
@@ -430,6 +442,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     };
     let final_time = seen.values().copied().max().unwrap_or(0).max(offer_us);
     let summary = json!({
+        "reused_connections": deliveries.iter().filter(|row| row.reused_connection).count(),
         "planned": work, "attempted": attempted, "offered": offered, "admitted": admitted, "visible": seen.len(),
         "client_drops": work - attempted, "transport_write_failures": attempted - offered, "visible_during_offer": in_window,
         "offered_during_window": offered_in_window, "offer_tps": offered_in_window as f64 / load.seconds as f64,
