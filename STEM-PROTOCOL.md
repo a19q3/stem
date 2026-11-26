@@ -592,7 +592,7 @@ Polytype 的边际成本采用控制实验。固定输入数量和数据、输�
 
 本节保留 CometBFT v0.38.26 和本地 CKB devnet 的对照记录。Stem 的 L1 状态认证依赖各自配置的 guardian 法定人数与受信 CKB 完整节点。详见 [操作与复现](OPERATIONS.md) 和 [测量](BENCHMARKS.md)。
 
-同一普通支付夹具使用内联 Strand 时为 312 B。三 Type Script 组合 Cell 的输出向量为 285 B，CKB 三个单独输出及 Data 向量为 590 B。标准锁的恢复调用计费 1,900,000 cycles，完整交易另计其余执行开销。早期 Molecule 编码、k256 锁与对应吞吐数据保存在[历史实验归档](FERN-BENCHMARKS.md)。[当前性能记录](BENCHMARKS.md)
+同一普通支付夹具使用内联 Strand 时为 312 B。三 Type Script 组合 Cell 的输出向量为 285 B，CKB 三个单独输出及 Data 向量为 590 B。标准锁的恢复调用计费 1,900,000 cycles，完整交易另计其余执行开销。早期 Molecule 编码、k256 锁与对应吞吐数据保存在[历史实验归档](HISTORICAL-BENCHMARKS.md)。[当前性能记录](BENCHMARKS.md)
 
 已在 CKB devnet 对照 CKB 与 xUDT 的入账和兑付，核对聚合储备、流通负债及待兑余额。Patricia 批量编辑保持状态根、证明和单次原子提交语义。Jolteon 实际网络覆盖 4 至 128 副本，并在 CKB devnet 核验跨 epoch 交接、观察节点恢复与原生检查点发布。当前默认入口为加权 Jolteon，CometBFT 保留为冻结的实验对照。默认节点已在 CKB devnet 验证无许可兑付、退休、解押和双签罚没。完整研发状态及本轮新增方向见[研发记录](STEM-EVOLUTION.md)。
 

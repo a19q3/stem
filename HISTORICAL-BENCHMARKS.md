@@ -1,6 +1,6 @@
 # Sidechain measurements, 2026-11-25
 
-The archived runs predate the standalone Fern checkout. Their original command lines, executable hashes and source commits are recorded in the raw archives. The commands below use the current Fern package and tool names.
+These measurements describe earlier ledger and node revisions. The source commits and executable fingerprints identify the tested builds. Command examples use current project and tool names. Use the recorded source revisions for the original build and invocation.
 
 Runs used a single Linux workstation with an Intel Core i9-13900H, 20 logical CPUs, 31 GiB RAM and NVMe storage. All replicas, the load driver and the observers shared this host. Every sidechain replica used native CKB signature and script checks and synchronous RocksDB commits. The evidence includes actual per-transaction RPC admission and executed-block visibility at each replica, sampled CPU, RSS, P2P counters, write bytes, allocated files and application sync totals. The verifier independently checked at least one execution receipt per run.
 
@@ -48,11 +48,11 @@ Observed process writes rose from 948 MB to 3,325 MB as the run committed more t
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --rate 176 --seconds 360 --drain 30 --idle-seconds 20 \
-  --output target/fern-runs/cache-comparison
+  --output target/stem-runs/cache-comparison
 ```
 
 ## Cached release under higher load and network faults
@@ -81,11 +81,11 @@ The indexed replica held 30,840 index records and 3.26 MB of logical index data 
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --rate 512 --seconds 60 --drain 20 --idle-seconds 10 \
-  --rpc-index-replica 0 --output target/fern-runs/rpc-index-cost
+  --rpc-index-replica 0 --output target/stem-runs/rpc-index-cost
 ```
 
 Run again with a new output directory and omit `--rpc-index-replica 0` for the baseline.
@@ -103,12 +103,12 @@ The client dropped 416 scheduled submissions in the first run and zero in the se
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --rate 512 --seconds 60 --drain 25 --idle-seconds 10 \
   --checkpoint-interval 24 --checkpoint-cell-proofs \
-  --output target/fern-runs/checkpoint-proof-cost
+  --output target/stem-runs/checkpoint-proof-cost
 ```
 
 Run with a new output directory and omit `--checkpoint-cell-proofs` to measure format 1.
@@ -128,13 +128,13 @@ In the initial runs, the format-3 observer was offered height 168 before height 
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --rate 450 --seconds 90 --drain 25 --idle-interval 2s \
   --idle-seconds 8 --admission-workers 3 --checkpoint-interval 24 \
   --checkpoint-cell-proofs --checkpoint-compact-transactions --prefund-payments \
-  --sync-observer --sync-checkpoint-height 168 --output target/fern-runs/compact-v3
+  --sync-observer --sync-checkpoint-height 168 --output target/stem-runs/compact-v3
 ```
 
 Run with a new output directory and omit `--checkpoint-compact-transactions` to measure format 2.
@@ -154,14 +154,14 @@ Replica 0 held 40,520 permanent ordinary replay records occupying 2.63 MB in for
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --rate 450 --seconds 90 --drain 25 --idle-interval 2s \
   --idle-seconds 8 --admission-workers 3 --checkpoint-interval 24 \
   --checkpoint-cell-proofs --checkpoint-compact-transactions --compact-transaction-history \
   --prefund-payments --sync-observer --sync-checkpoint-height 168 \
-  --checkpoint-live-cell-replay --output target/fern-runs/live-replay-v4
+  --checkpoint-live-cell-replay --output target/stem-runs/live-replay-v4
 ```
 
 To measure format 3, omit `--checkpoint-live-cell-replay` and use a new output directory.
@@ -183,15 +183,15 @@ A separate `null` run offered 8,000 payments in 20 seconds and killed replica 3 
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --rate 450 --seconds 90 --drain 25 --idle-interval 2s \
   --idle-seconds 8 --admission-workers 3 --checkpoint-interval 24 \
   --checkpoint-cell-proofs --checkpoint-compact-transactions --checkpoint-live-cell-replay \
   --compact-transaction-history --retain-consensus-blocks 96 --prefund-payments \
   --sync-observer --sync-checkpoint-height 168 --no-comet-tx-index \
-  --output target/fern-runs/comet-index-null
+  --output target/stem-runs/comet-index-null
 ```
 
 For the `kv` comparison, omit `--no-comet-tx-index` and use a new output directory.
@@ -213,11 +213,11 @@ The [raw network observations](benchmarks/2026-11-25-kvm-network.json.xz) includ
 
 ```sh
 python3 tools/vm_localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --rate 300 --seconds 90 --vm-cpus 3 --vm-memory-mib 2048 \
-  --p2p-delay-ms 20 --output target/fern-runs/kvm-network-delay
+  --p2p-delay-ms 20 --output target/stem-runs/kvm-network-delay
 ```
 
 For the zero-delay profile, omit `--p2p-delay-ms` and use a new output directory.
@@ -237,14 +237,14 @@ Replica 0 held 32.44 MB of logical Live Cell data and a 97.91 MB witnessed trans
 Two 52-second diagnostic runs at 1,024 scheduled TPS used the earlier `36c37b832` release. The default configuration with two workers per pool finalized 515.6 TPS across all replicas and used 371.35 CPU-seconds. Four workers per pool reached 522.4 TPS and used 475.05 CPU-seconds. Both dropped roughly 25,000 client requests before submission. A 10-second CPU capture in the two-worker run attributed 96.3% of the sampled performance-core cycles across replica 0's application and CometBFT processes to the admission threads. The [raw observations](benchmarks/2026-11-25-prefunded-512.json.xz) include the profiles, per-transaction records, funding confirmations, snapshots and proofs.
 
 ```sh
-go build -o target/fern-tools/fern-loadgen tools/loadgen/main.go
+go build -o target/stem-tools/stem-loadgen tools/loadgen/main.go
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --rate 512 --seconds 360 --drain 35 --idle-seconds 15 \
   --vm-workers 2 --admission-workers 3 --checkpoint-interval 120 \
-  --checkpoint-cell-proofs --prefund-payments --output target/fern-runs/prefund-512
+  --checkpoint-cell-proofs --prefund-payments --output target/stem-runs/prefund-512
 ```
 
 ## Assembly VM allocation reuse
@@ -271,14 +271,14 @@ On the same release, four validators executed all 1,536 signed transactions in a
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --base-port 29420 --rate 850 --seconds 75 --drain 25 --idle-seconds 6 --idle-interval 2s \
   --vm-workers 2 --admission-workers 3 --checkpoint-interval 24 \
   --checkpoint-cell-proofs --checkpoint-compact-transactions --checkpoint-live-cell-replay \
   --compact-transaction-history --no-comet-tx-index --retain-consensus-blocks 96 \
-  --prefund-payments --output target/fern-runs/vm-reuse-saturation
+  --prefund-payments --output target/stem-runs/vm-reuse-saturation
 ```
 
 Replace the rate, duration and drain with `--rate 575 --seconds 180 --drain 30` for the fixed-rate test. Use a new output directory for each run. Rebuild from `142ae0d701429ab26b2f12cb346c85bc98f0b290` in a separate checkout for the fresh-core control. To sample replica 0, run `perf record -e cycles:u -F 99 -p "$APP_PID,$COMET_PID" -- sleep 18` during the load window. The evidence includes original admissions, resource samples, profiles, binary hashes, commit IDs, verified receipts and their public committee configurations. Each payment's inclusion record stores the common height, CKB transaction hash and cycles, with one observation time per replica in replica order. [Raw observations](benchmarks/2026-11-25-vm-reuse.json.xz)
@@ -321,14 +321,14 @@ The release confirmed all 9,600 payments in the 320 TPS run with 20 ms one-way l
 
 ```sh
 python3 tools/localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --replicas 4 --base-port 29320 --rate 950 --seconds 60 --drain 24 \
   --idle-seconds 5 --idle-interval 2s --client-workers 64 --rpc-batch 1 --admission-workers 3 \
   --checkpoint-interval 24 --checkpoint-cell-proofs --checkpoint-compact-transactions \
   --checkpoint-live-cell-replay --compact-transaction-history --no-comet-tx-index \
-  --retain-consensus-blocks 96 --prefund-payments --output target/fern-runs/abci-flush
+  --retain-consensus-blocks 96 --prefund-payments --output target/stem-runs/abci-flush
 ```
 
 Run the commands sequentially and use a fresh output directory for each network. Use `--rate 650 --seconds 120` or `--rate 625 --seconds 120` for the fixed-rate runs. For the recovery run use `--rate 320 --seconds 30 --p2p-delay-ms 20 --outage-at 9 --outage-seconds 4`. The archive records source and binary hashes, admission replies, per-replica visibility times, commit timing, resource samples and the independently verified execution receipts. [Raw observations](benchmarks/2026-11-25-abci-flush.json.xz)
@@ -419,7 +419,7 @@ Every offered transaction reached all replicas and the verifier independently ch
 
 The `prod` binary also finalized all 1,536 transactions in the mixed native CKB and xUDT workload. The native bridge scenario used the frozen CKB L1 executable and deployed the RISC-V vault and deposit contracts on a local dev chain. It completed deposit, attested mint, transfer, burn and L1 payout, then moved the vault to a disjoint signing group and completed another deposit and withdrawal. The archive includes the two offline-verified withdrawal proofs and the bridge's observed L1 transactions and rejection results.
 
-Build with `cargo build --locked --release -p fern` and `cargo build --locked --profile prod -p fern`. For each binary, use the ABCI Flush benchmark command above with `--rate 950 --seconds 55 --admission-workers 2 --abci-response-queue 128` and a fresh output directory. The archive includes the build and run commands, binary and library hashes, per-payment observations, hardware counter samples, resource and storage records, and independently verified execution proofs. [Raw build profile observations](benchmarks/2026-11-25-build-profiles.json.xz)
+Build with `cargo build --locked --release -p stem` and `cargo build --locked --profile prod -p stem`. For each binary, use the ABCI Flush benchmark command above with `--rate 950 --seconds 55 --admission-workers 2 --abci-response-queue 128` and a fresh output directory. The archive includes the build and run commands, binary and library hashes, per-payment observations, hardware counter samples, resource and storage records, and independently verified execution proofs. [Raw build profile observations](benchmarks/2026-11-25-build-profiles.json.xz)
 
 ## Bounded proposal verification
 
@@ -469,13 +469,13 @@ The last queue samples recorded 0, 644 and 1,757 dropped packets across the four
 
 ```sh
 python3 tools/vm_localnet.py \
-  --binary target/release/fern --comet target/fern-tools/cometbft \
-  --loadgen target/fern-tools/fern-loadgen \
-  --proof-verifier target/fern-tools/fern-proof \
+  --binary target/release/stem --comet target/stem-tools/cometbft \
+  --loadgen target/stem-tools/stem-loadgen \
+  --proof-verifier target/stem-tools/stem-proof \
   --rate 420 --seconds 65 --vm-cpus 3 --vm-memory-mib 2048 \
   --abci-response-queue 32 --p2p-delay-ms 20 --p2p-netem-seed 4242 \
   --p2p-loss-percent 1 --p2p-duplicate-percent 1 --p2p-reorder-percent 10 \
-  --proposal-timeout-ms 12000 --output target/fern-runs/netem-mixed-wide-timeout
+  --proposal-timeout-ms 12000 --output target/stem-runs/netem-mixed-wide-timeout
 ```
 
 Use a fresh output directory for each run. To run the one-second profile, omit `--proposal-timeout-ms`. For the lower-load run set `--rate 160 --seconds 45`. For the delay control also omit the loss, duplicate and reorder options.
@@ -486,8 +486,8 @@ The original CKB release executable came from a clean checkout of `119598b0a1146
 
 ```sh
 python3 tools/l1_baseline.py \
-  --binary target/release/fern --l1 /path/to/frozen/ckb \
-  --output target/fern-runs/l1-baseline --rate 256 --seconds 18
+  --binary target/release/stem --l1 /path/to/frozen/ckb \
+  --output target/stem-runs/l1-baseline --rate 256 --seconds 18
 ```
 
 ## Raw evidence
@@ -496,12 +496,12 @@ The [compressed observations](benchmarks/2026-11-25.json.xz) include transaction
 
 ## Native encoding and VM fixtures
 
-| Molecule fixture | CKB bytes | Fern bytes | Change |
+| Molecule fixture | CKB bytes | Stem bytes | Change |
 | --- | ---: | ---: | ---: |
 | Payment with one input, two outputs, one Cell Dep and one 65-byte signature | 460 | 467 | +1.5% |
 | Output vectors with a 20-byte Lock and three 32-byte Type Script arguments, empty Cell Data | 590 | 384 | −34.9% |
 
-The output comparison serializes three separate CKB outputs and one combined Fern output. The CKB count includes both output vectors. The calculation excludes application-specific binding data and compares only the output fields. The payment measurements serialize complete transactions. Reproduce with `cargo test --locked -p fern-ledger measure_canonical_payment_and_combined_output_bytes -- --nocapture`.
+The output comparison serializes three separate CKB outputs and one combined Stem output. The CKB count includes both output vectors. The calculation excludes application-specific binding data and compares only the output fields. The payment measurements serialize complete transactions. Reproduce with `cargo test --locked -p stem-ledger measure_canonical_payment_and_combined_output_bytes -- --nocapture`.
 
 The current fixtures use CKB-VM assembly and reuse, independently compiled RISC-V Type Scripts, and the native secp256k1 recovery Lock Script. Charged cycles from the preceding native host with the CKB fixture lock are retained for context.
 
@@ -511,19 +511,19 @@ The current fixtures use CKB-VM assembly and reuse, independently compiled RISC-
 | Identity and lifecycle update | 2 | 5,760,590 | 1,931,200 |
 | Two-asset settlement with collateral and transfer policy | 5 | 5,835,417 | 2,020,121 |
 
-Run `cargo test --locked -p fern-vm --test native -- --nocapture`. Serial and four-worker validation charge identical cycles for the settlement fixture. The tests exercise cache-hit cycle accounting, Spawn, Exec and native Witness parsing. The lock change and the different signatures across fixtures are part of the current cycle measurements.
+Run `cargo test --locked -p stem-vm --test native -- --nocapture`. Serial and four-worker validation charge identical cycles for the settlement fixture. The tests exercise cache-hit cycle accounting, Spawn, Exec and native Witness parsing. The lock change and the different signatures across fixtures are part of the current cycle measurements.
 
 The native four-node test committed a signed payment at height 2 and a two-Type-Script transfer at height 3, after rejecting an attempted removal of its input Transfer Policy. The composed transfer charged 5,783,509 VM cycles. The test verified the signed AppHash at height 4 on all replicas and compared the restarted replica's Header at height 6. This is a correctness run. A fifth node restored a native state snapshot and caught up to height 9 using CometBFT state sync. [Reproduce the four-node test](OPERATIONS.md#exercise-the-native-cometbft-path)
 
 ## Four-node original-ledger control
 
-A debug build with the bridge recipient fix ran four local CometBFT 0.38.26 replicas and two VM workers per replica. The load offered 64 signed CKB payments per second for 12 seconds, including a restart of one replica. The runner scheduled, offered, admitted, and observed all 768 transactions on every replica. Its sampled admission rate was 63.33 TPS, confirmed rate 56.00 TPS, and client drops zero. Full-replica visibility was p50 2,861 ms, p95 6,473 ms, p99 6,973 ms. The sampled CPU total was 17.67 seconds, process writes were 117,301,248 bytes, and peak combined Fern/CometBFT RSS per replica ranged from 140.5 MB to 146.1 MB. Aggregate sampled P2P counters increased by about 4.67 MB received and 4.73 MB sent, counting sampled increments across the process restart.
+A debug build with the bridge recipient fix ran four local CometBFT 0.38.26 replicas and two VM workers per replica. The load offered 64 signed CKB payments per second for 12 seconds, including a restart of one replica. The runner scheduled, offered, admitted, and observed all 768 transactions on every replica. Its sampled admission rate was 63.33 TPS, confirmed rate 56.00 TPS, and client drops zero. Full-replica visibility was p50 2,861 ms, p95 6,473 ms, p99 6,973 ms. The sampled CPU total was 17.67 seconds, process writes were 117,301,248 bytes, and peak combined Stem/CometBFT RSS per replica ranged from 140.5 MB to 146.1 MB. Aggregate sampled P2P counters increased by about 4.67 MB received and 4.73 MB sent, counting sampled increments across the process restart.
 
 The snapshot observer restored checkpoint 16 and caught up through application height 18 in 10.02 seconds. The single-worker observer replayed from genesis through height 19 in 7.49 seconds. The runner verified the exported execution proof. These original-ledger measurements use the code preceding the native execution cutover. The transaction format, Lock implementation, build profile, restart schedule and cycle budget differ from the native measurements.
 
 ## Native four-node release baseline
 
-Four local CometBFT v0.38.26 replicas used Fern release builds with CKB-VM assembly and VM allocation reuse, native RISC-V secp256k1 signatures, separate admission workers, and synchronous RocksDB commits. The host had a Core i9-13900H and 20 logical CPUs. Results report the minimum confirmed receipt count across all four replicas. Each latency starts when the client sends a transaction and ends when all four replicas report its successful receipt. CPU, sampled RSS, process write bytes and CometBFT P2P counters aggregate across the four replicas. All sizes below use decimal MB.
+Four local CometBFT v0.38.26 replicas used Stem release builds with CKB-VM assembly and VM allocation reuse, native RISC-V secp256k1 signatures, separate admission workers, and synchronous RocksDB commits. The host had a Core i9-13900H and 20 logical CPUs. Results report the minimum confirmed receipt count across all four replicas. Each latency starts when the client sends a transaction and ends when all four replicas report its successful receipt. CPU, sampled RSS, process write bytes and CometBFT P2P counters aggregate across the four replicas. All sizes below use decimal MB.
 
 Each workload offered 512 transactions at 64 TPS and all 512 passed admission. The different business fixtures use different Cells, dependencies and scripts.
 
@@ -560,20 +560,20 @@ Both columns are actual complete Molecule transactions. They contain the same in
 | Ten UDT outputs, distinct Locks | 2,421 | 1,708 | −29.5% |
 | Ten UDT outputs, same Lock | 2,421 | 1,015 | −58.1% |
 
-The test decodes the candidate and reconstructs the output Scripts, Capacity and Cell Data. These fixtures place the dictionary in the raw transaction and preserve the byte count of the seal. The candidate is a test schema. Fern continues to accept the existing canonical transaction encoding. Run `cargo test --locked -p fern-ledger measure_transaction_script_dictionary -- --nocapture`. [Historical CKB Script Table proposal](https://talk.nervos.org/t/cell-model-changes-preview-in-v0-19-0/3349)
+The test decodes the candidate and reconstructs the output Scripts, Capacity and Cell Data. These fixtures place the dictionary in the raw transaction and preserve the byte count of the seal. The candidate is a test schema. Stem continues to accept the existing canonical transaction encoding. Run `cargo test --locked -p stem-ledger measure_transaction_script_dictionary -- --nocapture`. [Historical CKB Script Table proposal](https://talk.nervos.org/t/cell-model-changes-preview-in-v0-19-0/3349)
 
-## Fern VM worker comparison
+## Stem VM worker comparison
 
-After extracting the Fern VM crate, two fresh four-node release runs offered the same mix of 512 cross-asset settlement transactions at 64 TPS. Each transaction had five Type Groups and one native secp256k1 Lock Group. The runs used the identical release executables and cycle limits. Each network generated its own genesis and signatures.
+After extracting the Stem VM crate, two fresh four-node release runs offered the same mix of 512 cross-asset settlement transactions at 64 TPS. Each transaction had five Type Groups and one native secp256k1 Lock Group. The runs used the identical release executables and cycle limits. Each network generated its own genesis and signatures.
 
 | VM workers per replica | Admitted / confirmed | Confirmed TPS | p50/p95/p99 (s) | CPU (s) | RSS (MB) | Writes (MB) | P2P rx/tx (MB) |
 | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |
 | 1 | 512 / 512 | 34.21 | 4.12/7.11/7.48 | 29.86 | 381.4 | 73.28 | 10.59/10.59 |
 | 4 | 512 / 512 | 33.90 | 4.26/7.24/7.49 | 34.89 | 431.9 | 75.12 | 10.78/10.78 |
 
-Both runs recorded zero client drops. The four-worker run used more CPU time and memory with similar confirmation throughput under this block budget. The test supports `FERN_TEST_VM_WORKERS` to repeat both profiles. The full signed RISC-V VM fixtures still charge 5,769,207, 5,760,590 and 5,835,417 cycles respectively on the vendored backend. The upstream suite passed 164 tests.
+Both runs recorded zero client drops. The four-worker run used more CPU time and memory with similar confirmation throughput under this block budget. The test supports `STEM_TEST_VM_WORKERS` to repeat both profiles. The full signed RISC-V VM fixtures still charge 5,769,207, 5,760,590 and 5,835,417 cycles respectively on the vendored backend. The upstream suite passed 164 tests.
 
-The [worker measurements and CKB checkpoint evidence](benchmarks/2026-11-25-fern-vm-and-checkpoint.json.xz) include per-transaction data, the binary fingerprints, both CKB checkpoint inclusion proofs, signed CometBFT successors, a historical Header proof, and a CKB devnet reorganization that stopped Stake Snapshot signing.
+The [worker measurements and CKB checkpoint evidence](benchmarks/2026-11-25-vm-and-checkpoint.json.xz) include per-transaction data, the binary fingerprints, both CKB checkpoint inclusion proofs, signed CometBFT successors, a historical Header proof, and a CKB devnet reorganization that stopped Stake Snapshot signing.
 
 The final [stake lifecycle bundle](benchmarks/2026-11-25-stake-lifecycle.json.xz) includes the confirmed guardian rotation and later snapshot from the new authority, two signed validator handoffs, the authenticated retirement marker and the CKB withdrawal proof. The final release withdrew 250 CKB after the configured delay. The separate CKB run froze and forfeited 250 CKB, closed two Registry entries, rejected re-registration and stopped issuing attestations after a real devnet reorganization.
 
@@ -588,11 +588,11 @@ Each case uses one input, one output, the same 25-unit Cell Data, full Cell Dep 
 | 2 | 857 | 5,786,722 |
 | 3 | 919 | 5,796,264 |
 
-The three groups change the total charge by 38,270 cycles or 0.66% in this fixture. The transactions have different signatures and wire sizes. The absolute charge includes the native Lock. Run `cargo test --locked --release -p fern-vm --test native measure_type_groups_with_matched_payment_fixture -- --nocapture`.
+The three groups change the total charge by 38,270 cycles or 0.66% in this fixture. The transactions have different signatures and wire sizes. The absolute charge includes the native Lock. Run `cargo test --locked --release -p stem-vm --test native measure_type_groups_with_matched_payment_fixture -- --nocapture`.
 
 ## CKB-funded payments during validator updates
 
-A two-replica stake-backed CometBFT run used a three-second commit wait. A confirmed CKB deposit funded the native payment inputs. The generator offered and admitted 384 real signed payments at 8.00 TPS. Both replicas confirmed all 384 at 7.48 TPS. Full-replica p50/p95/p99 visibility was 1.98/3.56/3.83 s, with zero client drops. Fern and CometBFT used 13.74 aggregate CPU seconds, 187.8 MB peak sampled RSS, 29.63 MB of process writes, and 0.338 MB received and sent on P2P connections.
+A two-replica stake-backed CometBFT run used a three-second commit wait. A confirmed CKB deposit funded the native payment inputs. The generator offered and admitted 384 real signed payments at 8.00 TPS. Both replicas confirmed all 384 at 7.48 TPS. Full-replica p50/p95/p99 visibility was 1.98/3.56/3.83 s, with zero client drops. Stem and CometBFT used 13.74 aggregate CPU seconds, 187.8 MB peak sampled RSS, 29.63 MB of process writes, and 0.338 MB received and sent on P2P connections.
 
 ABCI returned validator updates at heights 9 and 19 during the measured window. Their voting effects started at heights 11 and 21. The same run subsequently increased an active validator's verified power from 400 to 450 at height 31, and authenticated another 250 CKB withdrawal. This measures progress under modest load during committee changes. The four-replica capacity runs use separate settings.
 
@@ -615,4 +615,4 @@ The 32-replica run timed out awaiting two HTTP responses covering 16 payments. A
 
 Four same-host release replicas admitted all 4,320 signed payments at 24.00 TPS and confirmed all 4,320 at 23.88 TPS over the full observation window. Full-replica p50/p95/p99 was 1.23/1.81/1.91 s, with zero client drops. The processes used 245.41 aggregate CPU seconds, 548.5 MB peak sampled RSS, 786.19 MB of process writes, and approximately 31.19 MB in both directions of aggregate CometBFT P2P traffic. The replicas drained the offered workload during the run. The higher-rate sweep identifies backlog on this host.
 
-The [scale and steady-load evidence](benchmarks/2026-11-25-native-scale-and-steady.json.xz) preserves all five reports and per-payment RPC and replica observations. The three-minute run uses `FERN_TEST_LOAD_COUNT=4320 FERN_TEST_LOAD_RATE=24` with the four-replica test. Production hardware and WAN traffic remain separate measurements.
+The [scale and steady-load evidence](benchmarks/2026-11-25-native-scale-and-steady.json.xz) preserves all five reports and per-payment RPC and replica observations. The three-minute run uses `STEM_TEST_LOAD_COUNT=4320 STEM_TEST_LOAD_RATE=24` with the four-replica test. Production hardware and WAN traffic remain separate measurements.

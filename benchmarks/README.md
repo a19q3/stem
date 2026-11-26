@@ -5,10 +5,10 @@ The report names the baseline, tested revision, workload, hardware and
 toolchains, commands, comparison conditions, results and run-specific limits.
 Keep negative results and superseded approaches alongside successful runs.
 Add new dated records for reruns so that original measurements remain
-available. Published network evidence contains public genesis and proof data.
+available. Published network evidence contains public genesis and proof data. Historical path and project labels use the current naming. The recorded revisions identify the original build and signing context.
 
 - [Current Stem measurements](../BENCHMARKS.md)
-- [Earlier Fern measurements](../FERN-BENCHMARKS.md)
+- [Historical measurements](../HISTORICAL-BENCHMARKS.md)
 - [Research scope and current verification status](../STEM-EVOLUTION.md)
 
 | Recent round | Report and evidence |
