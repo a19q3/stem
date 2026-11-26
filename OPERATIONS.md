@@ -1003,6 +1003,20 @@ cargo test --locked --release --bin stem measure_funded_stake_preparation \
 For its baseline, use the probe source in `src/native_spec.rs`
 at `183c7dd` against the runtime from `88fac89`.
 
+Build the release library test executable from each revision to
+count outgoing TCP calls for the native frame comparison. Copy
+both executables before rebuilding the same target directory.
+
+```sh
+strace -f -c -e trace=sendto,sendmsg,writev /path/to/stem-library-tests \
+  jolteon::transport::tests::submission_sessions_are_sequential_and_bounded --exact
+```
+
+For the network comparison, pair the Rust load test executable
+that links each client revision with a fixed node binary using
+`STEM_TEST_REPLICA_BIN`. Match the connection reuse setting,
+signed workload and database instrumentation across revisions.
+
 ### Measure sustained Lineage commands
 
 Run the native load fixture with real Lineage registration, signed fee

@@ -4631,3 +4631,61 @@ Cell references and the revisable Metatype custody round trip.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw preparations, signed workloads, state images and CKB proofs](benchmarks/2026-11-26-stem-stake-view-cache.json.xz).
+
+## Jolteon frame writes
+
+Revision `2604334` submits a frame's fixed four-byte length and
+body together. The asynchronous replica writes use two I/O
+slices and handle partial writes through Tokio. The blocking
+Rust client encodes into a length-prefixed request buffer.
+Revision `e3bb2aa` writes the same two parts separately.
+
+A loopback test used the asynchronous writer at both ends of
+one session and exchanged 256 sequential requests and replies.
+Tracing `sendto`, `sendmsg` and `writev` counted 1,024
+`sendto` calls on the baseline and 512 `writev` calls on the
+candidate, with zero errors. A separate TCP test sends a 4 MiB
+frame and then verifies that the next frame still decodes.
+
+The four-replica tests use the same signed payments, genesis,
+250 ms proposal interval, two VM workers per replica, two-billion
+cycle block budget and 64 submitters. The 1,000 TPS runs use fresh
+sockets for 20 seconds. The 2,000 TPS runs use connection reuse
+for 22 seconds. The high profile isolates the node by also running
+the new replica binary with the old Rust client fixture. The raw
+report includes per-run host and pressure samples.
+
+| Profile | Written / admitted / common-visible TPS in offer | Finalized TPS with drain | Confirmed / client drops | Visibility p50 / p95 / p99 | Replica CPU / peak RSS | Process writes / peer sends |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 baseline | 998.00 / 997.25 / 949.25 | 934.79 | 19,960 / 40 | 0.725 / 1.100 / 1.247 s | 36.34 s / 513.7 MiB | 363.19 / 24.99 MB |
+| 1,000 node + client | 987.70 / 987.70 / 960.70 | 964.44 | 19,754 / 246 | 0.702 / 1.026 / 1.208 s | 32.03 s / 506.5 MiB | 430.73 / 26.39 MB |
+| 2,000 baseline | 1,778.23 / 1,777.95 / 1,682.45 | 1,732.94 | 39,121 / 4,879 | 0.904 / 1.170 / 1.227 s | 54.10 s / 735.9 MiB | 632.16 / 70.80 MB |
+| 2,000 node only | 1,746.41 / 1,744.86 / 1,651.73 | 1,700.37 | 38,421 / 5,579 | 0.928 / 1.264 / 1.437 s | 56.73 s / 737.2 MiB | 609.23 / 66.76 MB |
+| 2,000 node + client | 1,794.82 / 1,793.86 / 1,703.55 | 1,750.10 | 39,486 / 4,514 | 0.898 / 1.177 / 1.327 s | 54.93 s / 743.8 MiB | 682.96 / 69.12 MB |
+| 2,000 baseline, repeat | 1,657.73 / 1,657.68 / 1,588.36 | 1,614.95 | 36,470 / 7,530 | 1.042 / 1.369 / 1.441 s | 66.00 s / 746.0 MiB | 490.59 / 67.78 MB |
+| 2,000 node + client, repeat | 1,384.82 / 1,381.91 / 1,333.05 | 1,311.53 | 30,466 / 13,534 | 1.146 / 2.313 / 2.815 s | 65.57 s / 745.2 MiB | 437.91 / 56.26 MB |
+
+The combined change increased offer-window common visibility by 1.3%
+in the first 2,000 TPS pair and decreased it by 16.1% in the reverse-order
+pair. Visibility p99 increased in both pairs. The repeat reached a
+lower actual offer rate in both versions and overlapped another Rust
+build on the host. These runs leave the end-to-end performance
+effect unresolved.
+
+The release workspace passed 481 tests with 22 ignored. Go proof
+tests and the frozen CometBFT feature check passed. The mixed-version
+four-replica network finalized 96 signed payments and recovered its
+offline replica. Separate CKB devnets verified Cell references and
+the revisable Metatype custody round trip.
+
+The first 128-member handoff run stopped when the host filesystem
+filled during RocksDB writes. After free space recovered, a fresh run
+on different ports completed with 129 Stem processes and confirmed
+the handoff on CKB at Stem height 40. The replica that restarted caught
+up to the agreed Header at height 44. Both the four-member and
+128-member handoffs delivered historical Intercell messages on CKB.
+The archive retains the first failed build, the disk-full run and the
+successful retry.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw traces, signed workloads, logs and CKB proofs](benchmarks/2026-11-26-stem-framed-writes.json.xz).
