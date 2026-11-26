@@ -1,0 +1,745 @@
+{
+  "fresh64": {
+    "workload": "5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939",
+    "genesis": {
+      "genesis_id": "8cf8287e9456f1e6adc8fbf1e7957ee204ddbbc6babe7abfccc8ba5145133b3d",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "window_tps": 1890.0722222222223,
+    "rolling60_tps": [
+      1809.0666666666666,
+      2048.0
+    ],
+    "minutes": [
+      {
+        "written": 168073,
+        "acknowledged": 168056,
+        "common": 108789,
+        "refused": 0,
+        "backlog_at_end": 59267
+      },
+      {
+        "written": 191572,
+        "acknowledged": 139949,
+        "common": 112640,
+        "refused": 51576,
+        "backlog_at_end": 86576
+      },
+      {
+        "written": 211857,
+        "acknowledged": 120695,
+        "common": 118784,
+        "refused": 91178,
+        "backlog_at_end": 88487
+      }
+    ],
+    "first_full_reply_us": 87072770,
+    "window_written": 571502,
+    "window_acknowledged": 428700,
+    "window_common": 340213,
+    "window_backlog": 88487,
+    "end_common": 418037,
+    "end_acknowledged": 428716,
+    "end_backlog": 10679,
+    "peak_backlog": 88930,
+    "write_to_common_p99_us": 195881324,
+    "fresh_connections": 571502,
+    "reused_requests": 0,
+    "client_errors": {
+      "dispatch queue full": 148498,
+      "mempool capacity exceeded": 142786
+    },
+    "full_mempool_pauses": 0,
+    "sender_pause_seconds": 0.0,
+    "mean_connect_us": 22.041747885396727,
+    "mean_write_to_reply_us": 12762.174214613422,
+    "server_queue_seconds": 7192.083374,
+    "queue_fraction_of_reply_wait": 0.9860803167958755,
+    "server_service_seconds": 84.766639,
+    "verified_admissions": 1158536,
+    "admission_verification_seconds": 207.574068,
+    "per_node_execution_seconds": {
+      "candidate_verify": 71.843798,
+      "commit": 9.2535335,
+      "proposal": 22.51841
+    },
+    "cpu_offer_seconds": {
+      "node-0": [
+        163.71,
+        163.94
+      ],
+      "node-1": [
+        164.44,
+        164.78
+      ],
+      "node-2": [
+        165.0,
+        165.4
+      ],
+      "node-3": [
+        165.82,
+        166.15
+      ],
+      "driver": [
+        19.59,
+        19.63
+      ],
+      "validators": [
+        658.97,
+        660.27
+      ]
+    },
+    "cpu_offer_and_drain_seconds": {
+      "node-0": [
+        190.9,
+        191.07
+      ],
+      "node-1": [
+        192.38,
+        192.69
+      ],
+      "node-2": [
+        193.38,
+        193.55
+      ],
+      "node-3": [
+        193.44,
+        193.63
+      ],
+      "driver": [
+        19.72,
+        19.73
+      ],
+      "validators": [
+        770.1,
+        770.94
+      ]
+    },
+    "device_write_bytes": [
+      13812256768,
+      13875445760
+    ],
+    "sst_creation": {
+      "offer": {
+        "flush": {
+          "bytes": 2860535632,
+          "files": 76
+        },
+        "compaction": {
+          "bytes": 3760395559,
+          "files": 63
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      },
+      "drain": {
+        "flush": {
+          "bytes": 614809626,
+          "files": 16
+        },
+        "compaction": {
+          "bytes": 1371558614,
+          "files": 27
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      }
+    },
+    "rocksdb_delta": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1247259943,
+        "wal_syncs": 635
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1247259943,
+        "wal_syncs": 635
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1247259943,
+        "wal_syncs": 635
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1247216566,
+        "wal_syncs": 635
+      }
+    ]
+  },
+  "reuse64": {
+    "workload": "5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939",
+    "genesis": {
+      "genesis_id": "8cf8287e9456f1e6adc8fbf1e7957ee204ddbbc6babe7abfccc8ba5145133b3d",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "window_tps": 1987.3222222222223,
+    "rolling60_tps": [
+      1843.2,
+      2116.266666666667
+    ],
+    "minutes": [
+      {
+        "written": 165714,
+        "acknowledged": 165684,
+        "common": 118102,
+        "refused": 0,
+        "backlog_at_end": 47582
+      },
+      {
+        "written": 179332,
+        "acknowledged": 153791,
+        "common": 116736,
+        "refused": 25507,
+        "backlog_at_end": 84637
+      },
+      {
+        "written": 205281,
+        "acknowledged": 124181,
+        "common": 122880,
+        "refused": 81116,
+        "backlog_at_end": 85938
+      }
+    ],
+    "first_full_reply_us": 97695080,
+    "window_written": 550327,
+    "window_acknowledged": 443656,
+    "window_common": 357718,
+    "window_backlog": 85938,
+    "end_common": 439638,
+    "end_acknowledged": 443688,
+    "end_backlog": 4050,
+    "peak_backlog": 87181,
+    "write_to_common_p99_us": 189720594,
+    "fresh_connections": 21686,
+    "reused_requests": 528641,
+    "client_errors": {
+      "dispatch queue full": 169545,
+      "queue deadline": 128,
+      "mempool capacity exceeded": 106639
+    },
+    "full_mempool_pauses": 0,
+    "sender_pause_seconds": 0.0,
+    "mean_connect_us": 1.7919218937104666,
+    "mean_write_to_reply_us": 13439.947870993064,
+    "server_queue_seconds": 7296.551148,
+    "queue_fraction_of_reply_wait": 0.9865048536796404,
+    "server_service_seconds": 86.425125,
+    "verified_admissions": 1222892,
+    "admission_verification_seconds": 215.581151,
+    "per_node_execution_seconds": {
+      "candidate_verify": 73.56520425,
+      "commit": 8.74224375,
+      "proposal": 22.89528775
+    },
+    "cpu_offer_seconds": {
+      "node-0": [
+        164.03,
+        164.72
+      ],
+      "node-1": [
+        165.9,
+        166.56
+      ],
+      "node-2": [
+        165.96,
+        166.37
+      ],
+      "node-3": [
+        168.44,
+        169.09
+      ],
+      "driver": [
+        9.84,
+        9.87
+      ],
+      "validators": [
+        664.33,
+        666.74
+      ]
+    },
+    "cpu_offer_and_drain_seconds": {
+      "node-0": [
+        192.6,
+        193.17
+      ],
+      "node-1": [
+        194.52,
+        195.31
+      ],
+      "node-2": [
+        193.92,
+        194.45
+      ],
+      "node-3": [
+        197.52,
+        198.07
+      ],
+      "driver": [
+        9.94,
+        9.96
+      ],
+      "validators": [
+        778.56,
+        781.0
+      ]
+    },
+    "device_write_bytes": [
+      14535876608,
+      15029575680
+    ],
+    "sst_creation": {
+      "offer": {
+        "flush": {
+          "bytes": 2862069932,
+          "files": 76
+        },
+        "compaction": {
+          "bytes": 4845044608,
+          "files": 78
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      },
+      "drain": {
+        "flush": {
+          "bytes": 767596864,
+          "files": 20
+        },
+        "compaction": {
+          "bytes": 896873194,
+          "files": 17
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      }
+    },
+    "rocksdb_delta": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1311225282,
+        "wal_syncs": 663
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1311225282,
+        "wal_syncs": 663
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1311225282,
+        "wal_syncs": 663
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1311178651,
+        "wal_syncs": 663
+      }
+    ]
+  },
+  "reuse128": {
+    "workload": "5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939",
+    "genesis": {
+      "genesis_id": "8cf8287e9456f1e6adc8fbf1e7957ee204ddbbc6babe7abfccc8ba5145133b3d",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "window_tps": 1882.1944444444443,
+    "rolling60_tps": [
+      1809.0666666666666,
+      2013.8666666666666
+    ],
+    "minutes": [
+      {
+        "written": 188292,
+        "acknowledged": 188164,
+        "common": 113515,
+        "refused": 0,
+        "backlog_at_end": 74649
+      },
+      {
+        "written": 222594,
+        "acknowledged": 134933,
+        "common": 114688,
+        "refused": 87661,
+        "backlog_at_end": 94894
+      },
+      {
+        "written": 226782,
+        "acknowledged": 111868,
+        "common": 110592,
+        "refused": 114946,
+        "backlog_at_end": 96170
+      }
+    ],
+    "first_full_reply_us": 66514709,
+    "window_written": 637668,
+    "window_acknowledged": 434965,
+    "window_common": 338795,
+    "window_backlog": 96170,
+    "end_common": 416619,
+    "end_acknowledged": 435029,
+    "end_backlog": 18410,
+    "peak_backlog": 96170,
+    "write_to_common_p99_us": 195545876,
+    "fresh_connections": 43539,
+    "reused_requests": 594129,
+    "client_errors": {
+      "dispatch queue full": 82076,
+      "mempool capacity exceeded": 202639,
+      "queue deadline": 256
+    },
+    "full_mempool_pauses": 0,
+    "sender_pause_seconds": 0.0,
+    "mean_connect_us": 2.539355903071818,
+    "mean_write_to_reply_us": 22465.13336720676,
+    "server_queue_seconds": 14221.566785,
+    "queue_fraction_of_reply_wait": 0.9927589716685815,
+    "server_service_seconds": 85.342998,
+    "verified_admissions": 1113380,
+    "admission_verification_seconds": 200.468867,
+    "per_node_execution_seconds": {
+      "candidate_verify": 72.6319275,
+      "commit": 9.274293,
+      "proposal": 22.960333
+    },
+    "cpu_offer_seconds": {
+      "node-0": [
+        159.71,
+        160.1
+      ],
+      "node-1": [
+        161.75,
+        162.1
+      ],
+      "node-2": [
+        162.36,
+        162.52
+      ],
+      "node-3": [
+        164.76,
+        165.13
+      ],
+      "driver": [
+        12.11,
+        12.14
+      ],
+      "validators": [
+        648.58,
+        649.85
+      ]
+    },
+    "cpu_offer_and_drain_seconds": {
+      "node-0": [
+        188.35,
+        188.68
+      ],
+      "node-1": [
+        190.95,
+        191.15
+      ],
+      "node-2": [
+        191.23,
+        191.43
+      ],
+      "node-3": [
+        193.26,
+        193.5
+      ],
+      "driver": [
+        12.21,
+        12.3
+      ],
+      "validators": [
+        763.79,
+        764.76
+      ]
+    },
+    "device_write_bytes": [
+      13832347648,
+      13901893632
+    ],
+    "sst_creation": {
+      "offer": {
+        "flush": {
+          "bytes": 2868197109,
+          "files": 76
+        },
+        "compaction": {
+          "bytes": 3763352041,
+          "files": 63
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      },
+      "drain": {
+        "flush": {
+          "bytes": 615450219,
+          "files": 16
+        },
+        "compaction": {
+          "bytes": 1372666647,
+          "files": 27
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      }
+    },
+    "rocksdb_delta": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1242879230,
+        "wal_syncs": 629
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1242808408,
+        "wal_syncs": 627
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1242808408,
+        "wal_syncs": 627
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1242764309,
+        "wal_syncs": 627
+      }
+    ]
+  },
+  "pause64": {
+    "workload": "5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939",
+    "genesis": {
+      "genesis_id": "8cf8287e9456f1e6adc8fbf1e7957ee204ddbbc6babe7abfccc8ba5145133b3d",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "window_tps": 1894.1,
+    "rolling60_tps": [
+      1842.3833333333334,
+      2013.8666666666666
+    ],
+    "minutes": [
+      {
+        "written": 168927,
+        "acknowledged": 168863,
+        "common": 111562,
+        "refused": 0,
+        "backlog_at_end": 57301
+      },
+      {
+        "written": 148712,
+        "acknowledged": 145509,
+        "common": 114688,
+        "refused": 3203,
+        "backlog_at_end": 88122
+      },
+      {
+        "written": 128628,
+        "acknowledged": 120560,
+        "common": 114688,
+        "refused": 8114,
+        "backlog_at_end": 93994
+      }
+    ],
+    "first_full_reply_us": 79554364,
+    "window_written": 446267,
+    "window_acknowledged": 434932,
+    "window_common": 340938,
+    "window_backlog": 93994,
+    "end_common": 420810,
+    "end_acknowledged": 434934,
+    "end_backlog": 14124,
+    "peak_backlog": 93994,
+    "write_to_common_p99_us": 196759037,
+    "fresh_connections": 446267,
+    "reused_requests": 0,
+    "client_errors": {
+      "dispatch queue full": 271020,
+      "mempool capacity exceeded": 11333,
+      "queue deadline": 2713
+    },
+    "full_mempool_pauses": 11333,
+    "sender_pause_seconds": 1131.127625,
+    "mean_connect_us": 22.190901411038684,
+    "mean_write_to_reply_us": 15508.883807227512,
+    "server_queue_seconds": 6823.950629,
+    "queue_fraction_of_reply_wait": 0.9859628703259953,
+    "server_service_seconds": 85.417858,
+    "verified_admissions": 1135552,
+    "admission_verification_seconds": 204.037399,
+    "per_node_execution_seconds": {
+      "candidate_verify": 71.843471,
+      "commit": 8.55909225,
+      "proposal": 23.11429425
+    },
+    "cpu_offer_seconds": {
+      "node-0": [
+        159.74,
+        159.84
+      ],
+      "node-1": [
+        162.11,
+        162.51
+      ],
+      "node-2": [
+        162.82,
+        162.96
+      ],
+      "node-3": [
+        164.22,
+        164.55
+      ],
+      "driver": [
+        15.76,
+        15.83
+      ],
+      "validators": [
+        648.89,
+        649.86
+      ]
+    },
+    "cpu_offer_and_drain_seconds": {
+      "node-0": [
+        189.14,
+        189.46
+      ],
+      "node-1": [
+        191.48,
+        191.84
+      ],
+      "node-2": [
+        192.62,
+        192.96
+      ],
+      "node-3": [
+        193.91,
+        194.05
+      ],
+      "driver": [
+        15.89,
+        15.92
+      ],
+      "validators": [
+        767.15,
+        768.3100000000001
+      ]
+    },
+    "device_write_bytes": [
+      13872291840,
+      13904826368
+    ],
+    "sst_creation": {
+      "offer": {
+        "flush": {
+          "bytes": 2865492337,
+          "files": 76
+        },
+        "compaction": {
+          "bytes": 3764395498,
+          "files": 64
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      },
+      "drain": {
+        "flush": {
+          "bytes": 615664775,
+          "files": 16
+        },
+        "compaction": {
+          "bytes": 1370468745,
+          "files": 27
+        },
+        "recovery": {
+          "bytes": 0,
+          "files": 0
+        },
+        "other": {
+          "bytes": 0,
+          "files": 0
+        }
+      }
+    },
+    "rocksdb_delta": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1254835580,
+        "wal_syncs": 633
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1254835580,
+        "wal_syncs": 633
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1254835580,
+        "wal_syncs": 633
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1254791059,
+        "wal_syncs": 633
+      }
+    ]
+  }
+}

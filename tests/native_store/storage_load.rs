@@ -38,6 +38,7 @@ struct Load {
     senders: usize,
     shard_senders: bool,
     ready_senders: bool,
+    pause_on_full: bool,
     cadence_ms: u64,
     vm_workers: usize,
     block_cycles: u64,
@@ -68,6 +69,7 @@ impl Load {
             senders: read("STEM_STORAGE_SENDERS", 24)?.try_into()?,
             shard_senders: read("STEM_STORAGE_SHARD_SENDERS", 0)? != 0,
             ready_senders: read("STEM_STORAGE_READY_SENDERS", 0)? != 0,
+            pause_on_full: read("STEM_STORAGE_PAUSE_ON_FULL", 0)? != 0,
             cadence_ms: read("STEM_STORAGE_CADENCE", 250)?,
             vm_workers: read("STEM_STORAGE_VM_WORKERS", 2)?.try_into()?,
             block_cycles: read("STEM_STORAGE_BLOCK_CYCLES", 2_000_000_000)?,
@@ -127,6 +129,8 @@ struct Delivery {
     endpoint: Option<usize>,
     response_us: Option<u64>,
     acknowledged_us: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    full_pause_us: Option<[u64; 2]>,
     error: Option<String>,
 }
 
@@ -443,6 +447,17 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
                         );
                         if load.ready_senders && row.offered_us.is_some() {
                             row.endpoint = Some(endpoint);
+                        }
+                        if load.pause_on_full
+                            && row.error.as_deref() == Some("mempool capacity exceeded")
+                        {
+                            let began = micros(start);
+                            let remaining = dispatch_deadline.saturating_sub(began);
+                            thread::sleep(
+                                Duration::from_millis(load.cadence_ms)
+                                    .min(Duration::from_micros(remaining)),
+                            );
+                            row.full_pause_us = Some([began, micros(start)]);
                         }
                         rows.push(row);
                     }

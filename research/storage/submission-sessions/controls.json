@@ -1,0 +1,31 @@
+{
+  "baseline": "research/storage/external/600.json.xz",
+  "workload": "44db66c3552524ed3b2d8a8172dbb084f8b799b8f7a2d8f50e2e314d063592bf",
+  "raw_report_sha256": "c6b7144f88415162f8867bdd68d586a98aba63023538cbe89af66370353124a9",
+  "checks": {
+    "legacy": {
+      "returncode": 0,
+      "result": "Verified 600 writes, 600 acknowledgements, 600 finalized payments, 563 in the offer window (93.83 TPS), at certified height 52"
+    },
+    "complete socket trace": {
+      "returncode": 0,
+      "result": "Verified 600 writes, 600 acknowledgements, 600 finalized payments, 563 in the offer window (93.83 TPS), at certified height 52"
+    },
+    "missing write socket": {
+      "returncode": 1,
+      "result": "invalid submission connection"
+    },
+    "reuse with disabled sessions": {
+      "returncode": 1,
+      "result": "invalid submission connection"
+    },
+    "wrong reuse count": {
+      "returncode": 1,
+      "result": "connection trace differs from reported reuse count"
+    },
+    "wrong sender count": {
+      "returncode": 1,
+      "result": "report dispatch settings differ from prepared trial"
+    }
+  }
+}

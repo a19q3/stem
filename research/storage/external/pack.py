@@ -38,6 +38,15 @@ def pack(report, receipt_sample=None):
                     samples=[{"at_us": s["at_us"], **heights(s)} for s in report["samples"]])
     if "driver_clock" in report:
         evidence["driver_clock"] = report["driver_clock"]
+    if "reused_connections" in report["summary"] and all(
+            "connected_us" in row and "reused_connection" in row for row in report["deliveries"]):
+        connections = []
+        for row in report["deliveries"]:
+            connected = row["connected_us"] is not None
+            if not connected and (row["offered_us"] is not None or row["reused_connection"]):
+                raise ValueError("payment has a socket write or reuse without a connection")
+            connections.append(row["reused_connection"] if connected else None)
+        evidence["submission_connections"] = connections
     if report["load"].get("ready_senders", False):
         evidence["delivery_routes"] = [row.get("endpoint") for row in report["deliveries"]]
     if any("queue_full_us" in row for row in report["deliveries"]):
@@ -46,6 +55,18 @@ def pack(report, receipt_sample=None):
                if row["acknowledged_us"] is None and row["response_us"] is not None]
     if replies:
         evidence["unacknowledged_responses"] = replies
+    if report["load"].get("pause_on_full"):
+        pauses = []
+        for i, row in enumerate(report["deliveries"]):
+            interval = row.get("full_pause_us")
+            if (interval is not None) != (row["error"] == "mempool capacity exceeded"):
+                raise ValueError("pause trace differs from full-mempool responses")
+            if interval is not None:
+                begin, end = interval
+                if row["response_us"] is None or row["acknowledged_us"] is not None or not row["response_us"] <= begin <= end:
+                    raise ValueError("invalid pause after full-mempool response")
+                pauses.append([i, begin, end])
+        evidence["full_mempool_pauses"] = pauses
     return evidence
 
 

@@ -270,6 +270,7 @@ impl Block {
 #[derive(Deserialize)]
 struct Summary {
     planned: usize,
+    reused_connections: Option<usize>,
     offered: usize,
     admitted: usize,
     offered_during_window: usize,
@@ -289,14 +290,32 @@ struct Delivery {
 }
 
 #[derive(Deserialize)]
+struct DispatchSettings {
+    rate: usize,
+    seconds: u64,
+    drain: u64,
+    senders: usize,
+    #[serde(default)]
+    reuse_submissions: bool,
+    #[serde(default)]
+    ready_senders: bool,
+    #[serde(default)]
+    shard_senders: bool,
+    #[serde(default)]
+    pause_on_full: bool,
+}
+
+#[derive(Deserialize)]
 struct Evidence {
     deliveries: Option<Vec<Delivery>>,
     delivery_times: Option<Vec<[Option<u64>; 2]>>,
     delivery_routes: Option<Vec<Option<usize>>>,
+    submission_connections: Option<Vec<Option<bool>>>,
     before: Snapshot,
     samples: Vec<Snapshot>,
     blocks: Vec<Block>,
     summary: Summary,
+    load: DispatchSettings,
     network: String,
     workload_id: String,
     start_header: String,
@@ -313,6 +332,18 @@ pub(super) fn verify_report(
     load: Load,
 ) -> Result<()> {
     let report: Evidence = serde_json::from_reader(std::io::BufReader::new(fs::File::open(path)?))?;
+    let settings = &report.load;
+    ensure!(
+        settings.rate == load.rate
+            && settings.seconds == load.seconds
+            && settings.drain == load.drain
+            && settings.senders == load.senders
+            && settings.reuse_submissions == load.reuse_submissions
+            && settings.ready_senders == load.ready_senders
+            && settings.shard_senders == load.shard_senders
+            && settings.pause_on_full == load.pause_on_full,
+        "report dispatch settings differ from prepared trial"
+    );
     let network = &fixture.spec.network;
     ensure!(
         report.workload_id == workload && hex::decode(&report.network)? == network.as_slice(),
@@ -429,6 +460,25 @@ pub(super) fn verify_report(
         times.len() == jobs.len() && report.summary.planned == jobs.len(),
         "incomplete dispatch trace"
     );
+    if let Some(connections) = report.submission_connections {
+        ensure!(
+            connections.len() == times.len(),
+            "incomplete submission connection trace"
+        );
+        let mut reused = 0;
+        for (connection, [write, _]) in connections.into_iter().zip(&times) {
+            ensure!(
+                (write.is_none() || connection.is_some())
+                    && (connection != Some(true) || load.reuse_submissions),
+                "invalid submission connection"
+            );
+            reused += usize::from(connection == Some(true));
+        }
+        ensure!(
+            Some(reused) == report.summary.reused_connections,
+            "connection trace differs from reported reuse count"
+        );
+    }
     let mut offered = 0;
     let mut admitted = 0;
     let mut writes_in_window = 0;

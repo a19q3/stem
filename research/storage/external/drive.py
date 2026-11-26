@@ -35,6 +35,8 @@ def main():
     prepare.add_argument("--block-cycles", type=int, default=2_000_000_000)
     prepare.add_argument("--complete-volume", action="store_true")
     prepare.add_argument("--reuse-submissions", action="store_true")
+    prepare.add_argument("--pause-on-full", action="store_true",
+                         help="pause a sender for one proposal interval after a full-mempool reply")
     measure = phases.add_parser("measure")
     measure.add_argument("--output", type=Path, required=True, help="new directory for this measurement")
     verify = phases.add_parser("verify")
@@ -53,7 +55,7 @@ def main():
                     "CADENCE": config["proposal_interval_ms"], "VM_WORKERS": config.get("vm_workers", 2),
                     "PAYMENT_DATA_BYTES": args.data_bytes, "COMPLETE_VOLUME": int(args.complete_volume),
                     "REPLICAS": len(config["peers"]), "PREFUND_PAYMENTS": 1,
-                    "REUSE_SUBMISSIONS": int(args.reuse_submissions),
+                    "REUSE_SUBMISSIONS": int(args.reuse_submissions), "PAUSE_ON_FULL": int(args.pause_on_full),
                     "SHARD_SENDERS": int(args.shard_senders), "READY_SENDERS": int(args.ready_senders),
                     "BLOCK_TRANSACTIONS": args.block_transactions, "BLOCK_CYCLES": args.block_cycles}
         plan = {"storage_settings": settings, "harness_sha256": harness_hash, "lock_sha256": lock_hash,

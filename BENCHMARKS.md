@@ -8,6 +8,8 @@ The three-minute signed payment study compares two proposal intervals, two block
 
 Three four-replica trials directly transferred a Stem-issued title twice with CKB Spore authorization. The 496 KiB member used 16,523,608 Stem cycles per handoff. [Transactions, CKB costs and custody recovery](research/spore-permit/upstream/beta2/handoff.md)
 
+Four further three-minute trials scheduled 4,000 signed payments per second. Across the two TCP reuse runs, doubling senders increased actual writes from 3,057 to 3,543 per second and reduced four-replica common finality from 1,987.32 to 1,882.19 TPS. Pausing fresh-connection senders after a full-mempool reply cut refusals by 92.1% and raised common throughput by 0.21% in one pair. [Archived payments, CPU, SST output and backlog](research/storage/submission-sessions/README.md)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two
