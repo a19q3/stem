@@ -3735,3 +3735,81 @@ included alongside the successful retry.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [All runs, signed workloads, CPU samples and regression logs](benchmarks/2026-11-26-stem-vm-trace-reset.json.xz).
+
+## RISC-V instruction-width dispatch
+
+The standard decoder now routes each cache miss to the compressed
+decoder or the configured 32-bit ISA factories using the instruction's
+low two bits. It preserves the precedence of built-in 32-bit
+factories and the insertion order of custom factories. The executable
+memory, instruction fetch, macro-op fusion and cycle accounting code
+is shared with the preceding revision.
+
+The isolated probe loaded each real RISC-V ELF in the assembly core
+using the VM's normal loader. It reset the instruction cache before
+each scan of the executable segments. The figures are the median of
+18 samples per revision and corpus. The corpus counts and decoded
+checksums matched across revisions. This probe measures cold
+decode calls and uses sequential instruction addresses from the ELF.
+
+| Executable corpus | Total / compressed instructions | Prior ns/instruction | Width dispatch ns/instruction | Reduction |
+| --- | ---: | ---: | ---: | ---: |
+| Stem standard Lock | 6,668 / 3,568 | 11.869 | 10.663 | 10.2% |
+| CKB Metatype dispatcher | 17,299 / 9,335 | 14.299 | 12.591 | 11.9% |
+| Stem native object Type | 10,838 / 5,719 | 13.348 | 11.759 | 11.9% |
+
+The decoder compared 3,932,160 results across RV32 and RV64, three VM
+versions and four extension selections. It checked all 49,152 narrow
+encodings, including reserved patterns, and a stratified 32-bit
+sample by primary opcode, function selectors and register fields.
+The focused tests also checked custom factory order, fallback from
+built-ins and the executable-page boundary for both instruction
+widths.
+
+The paired network runs used four local Jolteon replicas, fixed signed
+workloads and genesis, fresh sockets, 64 senders, two VM workers per
+replica and a 250 ms proposal interval. The block limit was two billion
+cycles. The 1,000 TPS offer lasted 35 seconds and the 2,000 TPS offers
+lasted 24 seconds with a 12-second drain allowance. The second higher
+load pair reversed the revision order.
+
+| Planned TPS and revision | Written / admitted / common visible TPS in offer | Finalized TPS with drain | Confirmed / client drops | Visibility p50 / p95 / p99 | Replica CPU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1,000 prior | 1,000.00 / 999.37 / 969.74 | 979.67 | 35,000 / 0 | 0.932 / 1.187 / 1.256 s | 74.26 s |
+| 1,000 width dispatch | 1,000.00 / 999.46 / 971.23 | 979.43 | 35,000 / 0 | 0.947 / 1.188 / 1.252 s | 74.02 s |
+| 2,000 prior | 1,389.58 / 1,388.71 / 1,323.67 | 1,350.12 | 33,350 / 14,650 | 1.408 / 1.874 / 1.934 s | 70.01 s |
+| 2,000 width dispatch | 1,432.75 / 1,432.25 / 1,328.79 | 1,391.00 | 34,386 / 13,614 | 1.373 / 1.838 / 1.902 s | 68.25 s |
+| 2,000 width dispatch repeat | 1,445.88 / 1,445.83 / 1,372.88 | 1,404.16 | 34,701 / 13,299 | 1.349 / 1.768 / 1.814 s | 68.51 s |
+| 2,000 prior repeat | 1,421.21 / 1,418.54 / 1,332.46 | 1,370.63 | 34,109 / 13,891 | 1.387 / 1.857 / 1.924 s | 69.86 s |
+
+All written payments became visible on all four replicas. At the
+matched 1,000 TPS offer, both revisions finalized all 35,000 payments
+and used almost the same CPU time. The two overload pairs reached
+different actual write rates. Width dispatch coincided with 0.4% and
+3.0% higher common-visible throughput and 2.5% and 1.9% lower
+aggregate replica CPU across the two pairs. In the matched 1,000 TPS
+run, aggregate process writes were 525.06 and 524.20 MB. Replica peer
+traffic was 55.65 and 57.55 MB. The offer rate reached by the clients
+in the overloaded runs was approximately 1,390–1,446 TPS.
+
+The isolated CPU profiles sampled all four replicas at a requested
+199 Hz per active thread for 12 seconds. The prior and width-dispatch
+runs yielded 6,275 and 6,617 userspace samples, with zero losses.
+Flat samples in raw decoding moved from 9.05% to 8.45%. The
+compressed factory moved from 5.00% to 3.05%. The new standard
+dispatch function accounted for 1.66% of samples. These samples show
+where the CPU spent time in the profiled runs. The ELF probe measures
+isolated decoder cost.
+
+The locked release workspace passed 475 tests with 19 ignored. The
+separate locked vendored CKB-VM assembly suite passed all 167 tests,
+including the differential tests, VM versions, instruction extensions,
+reset and resume cases. The frozen CometBFT build and Go proof tests
+passed. Four Stem replicas and real CKB completed the immutable
+Metatype round trip and a funded four-member Jolteon handoff with
+historical Intercell delivery. The first Metatype invocation stopped
+at setup because its output directory matched an ELF corpus filename.
+The corrected run and the first failure are both included.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Exact ELF bytes, signed workloads, raw profiles and regression logs](benchmarks/2026-11-26-stem-vm-decoder.json.xz).

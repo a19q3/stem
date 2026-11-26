@@ -94,5 +94,6 @@ available. Published network evidence contains public genesis and proof data.
 | Metatype object approvals and Polytype comparison | [Report](../BENCHMARKS.md#metatype-object-approvals-and-native-polytype-comparison), [signed cases, proof verification and unsuccessful runs](2026-11-26-stem-metatype-object.json.xz) |
 | Immutable Metatype custody round trip | [Report](../BENCHMARKS.md#immutable-metatype-custody-round-trip), [signed cases, state proofs and failed attempts](2026-11-26-stem-metatype-custody.json.xz) |
 | Sparse assembly trace invalidation | [Report](../BENCHMARKS.md#sparse-assembly-trace-invalidation), [paired payments, trace probe, CPU samples and regression logs](2026-11-26-stem-vm-trace-reset.json.xz) |
+| RISC-V instruction-width dispatch | [Report](../BENCHMARKS.md#risc-v-instruction-width-dispatch), [ELF corpus, paired results, CPU samples and regression logs](2026-11-26-stem-vm-decoder.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
