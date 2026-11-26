@@ -1,0 +1,164 @@
+{
+  "600": {
+    "trial": {
+      "storage_settings": {
+        "RATE": 100,
+        "SECONDS": 6,
+        "DRAIN": 5,
+        "SENDERS": 64,
+        "CADENCE": 250,
+        "VM_WORKERS": 2,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0
+      },
+      "harness_sha256": "edebaa493364627b8e2de9a67d307320004fb25c989868165e3635a2b48bb126",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "49b59f99153391e2883975b39c497d0fe3a6f3d0c2945091a257c1de18ca0108",
+      "genesis_sha256": "8d6f313735ec57d08bbdcb44353d2212eaeecfe6feff5d1cee69078a22b25a36"
+    },
+    "genesis": {
+      "genesis_id": "bb4d59b0a3bbfa0fd83d576308f69b846ffdef362a468eaa550ceef5d27c1839",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "driver": {
+      "harness_sha256": "edebaa493364627b8e2de9a67d307320004fb25c989868165e3635a2b48bb126"
+    },
+    "report_sha256": "c6b7144f88415162f8867bdd68d586a98aba63023538cbe89af66370353124a9",
+    "funding_splits": 3,
+    "funding_outputs": 600,
+    "funding_height": 12,
+    "replicas_before": [
+      {
+        "member": 0,
+        "history_window": 64
+      },
+      {
+        "member": 1,
+        "history_window": 64
+      },
+      {
+        "member": 2,
+        "history_window": 64
+      },
+      {
+        "member": 3,
+        "history_window": null
+      }
+    ],
+    "common_header_count": 40,
+    "sample_count": 218,
+    "by_minute": [],
+    "rocksdb_delta_by_node": [
+      {
+        "wal_bytes": 1269031,
+        "wal_syncs": 122,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      },
+      {
+        "wal_bytes": 1269031,
+        "wal_syncs": 122,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      },
+      {
+        "wal_bytes": 1269438,
+        "wal_syncs": 123,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      },
+      {
+        "wal_bytes": 1268382,
+        "wal_syncs": 121,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      }
+    ]
+  },
+  "540k": {
+    "trial": {
+      "storage_settings": {
+        "RATE": 3000,
+        "SECONDS": 180,
+        "DRAIN": 45,
+        "SENDERS": 64,
+        "CADENCE": 250,
+        "VM_WORKERS": 2,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0
+      },
+      "harness_sha256": "edebaa493364627b8e2de9a67d307320004fb25c989868165e3635a2b48bb126",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "bc6b095e103faafa373d2f8de9693ba145044f2aff408de5dc4d60adb6aaf41e",
+      "genesis_sha256": "caf7a089b485490d33e402602e690bb307c8c8d2da5939a4a475cab7525c502b"
+    },
+    "genesis": {
+      "genesis_id": "8858b9bf207848ceb9a78467b178892a8158a3eb9aa39c6960f67a4748061d92",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "driver": {
+      "harness_sha256": "edebaa493364627b8e2de9a67d307320004fb25c989868165e3635a2b48bb126"
+    },
+    "report_sha256": "2bb72cf6eedcb9b9fc8ef64c8097be0f36a6f2ee616277d3def98d4c010f429a",
+    "funding_splits": 2110,
+    "funding_outputs": 540000,
+    "funding_height": 144,
+    "replicas_before": [
+      {
+        "member": 0,
+        "history_window": 64
+      },
+      {
+        "member": 1,
+        "history_window": 64
+      },
+      {
+        "member": 2,
+        "history_window": 64
+      },
+      {
+        "member": 3,
+        "history_window": null
+      }
+    ],
+    "common_header_count": 377,
+    "sample_count": 1929,
+    "by_minute": [
+      100824,
+      105472,
+      103424
+    ],
+    "rocksdb_delta_by_node": [
+      {
+        "wal_bytes": 1131365476,
+        "wal_syncs": 1130,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      },
+      {
+        "wal_bytes": 1131363752,
+        "wal_syncs": 1126,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      },
+      {
+        "wal_bytes": 1131364183,
+        "wal_syncs": 1127,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      },
+      {
+        "wal_bytes": 1131284732,
+        "wal_syncs": 1127,
+        "flush_bytes": 0,
+        "compaction_bytes": 0
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "preflight": {
+    "other-genesis": "Error: unexpected payment fixture genesis",
+    "swapped-members": "Error: endpoint 0 is not the expected active committee member"
+  },
+  "offline": {
+    "payment-order": "Error: signed payments differ from the archive transaction commitment at height 14",
+    "common-clock": "Error: block time differs from common-height observation",
+    "reported-count": "Error: reported confirmation counts differ from observed blocks",
+    "certificate": "Error: Signature",
+    "ack-before-write": "Error: acknowledgement precedes dispatch",
+    "reported-tps": "Error: reported window TPS differs from verified count"
+  }
+}

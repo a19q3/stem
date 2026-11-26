@@ -1,3 +1,6 @@
+#[path = "storage_load/external.rs"]
+mod external;
+
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -73,7 +76,7 @@ impl Load {
         };
         ensure!(
             (4..=16).contains(&load.replicas)
-                && (1..=5000).contains(&load.rate)
+                && (1..=if load.prefund_payments { 10_000 } else { 5_000 }).contains(&load.rate)
                 && (1..=3600).contains(&load.seconds)
                 && (2..=45).contains(&load.drain)
                 && (1..=64).contains(&load.senders)
@@ -204,14 +207,6 @@ fn sustained_lineage_load() -> Result<()> {
 
 fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let load = Load::load()?;
-    let root =
-        std::env::var_os("STEM_TEST_EVIDENCE_ROOT").map_or_else(std::env::temp_dir, PathBuf::from);
-    fs::create_dir_all(&root)?;
-    let output = tempfile::Builder::new()
-        .prefix("stem-storage-")
-        .tempdir_in(root)?
-        .keep();
-    eprintln!("sustained load evidence in {}", output.display());
     let mut fixture = Fixture::new()?;
     (fixture.spec.chain_id, fixture.spec.network) = if mode.is_some() {
         ("stem-lineage-load".into(), [139; 32].pack())
@@ -237,6 +232,31 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     } else {
         Vec::new()
     };
+    let topology_path = std::env::var_os("STEM_STORAGE_TOPOLOGY").map(PathBuf::from);
+    let topology = if let Some(path) = &topology_path {
+        ensure!(
+            mode.is_none() && load.prefund_payments,
+            "external trials require funded payments"
+        );
+        Some(external::Topology::load(path, &mut fixture, load)?)
+    } else {
+        None
+    };
+    if let Some(path) = std::env::var_os("STEM_STORAGE_GENESIS_OUTPUT") {
+        return topology
+            .as_ref()
+            .context("preparing genesis requires a validator topology")?
+            .prepare(&fixture, path.into());
+    }
+
+    let root =
+        std::env::var_os("STEM_TEST_EVIDENCE_ROOT").map_or_else(std::env::temp_dir, PathBuf::from);
+    fs::create_dir_all(&root)?;
+    let output = tempfile::Builder::new()
+        .prefix("stem-storage-")
+        .tempdir_in(root)?
+        .keep();
+    eprintln!("sustained load evidence in {}", output.display());
     let (lineage, transactions_to_offer) = if let Some(mode) = mode {
         ensure!(
             (load.seconds + load.drain + 10) * 1000 / load.cadence_ms < 1000,
@@ -257,7 +277,14 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         )
     };
     let mut jobs = Vec::with_capacity(work);
-    let mut file = std::io::BufWriter::new(fs::File::create(output.join("workload.bin"))?);
+    let replay = std::env::var_os("STEM_STORAGE_VERIFY_REPORT");
+    let mut file: Box<dyn std::io::Write> = if replay.is_some() {
+        Box::new(std::io::sink())
+    } else {
+        Box::new(std::io::BufWriter::new(fs::File::create(
+            output.join("workload.bin"),
+        )?))
+    };
     let mut hash = ckb_hash::new_blake2b();
     for tx in transactions_to_offer {
         let length = u32::try_from(tx.as_slice().len())?.to_le_bytes();
@@ -273,18 +300,35 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     hash.finalize(&mut hash_bytes);
     let workload_hash = hex::encode(hash_bytes);
 
-    let (replicas, clients) = start_network_configured(
-        &mut fixture,
-        &output,
-        load.replicas,
-        NetworkOptions {
-            interval_ms: load.cadence_ms,
-            timeout_ms: 2400,
-            vm_workers: load.vm_workers,
-            history_window: Some(load.retention),
-            storage_metrics: load.measured,
-        },
-    )?;
+    if let Some(report) = replay {
+        ensure!(
+            topology.is_some(),
+            "offline verification requires the prepared topology"
+        );
+        return external::verify_report(
+            std::path::Path::new(&report),
+            &fixture,
+            &jobs,
+            &workload_hash,
+            load,
+        );
+    }
+    let (replicas, clients) = if let Some(external) = &topology {
+        (Vec::new(), external.connect(&fixture)?)
+    } else {
+        start_network_configured(
+            &mut fixture,
+            &output,
+            load.replicas,
+            NetworkOptions {
+                interval_ms: load.cadence_ms,
+                timeout_ms: 2400,
+                vm_workers: load.vm_workers,
+                history_window: Some(load.retention),
+                storage_metrics: load.measured,
+            },
+        )?
+    };
     let clients = if load.reuse_submissions {
         clients
             .into_iter()
@@ -431,6 +475,18 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let mut seen = HashMap::new();
     let mut sampled_blocks = Vec::new();
     let mut cursor = first_height + 1;
+    // The measurement scans blocks after the timed observer stops. Rebuild each external
+    // archive root from the actual signed workload and link it to certified finality.
+    let archive_jobs: HashMap<_, _> = if topology.is_some() {
+        jobs.iter().map(|(id, tx)| (id.as_str(), tx)).collect()
+    } else {
+        HashMap::new()
+    };
+    let start_header = topology
+        .as_ref()
+        .map(|_| archive.header(first_height))
+        .transpose()?;
+    let mut parent = start_header.as_ref().map(|h| h.id(&fixture.spec.network));
     for sample in &samples {
         let height = sample
             .statuses
@@ -440,15 +496,35 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             .unwrap();
         while cursor <= height {
             let ids = transactions(archive, cursor)?;
+            let mut block = json!({"height": cursor, "seen_us": sample.at_us, "ids": ids});
+            if let Some(previous) = &mut parent {
+                let header = archive.header(cursor)?;
+                external::check_block(
+                    &fixture.spec.network,
+                    &header,
+                    cursor,
+                    previous,
+                    &ids,
+                    &archive_jobs,
+                )?;
+                *previous = header.id(&fixture.spec.network);
+                block["header"] = json!(hex::encode(header.encode()));
+            }
             for id in &ids {
                 ensure!(
                     seen.insert(id.clone(), sample.at_us).is_none(),
                     "repeated finalized transaction"
                 );
             }
-            sampled_blocks.push(json!({"height": cursor, "seen_us": sample.at_us, "ids": ids}));
+            sampled_blocks.push(block);
             cursor += 1;
         }
+    }
+    if let Some(parent) = parent {
+        ensure!(
+            parent == final_header.id(&fixture.spec.network),
+            "measured chain does not reach the agreed Header"
+        );
     }
     let certificate = archive.finality(common_height)?;
     let members = fixture
@@ -534,6 +610,8 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             "mode": mode, "load": load, "limits": fixture.spec.limits, "workload_id": workload_hash,
             "summary": summary, "before": before, "after": after,
             "samples": samples, "blocks": sampled_blocks, "deliveries": deliveries, "observation_errors": failures,
+            "start_header": start_header.map(|h| hex::encode(h.encode())),
+            "external_endpoints": topology.as_ref().map(|t| t.addresses()),
             "agreed_height": common_height, "header": hex::encode(final_header.encode()),
             "finality": hex::encode(certificate.proof), "network": hex::encode(fixture.spec.network.as_slice()),
         }))?,
@@ -554,30 +632,32 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         )?;
     }
 
-    // This separate process opens only the disposable archive and a new index.
-    let mut history = Command::new(
-        std::env::var_os("STEM_TEST_GNU_TIME").unwrap_or_else(|| "/usr/bin/time".into()),
-    );
-    let index = output.join("history-index");
-    let indexed = history
-        .arg("-v")
-        .arg(replica_binary())
-        .args(["checkpoint", "history", "--archive-db"])
-        .arg(output.join(format!("node-{}/db", clients.len() - 1)))
-        .arg("--index")
-        .arg(index)
-        .arg("--network")
-        .arg(hex::encode(fixture.spec.network.as_slice()))
-        .arg("--height")
-        .arg(common_height.to_string())
-        .args(["--header", "1"])
-        .output()?;
-    fs::write(output.join("index-process.stderr"), indexed.stderr)?;
-    fs::write(output.join("history-index-proof.json"), indexed.stdout)?;
-    ensure!(
-        indexed.status.success(),
-        "standalone history index measurement failed"
-    );
+    if topology.is_none() {
+        // This separate process opens only the disposable archive and a new index.
+        let mut history = Command::new(
+            std::env::var_os("STEM_TEST_GNU_TIME").unwrap_or_else(|| "/usr/bin/time".into()),
+        );
+        let index = output.join("history-index");
+        let indexed = history
+            .arg("-v")
+            .arg(replica_binary())
+            .args(["checkpoint", "history", "--archive-db"])
+            .arg(output.join(format!("node-{}/db", clients.len() - 1)))
+            .arg("--index")
+            .arg(index)
+            .arg("--network")
+            .arg(hex::encode(fixture.spec.network.as_slice()))
+            .arg("--height")
+            .arg(common_height.to_string())
+            .args(["--header", "1"])
+            .output()?;
+        fs::write(output.join("index-process.stderr"), indexed.stderr)?;
+        fs::write(output.join("history-index-proof.json"), indexed.stdout)?;
+        ensure!(
+            indexed.status.success(),
+            "standalone history index measurement failed"
+        );
+    }
     println!("{summary}");
     ensure!(
         offered != 0 && !seen.is_empty(),

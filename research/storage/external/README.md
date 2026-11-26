@@ -1,0 +1,77 @@
+# Measure a Jolteon payment trial from a separate host
+
+The existing funded-payment driver can prepare a transferable genesis and measure four or more independently started validators over their configured socket addresses. The same signed workload, paced dispatch, common-height observer and bounded drain are used in the local and external modes. Only the load-generator host runs the driver. Validators use their own operator-held Ed25519 keys. Development funding uses the benchmark's deterministic payment key. [Driver](drive.py) · [Experiment harness](../../../tests/native_store/storage_load.rs)
+
+```mermaid
+sequenceDiagram
+    participant D as Driver
+    participant V as Validator endpoints
+    participant A as Archive validator
+    participant R as Offline verifier
+    D->>D: Derive fixture genesis from public committee and funding splits
+    D->>V: Check member identities and certificate at a common height
+    D->>A: Match the archive genesis to the locally derived ID
+    D->>V: Finalize signed funding splits before starting the clock
+    D->>V: Submit scheduled payments and timestamp writes and acknowledgements
+    loop During offer and drain
+        D->>V: Sample each committed height on the driver clock
+    end
+    D->>A: Fetch ordered payment IDs and native headers
+    D->>D: Rebuild each transaction root and verify the final certificate
+    R->>R: Regenerate signed payments and replay the recorded common heights
+```
+
+## Prepare the trial
+
+Build the release node and integration harness. Build `stem-lock` with the contract flags used by the repository. Record the release revisions and binary hashes, per-host core and disk allocation, and which host runs the load generator. Each node operator supplies the public key and reachable Jolteon socket address for its own validator. The standard Jolteon `replicas.json` places peers in ascending key order and contains `vm_workers`, `proposal_interval_ms` and `view_timeout_ms`. The last endpoint serves archive history. [Node operations](../../../OPERATIONS.md) · [Existing single-host protocol](../sustained/README.md)
+
+```sh
+cargo build --release --locked --bin stem
+cargo test --release --locked --test native_store --no-run
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' cargo build \
+  --release --locked --manifest-path contracts/Cargo.toml \
+  --target riscv64imac-unknown-none-elf --bin stem-lock
+```
+
+The test build prints the path of the `native_store` executable. Substitute that path for `$harness` and the RISC-V release directory for `$contracts` below. Prepare writes `genesis.json`, its locally derived ID, the public peer directory and the measurement settings into a new directory. The offer below schedules 540,000 payments from 2,110 signed splits. Choose the offer size before initializing the validator databases because funding inputs are part of genesis.
+
+```sh
+python3 research/storage/external/drive.py --harness "$harness" --contracts "$contracts" \
+  prepare --topology replicas.json --trial trial --rate 3000 --seconds 180 --senders 64 --drain 45
+```
+
+Distribute the two public files `trial/genesis.json` and `trial/replicas.json` to the participant hosts. On each host start the node using its own key and a fresh database. For the last endpoint substitute `--archive` for `--history-window 64`. The storage metrics endpoint provides the before and after RocksDB counters. Record host resource statistics on the validator hosts when the experiment needs CPU, compaction or physical-device attribution.
+
+```sh
+stem run --initialize --home "$node_home" --configuration trial/replicas.json \
+  --genesis trial/genesis.json --key-file "$validator_key" --history-window 64 --storage-metrics
+```
+
+## Measure and replay
+
+Once every validator has finalized at least three blocks, start the driver. It checks the genesis and committee before submitting funding transactions. The raw output includes socket stages, acknowledgements, per-replica height samples, storage metrics and the finality proof. The archive validator serves the block history over the network. The driver does not need a local replica database or the operators' private keys. An interrupted measurement that already spent fixture inputs requires a fresh trial database to repeat that workload.
+
+```sh
+python3 research/storage/external/drive.py --harness "$harness" --contracts "$contracts" \
+  measure --trial trial --output measurement
+python3 research/storage/external/pack.py measurement/stem-storage-*/report.json report.json.xz
+python3 research/storage/external/drive.py --harness "$harness" --contracts "$contracts" \
+  verify --trial trial --report report.json.xz
+```
+
+Replay runs with the validators stopped. It regenerates the exact signed bytes and workload digest, checks each payment list against its native transaction root, follows every Header to the pinned committee's certificate, and recomputes writes, acknowledgements, common confirmations and offer-window TPS. The timestamps and per-replica heights come from the driver. A certificate authenticates a block, while timing accuracy depends on the observer's polling cadence and RPC latency. External mode leaves the per-snapshot PID resource array empty. Distinct socket addresses establish connectivity. Identifying physical hosts and their storage devices requires the deployment inventory.
+
+## Workstation rehearsal
+
+All four validators and the driver ran on one workstation with shared memory and storage. The three-minute run assigned twelve physical cores and their SMT siblings to validators, and two other cores to the driver. Small integration checks and builds used the remaining cores during part of the run. All four endpoints had different loopback addresses, three validators retained 64 heights and the fourth served the complete archive. Host PID samples were empty on the driver, and the four remote storage queries supplied per-node RocksDB counters. [Recorded genesis IDs, process settings and storage deltas](runs.json)
+
+| Offer | Scheduled | Written and acknowledged | Common in offer | Common after drain | Common TPS in offer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 100/s for 6 s, drain 5 s | 600 | 600 | 563 | 600 | 93.83 |
+| 3,000/s for 180 s, drain 45 s | 540,000 | 361,707 | 309,720 | 361,707 | 1,720.67 |
+
+The three minute windows contained 100,824, 105,472 and 103,424 common confirmations. The driver dropped 178,293 scheduled payments before writing. All successful acknowledgements reached common visibility, including 51,987 payments first observed during drain. The write-to-common p99 was 187.152 seconds across the completed transactions. The signed workload and 377 successive block headers replayed offline to certified height 521. A second run with 600 payments exercised the same verifier. [Three-minute evidence](540k.json.xz) · [Small regression evidence](600.json.xz)
+
+The live preflight rejected a different funded genesis and a swapped member address before funding. The offline controls independently changed the payment order, common observation clock, reported confirmation count, reported TPS, acknowledgement time and final certificate. Every altered report was rejected. The original local launcher also ran its 100-payment regression and generated its separate archive index proof. [Control results](controls.json)
+
+To replay an archived trial, prepare the public configuration and workload size from the matching row. The large archive uses the three-minute command above with `--topology research/storage/external/540k-peers.json`. The smaller archive uses `600-peers.json`, `--rate 100 --seconds 6 --senders 64 --drain 5`. Pass the corresponding compressed report to `verify`. Both the preparation and verification steps work offline with built artifacts. Compare the derived genesis ID against the published value. The physical-host throughput experiment still requires separate load-generator and validator machines. [Large committee](540k-peers.json) · [Small committee](600-peers.json) · [Genesis commitments](runs.json)

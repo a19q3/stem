@@ -972,6 +972,8 @@ Approval and ownership have their own inputs and signatures. The fixture uses a 
 
 ### Measure native storage and sustained payments
 
+For a separate load-generator host, prepare a funded genesis from the public validator topology with `research/storage/external/drive.py prepare`. Start the validator processes on their participant machines and use `measure` from the driver. The `verify` command recomputes the signed workload, transaction roots, certificate, dispatch counts and common-window TPS offline. [Multi-host procedure and same-machine rehearsal](research/storage/external/README.md)
+
 Start a native node with `stem run --storage-metrics` to enable the
 local diagnostic query `/stem/storage-metrics`. Request the current tip
 with empty data and `prove=false`. The counters reset on process restart.
