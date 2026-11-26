@@ -90,5 +90,6 @@ available. Published network evidence contains public genesis and proof data.
 | Reuse of staged proposal execution | [Report](../BENCHMARKS.md#reuse-of-staged-proposal-execution), [exact Header comparison, network traces and regressions](2026-11-26-stem-proposal-reuse.json.xz) |
 | Compact Patricia branch storage | [Report](../BENCHMARKS.md#compact-patricia-branch-storage), [paired timing, signed workloads, WAL counters and regressions](2026-11-26-stem-patricia-storage.json.xz) |
 | Bounded submission connection reuse and CPU profile | [Report](../BENCHMARKS.md#bounded-submission-connection-reuse), [matched payments, CPU samples and regression evidence](2026-11-26-stem-submission-reuse.json.xz) |
+| Standalone CKB Metatype composition | [Report](../BENCHMARKS.md#standalone-ckb-metatype-composition), [signed transactions, inclusion proofs and failed runs](2026-11-26-stem-metatype-ckb.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

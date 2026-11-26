@@ -3472,3 +3472,58 @@ accepted a historical Intercell Outbox proof at a later checkpoint.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Signed workloads, raw latency, CPU samples and regression logs](benchmarks/2026-11-26-stem-submission-reuse.json.xz).
+
+## Standalone CKB Metatype composition
+
+CKB 0.210.0 deployed the dispatcher, its immutable adapter table,
+and two separately compiled RISC-V adapters. Each mint creates
+two Metatype Cells. A one-asset fixture uses one shared asset group
+and up to 15 independent transfer policy groups with different
+arguments. Two manifests of different sizes share groups except at
+the two-constraint setting. The spend splits the larger Cell and
+preserves the total for each old policy. The 85-byte witness is a
+standard CKB Lock witness.
+
+| Distinct groups | Largest manifest and state | Largest occupied Capacity | Mint bytes | Mint cycles | Split bytes | Split cycles |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 323 B | 481 CKB | 1,597 | 2,244,889 | 2,198 | 2,332,437 |
+| 4 | 693 B | 851 CKB | 1,967 | 2,858,167 | 2,938 | 3,137,120 |
+| 8 | 1,433 B | 1,591 CKB | 2,707 | 4,224,550 | 4,418 | 5,037,981 |
+| 16 | 2,913 B | 3,071 CKB | 4,187 | 7,246,903 | 7,378 | 9,683,231 |
+
+Occupied Capacity includes the actual serialized script args and
+the live Cell Data under CKB's occupied-byte rules. The fixture
+funds additional spendable Capacity to cover splits and rejected
+large-state cases. Split transactions took 415–427 ms from
+submission to inclusion under scripted local mining. This is a
+single-machine devnet observation.
+
+One atomic transaction spends two distinct UDT groups and their
+policies, and sends part of both assets into one Metatype Cell.
+It consumed 3,880,281 cycles, occupied 3,468 transaction bytes, and
+used an 85-byte witness. The fixture verifies the CKB transaction
+and witness inclusion proof for every accepted transition.
+The CKB dispatcher rejected deletion or substitution of an input
+policy, a duplicate constraint, missing adapter or table, transfer
+into another deployment, an unapproved recipient, excess supply,
+unknown logical code and excess entry state. Each rejection checks
+the dispatcher error code. The first attempt lacked Capacity to reach
+the state limit. Its invocation and signed transactions are retained
+with the corrected run.
+
+The separate four-replica regression re-exercised the specialized
+two-Type object bridge on CKB and Stem. CKB mint, transfer and burn
+used 4,260,992, 3,302,200 and 3,409,457 cycles and 2,183, 886 and
+1,523 bytes. It includes a Jolteon checkpoint and an independent
+approval Lock. These are different operations from the standalone
+Metatype UDT fixture. A same-workload cost comparison awaits the
+Metatype object and bridge path. The first control used an obsolete
+object ELF with an earlier Intercell witness format. The archive
+retains its rejection and the successful run with rebuilt binaries.
+Separate four-replica controls verified original Spore ID settlement
+and the native UDT round trip. The locked Rust release workspace
+passed 470 tests with 19 ignored. Go proof tests and the frozen
+CometBFT feature check passed.
+
+[Reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
+[Raw CKB evidence and controls](benchmarks/2026-11-26-stem-metatype-ckb.json.xz).
