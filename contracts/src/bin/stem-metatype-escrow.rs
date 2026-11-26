@@ -24,9 +24,10 @@ use stem_bridge_wire::{
         custody::{
             Custody, Gate, Principal, Profile, Transfer, escrow_nonce, manifest_id, positive_amount,
         },
+        fungible::{Amounts, MAX_DATA},
     },
 };
-use stem_contracts::metatype::bounded_data;
+use stem_contracts::{metatype::bounded_data, native_type};
 
 entry!(main);
 default_alloc!();
@@ -138,6 +139,14 @@ fn verify() -> Result<(), i8> {
             &custody,
             &escrow,
             amount,
+            &asset.recipient,
+            outbound,
+            message.nonce,
+        ),
+        Principal::MultiAsset(amounts) => verify_amounts(
+            &custody,
+            &escrow,
+            &amounts,
             &asset.recipient,
             outbound,
             message.nonce,
@@ -271,6 +280,105 @@ fn verify_fungible(
         before.outside == 0
             && before.held.checked_sub(after.held) == Some(amount)
             && after.outside == amount
+    };
+    valid.then_some(()).ok_or(54)
+}
+
+struct AmountTotals {
+    capacity: u64,
+    held: Amounts,
+    outside: Amounts,
+    first_held: Option<usize>,
+}
+
+fn amount_totals(
+    source: Source,
+    custody: &Custody,
+    escrow: &Identity,
+    claimed: &Amounts,
+    recipient: Option<&Identity>,
+) -> Result<AmountTotals, i8> {
+    let mut totals = AmountTotals {
+        capacity: 0,
+        held: claimed.zeroed(),
+        outside: claimed.zeroed(),
+        first_held: None,
+    };
+    for index in 0..=MAX_TRANSACTION_CELLS_PER_SIDE {
+        let lock = match load_cell_lock_hash(index, source) {
+            Ok(lock) if index < MAX_TRANSACTION_CELLS_PER_SIDE => lock,
+            Err(SysError::IndexOutOfBound) => return Ok(totals),
+            _ => return Err(54),
+        };
+        let held = &lock == escrow;
+        if held {
+            totals.first_held.get_or_insert(index);
+            totals.capacity = totals
+                .capacity
+                .checked_add(load_cell_capacity(index, source).map_err(|_| 54)?)
+                .ok_or(54)?;
+        }
+        let mut present = 0;
+        for asset in claimed.ids() {
+            present += usize::from(native_type::contains(source, index, asset).ok_or(54)?);
+        }
+        if present == 0 {
+            if held {
+                if load(LOAD_TYPE, source as u64, index, 0, &mut []).0 != INDEX_OUT_OF_BOUND {
+                    return Err(54);
+                }
+                bounded_data(index, source, 0).map_err(|_| 54)?;
+            }
+            continue;
+        }
+        if present != claimed.ids().count()
+            || scripts(source, index)? != custody.manifest
+            || (!held && recipient.is_some_and(|expected| expected != &lock))
+        {
+            return Err(54);
+        }
+        let data = bounded_data(index, source, MAX_DATA).map_err(|_| 54)?;
+        let cell = Amounts::decode(&data).ok_or(54)?;
+        let sum = if held {
+            &mut totals.held
+        } else {
+            &mut totals.outside
+        };
+        *sum = sum.checked_add(&cell).ok_or(54)?;
+    }
+    unreachable!("bounded Cell enumeration")
+}
+
+fn verify_amounts(
+    custody: &Custody,
+    escrow: &Identity,
+    amount: &Amounts,
+    recipient: &Identity,
+    outbound: bool,
+    nonce: u64,
+) -> Result<(), i8> {
+    if amount.layout_id() != custody.data_script {
+        return Err(53);
+    }
+    let before = amount_totals(Source::Input, custody, escrow, amount, None)?;
+    let after = amount_totals(
+        Source::Output,
+        custody,
+        escrow,
+        amount,
+        (!outbound).then_some(recipient),
+    )?;
+    if before.capacity != after.capacity {
+        return Err(54);
+    }
+    let valid = if outbound {
+        check_nonce(before.first_held.ok_or(53)?, nonce)?;
+        after.held.decrease(&before.held).as_ref() == Some(amount)
+            && before.outside.decrease(&after.outside).as_ref() == Some(amount)
+    } else {
+        before.outside.is_zero()
+            && before.held.decrease(&after.held).as_ref() == Some(amount)
+            && &after.outside == amount
     };
     valid.then_some(()).ok_or(54)
 }

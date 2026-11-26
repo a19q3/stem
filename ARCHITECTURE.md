@@ -398,6 +398,11 @@ The source asset Type requires an independent amount-cap Type
 on every Cell. CKB checks the exact issued or burned total and
 runs both adapters. Partial redemption conserves the principal
 still held on Stem and represented on CKB.
+The multiasset profile also carries several UDTs in one Cell. The
+native amount map uses full asset Script hashes as keys, and the CKB
+Manifest stores each quantity under that same Script. The escrow and
+mailbox sum and compare each asset independently while the original
+UDT and cap groups validate the local transaction.
 See the [Metatype specification and threat model](METATYPE.md).
 
 ## Historical proofs and CKB checkpoints

@@ -11,8 +11,8 @@ run independently deployed UDT, transfer policy, object identity
 and object approval adapters. Standalone object cases run against
 both CKB Metatype and four native Stem Polytype replicas. The
 custody profiles cover immutable objects, revisable objects with
-composable state constraints, and a fungible UDT with an independent
-per-Cell amount limit. Each profile
+composable state constraints, and fungible UDTs with independent
+per-Cell amount limits. Each profile
 can store repeated Script sets in a shared dependency. [Implementation status](STEM-EVOLUTION.md)
 
 ## Historical sources
@@ -97,17 +97,20 @@ Molecule Script encoding is exact, with no trailing fields.
 | Shared Cell Data | zero byte, 32-byte CKB data hash of the definition, then one u16-length-prefixed state string per definition entry |
 | Shared definition Cell Data | inline encoding of the complete Script set with every state string empty |
 | Adapter table | one-byte entry count, records of logical code hash, one-byte addressing mode and adapter ELF data hash, then custody tag and optional custody policy |
-| Custody policy | mailbox code data hash, mailbox Type ID, gate code data hash, full source Manifest ID and original data-bearing Script hash |
-| Gate args | custody tag, source escrow Lock hash, physical Metatype Type hash, mailbox code data hash, mailbox Type ID, Manifest ID and data-bearing Script hash |
+| Custody policy | mailbox code data hash, mailbox Type ID, gate code data hash, full source Manifest ID and data commitment |
+| Gate args | custody tag, source escrow Lock hash, physical Metatype Type hash, mailbox code data hash, mailbox Type ID, Manifest ID and data commitment |
 | Native escrow args | CKB genesis hash, physical Metatype Type hash, checkpoint code data hash, checkpoint Type ID, custody tag and custody policy |
 | Adapter argument | full physical Type hash, one-byte boundary, u16 length and complete logical Script, input and output index lists, then optional group witness fields |
 | Index list | one-byte count and strictly ascending absolute u16 transaction indices |
 
 Adapter table records are ordered by logical code hash and addressing
 mode. The one-byte custody tag is zero for a standalone deployment,
-one for immutable custody, two for fungible custody and three for
-revisable custody. All three custody tags carry the same five
-fields in the adapter table.
+one for immutable custody, two for fungible custody, three for
+revisable custody and four for multiasset custody. The custody
+tags carry the same five fields in the adapter table. The data
+commitment identifies the original data-bearing Script for the
+first three custody profiles and the ordered asset keys for the
+fourth.
 The dispatcher derives the boundary value from the authenticated
 deployment and actual input and output state. Boundary values
 are 0 for standalone, 1 for custody transfer, 2 for CKB import and
@@ -250,7 +253,7 @@ mandatory source constraint.
 ## Cross-chain invariant
 
 Each custody profile pins the original complete Script set,
-an explicit data-bearing Script, the CKB deployment, and the
+the state projection, the CKB deployment, and the
 Intercell checkpoint and mailbox. The same escrow and mailbox gate
 ELFs serve each compatible deployment. A route must pin a reviewed
 adapter for every source Script.
@@ -260,9 +263,11 @@ table when choosing the Stem escrow Lock.
 The source Manifest ID hashes the ordered sequence of complete
 Molecule Script hashes. The native escrow derives it from actual
 Type Scripts on **both sides** of the transaction. On CKB, the
-same Scripts and arguments are present in the Manifest. The one
-designated Script carries the source Cell Data and all other entries
-have empty state. The custody profiles use Data-addressed source
+same Scripts and arguments are present in the Manifest. In the
+single-state profiles the designated Script carries the source
+Cell Data and all other entries have empty state. In the multiasset
+profile each asset carries its own quantity and the remaining
+entries have empty state. The custody profiles use Data-addressed source
 Scripts. Both the gate and the dispatcher resolve shared CKB
 definitions against the actual dependency hashes.
 
@@ -548,6 +553,36 @@ message or Type Group aborts the whole transaction on its chain.
 The lanes retain independent Manifest, asset, amount and nonce
 checks. Confirmation and relay still occur between the two chains.
 
+### Multiple assets in one Cell
+
+Native fungible Cells can carry a canonical amount map. Data consists
+of a one-byte count from 2 to 8, followed by that many pairs of a full
+32-byte asset Script hash and a positive little-endian u128 quantity.
+Keys are strictly increasing by bytes. The decoder rejects duplicate keys
+and zero quantities. Each UDT and its independent cap group requires its
+asset key to be present and every map key to match a Type Script carried
+by the Cell. The same
+asset Scripts can validate ordinary scalar Cells, enabling local
+composition and disassembly without changing asset identity.
+
+The multiasset custody profile pins the complete Script set and the CKB
+hash of `"Stem Metatype amount keys\0" || ordered asset Script hashes`.
+The Stem escrow checks every participating Cell's Manifest and exact
+amount keys, then sums each asset independently with checked arithmetic.
+On CKB, one Metatype Cell can contain all those assets. The canonical
+Manifest stores each u128 under its asset Script and passes that state to
+the existing UDT and cap adapters. The custody boundary compares
+per-asset totals rather than a combined amount.
+
+The Intercell payload is the Manifest ID and recipient Lock hash
+followed by the canonical amount map of the export or burn deltas.
+An ordinary CKB transfer preserves every asset total. When tokens
+remain in custody after a partial return, the representation retains
+all asset keys and every asset decreases by the amount in the return
+message. A complete burn removes the representation. The native
+escrow keeps its Capacity and preserves any residual principal with
+the exact same amount keys and Type Scripts.
+
 These profiles establish correspondence for the specified source
 rules. Other asset classes, state transition rules and external dependencies
 need their own adapter profiles and differential verification.
@@ -579,6 +614,7 @@ commitments, and the participating owners' Locks.
 | Append-only revision | An approval authorizes a rewrite, truncation, MIME change, or removal of the constraint | Bind the full identity Script, require a valid successor, and compare the exact revision relationship and decoded content prefix on both chains. |
 | Signed workflow history | A return omits a review or substitutes, reorders or replays approval from another subject or chain | Verify each role's signature over the preceding head and exact step. Bind the fully replayed head to the authenticated return state. |
 | Published evidence to live state | Old witness data is missing, or a historical proof is treated as live | Keep state in the referencing Cell and use authenticated context that states what was proven at the pinned anchor. |
+| Asset map to custody | A transfer reassigns quantities between asset identities while preserving their combined total | Pin the complete Script set and ordered asset keys. Authenticate and compare every quantity independently at both boundaries. |
 | Relay to escrow | A replay, another CKB domain, or a substitute manifest releases unrelated collateral | Pin both networks, asset and deployment. Use authenticated finality and durable per-lane consumption. |
 | Guest and dependency bounds | Recursive execution, malformed lengths, or excessive combinations consume resources | Use bounded lists and byte reads, immutable reviewed adapters, sequential spawn and CKB cycles. Reject unknown dependencies and failed child results. |
 

@@ -1,8 +1,29 @@
 //! Native Stem Type Script membership syscall.
 
-use ckb_std::ckb_constants::Source;
+use ckb_std::{ckb_constants::Source, error::SysError};
 use core::arch::asm;
+use stem_bridge_wire::metatype::{
+    custody::positive_amount,
+    fungible::{Amounts, MAX_DATA},
+};
 use stem_stake::Hash32;
+
+use crate::metatype::bounded_data;
+
+pub fn amount(source: Source, index: usize, asset: &Hash32) -> Result<u128, SysError> {
+    let data = bounded_data(index, source, MAX_DATA)?;
+    if let Some(amount) = positive_amount(&data) {
+        return Ok(amount);
+    }
+    let amounts = Amounts::decode(&data).ok_or(SysError::Encoding)?;
+    if !amounts
+        .ids()
+        .all(|id| contains(source, index, id) == Some(true))
+    {
+        return Err(SysError::Encoding);
+    }
+    amounts.amount(asset).ok_or(SysError::Encoding)
+}
 
 pub fn contains(source: Source, index: usize, hash: &Hash32) -> Option<bool> {
     let mut size = 0u64;

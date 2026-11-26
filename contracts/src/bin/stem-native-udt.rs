@@ -7,21 +7,20 @@ use ckb_std::{
     ckb_constants::Source,
     default_alloc, entry,
     error::SysError,
-    high_level::{load_cell_data, load_cell_lock_hash, load_script, load_script_hash},
+    high_level::{load_cell_lock_hash, load_script, load_script_hash},
 };
-use stem_bridge_wire::metatype::{custody::positive_amount, fungible::Udt};
+use stem_bridge_wire::metatype::fungible::Udt;
 use stem_contracts::native_type;
 use stem_stake::Hash32;
 
 entry!(main);
 default_alloc!();
 
-fn total(source: Source, required: Option<&Hash32>) -> Option<u128> {
+fn total(source: Source, asset: &Hash32, required: Option<&Hash32>) -> Option<u128> {
     let mut amount = 0u128;
     for index in 0.. {
-        match load_cell_data(index, source) {
-            Ok(data) => {
-                let units = positive_amount(data.as_slice())?;
+        match native_type::amount(source, index, asset) {
+            Ok(units) => {
                 if required
                     .is_some_and(|hash| native_type::contains(source, index, hash) != Some(true))
                 {
@@ -46,10 +45,10 @@ fn main() -> i8 {
         return 91;
     };
     let policy = udt.policy.as_ref().map(ckb_hash::blake2b_256);
-    let Some(input) = total(Source::GroupInput, policy.as_ref()) else {
+    let Some(input) = total(Source::GroupInput, &asset, policy.as_ref()) else {
         return 92;
     };
-    let Some(output) = total(Source::GroupOutput, policy.as_ref()) else {
+    let Some(output) = total(Source::GroupOutput, &asset, policy.as_ref()) else {
         return 92;
     };
     if input == output {

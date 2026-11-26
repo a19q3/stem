@@ -7,7 +7,7 @@ use ckb_std::{
     ckb_constants::Source, default_alloc, entry, error::SysError, high_level::load_script,
 };
 use stem_bridge_wire::metatype::fungible::AmountCap;
-use stem_contracts::{metatype::bounded_data, native_type};
+use stem_contracts::native_type;
 
 entry!(main);
 default_alloc!();
@@ -19,9 +19,9 @@ fn main() -> i8 {
         let cap = AmountCap::decode(&args)?;
         for source in [Source::GroupInput, Source::GroupOutput] {
             for index in 0.. {
-                match bounded_data(index, source, 16) {
-                    Ok(data)
-                        if cap.permits(&data)
+                match native_type::amount(source, index, cap.asset) {
+                    Ok(amount)
+                        if amount <= cap.ceiling
                             && native_type::contains(source, index, cap.asset) == Some(true) =>
                     {
                         ()

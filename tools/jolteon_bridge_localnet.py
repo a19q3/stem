@@ -501,6 +501,8 @@ def bridge_round(args, l1, fixture, children):
         report["spore_settlement"] = spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     elif args.metatype_multiasset:
         report["metatype_multiasset"] = multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
+    elif args.metatype_composed_cell:
+        report["metatype_composed_cell"] = multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     elif args.export_udt:
         report["asset_export"] = asset_round(args, l1, fixture, vault, spec, spec_path,
                                               mint, clients, relay)
@@ -573,6 +575,8 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--metatype-shared-manifest", action="store_true")
     parser.add_argument("--metatype-multiasset", action="store_true")
+    parser.add_argument("--metatype-composed-cell", action="store_true")
+    parser.add_argument("--metatype-composed-partial", action="store_true")
     parser.add_argument("--metatype-revisable-object", action="store_true")
     parser.add_argument("--metatype-revision-topup", action="store_true")
     parser.add_argument("--metatype-workflow-early-return", action="store_true")
@@ -637,8 +641,12 @@ def main():
         parser.error("--full-udt-return requires the UDT settlement fixture")
     if args.finish_udt_return and (not all(portable_udt) or args.full_udt_return):
         parser.error("--finish-udt-return exercises two successive Metatype redemptions")
-    if args.metatype_multiasset and (not all(portable_udt) or args.full_udt_return or args.finish_udt_return):
-        parser.error("--metatype-multiasset requires the Metatype UDT route")
+    if (args.metatype_multiasset or args.metatype_composed_cell) and (
+            not all(portable_udt) or args.full_udt_return or args.finish_udt_return
+            or args.metatype_multiasset and args.metatype_composed_cell):
+        parser.error("Choose one Metatype multiasset fixture and supply the Metatype UDT route")
+    if args.metatype_composed_partial and not args.metatype_composed_cell:
+        parser.error("--metatype-composed-partial exercises the composed Cell route")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--intercell-mailbox uses the native CKB lane on its own")
     if args.security_domain and not args.reference_script:

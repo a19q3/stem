@@ -14,6 +14,8 @@ Stem 是一条以 CKB 计价、由加权 Jolteon 最终确认的 Cell 网络。S
 
 重建工具按实际 OutPoint 从 CKB 销毁回溯到导入，使用调用方认证的锚点核验区块祖先及交易和见证包含证明。恢复钱包可从 CKB 链上见证重建 Proof Data。仅变更归属的交易保留在可核验路径中，返程证明只包含实际完成的授权步骤。
 
+同一 Polytype Cell 可用完整资产 Script 哈希为键分别记录多项数量。CKB Metatype 将数量放入各自的 Manifest 项，托管同时绑定完整约束和资产键集合。导出、转移、销毁和返程逐资产核对守恒与数量差额。Cell 可在 Stem 本地组合和拆分，沿用原有资产 Script 身份。
+
 每个网络用全新的 genesis、数据库、签名域和桥实例启动。网络身份由 canonical network spec 和一次性网络盐导出。该预部署 spec 包含 CKB genesis、初始权限与经济配置，排除依赖网络身份才能部署的 Registry Type ID、金库 Type ID、Checkpoint Type ID 及初始化签名。部署完成后，Stem genesis 再固定这些 L1 合约身份和第一份已认证的完整质押快照。CKB Checkpoint Cell 的身份与初始认证方也由 genesis 固定。链身份与创世 Header 承诺进入 Jolteon 签名域。所有交易、证明和链间认证都明确绑定该网络。
 
 | 组件 | 权责 |

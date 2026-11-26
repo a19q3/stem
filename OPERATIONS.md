@@ -1612,3 +1612,12 @@ output directories for inline and shared runs. The report preserves
 both message IDs, the finalized execution receipts and the proof of
 each released Cell. The fixture also submits a separate four-action
 transaction and checks rejection of a fifth action.
+
+Use `--metatype-composed-cell` in place of `--metatype-multiasset`
+to compose two capped assets in one Cell and settle that Cell through
+one mailbox. The fixture issues two scalar Cells, combines them, runs
+the CKB custody stages, and splits the returned Cell into its original
+assets. Run with and without `--metatype-shared-manifest` and use fresh
+ports and output directories. Add `--metatype-composed-partial` to
+redeem 60 and 110 units and verify the residual 100 and 140 units on
+both chains.

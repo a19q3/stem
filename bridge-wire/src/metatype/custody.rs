@@ -1,6 +1,6 @@
 //! Shared identities and principal projection for Metatype custody.
 
-use super::{Hash, MAX_STATE_BYTES, ManifestCell, MetatypeManifest};
+use super::{Hash, MAX_STATE_BYTES, ManifestCell, MetatypeManifest, fungible::Amounts};
 use crate::{
     hash,
     object::{revision, valid_revision_transition},
@@ -12,6 +12,7 @@ pub enum Profile {
     Immutable = 1,
     Fungible = 2,
     Revisable = 3,
+    MultiAsset = 4,
 }
 
 impl Profile {
@@ -20,6 +21,7 @@ impl Profile {
             1 => Some(Self::Immutable),
             2 => Some(Self::Fungible),
             3 => Some(Self::Revisable),
+            4 => Some(Self::MultiAsset),
             _ => None,
         }
     }
@@ -88,7 +90,7 @@ impl Custody {
             Profile::Immutable => before == after,
             Profile::Revisable if exporting => before == after && revision(before).is_some(),
             Profile::Revisable => valid_revision_transition(before, after),
-            Profile::Fungible => false,
+            Profile::Fungible | Profile::MultiAsset => false,
         }
     }
 
@@ -129,7 +131,42 @@ impl Custody {
                 };
                 Some((direction, Principal::Fungible(delta)))
             }
+            Profile::MultiAsset => {
+                let (boundary, amounts) = match (self.amounts(inputs)?, self.amounts(outputs)?) {
+                    (None, None) => return None,
+                    (None, Some(output)) => (Boundary::Import, output),
+                    (Some(input), None) => (Boundary::Return, input),
+                    (Some(input), Some(output)) if input == output => (Boundary::Transfer, input),
+                    (Some(input), Some(output)) => (Boundary::Return, input.decrease(&output)?),
+                };
+                Some((boundary, Principal::MultiAsset(amounts)))
+            }
         }
+    }
+
+    fn amounts(&self, cells: &[ManifestCell<'_>]) -> Option<Option<Amounts>> {
+        let mut sums: Option<Amounts> = None;
+        for (_, manifest) in cells {
+            if manifest.id() != self.manifest
+                || manifest
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.script.code().1 != 0)
+            {
+                return None;
+            }
+            let cell = Amounts::from_states(manifest.entries().iter().filter_map(|entry| {
+                (!entry.state.is_empty()).then(|| (entry.script.id(), entry.state))
+            }))?;
+            if cell.layout_id() != self.data_script {
+                return None;
+            }
+            sums = Some(match sums {
+                None => cell,
+                Some(total) => total.checked_add(&cell)?,
+            });
+        }
+        Some(sums)
     }
 }
 
@@ -172,10 +209,11 @@ pub fn escrow_nonce(outpoint: &[u8; 36]) -> u64 {
     u64::from_le_bytes(raw[..8].try_into().expect("fixed nonce"))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Principal<'a> {
     Object(&'a [u8]),
     Fungible(u128),
+    MultiAsset(Amounts),
 }
 
 pub fn positive_amount(data: &[u8]) -> Option<u128> {
@@ -199,6 +237,7 @@ impl<'a> Transfer<'a> {
                 Principal::Object(profile.object_state(data)?)
             }
             Profile::Fungible => Principal::Fungible(positive_amount(data)?),
+            Profile::MultiAsset => Principal::MultiAsset(Amounts::decode(data)?),
         };
         (*manifest != [0; 32] && *recipient != [0; 32]).then_some(Self {
             manifest: *manifest,
