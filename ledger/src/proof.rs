@@ -1,56 +1,60 @@
 //! Ordered Merkle trees for witnessed transactions and execution receipts.
 
 use anyhow::{Result, ensure};
-use ckb_types::{bytes::Bytes, packed::Byte32, prelude::Entity};
+use ckb_types::{bytes::Bytes, packed::Byte32, prelude::*};
 
 use crate::{
     Transaction,
     block::{ExecutionCommitment, Receipt},
-    hash,
+    hash_bytes,
     strand::prelude::{Builder as WireBuilder, Entity as WireEntity},
     wire,
 };
 
 const TX_ROOT: &[u8] = b"Stem transaction Merkle root\0";
 const RECEIPT_ROOT: &[u8] = b"Stem receipt Merkle root\0";
+type Digest = [u8; 32];
 
 pub struct Tree {
     network: Byte32,
     domain: &'static [u8],
-    leaves: Vec<Byte32>,
+    leaves: Vec<Digest>,
 }
 
 impl Tree {
     pub fn transactions(network: Byte32, transactions: &[Transaction]) -> Result<Self> {
-        Self::new(
-            network.clone(),
-            TX_ROOT,
-            transactions
-                .iter()
-                .map(|tx| tx.commitment(&network))
-                .collect(),
-        )
+        check_leaf_count(transactions.len())?;
+        let leaves = transactions
+            .iter()
+            .map(|tx| tx.commitment_bytes(&network))
+            .collect();
+        Ok(Self {
+            network,
+            domain: TX_ROOT,
+            leaves,
+        })
     }
 
     pub fn receipts(network: Byte32, receipts: &[Receipt]) -> Result<Self> {
-        Self::new(
-            network.clone(),
-            RECEIPT_ROOT,
-            receipts
-                .iter()
-                .map(|receipt| receipt_hash(&network, receipt))
-                .collect(),
-        )
+        Self::receipts_with(network, receipts, |_, _| Ok(()))
     }
 
-    fn new(network: Byte32, domain: &'static [u8], leaves: Vec<Byte32>) -> Result<Self> {
-        ensure!(
-            u32::try_from(leaves.len()).is_ok(),
-            "too many Merkle leaves"
-        );
+    /// Hash each canonical receipt and make its encoded bytes available to storage.
+    pub fn receipts_with(
+        network: Byte32,
+        receipts: &[Receipt],
+        mut record: impl FnMut(usize, &[u8]) -> Result<()>,
+    ) -> Result<Self> {
+        check_leaf_count(receipts.len())?;
+        let mut leaves = Vec::with_capacity(receipts.len());
+        for (position, receipt) in receipts.iter().enumerate() {
+            let encoded = receipt.encode();
+            leaves.push(receipt_hash(&network, &encoded));
+            record(position, &encoded)?;
+        }
         Ok(Self {
             network,
-            domain,
+            domain: RECEIPT_ROOT,
             leaves,
         })
     }
@@ -62,6 +66,7 @@ impl Tree {
             self.leaves.len() as u32,
             &merkle_root(&self.network, &self.leaves),
         )
+        .pack()
     }
 
     pub fn prove(&self, position: u32) -> Result<InclusionProof> {
@@ -75,10 +80,10 @@ impl Tree {
         while leaves.len() > 1 {
             let split = split_point(leaves.len());
             if relative < split {
-                siblings.push(merkle_root(&self.network, &leaves[split..]));
+                siblings.push(merkle_root(&self.network, &leaves[split..]).pack());
                 leaves = &leaves[..split];
             } else {
-                siblings.push(merkle_root(&self.network, &leaves[..split]));
+                siblings.push(merkle_root(&self.network, &leaves[..split]).pack());
                 leaves = &leaves[split..];
                 relative -= split;
             }
@@ -166,7 +171,7 @@ impl InclusionProof {
     }
 
     pub fn verify_transaction(&self, network: &Byte32, root: &Byte32, tx: &Transaction) -> bool {
-        self.verify(TX_ROOT, network, root, tx.commitment(network))
+        self.verify(TX_ROOT, network, root, tx.commitment_bytes(network))
     }
 
     pub fn verify_execution(
@@ -184,11 +189,11 @@ impl InclusionProof {
                 RECEIPT_ROOT,
                 network,
                 &roots.receipt_root,
-                receipt_hash(network, receipt),
+                receipt_hash(network, &receipt.encode()),
             )
     }
 
-    fn verify(&self, domain: &[u8], network: &Byte32, root: &Byte32, mut leaf: Byte32) -> bool {
+    fn verify(&self, domain: &[u8], network: &Byte32, root: &Byte32, mut leaf: Digest) -> bool {
         let Some((directions, depth)) = proof_path(self.position, self.count) else {
             return false;
         };
@@ -197,12 +202,12 @@ impl InclusionProof {
         }
         for (step, sibling) in self.siblings.iter().enumerate().rev() {
             leaf = if directions & (1 << step) != 0 {
-                merge(network, sibling, &leaf)
+                merge(network, sibling.as_slice(), &leaf)
             } else {
-                merge(network, &leaf, sibling)
+                merge(network, &leaf, sibling.as_slice())
             };
         }
-        bind_root(domain, network, self.count, &leaf) == *root
+        bind_root(domain, network, self.count, &leaf) == root.as_slice()
     }
 }
 
@@ -227,14 +232,19 @@ fn proof_path(position: u32, count: u32) -> Option<(u32, usize)> {
     Some((directions, depth))
 }
 
-fn receipt_hash(network: &Byte32, receipt: &Receipt) -> Byte32 {
-    hash(b"Stem execution receipt\0", network, &[&receipt.encode()])
+fn check_leaf_count(count: usize) -> Result<()> {
+    ensure!(u32::try_from(count).is_ok(), "too many Merkle leaves");
+    Ok(())
 }
 
-fn merkle_root(network: &Byte32, leaves: &[Byte32]) -> Byte32 {
+fn receipt_hash(network: &Byte32, encoded: &[u8]) -> Digest {
+    hash_bytes(b"Stem execution receipt\0", network, &[encoded])
+}
+
+fn merkle_root(network: &Byte32, leaves: &[Digest]) -> Digest {
     match leaves {
-        [] => hash(b"Stem empty Merkle tree\0", network, &[]),
-        [leaf] => leaf.clone(),
+        [] => hash_bytes(b"Stem empty Merkle tree\0", network, &[]),
+        [leaf] => *leaf,
         _ => {
             let (left, right) = leaves.split_at(split_point(leaves.len()));
             merge(
@@ -250,14 +260,10 @@ fn split_point(count: usize) -> usize {
     1usize << (usize::BITS - (count - 1).leading_zeros() - 1)
 }
 
-fn merge(network: &Byte32, left: &Byte32, right: &Byte32) -> Byte32 {
-    hash(
-        b"Stem Merkle node\0",
-        network,
-        &[left.as_slice(), right.as_slice()],
-    )
+fn merge(network: &Byte32, left: &[u8], right: &[u8]) -> Digest {
+    hash_bytes(b"Stem Merkle node\0", network, &[left, right])
 }
 
-fn bind_root(domain: &[u8], network: &Byte32, count: u32, root: &Byte32) -> Byte32 {
-    hash(domain, network, &[&count.to_le_bytes(), root.as_slice()])
+fn bind_root(domain: &[u8], network: &Byte32, count: u32, root: &Digest) -> Digest {
+    hash_bytes(domain, network, &[&count.to_le_bytes(), root])
 }

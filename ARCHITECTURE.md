@@ -20,6 +20,8 @@ Transactions assign group indices by role and the full packed CKB Script bytes. 
 
 The Cell and system roots use the same incremental Patricia implementation. Each state record appears once, with its hash in the leaf. An MMR commits preceding native Header IDs and stores its leaf count and peaks on the application commit path. Separate ordered Merkle trees authenticate transactions and receipts. A single synchronous RocksDB batch writes affected nodes, records, execution, the Header and the MMR frontier. State snapshots contain canonical records and the retained Header suffix. Installation requires an independently authenticated application hash and reconstructs both state roots.
 
+Execution preparation encodes each canonical receipt once. Its bytes feed the receipt tree and the ordered execution record, which moves into the batch as one buffer. The trees use fixed-size hashes internally and expose their roots and proof siblings in the canonical wire representation.
+
 RocksDB stores each Patricia branch with its bit length, the prefix
 bytes through that bit length, and two child hashes. Loading a node
 restores the canonical bytes in a fixed-size buffer before checking

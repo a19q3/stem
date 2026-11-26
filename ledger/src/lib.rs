@@ -689,7 +689,11 @@ impl Transaction {
     }
 
     pub fn commitment(&self, network_id: &Byte32) -> Byte32 {
-        hash(
+        self.commitment_bytes(network_id).pack()
+    }
+
+    fn commitment_bytes(&self, network_id: &Byte32) -> [u8; 32] {
+        hash_bytes(
             b"Stem transaction commitment\0",
             network_id,
             &[self.as_slice()],
@@ -1297,6 +1301,10 @@ fn check_count(
 }
 
 fn hash(domain: &[u8], network_id: &Byte32, items: &[&[u8]]) -> Byte32 {
+    hash_bytes(domain, network_id, items).pack()
+}
+
+fn hash_bytes(domain: &[u8], network_id: &Byte32, items: &[&[u8]]) -> [u8; 32] {
     let mut hasher = new_blake2b();
     hasher.update(domain);
     hasher.update(network_id.as_slice());
@@ -1305,7 +1313,7 @@ fn hash(domain: &[u8], network_id: &Byte32, items: &[&[u8]]) -> Byte32 {
     }
     let mut digest = [0; 32];
     hasher.finalize(&mut digest);
-    digest.pack()
+    digest
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]

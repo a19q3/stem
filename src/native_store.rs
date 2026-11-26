@@ -1388,6 +1388,8 @@ impl Store {
         })?;
         let system_root = system.root().pack();
         put_nodes(&mut batch, Namespace::System, system.into_writes());
+        let (execution_bytes, receipt_root) =
+            encode_execution(&self.network, execution, &receipts)?;
         let mut history = self.history.clone();
         let next = Header::next(
             &self.network,
@@ -1396,13 +1398,10 @@ impl Store {
             context,
             cell_root,
             system_root,
-            Receipt::root(&self.network, &receipts)?,
+            receipt_root,
         )?;
         put_tip(&mut batch, &self.network, &next, &history);
-        batch.put(
-            index_key(EXECUTION, &height.to_be_bytes()),
-            encode_execution(execution, &receipts)?,
-        );
+        batch.put_owned(index_key(EXECUTION, &height.to_be_bytes()), execution_bytes);
         if let Retention::Recent(window) = self.retention
             && let Some(pruned) = height.checked_sub(window)
         {
@@ -2202,16 +2201,25 @@ fn put_tip(batch: &mut Batch, network: &Byte32, header: &Header, history: &Histo
     batch.put(index_key(HEADER_ID, header.id(network).as_slice()), height);
 }
 
-fn encode_execution(transactions: &[Transaction], receipts: &[Receipt]) -> Result<Vec<u8>> {
+fn encode_execution(
+    network: &Byte32,
+    transactions: &[Transaction],
+    receipts: &[Receipt],
+) -> Result<(Vec<u8>, Byte32)> {
+    ensure!(
+        transactions.len() == receipts.len(),
+        "execution item counts differ"
+    );
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&u32::try_from(transactions.len())?.to_le_bytes());
-    for (tx, receipt) in transactions.iter().zip(receipts) {
-        for item in [tx.as_slice(), receipt.encode().as_ref()] {
+    let tree = Tree::receipts_with(network.clone(), receipts, |position, receipt| {
+        for item in [transactions[position].as_slice(), receipt] {
             bytes.extend_from_slice(&u32::try_from(item.len())?.to_le_bytes());
             bytes.extend_from_slice(item);
         }
-    }
-    Ok(bytes)
+        Ok(())
+    })?;
+    Ok((bytes, tree.root()))
 }
 
 fn take_u32(cursor: &mut &[u8]) -> Result<u32> {
