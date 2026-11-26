@@ -13,6 +13,7 @@ const RISCV_PAGESIZE_MASK: u64 = RISCV_PAGESIZE as u64 - 1;
 const INSTRUCTION_CACHE_SIZE: usize = 2048;
 
 pub struct Decoder {
+    standard_factory: Option<InstructionFactory>,
     factories: Vec<InstructionFactory>,
     mop: bool,
     version: u32,
@@ -27,6 +28,7 @@ pub struct Decoder {
 impl Decoder {
     pub fn new(mop: bool, version: u32) -> Decoder {
         Decoder {
+            standard_factory: None,
             factories: vec![],
             mop,
             version,
@@ -113,16 +115,20 @@ impl Decoder {
             return Ok(cached_instruction.1);
         }
         let instruction_bits = self.decode_bits(memory, pc)?;
-        for factory in &self.factories {
-            if let Some(instruction) = factory(instruction_bits, self.version) {
-                self.instructions_cache[instruction_cache_key] = (pc, instruction);
-                return Ok(instruction);
-            }
-        }
-        Err(Error::InvalidInstruction {
-            pc,
-            instruction: instruction_bits,
-        })
+        let instruction = self
+            .standard_factory
+            .and_then(|factory| factory(instruction_bits, self.version))
+            .or_else(|| {
+                self.factories
+                    .iter()
+                    .find_map(|factory| factory(instruction_bits, self.version))
+            })
+            .ok_or(Error::InvalidInstruction {
+                pc,
+                instruction: instruction_bits,
+            })?;
+        self.instructions_cache[instruction_cache_key] = (pc, instruction);
+        Ok(instruction)
     }
 
     // Macro-Operation Fusion (also Macro-Op Fusion, MOP Fusion, or Macrofusion) is a hardware optimization technique found
@@ -861,14 +867,38 @@ impl Decoder {
 
 pub fn build_decoder<R: Register>(isa: u8, version: u32) -> Decoder {
     let mut decoder = Decoder::new(isa & ISA_MOP != 0, version);
-    decoder.add_instruction_factory(rvc::factory::<R>);
-    decoder.add_instruction_factory(i::factory::<R>);
-    decoder.add_instruction_factory(m::factory::<R>);
-    if isa & ISA_B != 0 {
-        decoder.add_instruction_factory(b::factory::<R>);
-    }
-    if isa & ISA_A != 0 {
-        decoder.add_instruction_factory(a::factory::<R>);
-    }
+    decoder.standard_factory = Some(match (isa & ISA_B != 0, isa & ISA_A != 0) {
+        (false, false) => standard_factory::<R, false, false>,
+        (true, false) => standard_factory::<R, true, false>,
+        (false, true) => standard_factory::<R, false, true>,
+        (true, true) => standard_factory::<R, true, true>,
+    });
     decoder
+}
+
+fn standard_factory<R: Register, const B: bool, const A: bool>(
+    bits: u32,
+    version: u32,
+) -> Option<Instruction> {
+    // RVC uses quadrants 0–2. All standard 32-bit factories check opcodes
+    // from quadrant 3. Keep their original precedence for overlapping opcodes.
+    if bits & 3 != 3 {
+        return rvc::factory::<R>(bits, version);
+    }
+    i::factory::<R>(bits, version)
+        .or_else(|| m::factory::<R>(bits, version))
+        .or_else(|| {
+            if B {
+                b::factory::<R>(bits, version)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if A {
+                a::factory::<R>(bits, version)
+            } else {
+                None
+            }
+        })
 }
