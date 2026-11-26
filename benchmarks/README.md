@@ -109,5 +109,6 @@ available. Published network evidence contains public genesis and proof data.
 | Reusing decoded stake inputs across blocks | [Report](../BENCHMARKS.md#reusing-decoded-stake-inputs-across-blocks), [funded preparation controls and full-size CKB handoff](2026-11-26-stem-stake-view-cache.json.xz) |
 | Jolteon frame writes | [Report](../BENCHMARKS.md#jolteon-frame-writes), [syscall traces, signed loads and CKB proofs](2026-11-26-stem-framed-writes.json.xz) |
 | Borrowed transaction output validation | [Report](../BENCHMARKS.md#borrowed-transaction-output-validation), [decode samples, matched network runs, failed build and CKB proofs](2026-11-26-stem-transaction-decode.json.xz) |
+| Three-constraint Metatype with an external rule | [Report](../BENCHMARKS.md#three-constraint-metatype-with-an-external-rule), [paired signed cases, proof verification, controls and failed runs](2026-11-26-stem-metatype-external-rule.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.

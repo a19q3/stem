@@ -4757,3 +4757,65 @@ top-up and proofs of the restored object. The Go proof suite and
 frozen CometBFT build check passed.
 
 [Raw results, build fingerprints, proofs and reproduction commands](benchmarks/2026-11-26-stem-transaction-decode.json.xz).
+
+## Three-constraint Metatype with an external rule
+
+Four Jolteon replicas and a real CKB devnet executed an object with
+independent identity, approval and state-length groups. A two-byte
+record gives the ceiling on encoded state. Both hosts resolved that
+record by its CKB data hash in the actual Cell Deps. A signed revision
+from the same state to the same oversized payload was rejected on
+both chains. Each rejected a missing record, a different record,
+removal of the rule and changing the rule Script to point to a looser
+record. The CKB publisher spent the original record and published
+the same two bytes at a new OutPoint. A later update and burn used
+that replacement. Each chain also rejected a return step without
+the rule dependency. Stem restored the exact authorized state at
+the byte limit and retained all three original Scripts. The dedicated
+bridge rejected an export with an additional constraint.
+
+The two-constraint controls used the same build and revisable object
+flow with identity and approval. The dedicated immutable route is
+shown as a separate reference workload. These are individual CKB
+transactions measured with `estimate_cycles` and committed on the
+devnet. Occupied Capacity refers to the wrapped object at import.
+The rule's separate two-byte Cell occupies at least 63 CKB under the
+standard Lock. The shared definition Cells used 369 CKB with two
+Scripts and 490 CKB with three. These figures exclude code, escrow
+and Mailbox reserves.
+
+| Profile and layout | Object occupied CKB | Import / transfer / burn cycles | Signed bytes import / transfer / burn | Transfer Witness bytes |
+| --- | ---: | --- | --- | ---: |
+| Dedicated immutable | 256 | 4,248,758 / 3,323,607 / 3,384,466 | 2,081 / 886 / 1,523 | 170 |
+| Two constraints, inline | 564 | 4,981,182 / 4,076,642 / 4,142,713 | 2,602 / 1,383 / 1,749 | 170 |
+| Three constraints, inline | 685 | 5,319,860 / 4,458,602 / 4,491,863 | 3,001 / 1,578 / 1,864 | 170 |
+| Two constraints, shared | 293 | 5,100,428 / 4,088,030 / 4,181,850 | 2,572 / 1,149 / 1,786 | 170 |
+| Three constraints, shared | 295 | 5,406,127 / 4,480,808 / 4,557,259 | 2,546 / 1,225 / 1,901 | 170 |
+
+The added constraint increased CKB transfer cycles by 9.4% inline and
+9.6% with shared Manifests, with the same transfer Witness size. The
+three-constraint transfers took about 416 and 419 ms respectively from
+submission through local mining. Some other work overlapped the tests.
+The files retain individual finality proofs, timing and signed byte
+measurements. Checkpoint message proofs can vary in length across runs.
+
+An independent WASM verifier checked the original Stem rule Cell,
+execution receipts, escrow membership and absence, and the restored
+object. It verified revision 4 with all three Scripts in both storage
+layouts. A third verification used a 700-byte final state, restoring
+9 CKB of original Capacity and 5 CKB of authorized top-up. Missing that
+top-up was rejected. Two earlier top-up runs hit ordinary Storage Bond
+validation before the intended check. The retry funds the oversized
+negative case to isolate the state policy and gives the three-Script
+escrow enough initial Capacity to carry the object. The report also
+contains the initial WASM build failure and the successful retry with
+the pinned bindgen.
+
+The workspace passed 484 tests with 22 ignored. CKB regressions
+covered 2, 4, 8 and 16 standalone constraints, fungible Metatype
+export and return, Spore ID preservation, funded committee handoff
+with Intercell delivery, four fee payouts, the CKB and xUDT bridge,
+and both L1 Cell Reference modes. The Go proof suite and frozen
+CometBFT build check passed.
+
+[Signed transactions, proof inputs, measurements, failed runs and reproduction commands](benchmarks/2026-11-26-stem-metatype-external-rule.json.xz).
