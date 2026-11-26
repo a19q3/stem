@@ -19,7 +19,7 @@ def check_registrations(settlement, checked):
     cell = settlement.get("final_ckb") or settlement["final_ckb_cell"]
     data = binary(cell["data"]["content"])
     mime_size = int.from_bytes(data[16:20], "little")
-    ids = [entry["type"]["args"][2:] for entry in entries]
+    ids = [binary(entry["type"]["args"])[:32].hex() for entry in entries]
     assert len(set(ids)) == len(ids)
     assert data[20:20 + mime_size] == ("text/plain;mutant[]=" + ",".join(ids)).encode()
     for entry in entries:
@@ -172,7 +172,8 @@ def main():
     records = {}
     for filename in ("histories.json.xz", "two-registrations.json.xz", "cluster-controls.json.xz", "cluster-settlement.json.xz",
                      "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
-                     "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz"):
+                     "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz",
+                     "registered-policy/settlement.json.xz"):
         with lzma.open(HERE / filename, "rt") as source:
             records.update(json.load(source))
     with tempfile.TemporaryDirectory() as scratch:

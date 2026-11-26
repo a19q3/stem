@@ -2,6 +2,8 @@
 
 A Spore issued on Stem reached a CKB wallet with the published beta.2 Type, its reserved 32-byte ID, the original content and a reference to a real Lua registration. After a CKB wallet transfer, the object returned to Stem and went back to CKB under the same Type. The final CKB melt authorized the retirement of the native title and refunded its full capacity. A second four-replica network began with a CKB-issued Spore and ended with the second owner's native custody claim. Both used the upstream registration example, `print('hello world')`. Every CKB operation used local development funds. [CKB histories and native receipts](histories.json.xz) · [Upstream positive fixture](https://github.com/sporeprotocol/spore-contract/blob/9e8663b3ef6e277a58acca9f4f347e5dbf8d5c06/tests/src/tests/mutant.rs)
 
+A later study authenticated a public paid registration and an actual Spore mint. Four local validators on each asset-origin route verified the same program through wallet transfers and custody handoffs. [Public policy, 1,000-shannon registration and settlement](registered-policy/README.md)
+
 ```mermaid
 sequenceDiagram
     participant N as Stem owner and validators

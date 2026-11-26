@@ -10,6 +10,8 @@ Three four-replica trials directly transferred a Stem-issued title twice with CK
 
 Four further three-minute trials scheduled 4,000 signed payments per second. Across the two TCP reuse runs, doubling senders increased actual writes from 3,057 to 3,543 per second and reduced four-replica common finality from 1,987.32 to 1,882.19 TPS. Pausing fresh-connection senders after a full-mempool reply cut refusals by 92.1% and raised common throughput by 0.21% in one pair. [Archived payments, CPU, SST output and backlog](research/storage/submission-sessions/README.md)
 
+A published testnet Lua program with a 1,000-shannon mint payment completed both local asset-origin routes. The two four-validator devnets replayed 13 CKB asset states and 11 certified native executions. An independently checked public mint resolved the same program under its original registration. [Committed assets, payment deltas and offline verification](research/spore-permit/upstream/beta2/registered-policy/README.md)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two

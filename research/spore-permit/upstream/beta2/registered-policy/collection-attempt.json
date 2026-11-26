@@ -1,0 +1,79 @@
+{
+  "operation": "estimate_cycles",
+  "registration": "0x8670f87c7763271d2f75b119e49063afcf640ad71d4ec0f423c89a39d5653553",
+  "registration_type": {
+    "args": "0x85fe7798e1be4cc4e3f38c3f541b8cf32f6f3ef2fbc7ab66ea2239b8e4075171e803000000000000",
+    "code_hash": "0x5ff1a403458b436ea4b2ceb72f1fa70a6507968493315b646f5302661cb68e57",
+    "hash_type": "data1"
+  },
+  "collection_tx": "0x9242ef4461bd613aadcebdbc37f21d126d6cee1ab333ca5f290291177697cb18",
+  "collection_type": {
+    "args": "0x5da77a7d8370716505c1d45f0720547ba955a662161a866fd73127efed16669c",
+    "code_hash": "0x0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058",
+    "hash_type": "data1"
+  },
+  "collection_data": "0x5d000000100000002a000000390000001600000043726f73732d636861696e20636f6c6c656374696f6e0b000000434b4220637573746f64792000000085fe7798e1be4cc4e3f38c3f541b8cf32f6f3ef2fbc7ab66ea2239b8e4075171",
+  "dependencies": [
+    {
+      "dep_type": "dep_group",
+      "out_point": {
+        "index": "0x0",
+        "tx_hash": "0x92203bf17d2d900953864c951fb9b986cbf154129e045ca30e2ec6f07191d26a"
+      }
+    },
+    {
+      "dep_type": "code",
+      "out_point": {
+        "index": "0x0",
+        "tx_hash": "0x00eedf49105b5b8aed70e7ed42a9b12b3896c088d701dc5807cce292b330d07f"
+      }
+    },
+    {
+      "dep_type": "code",
+      "out_point": {
+        "index": "0x1",
+        "tx_hash": "0x00eedf49105b5b8aed70e7ed42a9b12b3896c088d701dc5807cce292b330d07f"
+      }
+    },
+    {
+      "dep_type": "code",
+      "out_point": {
+        "index": "0x2",
+        "tx_hash": "0x00eedf49105b5b8aed70e7ed42a9b12b3896c088d701dc5807cce292b330d07f"
+      }
+    },
+    {
+      "dep_type": "code",
+      "out_point": {
+        "index": "0x3",
+        "tx_hash": "0x00eedf49105b5b8aed70e7ed42a9b12b3896c088d701dc5807cce292b330d07f"
+      }
+    },
+    {
+      "dep_type": "code",
+      "out_point": {
+        "index": "0x4",
+        "tx_hash": "0x00eedf49105b5b8aed70e7ed42a9b12b3896c088d701dc5807cce292b330d07f"
+      }
+    },
+    {
+      "dep_type": "code",
+      "out_point": {
+        "index": "0x0",
+        "tx_hash": "0x8670f87c7763271d2f75b119e49063afcf640ad71d4ec0f423c89a39d5653553"
+      }
+    },
+    {
+      "dep_type": "code",
+      "out_point": {
+        "index": "0x0",
+        "tx_hash": "0xcdf2ada2c1738c5bbea25ad6d2721357dfa425869b83065f92106462f332ea68"
+      }
+    }
+  ],
+  "result": {
+    "code": -302,
+    "message": "TransactionFailedToVerify: Script(TransactionScriptError { source: Outputs[0].Type, cause: ValidationFailure: see error code 54 on page https://nervosnetwork.github.io/ckb-script-error-codes/by-data-hash/0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058.html#54 })",
+    "data": "Error { kind: Script, inner: TransactionScriptError { source: Outputs[0].Type, cause: ValidationFailure: see error code 54 on page https://nervosnetwork.github.io/ckb-script-error-codes/by-data-hash/0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058.html#54 } }"
+  }
+}

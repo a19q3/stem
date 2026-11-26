@@ -12,7 +12,8 @@ const trust = JSON.parse(await readFile(new URL("committee-trust.json", import.m
 const evidence = {};
 for (const filename of ["histories.json.xz", "two-registrations.json.xz", "cluster-settlement.json.xz",
     "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
-    "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz"]) {
+    "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz",
+    "registered-policy/settlement.json.xz"]) {
     const archive = new URL(filename, import.meta.url);
     Object.assign(evidence, JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 32*1024*1024})));
 }
@@ -21,8 +22,8 @@ for (const [name, root] of Object.entries(trust)) {
     const verifier = new sdk.StemVerifier(bytes(root.network_id), bytes(root.genesis_id), bytes(root.initial_committee));
     const transactions = "imported" in record
         ? { imported: record.imported, burned: record.burned, reimported: record.reimported }
-        : { issue: record.issued, lock: record.locked, restore: record.restored, relock: record.relocked,
-            retire: record.standard_melt.retired };
+        : { issue: record.issued, lock: record.locked, restore: record.restored, relock: record.relocked };
+    if (record.standard_melt) transactions.retire = record.standard_melt.retired;
     const grants = new Map((record.handoffs ?? []).map((grant, i) => [`handoff-${i+1}`, grant]));
     for (const [label, grant] of grants) transactions[label] = grant.native;
     const titles = new Map();

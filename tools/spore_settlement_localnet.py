@@ -226,9 +226,13 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         deps += [dependency(point(funded, i)) for i in (lua_index, lua_index + 1)]
         entries = []
         required = [{"data_hash": hex_bytes(h)} for h in (spore_hash, MUTANT_BETA2, LUA_LIB)]
+        payment = b"" if args.spore_mutant_payment is None else le(args.spore_mutant_payment, 8)
+        mutant_ids = []
         for offset, program in enumerate(programs):
             index = registration_index + offset
-            registry = script(hex_bytes(MUTANT_BETA2), hex_bytes(type_id(index)), "data1")
+            mutant_id = type_id(index)
+            mutant_ids.append(mutant_id.hex().encode())
+            registry = script(hex_bytes(MUTANT_BETA2), hex_bytes(mutant_id + payment), "data1")
             capacity = funds[index - len(codes)][0] - FEE
             create = transaction([point(funded, index)], [output(capacity, fixture.owner_lock, registry)],
                                  [hex_bytes(program)], deps)
@@ -237,7 +241,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             entries.append({"type": registry, "program": program.decode(), "created": registered})
             required.append({"data_hash": hex_bytes(ckb_hash(program)), "type_hash": hex_bytes(script_hash(registry))})
         deps.extend(dependency(point(entry["created"]["hash"], 0)) for entry in entries)
-        mutant_suffix = b";mutant[]=" + b",".join(entry["type"]["args"][2:].encode() for entry in entries)
+        mutant_suffix = b";mutant[]=" + b",".join(mutant_ids)
         mutant_registration = {**(entries[0] if len(entries) == 1 else {"entries": entries}), "required_dependencies": required}
     mint_source = len(codes)
     cluster_id, cluster = b"", None

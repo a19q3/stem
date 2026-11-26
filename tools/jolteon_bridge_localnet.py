@@ -610,6 +610,8 @@ def main():
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
     parser.add_argument("--spore-mutant-program", type=lambda path: Path(path).resolve(), action="append",
                         help="register this Lua source and include its ID in the Spore, in argument order")
+    parser.add_argument("--spore-mutant-payment", type=int,
+                        help="set the beta.2 registration mint payment in shannons for each program")
     parser.add_argument("--spore-handoff", action="store_true",
                         help="authorize two direct native title transfers using the original CKB Spore")
     parser.add_argument("--spore-handoff-stale-source", action="store_true",
@@ -665,7 +667,9 @@ def main():
             not all((args.export_udt, args.intercell_mailbox))
             or not (all(portable_udt) or all((args.asset_escrow, args.ckb_stem_udt)))):
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
-    if args.spore_mutant_lua or args.ckb_lua_library or args.spore_mutant_program:
+    if args.spore_mutant_payment is not None and not 0 <= args.spore_mutant_payment < 2**64:
+        parser.error("--spore-mutant-payment must fit an unsigned 64-bit shannon amount")
+    if args.spore_mutant_lua or args.ckb_lua_library or args.spore_mutant_program or args.spore_mutant_payment is not None:
         if not all((args.spore_mutant_lua, args.ckb_lua_library, args.stem_spore or args.native_spore_origin)) or any((
                 args.spore_immortal, args.native_spore_approval,
                 args.native_spore_json, args.native_spore_multipart)):
