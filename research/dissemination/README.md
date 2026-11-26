@@ -41,3 +41,15 @@ uv pip install --python /tmp/stem-graphs/bin/python -r research/dissemination/re
 OPENBLAS_NUM_THREADS=1 /tmp/stem-graphs/bin/python research/dissemination/simulate.py --seeds 19 83 251 409 877 > /tmp/stem-graphs.json
 /tmp/stem-graphs/bin/python research/dissemination/verify.py /tmp/stem-graphs.json
 ```
+
+## Persistent TCP sockets and four-payload bursts
+
+The follow-up sent 64 KiB messages over real IPv4 loopback sockets at 128 and 1,024 logical nodes, with the same two held-out graph seeds, origins and 10% omission sets. Each undirected live edge uses one full-duplex TCP connection. The direct baseline opens just the origin's star, enough for this single-origin experiment. All connections are established before timing. A single pinned Python selector loop processes the endpoints, verifies each complete payload and forwards on first receipt. Every endpoint/direction holds at most one pending frame per distinct message. Payload byte counts exclude transport headers. For each case the harness compared delivery counts against the root's connected component and accounted for every copy, including duplicates.
+
+At 1,024 healthy nodes, each 64 KiB message cost 63.94 MiB direct, 448.06 MiB on the flood, and 186.19 / 188.31 MiB on the delay-aware tree pair. Across three four-message bursts, median recipient p99 for the fourth message from burst launch was **90.9 / 89.6 ms** direct, **678.0 / 686.8 ms** flooded, and **305.9 / 269.3 ms** on the tree pair. Each pair is seeds 409 / 877. With 102 absent, the direct and flood paths reached all 922 live nodes; the tree pair reached 921 in both cases. No synthetic repair was included. Graph, queue and recipient counts are comparable to the simulator; the host's NIC, RTT diversity and independent endpoint CPU costs require a multi-host trial.
+
+```sh
+OPENBLAS_NUM_THREADS=1 taskset -c 2 python3 research/dissemination/loopback.py > /tmp/stem-tcp-bursts.json
+```
+
+The archive loopback.json.xz includes all 144 trials, per-message p99 and last receipt, queue maxima, unique coverage, duplicates, payload bytes and process resource usage. Timing excludes connection setup.
