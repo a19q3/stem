@@ -1,0 +1,382 @@
+{
+  "mainnet": {
+    "tip": {
+      "block_hash": "0x564a1117cd8d479468f7f46f7d1eaf22fce4fed6218a52e102496840ff66c835",
+      "block_number": "0x1423c02"
+    },
+    "deployment": {
+      "name": "spore_extension_lua",
+      "tx_hash": "0x3faf49cbd18fc99566079b534c3c05b2b29703d936e9c0b04234bcc686e076b1",
+      "index": 0,
+      "occupied_capacity": 3155000000000,
+      "data_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+      "type_id": "0x83c394f0e439bfdd5711578b1669ec73140b5aefd8c6af1d623d6d299a5218de"
+    },
+    "queries": {
+      "published_spore_control": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5",
+            "hash_type": "data1",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x1423c03"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0xa04a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f502fff5a2e0c11c5f54d6e44b624e2b40ca7a1ee7343af723be4bd4bd03cfc8668c0000000000d16da7000000030000000001",
+          "objects": [
+            {
+              "block_number": "0xe30a17",
+              "io_index": "0xc",
+              "io_type": "output",
+              "tx_hash": "0x0d615377af6eca7ba75c9a6133b3ea9ff4a7805f680beafacd7b1e0d0f2692b9",
+              "tx_index": "0x1"
+            },
+            {
+              "block_number": "0xd9ab56",
+              "io_index": "0x0",
+              "io_type": "output",
+              "tx_hash": "0x7440d5abeccee718c1e7ce45696c4d459064a230c88f25538eeba1250bd0dab3",
+              "tx_index": "0x1"
+            },
+            {
+              "block_number": "0xd9ab56",
+              "io_index": "0x0",
+              "io_type": "input",
+              "tx_hash": "0x7440d5abeccee718c1e7ce45696c4d459064a230c88f25538eeba1250bd0dab3",
+              "tx_index": "0x1"
+            },
+            {
+              "block_number": "0xd16da7",
+              "io_index": "0x0",
+              "io_type": "output",
+              "tx_hash": "0xb036fb7eae8334791d25d79478d79e975b056f8ec460392a6951954d5eb2e4e6",
+              "tx_index": "0x3"
+            }
+          ]
+        },
+        "checked_output": {
+          "type": {
+            "args": "0xfffec9f931955acbe3a8c4ee50776ee904f825c9698d32fd9956bdffe908f592",
+            "code_hash": "0x4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5",
+            "hash_type": "data1"
+          },
+          "out_point": {
+            "block_number": "0xe30a17",
+            "io_index": "0xc",
+            "io_type": "output",
+            "tx_hash": "0x0d615377af6eca7ba75c9a6133b3ea9ff4a7805f680beafacd7b1e0d0f2692b9",
+            "tx_index": "0x1"
+          },
+          "inclusion": {
+            "block_hash": "0x24073985962eb4a3d032c513ea49f82d320efb56d8e465df01e63b0e9641cbb0",
+            "transactions_proof": {
+              "indices": [
+                "0x9"
+              ],
+              "lemmas": [
+                "0xd48b1190897d672c427f7231504ca66ad1aa9236c61b8850441c8449fe176583",
+                "0xc8effb4f61c45a6083ba349ad14376820be6ba3d2f37df78384b9dd49bdef886",
+                "0x2b0ac0fdd4de8d0694963675495e6b3b54e973509d86b5e69a3adfd81e540046"
+              ]
+            },
+            "witnesses_proof": {
+              "indices": [
+                "0x9"
+              ],
+              "lemmas": [
+                "0x9ebf5182387b2163525499695d1e0506e60d9d07b7adf6713ae53c2beab04627",
+                "0x358e5b509a0cb7d1f7e0daf705ee9eff1345609b03810285e4697ea94e5fb0d5",
+                "0x9a87d91d2a486a4bf5477d52a893c59cef1bca4d469dc791c5ef533aa92f3499"
+              ]
+            }
+          }
+        }
+      },
+      "lua_data1": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+            "hash_type": "data1",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x1423c03"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      },
+      "lua_type": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x83c394f0e439bfdd5711578b1669ec73140b5aefd8c6af1d623d6d299a5218de",
+            "hash_type": "type",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x1423c03"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      },
+      "lua_data2": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+            "hash_type": "data2",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x1423c03"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      },
+      "lua_data": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+            "hash_type": "data",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x1423c03"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      }
+    },
+    "endpoint": "https://mainnet.ckb.dev",
+    "method": "get_transactions",
+    "order": "desc",
+    "limit": "0x4"
+  },
+  "testnet": {
+    "tip": {
+      "block_hash": "0x311bf0b5868a62dce37d0c598fa0928e1a5970b4301d3aa026f6efd0fc1a8761",
+      "block_number": "0x161e778"
+    },
+    "deployment": {
+      "name": "spore_extension_lua",
+      "tx_hash": "0x3faf49cbd18fc99566079b534c3c05b2b29703d936e9c0b04234bcc686e076b1",
+      "index": 0,
+      "occupied_capacity": 3155000000000,
+      "data_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+      "type_id": "0x83c394f0e439bfdd5711578b1669ec73140b5aefd8c6af1d623d6d299a5218de"
+    },
+    "queries": {
+      "published_spore_control": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x5e063b4c0e7abeaa6a428df3b693521a3050934cf3b0ae97a800d1bc31449398",
+            "hash_type": "data1",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x161e779"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0xa05e063b4c0e7abeaa6a428df3b693521a3050934cf3b0ae97a800d1bc3144939802ff7d234d08aac9927756778f2f028171a073a3b888613a48ccea57df54f8ffec0000000000c2b587000000060000000000",
+          "objects": [
+            {
+              "block_number": "0xbf62ab",
+              "io_index": "0x0",
+              "io_type": "output",
+              "tx_hash": "0x4346786c4a3104d426ecb91bdd268dc2d777caacd338f62374ff5cda220acb4a",
+              "tx_index": "0x3"
+            },
+            {
+              "block_number": "0xc90a1c",
+              "io_index": "0x0",
+              "io_type": "output",
+              "tx_hash": "0x08998699d5e77b534d2d37704d5c1e4930381420d732996fe98eeb46a8ca2bb9",
+              "tx_index": "0x1"
+            },
+            {
+              "block_number": "0xc2b587",
+              "io_index": "0x0",
+              "io_type": "output",
+              "tx_hash": "0x0373b193503463327a865c6dee4e12f740fe2ef8f5d084976de8606db8a2d228",
+              "tx_index": "0x6"
+            },
+            {
+              "block_number": "0xc2b587",
+              "io_index": "0x0",
+              "io_type": "input",
+              "tx_hash": "0x0373b193503463327a865c6dee4e12f740fe2ef8f5d084976de8606db8a2d228",
+              "tx_index": "0x6"
+            }
+          ]
+        },
+        "checked_output": {
+          "type": {
+            "args": "0xffeb0985315ec2fde94b2bd07bd51af660aa05d1920e38e417ac0a18556f1704",
+            "code_hash": "0x5e063b4c0e7abeaa6a428df3b693521a3050934cf3b0ae97a800d1bc31449398",
+            "hash_type": "data1"
+          },
+          "out_point": {
+            "block_number": "0xbf62ab",
+            "io_index": "0x0",
+            "io_type": "output",
+            "tx_hash": "0x4346786c4a3104d426ecb91bdd268dc2d777caacd338f62374ff5cda220acb4a",
+            "tx_index": "0x3"
+          },
+          "inclusion": {
+            "block_hash": "0x1d070eb73ae1f2069ed59814fc73301ec41dfe12bfe56d679a14d742caec9dd5",
+            "transactions_proof": {
+              "indices": [
+                "0x6"
+              ],
+              "lemmas": [
+                "0xdd04972925c4ace53b73cbb44d203033a48e47f186af8c9f4996e2fefe320185",
+                "0x6ea2ef9c609f78e8aedc83379588f7e107319674e586757732468ef243392918"
+              ]
+            },
+            "witnesses_proof": {
+              "indices": [
+                "0x6"
+              ],
+              "lemmas": [
+                "0x6029a85780a58b686f6bbc8ae6a82943740d6fccd60627ea8eb532c64dc85dce",
+                "0x96b6ae92d2c50c66005e19bd272eb6076e68bc55511c12fbcb9a5acd5fec6315"
+              ]
+            }
+          }
+        }
+      },
+      "lua_data1": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+            "hash_type": "data1",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x161e779"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      },
+      "lua_type": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x83c394f0e439bfdd5711578b1669ec73140b5aefd8c6af1d623d6d299a5218de",
+            "hash_type": "type",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x161e779"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      },
+      "lua_data2": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+            "hash_type": "data2",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x161e779"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      },
+      "lua_data": {
+        "search_key": {
+          "script": {
+            "code_hash": "0x94a9b875911ace20f1f0d063a26495d14e4b04e32fd218261bb747f34e71ae47",
+            "hash_type": "data",
+            "args": "0x"
+          },
+          "script_type": "type",
+          "script_search_mode": "prefix",
+          "filter": {
+            "block_range": [
+              "0x0",
+              "0x161e779"
+            ]
+          }
+        },
+        "reply": {
+          "last_cursor": "0x",
+          "objects": []
+        }
+      }
+    },
+    "endpoint": "https://testnet.ckb.dev",
+    "method": "get_transactions",
+    "order": "desc",
+    "limit": "0x4"
+  }
+}

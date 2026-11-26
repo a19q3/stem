@@ -32,3 +32,9 @@ stem ckb-wallet verify-type-history \
   --request /tmp/stem-mutant-registration/request.json \
   --proof /tmp/stem-mutant-registration/history.json
 ```
+
+## Public index lookup
+
+The mainnet and testnet indexers returned zero historical transaction matches for the published Lua interpreter's data hash under Data, Data1 and Data2 addressing, and for its published testnet Type hash under Type addressing. Each lookup used a Type Script argument prefix and an exclusive upper bound of one block above the recorded indexer tip. The mainnet snapshot ended at height 21,117,954 and the testnet snapshot at 23,193,464. Both endpoints returned ordinary Spore transactions as positive controls. One matching output per network was checked against the returned transaction and its CKB transaction-and-witness inclusion proof.
+
+These queries cover the listed identities and indexer responses. Other interpreter deployments, versions and privately supplied fixtures may provide a positive extension-bearing Spore. A successful original asset transfer and its dependencies are still needed for the next cross-chain comparison. [Exact search keys, indexer tips and control proofs](index-snapshot.json) · [Published interpreter deployment](https://github.com/sporeprotocol/spore-contract/blob/3c796b6c02e5d3857bbaa42476adcb23e1c88722/deployment/migration/testnet/spore_extension_lua/2024-01-19-0.2.1.json)
