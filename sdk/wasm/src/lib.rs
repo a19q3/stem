@@ -13,6 +13,7 @@ use stem_ledger::{
     Transaction,
     block::Receipt,
     light::{self, EXTINGUISHED_FEES_KEY, FinalityVerifier, VerifiedHeader},
+    lineage::{self, Head, LineageProof},
     patricia::{Namespace, Patricia, Proof},
     proof::InclusionProof,
     protocol::{BridgeBacking, VaultRevenue},
@@ -110,6 +111,36 @@ impl AuthenticatedHeader {
         js(verify_cell(&self.0, point, raw, proof))
     }
 
+    #[wasm_bindgen(js_name = verifyLineage)]
+    pub fn verify_lineage(
+        &self,
+        reference: &LineageRef,
+        marker_code: &[u8],
+        record: &[u8],
+        proof: &[u8],
+        cell: &[u8],
+        cell_proof: &[u8],
+    ) -> Result<Option<VerifiedLineageHead>, JsError> {
+        js((|| {
+            let proof = LineageProof::decode(
+                nonempty(record),
+                proof,
+                nonempty(cell),
+                nonempty(cell_proof),
+            )?;
+            ensure!(
+                proof.verify(
+                    self.0.network(),
+                    self.0.header(),
+                    &reference.0,
+                    &Byte32::from_slice(marker_code)?
+                ),
+                "Lineage proof does not match the reference and authenticated Header"
+            );
+            Ok(proof.head.map(|(head, _, _)| VerifiedLineageHead(head)))
+        })())
+    }
+
     #[wasm_bindgen(js_name = verifyExecution)]
     pub fn verify_execution(
         &self,
@@ -197,6 +228,89 @@ impl AuthenticatedHeader {
         proof: &[u8],
     ) -> Result<(), JsError> {
         js(self.authenticate_record(key, record.as_deref(), proof))
+    }
+}
+
+#[wasm_bindgen]
+pub struct LineageRef(lineage::LineageRef);
+
+#[wasm_bindgen]
+impl LineageRef {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        id: &[u8],
+        #[wasm_bindgen(unchecked_optional_param_type = "bigint")] version: Option<JsValue>,
+    ) -> Result<LineageRef, JsError> {
+        js((|| {
+            let version = version
+                .map(|version| {
+                    u64::try_from(version)
+                        .ok()
+                        .context("expected a u64 BigInt version")
+                })
+                .transpose()?;
+            Ok(Self(lineage::LineageRef::new(
+                Byte32::from_slice(id)?,
+                version,
+            )?))
+        })())
+    }
+
+    #[wasm_bindgen(js_name = deriveId)]
+    pub fn derive_id(network: &[u8], anchor: &[u8], output_index: f64) -> Result<Vec<u8>, JsError> {
+        js((|| {
+            let anchor = OutPoint::from_slice(anchor)?;
+            ensure!(
+                !anchor.is_null(),
+                "Lineage registration requires a real anchor"
+            );
+            ensure!(
+                (0.0..=f64::from(u32::MAX)).contains(&output_index) && output_index.fract() == 0.0,
+                "expected a u32 Lineage output index"
+            );
+            Ok(
+                lineage::id(&Byte32::from_slice(network)?, &anchor, output_index as u32)
+                    .as_slice()
+                    .to_vec(),
+            )
+        })())
+    }
+
+    #[wasm_bindgen(js_name = fromBytes)]
+    pub fn from_bytes(bytes: &[u8]) -> Result<LineageRef, JsError> {
+        js(lineage::LineageRef::decode(bytes).map(Self))
+    }
+
+    #[wasm_bindgen(js_name = toBytes)]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0.encode().to_vec()
+    }
+
+    pub fn id(&self) -> Vec<u8> {
+        self.0.id().as_slice().to_vec()
+    }
+
+    pub fn version(&self) -> Option<u64> {
+        self.0.version()
+    }
+}
+
+#[wasm_bindgen]
+pub struct VerifiedLineageHead(Head);
+
+#[wasm_bindgen]
+impl VerifiedLineageHead {
+    pub fn version(&self) -> u64 {
+        self.0.version
+    }
+
+    #[wasm_bindgen(js_name = outPoint)]
+    pub fn out_point(&self) -> Vec<u8> {
+        self.0.out_point.as_slice().to_vec()
+    }
+
+    pub fn executor(&self) -> Vec<u8> {
+        self.0.executor.as_slice().to_vec()
     }
 }
 

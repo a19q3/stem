@@ -4,6 +4,23 @@ use super::*;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Derive a Lineage ID from the first registration input and output slot.
+    Id {
+        #[arg(long)]
+        genesis: PathBuf,
+        /// JSON OutPoint for the first registration input.
+        #[arg(long)]
+        anchor: PathBuf,
+        #[arg(long)]
+        output_index: u32,
+    },
+    /// Encode a LineageRef. Omit --version to select Latest.
+    Reference {
+        #[arg(long, value_parser = crate::bridge_cli::parse_hash)]
+        id: H256,
+        #[arg(long)]
+        version: Option<u64>,
+    },
     /// Encode a Lineage command from JSON with strictly ordered target IDs.
     Build {
         #[arg(long)]
@@ -132,15 +149,32 @@ struct Plan {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Target {
-    id: H256,
-    min_version: u64,
-    max_version: u64,
+    reference: JsonBytes,
+    latest_bounds: Option<(u64, u64)>,
     min_capacity: u64,
 }
 
 impl Command {
     pub(super) fn run(self) -> Result<()> {
         let transaction = match self {
+            Self::Id {
+                genesis,
+                anchor,
+                output_index,
+            } => {
+                let network = native_spec::load(&genesis)?.network;
+                let anchor: OutPoint = read_json_limited(&anchor, 1024)?;
+                let anchor: packed::OutPoint = anchor.into();
+                ensure!(
+                    !anchor.is_null(),
+                    "Lineage registration requires a real anchor"
+                );
+                return print_json(&H256::from(ledger::id(&network, &anchor, output_index)));
+            }
+            Self::Reference { id, version } => {
+                let reference = ledger::LineageRef::new(id.pack(), version)?;
+                return print_json(&JsonBytes::from_bytes(reference.encode()));
+            }
             Self::Build { request } => {
                 let request: Request = read_json_limited(&request, 512 * 1024)?;
                 let business = request.business.map(|intent| ledger::Intent {
@@ -171,13 +205,16 @@ impl Command {
                         targets: request
                             .targets
                             .into_iter()
-                            .map(|target| ledger::Target {
-                                id: target.id.pack(),
-                                min_version: target.min_version,
-                                max_version: target.max_version,
-                                min_capacity: target.min_capacity,
+                            .map(|target| {
+                                Ok(ledger::Target {
+                                    reference: ledger::LineageRef::decode(
+                                        target.reference.as_bytes(),
+                                    )?,
+                                    latest_bounds: target.latest_bounds,
+                                    min_capacity: target.min_capacity,
+                                })
                             })
-                            .collect(),
+                            .collect::<Result<_>>()?,
                     },
                 )?;
                 let tx = if let Some(intent) = business {

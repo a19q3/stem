@@ -458,13 +458,39 @@
       ]
     },
     {
-      "name": "LineageTarget",
+      "name": "LineageSelector",
+      "kind": "uleb",
+      "bits": 65
+    },
+    {
+      "name": "LineageRef",
       "kind": "sequence",
       "fields": [
         { "name": "id", "type": "Byte32" },
+        { "name": "selector", "type": "LineageSelector" }
+      ]
+    },
+    {
+      "name": "LineageVersionBounds",
+      "kind": "sequence",
+      "fields": [
         { "name": "min_version", "type": "CompactUint64" },
-        { "name": "max_version", "type": "CompactUint64" },
-        { "name": "min_capacity", "type": "CompactUint64" }
+        { "name": "max_version", "type": "CompactUint64" }
+      ]
+    },
+    {
+      "name": "LineageVersionBoundsOpt",
+      "kind": "optional",
+      "item": "LineageVersionBounds"
+    },
+    {
+      "name": "LineageTarget",
+      "kind": "flagged",
+      "flag_bytes": 1,
+      "fields": [
+        { "name": "reference", "type": "LineageRef" },
+        { "name": "min_capacity", "type": "CompactUint64" },
+        { "name": "latest_bounds", "type": "LineageVersionBoundsOpt", "bit": 0 }
       ]
     },
     {

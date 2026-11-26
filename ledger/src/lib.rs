@@ -625,7 +625,7 @@ impl Transaction {
                     && command
                         .targets
                         .iter()
-                        .any(|target| target.min_version == target.max_version),
+                        .any(|target| target.reference.version().is_some()),
                 "Lineage intent requires its fee cap and an exact target version"
             );
             ensure!(
@@ -901,7 +901,7 @@ impl Transaction {
                     command
                         .targets
                         .iter()
-                        .all(|target| heads.insert(target.id.clone())),
+                        .all(|target| heads.insert(target.reference.id().clone())),
                     "overlapping Lineage batch targets"
                 );
                 Ok(member)
@@ -951,19 +951,19 @@ impl Transaction {
                 command
                     .targets
                     .iter()
-                    .all(|target| heads.insert(target.id.clone())),
+                    .all(|target| heads.insert(target.reference.id().clone())),
                 "overlapping Lineage batch targets"
             );
             leaves.extend_from_slice(
                 hash(
-                    b"Stem Lineage batch member terms\0",
+                    b"Stem LineageRef batch member terms\0",
                     network,
                     &[terms.as_slice()],
                 )
                 .as_slice(),
             );
         }
-        Ok(hash(b"Stem Lineage batch plan\0", network, &[&leaves]))
+        Ok(hash(b"Stem LineageRef batch plan\0", network, &[&leaves]))
     }
 
     /// Match every member's binding to the exact signed order and contents.
@@ -1044,7 +1044,7 @@ impl Transaction {
         let intent = self.lineage_intent().context("expected a Lineage intent")?;
         let raw = self.normalized_lineage_terms(intent);
         Ok(hash(
-            b"Stem Lineage business authorization\0",
+            b"Stem LineageRef business authorization\0",
             network,
             &[raw.as_slice()],
         ))
@@ -1079,7 +1079,7 @@ impl Transaction {
                 "fee seal requires complete business seals"
             );
             return Ok(hash(
-                b"Stem sponsored Lineage fee authorization\0",
+                b"Stem sponsored LineageRef fee authorization\0",
                 network,
                 &[
                     self.id(network).as_slice(),
@@ -1089,7 +1089,7 @@ impl Transaction {
             ));
         }
         Ok(hash(
-            b"Stem Lineage command authorization\0",
+            b"Stem LineageRef command authorization\0",
             network,
             &[
                 self.id(network).as_slice(),

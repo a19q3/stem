@@ -64,7 +64,7 @@ def validate_schema():
   if n in stack:raise ValueError('recursive Strand type: '+n)
   t=TS[n];children=[f['type'] for f in t.get('fields',[])]+t.get('variants',[])+([t['item']] if 'item' in t else [])
   if t['kind'] not in ('fixed','struct','sequence','flagged','bytes','dense_vector','union','uleb','optional'):raise ValueError('unsupported Strand v1 primitive: '+t['kind'])
-  if t['kind']=='uleb' and t.get('bits') not in (16,32,64,128):raise ValueError('unsupported ULEB width: '+n)
+  if t['kind']=='uleb' and t.get('bits') not in (16,32,64,65,128):raise ValueError('unsupported ULEB width: '+n)
   if t['kind']=='union' and (t.get('tag_bytes',1)!=1 or not t['variants'] or len(t['variants'])>256):raise ValueError('Strand v1 requires closed one-byte union tags: '+n)
   if 'allowed_values' in t:
    values=t['allowed_values']

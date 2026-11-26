@@ -483,19 +483,25 @@ For Action-bearing pairs, every signer and the sponsor pass the same `--actions 
 
 Use the actual full Script hash from the offered or delivered Cells. The signing fragment may omit other pairs. The solver must produce every group named by the manifest. When using a draft that already has its final indexed Group Messages, omit `--actions` and use a signing context that resolves all inputs referenced by the draft. Build and publish the current Intent Lock ELF and re-sign partial quotes using its Action-bound signature domain.
 
-To enable Lineage lifecycle transitions in a fresh network, set `lineage_type` to the Data hash of the compiled `stem-lineage` RISC-V ELF and publish that program as a Cell Dep. Use `stem_ledger::lineage::id` and `marker` to build the Type Script. Register from an ordinary input at index 0 using group Action 0 with a 32-byte Executor Data hash. Use Action 1 for code replacement and Action 2 with empty data for retirement. Query `/stem/lineage` with a 32-byte Lineage ID and `prove=true`. Decode the Strand registry `record`, its `proof`, the `cell` and `cell_proof`. Verify both paths with `LineageProof::verify` against the same authenticated Header. Registration, Executor replacement and retirement use explicit OutPoints.
+To enable Lineage lifecycle transitions in a fresh network, set `lineage_type` to the Data hash of the compiled `stem-lineage` RISC-V ELF and publish that program as a Cell Dep. Use `stem_ledger::lineage::id` and `marker` to build the Type Script. Register from an ordinary input at index 0 using group Action 0 with a 32-byte Executor Data hash. Use Action 1 for code replacement and Action 2 with empty data for retirement. Query `/stem/lineage` with a canonical `LineageRef` and `prove=true`. Decode the Strand registry `record`, its `proof`, the `cell` and `cell_proof`. Verify both paths with `LineageProof::verify` against the same authenticated Header. Save that Header's finality proof and both state paths to verify the version after the Head advances. Registration, Executor replacement and retirement use explicit OutPoints.
 
-For dynamic commands, publish the registered Executor and the example `stem-lineage-lock` as Cell Deps. Prepare a head with `stem_ledger::lineage::lock` in head mode. Fund a separate plain CKB Cell with the same helper in fee mode. Use `Transaction::new_lineage_command` with the fee OutPoint, ordered target IDs and version ranges, Executor Data hash and OutPoint, signed fee, execution budgets, application payload and exclusive expiry. Sign `Transaction::lineage_signing_digest` with the fee Cell owner's secp256k1 key and place its 65-byte seal at Group Witness index 0. Use the ordinary node broadcast interfaces. The client must authenticate the fee Cell and check the Executor and application payload before signing. Owners can still authorize exact Head transitions with a complete transaction signature.
+For dynamic commands, publish the registered Executor and the example `stem-lineage-lock` as Cell Deps. Prepare a head with `stem_ledger::lineage::lock` in head mode. Fund a separate plain CKB Cell with the same helper in fee mode. Use `Transaction::new_lineage_command` with the fee OutPoint, ordered target references, Executor Data hash and OutPoint, signed fee, execution budgets, application payload and exclusive expiry. Sign `Transaction::lineage_signing_digest` with the fee Cell owner's secp256k1 key and place its 65-byte seal at Group Witness index 0. Use the ordinary node broadcast interfaces. The client must authenticate the fee Cell and check the Executor and application payload before signing. Owners can also authorize exact Head transitions with a complete transaction signature.
 
 The CLI builds and signs the same native command. The build request has
 `fee_input`, `cell_deps`, `targets`, `executor`, `executor_dep`,
 `valid_before_height`, `executor_cycles`, `validation_cycles`, `fee`
-and hex `payload` fields. A target contains `id`, `min_version`,
-`max_version` and `min_capacity`. Order targets by raw ID bytes. The
+and hex `payload` fields. A target contains the hex `reference` and
+`min_capacity`. `Latest` also accepts an optional `latest_bounds` array
+`[min, max]`, inclusive at both ends. Order targets by raw ID bytes. The
 signing context includes the authenticated fee and Executor Cells. Supply
 a separate expected Executor hash and a local fee cap before signing.
+Rebuild and re-sign pending Lineage commands when switching to the reference
+wire format, including sponsored batches and Keeper reservations on a fresh network.
 
 ```sh
+id=$(stem wallet lineage id --genesis stem-genesis.json --anchor anchor.json --output-index 0 | jq -r .)
+stem wallet lineage reference --id "$id"             # Latest
+stem wallet lineage reference --id "$id" --version 42 # Exact(42)
 stem wallet lineage build --request command.json > draft.json
 stem wallet lineage sign --genesis stem-genesis.json --transaction draft.json \
   --context cells.json --code stem-lineage-lock --key-file fee-key \
@@ -544,6 +550,17 @@ STEM_TEST_EVIDENCE_ROOT=/tmp/stem-keeper-evidence \
   native_default_preserves_polytype_intent_lineage_and_keeper -- --ignored --nocapture
 cargo test --locked --release --test native_store \
   measure_keeper_time_agenda -- --ignored --nocapture
+```
+
+The four-replica run also exports `lineage-references.json` with finalized
+proofs for versions 0 and 4 of the same Lineage. Use the run directory
+reported by the test to verify both proofs in the WASM SDK.
+
+```sh
+target/release/stem jolteon-trust --genesis "$RUN/genesis.json" > "$RUN/trust.json"
+sdk/wasm/build.sh /tmp/stem-lineage-wasm
+node sdk/wasm/tests/lineage.mjs /tmp/stem-lineage-wasm \
+  "$RUN/lineage-references.json" "$RUN/trust.json"
 ```
 
 For a 30-second mixed run with native Jolteon, select a fresh evidence

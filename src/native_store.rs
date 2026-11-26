@@ -37,7 +37,7 @@ pub use history_index::HistoryIndex;
 mod keeper;
 pub use keeper::{KeeperPolicy, KeeperTimePolicy};
 mod lineage;
-pub use lineage::LineageProof;
+pub use stem_ledger::lineage::LineageProof;
 mod node_storage;
 mod staking;
 mod state_snapshot;
@@ -525,7 +525,7 @@ impl Store {
                 ensure!(
                     spec.lineage_type.as_ref().is_none_or(|code| !cell
                         .type_scripts()
-                        .any(|script| lineage::is_marker(code, &script))),
+                        .any(|script| stem_ledger::lineage::is_marker(code, &script))),
                     "Lineages require post-genesis registration"
                 );
                 spec.capacity.verify(cell)?;
@@ -1352,7 +1352,7 @@ impl Store {
             }
         }
         for (id, head) in overlay.lineages {
-            let id = self.system.record_key(&lineage::record_key(&id));
+            let id = self.system.record_key(&stem_ledger::lineage::head_key(&id));
             let hash = head.map(|head| {
                 let value = head.encode();
                 let hash = self.system.value_hash(&value);
@@ -1904,7 +1904,8 @@ impl Store {
                 .sum::<u64>()
             + message_read_bytes
             + lineage_reads
-                * (lineage::KEY_BYTES + stem_ledger::lineage::Head::MAX_ENCODED_BYTES as u64)
+                * (stem_ledger::lineage::HEAD_KEY_BYTES as u64
+                    + stem_ledger::lineage::Head::MAX_ENCODED_BYTES as u64)
             + materialized
                 .as_ref()
                 .map_or(0, |command| command.read_bytes);
@@ -1945,7 +1946,8 @@ impl Store {
         let lineage_bytes = lineage_changes
             .values()
             .map(|head| {
-                lineage::KEY_BYTES + head.as_ref().map_or(0, |head| head.encode().len() as u64)
+                stem_ledger::lineage::HEAD_KEY_BYTES as u64
+                    + head.as_ref().map_or(0, |head| head.encode().len() as u64)
             })
             .sum();
         charge(

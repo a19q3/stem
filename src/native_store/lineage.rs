@@ -12,54 +12,17 @@ use ckb_types::{
 use stem_ledger::{
     BlockContext, Cell, CellInput, GroupMessage, LiveCell, ResolvedTransaction, ScriptGroupKind,
     Transaction,
-    lineage::{Command, Head, MAX_DATA_BYTES, REGISTER, REPLACE_EXECUTOR, RETIRE, id},
-    patricia::{Namespace, Patricia},
-    record,
+    lineage::{
+        Command, HEAD_KEY_BYTES, Head, LineageProof, LineageRef, MAX_DATA_BYTES, REGISTER,
+        REPLACE_EXECUTOR, RETIRE, head_key, id, is_marker, matches_head,
+    },
 };
 
 use stem_vm::executor;
 
 use super::{Budget, Header, Proof, Store};
 
-const PREFIX: &[u8] = b"lineage/head/";
-pub(super) const KEY_BYTES: u64 = (PREFIX.len() + 32) as u64;
 pub(super) type Heads = BTreeMap<Byte32, Option<Head>>;
-
-pub struct LineageProof {
-    pub head: Option<(Head, LiveCell, Proof)>,
-    pub system_path: Proof,
-}
-
-impl LineageProof {
-    pub fn verify(
-        &self,
-        network: &Byte32,
-        header: &Header,
-        id: &Byte32,
-        marker_code: &Byte32,
-    ) -> bool {
-        Store::verify_lineage(
-            network,
-            header,
-            id,
-            self.head.as_ref().map(|(head, _, _)| head),
-            &self.system_path,
-        ) && self.head.as_ref().is_none_or(|(head, cell, path)| {
-            matches_head(cell, marker_code, id)
-                && record::verify_cell(
-                    &Patricia::new(network.clone(), Namespace::Cells),
-                    &super::as_key(&header.state.cell_root),
-                    &head.out_point,
-                    Some(cell),
-                    path,
-                )
-        })
-    }
-}
-
-pub(super) fn is_marker(code: &Byte32, script: &Script) -> bool {
-    &script.code_hash() == code && script.hash_type().as_slice()[0] == ScriptHashType::Data as u8
-}
 
 pub(super) fn changes(
     store: &Store,
@@ -185,7 +148,7 @@ fn current_head(store: &Store, stage: &Heads, id: &Byte32) -> Result<Option<Head
     match stage.get(id) {
         Some(value) => Ok(value.clone()),
         None => store
-            .system_record(&record_key(id))?
+            .system_record(&head_key(id))?
             .as_deref()
             .map(Head::decode)
             .transpose()
@@ -205,7 +168,7 @@ pub(super) fn independent(store: &Store, wave: &[Transaction], heads: &Heads) ->
             return Ok(false);
         }
         for target in &command.targets {
-            let Some(head) = current_head(store, heads, &target.id)? else {
+            let Some(head) = current_head(store, heads, target.reference.id())? else {
                 return Ok(false);
             };
             if !writes.insert(head.out_point) {
@@ -394,25 +357,27 @@ pub(super) fn materialize(
     let mut loaded = Vec::with_capacity(command.targets.len());
     let mut read_bytes = (executor_code.as_slice().len() + fee_cell.as_slice().len()) as u64;
     for target in &command.targets {
-        let head = current_head(store, heads, &target.id)?.context("Lineage has no live head")?;
+        let head = current_head(store, heads, target.reference.id())?
+            .context("Lineage has no live head")?;
         ensure!(
-            head.executor == command.executor
-                && (target.min_version..=target.max_version).contains(&head.version),
+            head.executor == command.executor && target.matches_version(head.version),
             "Lineage head is outside the signed version or Executor bounds"
         );
         let cell = fresh(&head.out_point)?;
         ensure!(
-            matches_head(&cell, marker, &target.id) && cell.cell.data().len() <= MAX_DATA_BYTES,
+            matches_head(&cell, marker, target.reference.id())
+                && cell.cell.data().len() <= MAX_DATA_BYTES,
             "invalid Lineage Executor input"
         );
         ensure!(
             cell.cell.lock() != fee_cell.lock(),
             "Lineage head and fee Lock groups must be distinct"
         );
-        read_bytes +=
-            KEY_BYTES + Head::MAX_ENCODED_BYTES as u64 + cell.cell.as_slice().len() as u64;
+        read_bytes += HEAD_KEY_BYTES as u64
+            + Head::MAX_ENCODED_BYTES as u64
+            + cell.cell.as_slice().len() as u64;
         inputs.push(executor::Input {
-            id: target.id.clone(),
+            id: target.reference.id().clone(),
             version: head.version,
             capacity: cell.cell.capacity(),
             data: cell.cell.data(),
@@ -537,17 +502,22 @@ fn successors(
     Ok(successors)
 }
 
-pub(super) fn record_key(id: &Byte32) -> Vec<u8> {
-    [PREFIX, id.as_slice()].concat()
-}
-
-fn matches_head(cell: &LiveCell, code: &Byte32, id: &Byte32) -> bool {
-    cell.cell
-        .type_scripts()
-        .any(|script| is_marker(code, &script) && script.args().raw_data() == id.as_bytes())
-}
-
 impl Store {
+    /// Resolve a reference against the current authenticated state.
+    pub fn prove_lineage_ref(&self, reference: &LineageRef) -> Result<LineageProof> {
+        let proof = self.prove_current_lineage(reference.id())?;
+        if let Some(version) = reference.version() {
+            ensure!(
+                proof
+                    .head
+                    .as_ref()
+                    .is_some_and(|(head, _, _)| head.version == version),
+                "exact Lineage version is not the live head at the current height"
+            );
+        }
+        Ok(proof)
+    }
+
     pub fn prove_current_lineage(&self, id: &Byte32) -> Result<LineageProof> {
         let code = self
             .lineage
@@ -570,7 +540,7 @@ impl Store {
 
     pub fn prove_lineage(&self, id: &Byte32) -> Result<(Option<Head>, Proof)> {
         ensure!(self.lineage.is_some(), "Lineages are not configured");
-        let (record, proof) = self.prove_system(&record_key(id))?;
+        let (record, proof) = self.prove_system(&head_key(id))?;
         Ok((record.as_deref().map(Head::decode).transpose()?, proof))
     }
 
@@ -582,6 +552,6 @@ impl Store {
         proof: &Proof,
     ) -> bool {
         let record = head.map(Head::encode);
-        Self::verify_system_record(network, header, &record_key(id), record.as_deref(), proof)
+        Self::verify_system_record(network, header, &head_key(id), record.as_deref(), proof)
     }
 }

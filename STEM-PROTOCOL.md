@@ -85,13 +85,17 @@ Action 清单通过实际推导出的组校验，按 `(role, script_hash)` 唯�
 
 ### Lineage Cell
 
-已实现的注册表使用普通四字段 Cell 和网络固定的 Lineage Type Script。其 32 字节参数是稳定的 `LineageId`，由网络、注册交易首个消费的普通 OutPoint 和输出下标推导。注册和 Executor 更换用该 Type Group 的一个显式 Action 声明固定的 RISC-V 程序内容哈希。实际代码必须存在于解析后的依赖。Lineage 元数据在同一个 SystemRoot 下承诺，Live Head、版本和 Executor 与实际 UTXO 同步更新。Cell Data 和其他 Type Scripts 可由应用独立使用。
+已实现的注册表使用普通四字段 Cell 和网络固定的 Lineage Type Script。其 32 字节参数是稳定的 `LineageId`。按顺序哈希 `"Stem Lineage ID\0"`、32 字节网络 ID、注册交易首个消费的普通 OutPoint 的 36 字节编码和小端 `u32` 输出下标。哈希使用 CKB 的 32 字节 Blake2b。注册和 Executor 更换用该 Type Group 的一个显式 Action 声明固定的 RISC-V 程序内容哈希。实际代码必须存在于解析后的依赖。Lineage 元数据在同一个 SystemRoot 下承诺，Live Head、版本和 Executor 与实际 UTXO 同步更新。Cell Data 和其他 Type Scripts 可由应用独立使用。
 
-注册版本为零。后继消费唯一当前 Head，版本加一，并运行旧 Lock 与输入输出派生的全部 Type Groups。更换 Executor 或控制 Lock 经过当前 Head 的授权。显式退休消费 Head 并移除活动记录，注册锚点已经消费，原身份无法重新生成。`/stem/lineage` 在同一可信 Header 下提供 SystemRoot 路径与 CellRoot 路径。普通网络可省略 `lineage_type` 配置。
+注册版本为零。后继消费唯一当前 Head，版本加一，并运行旧 Lock 与输入输出派生的全部 Type Groups。更换 Executor 或控制 Lock 经过当前 Head 的授权。显式退休消费 Head 并移除活动记录，注册锚点已经消费，原身份无法重新生成。普通网络可省略 `lineage_type` 配置。
 
-Lineage 命令是原生 Strand 交易的可选字段。命令包含 1 至 16 个严格按 LineageId 排序且互异的目标，每个目标有闭区间版本约束和最低后继 Capacity。交易签名还覆盖网络、固定 Executor 的 Data 哈希和直接 Cell Dep、完整依赖引用、唯一付款 OutPoint 及其 Cell 内容、排他的过期高度、应用载荷、确定费用和两项 cycles 上限。应用载荷最多 4 KiB。网络和签名域防止跨网重放，精确付款 Cell 防止同网重复提交。付款 Cell 只持有 CKB Capacity，扣除授权费用后的余额返回原 Lock。
+`LineageRef` 由 32 字节 `LineageId` 和最短无符号 LEB128 选择器组成。`0` 选择当前 Head，正数 `v + 1` 选择精确的 `u64` 版本 `v`。选择器最高为 `2^64`，因此能表达完整的版本范围。引用的总长度为 33 至 42 字节。拒绝零 ID、超范围整数、非最短编码和多余字节。
 
-节点在交易的规范区块位置查找当前 Head。只有注册版本和 Executor 满足签名约束才开始执行。付款 Lock 先验证授权，Executor 在有界的 RISC-V V2 VM 中读取已声明目标、应用载荷、候选高度、上一提交区块时间和付款 Lock 哈希。Executor 为每个目标返回至多 16 KiB Data 及新 Capacity。内核保留原 Head 的 Lock 和完整 Type Script 集合，检查后继最低 Capacity、目标间总 Capacity 守恒以及存储抵押。生成的完整交易仍须通过原有 Lock 和所有输入、输出 Type Groups。权限变更和退休保持普通精确 OutPoint 授权。
+`/stem/lineage` 接收相同的规范引用并返回查询高度的 SystemRoot 和 CellRoot 路径。精确引用必须匹配该高度的 live Head。`Latest` 在该高度没有 live Head 时可以返回认证的缺失证明，该证明无法判定某历史版本是否曾经存在。历史读取需同时持有一个该版本仍是 Head 时的已认证 Header 及其两条状态证明。节点的查询仅服务当前高度，客户端可以保存历史证明并在对应的 Header 下验证。
+
+Lineage 命令是原生 Strand 交易的可选字段。命令包含 1 至 16 个严格按原始 LineageId 排序且互异的目标，每个目标包含 `LineageRef` 和最低后继 Capacity。`Latest` 可以附加非平凡的闭区间版本约束。完整范围采用无约束形式，单一版本采用精确引用。交易签名覆盖规范化后的目标、网络、固定 Executor 的 Data 哈希和直接 Cell Dep、完整依赖引用、唯一付款 OutPoint 及其 Cell 内容、排他的过期高度、应用载荷、确定费用和两项 cycles 上限。应用载荷最多 4 KiB。网络和签名域防止跨网重放，精确付款 Cell 防止同网重复提交。付款 Cell 只持有 CKB Capacity，扣除授权费用后的余额返回原 Lock。
+
+节点在交易的规范区块位置查找当前 Head。`Latest` 和 `Exact(v)` 均从同一注册表解析，`Exact(v)` 仅在当前 Head 的版本等于 `v` 时可写入。选择器或 Executor 校验失败时跳过执行。付款 Lock 先验证授权，Executor 在有界的 RISC-V V2 VM 中读取已声明目标、应用载荷、候选高度、上一提交区块时间和付款 Lock 哈希。Executor 为每个目标返回至多 16 KiB Data 及新 Capacity。内核保留原 Head 的 Lock 和完整 Type Script 集合，检查后继最低 Capacity、目标间总 Capacity 守恒以及存储抵押。生成的完整交易仍须通过原有 Lock 和所有输入、输出 Type Groups。权限变更和退休保持普通精确 OutPoint 授权。
 
 成功时原子消费付款 Cell 与所有 Head，在原命令交易 ID 下创建后继。输出 0 是付款余额，其余按目标顺序。Executor 拒绝、耗尽预算、给出不合规后继或后续 Script Group 拒绝时，已通过付款授权且覆盖预算的命令可以提交费用结果，全部 Head 保持原样。未认证、过期或签名匹配条件失效的命令没有费用结果。回执的协议结果单字节为 1（已应用）或 0（已拒绝业务）。已执行尝试的逻辑读取和 VM cycles 一并计费，失败阶段按签名上限计费。
 

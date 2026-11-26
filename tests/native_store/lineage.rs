@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, path::Path};
 use ckb_types::{packed::Byte32, prelude::*};
 use stem_ledger::{
     GroupAction, GroupMessage,
-    lineage::{self, Head, REGISTER, REPLACE_EXECUTOR, RETIRE},
+    lineage::{self, Head, LineageRef, REGISTER, REPLACE_EXECUTOR, RETIRE},
 };
 
 use super::{
@@ -220,9 +220,10 @@ fn lineage_registry_orders_versions_authenticates_heads_and_excludes_recycling()
     };
     let (head, proof) = store.prove_lineage(&id)?;
     assert_eq!(head.as_ref(), Some(&expected));
-    let paired = store.prove_current_lineage(&id)?;
-    assert!(paired.verify(store.network(), store.tip(), &id, &lineage.marker_code));
-    assert!(!paired.verify(store.network(), store.tip(), &id, &[87; 32].pack()));
+    let exact = LineageRef::new(id.clone(), Some(2))?;
+    let paired = store.prove_lineage_ref(&exact)?;
+    assert!(paired.verify(store.network(), store.tip(), &exact, &lineage.marker_code));
+    assert!(!paired.verify(store.network(), store.tip(), &exact, &[87; 32].pack()));
     let invalid_business = fixture.seal(Transaction::new(
         lineage.deps.clone(),
         vec![],
@@ -290,6 +291,21 @@ fn lineage_registry_orders_versions_authenticates_heads_and_excludes_recycling()
         head.is_none()
             && Store::verify_lineage(restored.network(), restored.tip(), &id, None, &proof)
     );
+    let latest = LineageRef::new(id.clone(), None)?;
+    let absence = restored.prove_lineage_ref(&latest)?;
+    assert!(absence.verify(
+        restored.network(),
+        restored.tip(),
+        &latest,
+        &lineage.marker_code
+    ));
+    assert!(!absence.verify(
+        restored.network(),
+        restored.tip(),
+        &exact,
+        &lineage.marker_code
+    ));
+    assert!(restored.prove_lineage_ref(&exact).is_err());
     assert_eq!(
         restored
             .live_cell(&withdrawal)?
@@ -659,14 +675,17 @@ impl DynamicLineage {
     ) -> Result<Transaction> {
         let mut targets: Vec<_> = targets
             .iter()
-            .map(|index| lineage::Target {
-                id: self.ids[*index].clone(),
-                min_version: versions.0,
-                max_version: versions.1,
-                min_capacity: FUND - FEE,
+            .map(|index| {
+                let version = (versions.0 == versions.1).then_some(versions.0);
+                Ok(lineage::Target {
+                    reference: LineageRef::new(self.ids[*index].clone(), version)?,
+                    latest_bounds: (version.is_none() && versions != (0, u64::MAX))
+                        .then_some(versions),
+                    min_capacity: FUND - FEE,
+                })
             })
-            .collect();
-        targets.sort_unstable_by(|left, right| left.id.cmp(&right.id));
+            .collect::<Result<_>>()?;
+        targets.sort_unstable_by(|left, right| left.reference.id().cmp(right.reference.id()));
         let transaction = Transaction::new_lineage_command(
             self.deps.clone(),
             self.fee_points[fee].clone(),
@@ -744,7 +763,7 @@ fn lineage_commands_resolve_latest_heads_and_commit_atomically() -> Result<()> {
     use lineage::Outcome;
     let mut fixture = Fixture::new()?;
     let dynamic = DynamicLineage::fund(&mut fixture, 8)?;
-    let first = dynamic.signed(&fixture, 0, &[0], (0, 2), 2)?;
+    let first = dynamic.signed(&fixture, 0, &[0], (0, u64::MAX), 2)?;
     let second = dynamic.signed(&fixture, 1, &[0, 1], (0, 2), 3)?;
     let business_failure = dynamic.signed(&fixture, 2, &[0, 1], (0, 2), 0)?;
     let type_failure = dynamic.signed(&fixture, 3, &[0, 2], (0, 2), 4)?;
@@ -759,6 +778,10 @@ fn lineage_commands_resolve_latest_heads_and_commit_atomically() -> Result<()> {
         .map(|index| dynamic.register(&fixture, index))
         .collect::<Result<Vec<_>>>()?;
     store.commit(store.prepare(&register, TIME, false)?)?;
+    let exact_zero = LineageRef::new(dynamic.ids[0].clone(), Some(0))?;
+    let historical_header = store.tip().clone();
+    let historical_proof = store.prove_lineage_ref(&exact_zero)?;
+    assert!(store.check(&stale).is_ok());
     let resign = |command: lineage::Command, expires| -> Result<Transaction> {
         Transaction::new_lineage_command(
             first.cell_deps().collect(),
@@ -769,8 +792,23 @@ fn lineage_commands_resolve_latest_heads_and_commit_atomically() -> Result<()> {
     };
     let terms = first.lineage_command().unwrap().clone();
     let mut double_target = terms.clone();
-    double_target.targets.push(double_target.targets[0].clone());
+    double_target.targets.push(lineage::Target {
+        reference: exact_zero.clone(),
+        latest_bounds: None,
+        min_capacity: terms.targets[0].min_capacity,
+    });
     assert!(resign(double_target, 1000).is_err());
+    let mut altered = terms.clone();
+    altered.targets[0].reference = exact_zero.clone();
+    let changed = resign(altered.clone(), 1000)?.with_witnesses(first.witnesses().collect())?;
+    assert!(store.check(&changed).is_err());
+    altered.targets[0].latest_bounds = Some((0, 2));
+    assert!(resign(altered, 1000).is_err());
+    for bounds in [(2, 2), (2, 1), (0, u64::MAX)] {
+        let mut altered = terms.clone();
+        altered.targets[0].latest_bounds = Some(bounds);
+        assert!(resign(altered, 1000).is_err());
+    }
     let mut altered = terms.clone();
     altered.payload = Bytes::copy_from_slice(&100u64.to_le_bytes());
     let tampered = resign(altered, 1000)?.with_witnesses(first.witnesses().collect())?;
@@ -786,6 +824,11 @@ fn lineage_commands_resolve_latest_heads_and_commit_atomically() -> Result<()> {
     let expired = resign(terms, 2)?.with_witnesses(first.witnesses().collect())?;
     assert!(store.check(&expired).is_err());
     assert!(store.live_cell(&dynamic.fee_points[0])?.is_some());
+    assert!(
+        store
+            .prepare(&[first.clone(), stale.clone()], TIME, true)
+            .is_err()
+    );
     let transactions = [first.clone(), second.clone(), business_failure.clone()];
     let serial = store.prepare(&transactions, TIME, false)?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
@@ -802,12 +845,21 @@ fn lineage_commands_resolve_latest_heads_and_commit_atomically() -> Result<()> {
     );
     store.commit(parallel)?;
 
+    assert!(store.prove_lineage_ref(&exact_zero).is_err());
+    assert!(historical_proof.verify(
+        store.network(),
+        &historical_header,
+        &exact_zero,
+        &dynamic.marker
+    ));
+    assert!(!historical_proof.verify(store.network(), store.tip(), &exact_zero, &dynamic.marker));
+
     for (index, version, expected) in [(0, 2, 245u128), (1, 1, 243), (2, 0, 240)] {
         let proof = store.prove_current_lineage(&dynamic.ids[index])?;
         assert!(proof.verify(
             store.network(),
             store.tip(),
-            &dynamic.ids[index],
+            &LineageRef::new(dynamic.ids[index].clone(), None)?,
             &dynamic.marker
         ));
         let (head, cell, _) = proof.head.context("missing dynamic Lineage head")?;
@@ -816,6 +868,7 @@ fn lineage_commands_resolve_latest_heads_and_commit_atomically() -> Result<()> {
     }
     assert!(store.check(&first).is_err());
     assert!(store.check(&stale).is_err());
+    assert!(store.live_cell(&dynamic.fee_points[4])?.is_some());
     let failed = store.prepare(&[type_failure.clone()], TIME, true)?;
     assert_eq!(
         Outcome::decode(&failed.receipts()[0].protocol_result)?,
@@ -1166,9 +1219,8 @@ fn wallet_builds_and_seals_the_native_lineage_command() -> Result<()> {
         .iter()
         .map(|target| {
             json!({
-                "id": format!("0x{}", hex::encode(target.id.as_slice())),
-                "min_version": target.min_version,
-                "max_version": target.max_version,
+                "reference": format!("0x{}", hex::encode(target.reference.encode())),
+                "latest_bounds": target.latest_bounds,
                 "min_capacity": target.min_capacity,
             })
         })
@@ -1189,6 +1241,46 @@ fn wallet_builds_and_seals_the_native_lineage_command() -> Result<()> {
         }))?,
     )?;
     super::comet::write_spec(&genesis, &fixture.spec)?;
+    let anchor = temp.path().join("anchor.json");
+    fs::write(
+        &anchor,
+        serde_json::to_vec(&JsonPoint::from(dynamic.anchors[0].clone()))?,
+    )?;
+    let id = Command::new(env!("CARGO_BIN_EXE_stem"))
+        .args(["wallet", "lineage", "id", "--genesis"])
+        .arg(&genesis)
+        .arg("--anchor")
+        .arg(&anchor)
+        .args(["--output-index", "0"])
+        .output()?;
+    assert!(
+        id.status.success(),
+        "{}",
+        String::from_utf8_lossy(&id.stderr)
+    );
+    let id: String = serde_json::from_slice(&id.stdout)?;
+    assert_eq!(id, format!("0x{}", hex::encode(dynamic.ids[0].as_slice())));
+    let reference = Command::new(env!("CARGO_BIN_EXE_stem"))
+        .args([
+            "wallet",
+            "lineage",
+            "reference",
+            "--id",
+            &id,
+            "--version",
+            "42",
+        ])
+        .output()?;
+    assert!(
+        reference.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reference.stderr)
+    );
+    let reference: JsonBytes = serde_json::from_slice(&reference.stdout)?;
+    assert_eq!(
+        reference.as_bytes(),
+        LineageRef::new(dynamic.ids[0].clone(), Some(42))?.encode()
+    );
     let lock_point = OutPoint::new([232; 32].pack(), 0);
     let cells: Vec<_> = fixture
         .spec

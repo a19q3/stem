@@ -233,8 +233,8 @@ impl BatchFixture {
                             "business": {"actors": business.actors.iter().map(|id| format!("0x{}", hex::encode(id.as_slice()))).collect::<Vec<_>>(),
                                 "max_fee": business.max_fee},
                             "targets": terms.targets.iter().map(|target| json!({
-                                "id": format!("0x{}", hex::encode(target.id.as_slice())),
-                                "min_version": target.min_version, "max_version": target.max_version,
+                                "reference": JsonBytes::from_bytes(target.reference.encode()),
+                                "latest_bounds": target.latest_bounds,
                                 "min_capacity": target.min_capacity,
                             })).collect::<Vec<_>>(),
                         }))?,
@@ -572,7 +572,8 @@ fn batch_recombination_authenticates_order_and_rolls_back_a_late_failure() -> Re
         for (rank, (id, (x, y))) in market.head_ids().iter().zip(expected).enumerate() {
             let state = store.prove_current_lineage(id)?;
             let marker = fixture.spec.lineage_type.as_ref().unwrap();
-            assert!(state.verify(store.network(), store.tip(), id, marker));
+            let reference = stem_ledger::lineage::LineageRef::new(id.clone(), None)?;
+            assert!(state.verify(store.network(), store.tip(), &reference, marker));
             let point = OutPoint::new(txid.clone(), rank as u32 + 1);
             assert_eq!(
                 store

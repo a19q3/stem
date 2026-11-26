@@ -62,6 +62,21 @@ proves both the allocation and fee total against one SystemRoot.
 `verifySystemRecord` accepts the protocol key for additional accounting
 and stake records.
 
+Use `LineageRef.deriveId(networkId, anchorOutPoint, outputIndex)` for registration.
+`new LineageRef(id)` selects `Latest` and `new LineageRef(id, 42n)` selects
+version 42. Pass `reference.toBytes()` to `/stem/lineage`. Authenticate the
+returned proof against its finalized Header.
+
+```ts
+const head = header.verifyLineage(reference, markerCodeHash, record, proof, cell, cellProof);
+if (head) console.log(head.version(), head.outPoint());
+```
+
+Supply empty byte arrays for absent `record`, `cell` and `cellProof`.
+`Latest` can authenticate absence. An exact reference requires a proof of
+that version at a Header where it was live. Keep old proof bundles to read
+older versions after the Head advances.
+
 Each verified Header describes its own height. Choose a recent finalized
 Header for signing and refresh the signing state when the application's
 freshness policy requires it. A client starting from genesis relies on the

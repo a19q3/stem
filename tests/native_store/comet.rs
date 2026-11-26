@@ -824,7 +824,7 @@ fn four_node_native_finality_restart_and_app_hash() -> Result<()> {
             .unwrap()
             .targets
             .iter()
-            .position(|target| &target.id == id)
+            .position(|target| target.reference.id() == id)
             .unwrap() as u32
     };
     let mut dynamic_proofs = Vec::new();
@@ -1171,7 +1171,10 @@ fn verify_lineage_heads(
             client,
             &format!(
                 "abci_query?path=%22%2Fstem%2Flineage%22&prove=true&data=0x{}",
-                hex::encode(id.as_slice())
+                hex::encode(
+                    stem_ledger::lineage::LineageRef::new(id.clone(), Some(expected_version))?
+                        .encode()
+                )
             ),
         )?;
         let response = &payload["response"];
@@ -1212,7 +1215,7 @@ fn verify_lineage_heads(
             proof.verify(
                 &fixture.spec.network,
                 &header,
-                id,
+                &stem_ledger::lineage::LineageRef::new(id.clone(), Some(expected_version))?,
                 fixture
                     .spec
                     .lineage_type

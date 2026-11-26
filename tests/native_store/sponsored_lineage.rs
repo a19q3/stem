@@ -154,13 +154,14 @@ impl SponsoredLineage {
                 targets: self
                     .head_ids()
                     .into_iter()
-                    .map(|id| ledger::Target {
-                        id,
-                        min_version: version,
-                        max_version: version,
-                        min_capacity: FUND - FEE,
+                    .map(|id| {
+                        Ok(ledger::Target {
+                            reference: ledger::LineageRef::new(id, Some(version))?,
+                            latest_bounds: None,
+                            min_capacity: FUND - FEE,
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<_>>()?,
                 executor: self.dynamic.executor.clone(),
                 executor_dep: self.dynamic.executor_dep.clone(),
                 executor_cycles: 100_000,
@@ -404,8 +405,8 @@ fn wallet_collects_business_seals_before_binding_and_signing_the_fee() -> Result
         .iter()
         .map(|target| {
             json!({
-                "id": H256::from(target.id.clone()), "min_version": target.min_version,
-                "max_version": target.max_version, "min_capacity": target.min_capacity
+                "reference": JsonBytes::from_bytes(target.reference.encode()),
+                "latest_bounds": target.latest_bounds, "min_capacity": target.min_capacity
             })
         })
         .collect();

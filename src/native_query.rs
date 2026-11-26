@@ -6,7 +6,7 @@ use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::Entity,
 };
-use stem_ledger::{proof::Tree, record};
+use stem_ledger::{lineage::LineageRef, proof::Tree, record};
 
 use crate::native_store::Store;
 
@@ -35,8 +35,8 @@ pub(crate) fn query(
                 requested == tip,
                 "Lineage proof requires the current height"
             );
-            let id = Byte32::from_slice(data)?;
-            let lineage = store.prove_current_lineage(&id)?;
+            let reference = LineageRef::decode(data)?;
+            let lineage = store.prove_lineage_ref(&reference)?;
             let (head, cell, cell_path) = if let Some((head, cell, path)) = lineage.head {
                 let encoded = record::encode_cell(&head.out_point, &cell);
                 (Some(head.encode()), Some(encoded), Some(path.encode()?))

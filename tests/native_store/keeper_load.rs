@@ -484,9 +484,8 @@ fn booking(
         height + 56,
         lineage::Command {
             targets: vec![lineage::Target {
-                id: work.ids[index].clone(),
-                min_version: 0,
-                max_version: 0,
+                reference: lineage::LineageRef::new(work.ids[index].clone(), Some(0))?,
+                latest_bounds: None,
                 min_capacity: FUND - FEE,
             }],
             executor: work.executor.clone(),

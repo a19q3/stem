@@ -16,7 +16,7 @@ use stem_ledger::{
     Transaction,
     block::{Header, Receipt},
     keeper::{Reservation, Retry, Trigger, decode_agenda, primary_fee},
-    lineage::{Head, Outcome},
+    lineage::{Head, LineageProof, LineageRef, Outcome},
     patricia::Proof,
     proof::InclusionProof,
 };
@@ -334,6 +334,8 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         &dynamic.register(&fixture, 1)?,
         None,
     )?;
+    let original = LineageRef::new(dynamic.ids[0].clone(), Some(0))?;
+    let historical = lineage_evidence(&clients[0], &verifier, &original, &dynamic.marker)?;
     submit(
         "one-head Lineage",
         &dynamic.signed(&fixture, 0, &[0], (0, 2), 2)?,
@@ -516,24 +518,45 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         None,
         &Proof::decode(&bytes(&consumed, "proof")?)?
     ));
+    let latest = LineageRef::new(dynamic.ids[0].clone(), None)?;
+    let exact = LineageRef::new(dynamic.ids[0].clone(), Some(4))?;
     let heads = clients
         .iter()
         .map(|client| -> Result<Value> {
-            let query = client.query("/stem/lineage", 0, dynamic.ids[0].as_slice(), true)?;
+            for rejected in [original.encode().as_ref(), latest.id().as_slice()] {
+                assert!(client.query("/stem/lineage", 0, rejected, true).is_err());
+            }
+            let query = client.query("/stem/lineage", 0, &latest.encode(), true)?;
             let payload: Value = serde_json::from_slice(&query.value)?;
             let head = Head::decode(&bytes(&payload, "record")?)?;
             assert_eq!(head.version, 4);
             assert_eq!(head.out_point, OutPoint::new(timed.id(network), 1));
-            assert!(Store::verify_lineage(
-                network,
-                &client.header(query.height)?,
-                &dynamic.ids[0],
-                Some(&head),
-                &Proof::decode(&bytes(&payload, "proof")?)?
-            ));
+            let proof = LineageProof::decode(
+                Some(&bytes(&payload, "record")?),
+                &bytes(&payload, "proof")?,
+                Some(&bytes(&payload, "cell")?),
+                Some(&bytes(&payload, "cell_proof")?),
+            )?;
+            let header = client.header(query.height)?;
+            assert!(proof.verify(network, &header, &latest, &dynamic.marker));
+            assert!(proof.verify(network, &header, &exact, &dynamic.marker));
+            assert!(!proof.verify(network, &header, &original, &dynamic.marker));
+            let exact_query = client.query("/stem/lineage", 0, &exact.encode(), true)?;
+            assert_eq!(exact_query.value, query.value);
             Ok(payload)
         })
         .collect::<Result<Vec<_>>>()?;
+    let current = lineage_evidence(&clients[0], &verifier, &exact, &dynamic.marker)?;
+    fs::write(
+        output.join("lineage-references.json"),
+        serde_json::to_vec_pretty(&json!({
+            "id": hex::encode(latest.id().as_slice()),
+            "registration_anchor": hex::encode(dynamic.anchors[0].as_slice()),
+            "marker_code": hex::encode(dynamic.marker.as_slice()),
+            "historical": historical,
+            "current": current,
+        }))?,
+    )?;
     let first_retry_height = clients[0].status()?.height + 12;
     let retry_delay = 8;
     let second_retry_height = first_retry_height + u64::from(retry_delay);
@@ -597,8 +620,9 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         let child_id = member.id(network);
         for (index, target) in member.lineage_command().unwrap().targets.iter().enumerate() {
             let mut replicas = Vec::new();
+            let reference = LineageRef::new(target.reference.id().clone(), Some(4))?;
             for client in &clients {
-                let query = client.query("/stem/lineage", 0, target.id.as_slice(), true)?;
+                let query = client.query("/stem/lineage", 0, &reference.encode(), true)?;
                 let payload: Value = serde_json::from_slice(&query.value)?;
                 let head = Head::decode(&bytes(&payload, "record")?)?;
                 assert_eq!(head.version, 4);
@@ -609,14 +633,14 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
                 assert!(Store::verify_lineage(
                     network,
                     &client.header(query.height)?,
-                    &target.id,
+                    reference.id(),
                     Some(&head),
                     &Proof::decode(&bytes(&payload, "proof")?)?,
                 ));
                 replicas.push(json!({"height": query.height, "proof": payload}));
             }
             batch_heads
-                .push(json!({"id": hex::encode(target.id.as_slice()), "replicas": replicas}));
+                .push(json!({"id": hex::encode(reference.id().as_slice()), "replicas": replicas}));
         }
     }
     fs::write(
@@ -768,4 +792,25 @@ fn bytes(payload: &Value, key: &str) -> Result<Vec<u8>> {
         .as_str()
         .with_context(|| format!("missing {key}"))?;
     Ok(hex::decode(text.trim_start_matches("0x"))?)
+}
+
+fn lineage_evidence(
+    client: &Client,
+    store: &Store,
+    reference: &LineageRef,
+    marker: &ckb_types::packed::Byte32,
+) -> Result<Value> {
+    let query = client.query("/stem/lineage", 0, &reference.encode(), true)?;
+    let payload: Value = serde_json::from_slice(&query.value)?;
+    let certificate = client.finality(query.height)?;
+    let header = verify_finality(store, &[], &certificate.proof, false)?;
+    let proof = LineageProof::decode(
+        Some(&bytes(&payload, "record")?),
+        &bytes(&payload, "proof")?,
+        Some(&bytes(&payload, "cell")?),
+        Some(&bytes(&payload, "cell_proof")?),
+    )?;
+    assert!(proof.verify(store.network(), &header, reference, marker));
+    Ok(json!({"head": payload, "height": header.context.height,
+        "finality": hex::encode(certificate.proof)}))
 }

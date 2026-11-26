@@ -288,7 +288,7 @@ impl Workload {
                     cycle_sum += receipt.cycles;
                     total_fee += receipt.fee;
                     for target in &command.targets {
-                        *counts.entry(target.id.clone()).or_default() += 1;
+                        *counts.entry(target.reference.id().clone()).or_default() += 1;
                     }
                 }
             }
@@ -305,7 +305,7 @@ impl Workload {
             ensure!(proof.verify(
                 &fixture.spec.network,
                 serial.tip(),
-                id,
+                &stem_ledger::lineage::LineageRef::new(id.clone(), None)?,
                 &self.dynamic.marker
             ));
             let (head, cell, cell_path) = proof.head.context("missing final Lineage Head")?;
