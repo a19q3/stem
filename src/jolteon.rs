@@ -26,6 +26,8 @@ use stem_stake::{
 
 use crate::native_store::{Prepared, Store};
 
+#[cfg(feature = "jolteon-certificate-experiment")]
+mod certificate_experiment;
 mod client;
 mod mempool;
 mod recovery;
@@ -162,6 +164,8 @@ struct Replica {
     observed_votes: HashMap<(u64, u16), (Point, Share)>,
     timeouts: BTreeMap<u64, BTreeMap<u16, (Quorum, Share)>>,
     certificates: HashSet<Hash32>,
+    #[cfg(feature = "jolteon-certificate-experiment")]
+    certificate_experiment: certificate_experiment::Cache,
     requests: HashMap<Point, Instant>,
     mempool: Mempool,
     admission: AdmissionMetrics,
@@ -360,6 +364,8 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 observed_votes: HashMap::new(),
                 timeouts: BTreeMap::new(),
                 certificates: HashSet::new(),
+                #[cfg(feature = "jolteon-certificate-experiment")]
+                certificate_experiment: Default::default(),
                 requests: HashMap::new(),
                 mempool: Mempool::default(),
                 admission: AdmissionMetrics::default(),
@@ -495,11 +501,17 @@ impl Replica {
             header: hash,
         };
         Point::decode(&point.encode())?;
+        #[cfg(not(feature = "jolteon-certificate-experiment"))]
         let tc = (!proposal.timeout.is_empty())
             .then(|| TimeoutCertificate::decode(&proposal.timeout, self.committee.size()))
             .transpose()?;
+        #[cfg(not(feature = "jolteon-certificate-experiment"))]
         self.committee
             .verify_parent_view(proposal.view, parent.point, tc.as_ref())?;
+        #[cfg(feature = "jolteon-certificate-experiment")]
+        let tc = self.certificate_experiment.verify_parent(
+            &self.committee, proposal.view, parent.point, &proposal.timeout,
+        )?;
         let signature = proposal.signature.as_slice().try_into()?;
         self.committee.verify_share(
             &self.committee.proposal_digest(point),
@@ -849,6 +861,8 @@ impl Replica {
             self.high = committee.genesis_quorum();
             self.finalized = self.high.point;
             self.committee = committee;
+            #[cfg(feature = "jolteon-certificate-experiment")]
+            self.certificate_experiment.reset();
             self.pending = None;
             self.handoff_tip = None;
             self.handoff_requested = None;
@@ -1229,13 +1243,23 @@ impl Replica {
         }
         if self.announced.elapsed() >= Duration::from_millis(350) {
             self.announced = Instant::now();
+            #[cfg(feature = "jolteon-certificate-experiment")]
+            self.certificate_experiment.quorum_frame.send(
+                &self.net, wire::QUORUM, &self.journal.high,
+            );
+            #[cfg(not(feature = "jolteon-certificate-experiment"))]
             self.net.broadcast(wire::QUORUM, self.high.encode());
-            if let Some(tc) = self
+            if let Some(_tc) = self
                 .certificate
                 .as_ref()
                 .filter(|tc| tc.view >= self.high.point.view)
             {
-                self.net.broadcast(wire::TIMEOUT_CERTIFICATE, tc.encode());
+                #[cfg(feature = "jolteon-certificate-experiment")]
+                self.certificate_experiment.timeout_frame.send(
+                    &self.net, wire::TIMEOUT_CERTIFICATE, &self.journal.certificate,
+                );
+                #[cfg(not(feature = "jolteon-certificate-experiment"))]
+                self.net.broadcast(wire::TIMEOUT_CERTIFICATE, _tc.encode());
             }
             if !self.journal.timeout.is_empty() {
                 let timeout: wire::Timeout = wire::canonical(&self.journal.timeout)?;
@@ -1432,28 +1456,37 @@ impl Replica {
     fn client(&mut self, kind: u32, body: Bytes) -> Result<serde_json::Value> {
         let tip = self.store.tip();
         match kind {
-            wire::STATUS => Ok(json!({
-                "height": tip.context.height, "epoch": self.committee.epoch(), "view": self.view,
-                "high_view": self.high.point.view, "member": self.member,
-                "voting_power": self.member.map(|member| self.committee.power(member)).transpose()?,
-                "app_hash": hex::encode(tip.app_hash(self.store.network()).as_slice()),
-                "committed_transactions": self.journal.committed_transactions,
-                "timeout_view": self.certificate.as_ref().map_or(0, |tc| tc.view),
-                "timeout_views": self.timeout_views,
-                "last_untimely_view": self.last_untimely_view,
-                "catching_up": self.recovery.active,
-                "replayed_blocks": self.recovery.blocks,
-                "observer_only": self.journal.observer_only,
-                "history_window": self.store.history_window(),
-                "sent_bytes": self.net.traffic.sent.load(Ordering::Relaxed),
-                "received_bytes": self.net.traffic.received.load(Ordering::Relaxed),
-                "transport_drops": self.net.traffic.dropped.load(Ordering::Relaxed),
-                "invalid_messages": self.rejected,
-                "mempool_transactions": self.mempool.len(),
-                "mempool_bytes": self.mempool.bytes(),
-                "admission": self.admission,
-                "execution": self.execution,
-            })),
+            wire::STATUS => {
+                let status = json!({
+                    "height": tip.context.height, "epoch": self.committee.epoch(), "view": self.view,
+                    "high_view": self.high.point.view, "member": self.member,
+                    "voting_power": self.member.map(|member| self.committee.power(member)).transpose()?,
+                    "app_hash": hex::encode(tip.app_hash(self.store.network()).as_slice()),
+                    "committed_transactions": self.journal.committed_transactions,
+                    "timeout_view": self.certificate.as_ref().map_or(0, |tc| tc.view),
+                    "timeout_views": self.timeout_views,
+                    "last_untimely_view": self.last_untimely_view,
+                    "catching_up": self.recovery.active,
+                    "replayed_blocks": self.recovery.blocks,
+                    "observer_only": self.journal.observer_only,
+                    "history_window": self.store.history_window(),
+                    "sent_bytes": self.net.traffic.sent.load(Ordering::Relaxed),
+                    "received_bytes": self.net.traffic.received.load(Ordering::Relaxed),
+                    "transport_drops": self.net.traffic.dropped.load(Ordering::Relaxed),
+                    "invalid_messages": self.rejected,
+                    "mempool_transactions": self.mempool.len(),
+                    "mempool_bytes": self.mempool.bytes(),
+                    "admission": self.admission,
+                    "execution": self.execution,
+                });
+                #[cfg(feature = "jolteon-certificate-experiment")]
+                let status = {
+                    let mut value = status;
+                    value["certificate_experiment"] = json!(&self.certificate_experiment);
+                    value
+                };
+                Ok(status)
+            }
             wire::SUBMIT => {
                 let id = self.insert_tx(&body, true)?;
                 if self

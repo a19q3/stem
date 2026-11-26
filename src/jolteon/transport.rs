@@ -143,7 +143,7 @@ impl Network {
         ))
     }
 
-    fn frame(&self, epoch: u64, kind: u32, body: impl Into<bytes::Bytes>) -> Arc<Vec<u8>> {
+    pub(super) fn frame(&self, epoch: u64, kind: u32, body: impl Into<bytes::Bytes>) -> Arc<Vec<u8>> {
         Arc::new(
             Frame {
                 sender: u32::from(self.own),
@@ -160,7 +160,10 @@ impl Network {
     }
 
     pub fn broadcast_at(&self, epoch: u64, kind: u32, body: Vec<u8>) {
-        let msg = self.frame(epoch, kind, body);
+        self.broadcast_frame(kind, self.frame(epoch, kind, body));
+    }
+
+    pub(super) fn broadcast_frame(&self, kind: u32, msg: Arc<Vec<u8>>) {
         for peer in self.peers.iter().flatten() {
             self.enqueue(peer, kind, msg.clone());
         }

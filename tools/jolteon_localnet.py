@@ -246,7 +246,12 @@ def scenario(args):
                 for offset in range(len(offline))
             ) for view in tcs) else None
 
-        active = wait_for(both_payments_and_timeouts, "payment finality with the failed leaders", seconds=75)
+        # A leader that already served at startup may only be scheduled again
+        # after a full weighted rotation. Allow time for the consecutive TCs too.
+        rotation_seconds = len(schedule) * args.cadence / 1000
+        fault_deadline = max(75, 30 + 1.5 * rotation_seconds + 8 * args.timeout / 1000)
+        active = wait_for(both_payments_and_timeouts, "payment finality with the failed leaders",
+                          seconds=fault_deadline)
         elapsed = time.perf_counter() - started
         write_json(args.output / "while-offline.json", active)
         phase = "replica restart"
