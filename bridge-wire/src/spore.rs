@@ -328,15 +328,15 @@ impl<'a> SporeData<'a> {
         portable_content(mime, spore.content).then_some(spore)
     }
 
-    /// Unclustered canonical Mutant references for CKB-authorized custody changes.
+    /// Canonical Mutant references for CKB-authorized custody changes.
+    /// The optional collection ID remains part of the authenticated Cell bytes.
     pub fn custody_mutant(data: &'a [u8]) -> Option<Self> {
         let spore = Self::fields(data)?;
         let (base, suffix) = spore
             .content_type
             .split_at(spore.content_type.iter().position(|b| *b == b';')?);
         let ids = suffix.strip_prefix(b";mutant[]=")?;
-        (spore.cluster_id.is_none()
-            && !spore.content.is_empty()
+        (!spore.content.is_empty()
             && portable_mime(base)
             && ids.split(|b| *b == b',').all(|id| {
                 id.len() == 64
@@ -479,6 +479,24 @@ mod tests {
         assert!(CellTransfer::decode(payload).is_none());
         assert!(SporeData::from_cell(&data).is_none());
         assert!(MeltReceipt::encode(&[1; 32], &[2; 32], &data).is_some());
+        let mut member = data.clone();
+        member.extend_from_slice(&32u32.to_le_bytes());
+        member.extend_from_slice(&[7; 32]);
+        let size = (member.len() as u32).to_le_bytes();
+        member[..4].copy_from_slice(&size);
+        assert_eq!(
+            SporeData::custody_mutant(&member).unwrap().cluster_id,
+            Some(&[7; 32])
+        );
+        assert!(CellTransfer::encode(&[1; 32], &[2; 32], &member, &mut buf).is_none());
+        let payload = CellTransfer::encode_custody(&[1; 32], &[2; 32], &member, &mut buf).unwrap();
+        assert_eq!(
+            CellTransfer::decode_custody(payload).unwrap().content,
+            TransferContent::Inline(&member)
+        );
+        assert!(CellTransfer::decode(payload).is_none());
+        member[total as usize + 4..].fill(0);
+        assert!(SporeData::custody_mutant(&member).is_none());
         let comma = 20 + b"text/plain;mutant[]=".len() + 64;
         data[comma] = b';';
         assert!(SporeData::custody_mutant(&data).is_none());

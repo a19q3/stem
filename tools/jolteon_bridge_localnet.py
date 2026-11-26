@@ -663,9 +663,9 @@ def main():
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
     if args.spore_mutant_lua or args.ckb_lua_library or args.spore_mutant_program:
         if not all((args.spore_mutant_lua, args.ckb_lua_library, args.stem_spore or args.native_spore_origin)) or any((
-                args.spore_cluster_v2, args.spore_immortal, args.native_spore_approval,
+                args.spore_immortal, args.native_spore_approval,
                 args.native_spore_json, args.native_spore_multipart)):
-            parser.error("the Mutant fixture needs both Lua artifacts and a single unclustered Spore")
+            parser.error("the Mutant fixture needs both Lua artifacts and the beta.2 Spore custody profile")
     if (args.native_spore_json or args.native_spore_multipart) and not args.native_spore_origin:
         parser.error("the native media fixtures require --native-spore-origin")
     if args.native_spore_sync_melt and (not args.native_spore_origin or args.native_spore_approval or args.spore_immortal):
@@ -684,8 +684,10 @@ def main():
         parser.error("--spore-type-history requires the Spore V2 settlement fixture")
     if args.spore_immortal and not args.spore_v2:
         parser.error("--spore-immortal requires the original Spore V2 settlement fixture")
-    if args.native_spore_origin and any((args.stem_spore, args.spore_cluster_v2, args.stem_native_object, args.export_udt)):
-        parser.error("native Spore export requires the unrestricted immutable profile")
+    if args.native_spore_origin and any((args.stem_spore, args.stem_native_object, args.export_udt)):
+        parser.error("select one native Spore, imported Spore, native object or UDT fixture")
+    if args.native_spore_origin and args.spore_cluster_v2 and not args.spore_mutant_lua:
+        parser.error("a native-origin collection member requires the beta.2 Mutant custody profile")
     if any((args.native_spore_origin, args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.spore_cluster_v2)) and (
             not all((args.stem_spore or args.native_spore_origin, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
             or args.export_udt):

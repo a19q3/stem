@@ -31,7 +31,7 @@ In a separate CKB-only control, the same deployment minted, transferred and melt
 
 ## Which rules the custody route enforces
 
-The custody envelope accepts an ordered, comma-separated list of lowercase, 64-digit IDs under the unclustered media type’s `mutant[]` argument. A standalone native wallet-to-wallet transfer of this class is declined. CKB sees the actual Spore, registration, interpreter, library, owners, dependencies and witnesses when it decides a mint, transfer or melt. Transfer predicates which depend on transaction positions or other CKB inputs can decline a particular custody transaction. The ordinary portable content route keeps its own parser. [Content and wire encodings](../../../../bridge-wire/src/spore.rs) · [Imported representation](../../../../contracts/src/bin/stem-spore.rs)
+The custody envelope accepts an ordered, comma-separated list of lowercase, 64-digit IDs under the media type’s `mutant[]` argument. An optional 32-byte Cluster ID travels in the same immutable Cell data. Direct native wallet transfers of this class require further protocol work. CKB sees the actual Spore, registration, interpreter, library, owners, dependencies and witnesses when it decides a mint, transfer or melt. Transfer predicates which depend on transaction positions or other CKB inputs can decline a particular custody transaction. [Content and wire encodings](../../../../bridge-wire/src/spore.rs) · [Imported representation](../../../../contracts/src/bin/stem-spore.rs)
 
 The native-origin title pins its creation ID, counterpart Type hash and a hash of its settlement route. Escrowing the title also consumes the endpoint bond. Restoration and retirement execute the input endpoint Lock. Retirement requires a terminal CKB mailbox receipt and the exact untyped native refund. The CKB escrow checks its original Type, data, capacity, mailbox and checkpoint. The guardians still authenticate inbound CKB observations. The current evidence covers this testnet deployment and the archived program. Direct native transfers under arbitrary Lua, Cluster extensions and other program combinations require separate acceptance. An additional application-level condition did not meet its independent verification criterion. [Native title and endpoint](../../../../contracts/src/bin/stem-native-object.rs) · [CKB custody](../../../../contracts/src/bin/ckb-spore-escrow.rs)
 
@@ -59,6 +59,43 @@ The published testnet Cluster ELF contains 46,528 bytes. Its CKB data hash is `0
 The two histories can be verified after shutting down CKB. The member's mint, transfer and melt took 1,815,107, 1,759,776 and 1,717,516 estimated CKB cycles respectively. All three were confirmed locally. Run the CKB-only harness with `--cluster "$cluster_beta2_elf"` and the existing interpreter, Lua library and Spore inputs. The fixture also supports the independent `--second-mutant` control in the same invocation. [CKB histories](cluster-controls.json.xz) · [Offline verifier](replay.py)
 
 To look for a known-good collection-level reference, the public testnet indexer was queried at tip 23,193,926. The two most recent pages of live Cells under the published Data1 identity contained 256 three-field collection records with an empty optional Mutant ID. The query using the deployment's Type identity returned no live matches. Both used a 64 KiB maximum data size and an upper block bound of the tip plus one. This sample leaves older, spent and larger collection records unexamined. A confirmed collection with a populated field and its matching registered program would let a subsequent test replay a known-good transaction. [Query parameters, outpoints and observed field shapes](cluster-index-sample.json.xz)
+
+A second lookup covered historical outputs through testnet height 23,194,162. The indexer returned 4,611 output records for the published Data1 identity, representing 2,274 distinct collection IDs. The scanner read 2,274 compact live Cells and retrieved 2,337 additional committed transactions for the other outputs. All 4,611 decoded as three-field records with an empty optional Mutant ID. Data hashes stayed constant across every observed output for each ID. The deployment Type identity returned zero outputs. These counts cover the two queried script identities and the indexer's responses at the recorded block bound. Other deployments or a local positive fixture could still supply a collection-level test case. [Public index record](cluster-index-history.json.xz) · [Historical query and field decoder](cluster_index.py)
+
+The offline wallet also authenticated two of those public outputs, the collection's creation at height 22,434,867 and its transfer to a different Lock at 22,434,870. Each transaction resolved the published Cluster program. The 50-byte collection record had the same hash and empty extension field under both owners. To repeat the enumeration use `python3 cluster_index.py --height 23194162 --output cluster-index.json.xz`. [Public wallet request, inclusion proofs and certified owners](public-collection.json.xz) · [Offline check against the indexed rows](replay.py)
+
+## Cross-chain settlement of registered Cluster members
+
+Four fresh devnets combined an ordinary beta.2 Cluster with a Spore whose own MIME field names one or two registered Lua programs. Each run had four Jolteon validators and a separate disposable CKB chain. The member's wallet history and the collection's history terminate at the same authenticated CKB header. Each member transaction resolved the Spore binary, interpreter, shared library, each named registration, Cluster binary and a collection Cell with the committed Type and data hash. [CKB and native proof archive](cluster-settlement.json.xz) · [Pinned native committees](committee-trust.json)
+
+| Asset origin | Registrations on member | Certified member transitions | Certified collection transitions | Native execution receipts | Common native height |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CKB | 1 | 5 | 2 | 3 | 40 |
+| CKB | 2 | 5 | 2 | 3 | 39 |
+| Stem | 1 | 5 | 1 | 5 | 43 |
+| Stem | 2 | 5 | 1 | 5 | 44 |
+
+On both imports, the collection changed owners on CKB after the member entered escrow and before its release. The next member transaction named the new collection outpoint. Both collection owners had the same Type and data hash. The wallet matched the 32-byte ID inside the actual member to the certified collection's script arguments. The member returned to a CKB wallet, changed hands and entered Stem custody under its second owner. [Offline history verifier](replay.py)
+
+On both native-origin paths the title initially committed to the requested collection and registered programs. CKB accepted membership on first export. An ordinary wallet transferred the resulting standard Spore, returned it to Stem and received the same Spore on re-export. CKB then committed the melt and the native validators released the collateral. The two-registration mint, wallet transfer, re-export and melt were estimated at 5,578,370, 4,479,214, 5,558,981 and 4,595,605 CKB cycles. The registered programs in these runs log fixed messages. The collection's own optional Mutant field was empty. [Certified execution replay](native.mjs) · [Published release identities](https://github.com/sporeprotocol/spore-contract/blob/9e8663b3ef6e277a58acca9f4f347e5dbf8d5c06/docs/VERSIONS.md)
+
+```mermaid
+sequenceDiagram
+    participant C as CKB Cluster
+    participant M as CKB member Spore
+    participant S as Stem validators
+    participant W as Offline wallet
+    C->>M: Mint member referencing collection and registered programs
+    M->>S: Deposit member and authenticate native custody
+    C->>C: Transfer collection to a second owner
+    S->>M: Release member using the successor collection Cell
+    M->>M: Wallet transfer
+    M->>S: Deposit for the second member owner
+    C-->>W: Certify both collection owners at the member anchor
+    M-->>W: Certify five transitions and resolve each dependency
+```
+
+To reproduce, add `--spore-cluster-v2` with the published beta.2 Cluster ELF to either beta.2 bridge command below. The runner publishes the Cluster program separately to fit CKB's transaction size limit. For the two-registration case supply both program files. Replay the CKB histories and native receipts using the commands below.
 
 ## Reproduce
 

@@ -10,7 +10,7 @@ await sdk.default({ module_or_path: await readFile(new URL("stem_wasm_bg.wasm", 
 const bytes = (s) => Buffer.from(s.replace(/^0x/, ""), "hex");
 const trust = JSON.parse(await readFile(new URL("committee-trust.json", import.meta.url)));
 const evidence = {};
-for (const filename of ["histories.json.xz", "two-registrations.json.xz"]) {
+for (const filename of ["histories.json.xz", "two-registrations.json.xz", "cluster-settlement.json.xz"]) {
     const archive = new URL(filename, import.meta.url);
     Object.assign(evidence, JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 32*1024*1024})));
 }
