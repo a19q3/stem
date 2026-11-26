@@ -5010,3 +5010,42 @@ payouts, Intercell recovery, and a funded committee handoff. The Go
 proof suite and frozen CometBFT build check passed.
 
 [Signed cases, proofs, cycle and capacity measurements, fingerprints, commands and failures](benchmarks/2026-11-26-stem-metatype-append-only.json.xz).
+
+## Metatype workflow history
+
+Four Jolteon replicas and a real CKB devnet confirmed an object with
+identity, ownership approval and an independent signed workflow. The
+request moved revision 0 to 1 on Stem. The CKB review and completion
+were separate committed transactions at revisions 2 and 3. The Stem
+return verified the two step signatures in order and restored the
+120-byte state, the three original Type Scripts and 200 CKB.
+
+| Manifest | CKB object occupied | Shared definition occupied | CKB completion bytes / cycles | CKB raw witnesses | Stem return bytes / cycles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Inline | 867 CKB | — | 1,881 / 6,759,827 | 329 B | 3,222 / 18,395,115 |
+| Shared | 349 CKB | 618 CKB | 1,400 / 6,850,759 | 329 B | 3,222 / 18,423,397 |
+
+Both releases used the existing 20-million-cycle Stem transaction
+budget. Each returned transaction carries a 128-byte group proof.
+Local submission through mining for the CKB review and completion
+ranged from 423 to 481 ms over the two layouts, including RPC and
+block production. The CKB object locked 1,000 CKB in both runs.
+
+CKB rejected presenting two valid step signatures for one edit,
+replaying a prior step, a foreign network domain and a missing
+signature. Stem rejected premature export and refused a return
+with missing, incomplete, reordered or altered proofs, even with an
+authenticated CKB burn. An offline check replayed all three Ed25519
+signatures, verified CKB transaction and witness inclusion for the
+actual import, review, completion and burn, and checked that each
+spend consumed its predecessor OutPoint. WASM independently verified
+Stem finality, execution and restored Cell proofs.
+
+488 workspace tests passed with 22 ignored. The Go proof suite,
+CometBFT comparison build and six real-network regression runs passed.
+They exercised append-only custody, CKB and xUDT, Spore, Intercell,
+funded committee handoff and four fee payouts. The first CKB build
+reported a missing Molecule trait import, which the archived rebuild
+corrected.
+
+[Signed transactions, inclusion and finality proofs, measurements, build fingerprints and commands](benchmarks/2026-11-26-stem-metatype-workflow.json.xz).

@@ -114,5 +114,6 @@ available. Published network evidence contains public genesis and proof data.
 | CKB reference-set certificates | [Report](../BENCHMARKS.md#ckb-reference-set-certificates), [paired signed transactions, execution proofs and failures](2026-11-26-stem-reference-set.json.xz) |
 | Reusing verified CKB reference sets | [Report](../BENCHMARKS.md#reusing-verified-ckb-reference-sets), [CPU samples, paired devnets and proof checks](2026-11-26-stem-reference-cache.json.xz) |
 | Append-only Metatype revisions | [Report](../BENCHMARKS.md#append-only-metatype-revisions), [paired devnets, differential decisions and proof checks](2026-11-26-stem-metatype-append-only.json.xz) |
+| Metatype workflow history | [Report](../BENCHMARKS.md#metatype-workflow-history), [signed histories, proof checks and devnet records](2026-11-26-stem-metatype-workflow.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
