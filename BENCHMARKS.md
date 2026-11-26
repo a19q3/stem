@@ -3654,3 +3654,84 @@ passed on the devnets.
 
 [Reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
 [Signed runs, rejected controls and proof verification](benchmarks/2026-11-26-stem-metatype-custody.json.xz).
+
+## Sparse assembly trace invalidation
+
+The earlier payment profile attributed 8.26% of userspace samples to
+the allocation pool checkout path. Its reset wrote the length field in
+all 8,192 trace slots. Each assembly core now uses a 1 KiB bitmap and
+clears the length of each populated slot on reset or pool checkout.
+The trace lookup still tests the original address and nonzero length.
+Guest cycle accounting continues to use the installed trace metadata.
+
+The isolated release probe measured trace publication plus invalidation
+on a reused core. The probe permutes slot indices and reports the median
+of 14 samples per revision and size. The synthetic probe writes trace
+payloads directly.
+
+| Populated trace slots | Full sweep, μs | Bitmap, μs |
+| --- | ---: | ---: |
+| 4 | 8.776 | 0.126 |
+| 16 | 8.187 | 0.224 |
+| 64 | 9.092 | 0.418 |
+| 256 | 11.567 | 2.733 |
+| 1,024 | 22.077 | 11.358 |
+| 8,192 | 130.946 | 159.012 |
+
+The full-table stress case includes extra bitmap updates for every
+publication and pays a higher total cost. Trace counts in the probe are
+controlled inputs, and the table does not describe their distribution
+in the payment workload.
+
+Four local replicas used the same pinned test executable, signed payment
+bytes and genesis for each rate. All runs used fresh connections, 64
+senders, two VM workers per node, a 250 ms proposal interval and a
+two-billion-cycle block cap. The matched 1,000 TPS offer lasted 35
+seconds. Each 2,000 TPS offer lasted 24 seconds. The high-load pair was
+repeated in reverse order.
+
+| Planned TPS, sample | Written / admitted / common visible TPS in offer | Finalized TPS with drain | Confirmed / client drops | Common visibility p50 / p95 / p99 | Aggregate replica CPU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1,000, full sweep | 998.54 / 997.14 / 959.57 | 976.10 | 34,949 / 51 | 1.090 / 1.397 / 1.497 s | 85.43 s |
+| 1,000, bitmap | 999.17 / 997.34 / 961.00 | 978.64 | 34,971 / 29 | 1.006 / 1.259 / 1.326 s | 82.32 s |
+| 2,000, full sweep | 1,294.67 / 1,292.00 / 1,206.38 | 1,244.51 | 31,072 / 16,928 | 1.514 / 2.038 / 2.135 s | 74.09 s |
+| 2,000, bitmap | 1,175.04 / 1,174.00 / 1,111.25 | 1,139.67 | 28,201 / 19,799 | 1.514 / 2.709 / 3.602 s | 71.60 s |
+| 2,000, bitmap repeat | 1,371.96 / 1,369.29 / 1,282.92 | 1,317.12 | 32,927 / 15,073 | 1.434 / 1.931 / 2.024 s | 72.35 s |
+| 2,000, full sweep repeat | 1,283.50 / 1,280.83 / 1,195.83 | 1,237.14 | 30,804 / 17,196 | 1.525 / 2.067 / 2.157 s | 74.99 s |
+
+All written payments became visible on all four replicas. The matched
+1,000 TPS run showed nearly the same confirmation throughput and used
+3.6% less replica CPU in the bitmap run. Measured process writes were
+505.90 and 527.52 MB, and the replicas sent 57.42 and 55.67 MB over
+peer connections, respectively. The two higher-load pairs moved in
+opposite directions and wrote different numbers of payments. The
+sustained throughput result remains inconclusive.
+
+The separate instrumented pair sampled all four processes at a requested
+199 Hz per active thread for 12 seconds. The full-sweep run collected
+6,449 userspace samples, of which 606 landed in the checkout symbol
+(9.40%). The bitmap run collected 6,303 samples, of which 16 landed in
+the new explicit trace invalidation function (0.25%). Both recordings
+reported zero lost samples. The functions have different inlining
+boundaries. The totals show the change in the visible hotspot, while
+the isolated probe measures the cache operation directly. Raw
+instruction decoding still accounted for 9.47% of samples in the
+bitmap run.
+
+The final locked release workspace passed 475 tests with 19 ignored.
+The regression test exercises reloading different instructions at two
+cached addresses, both after an in-place reset and after allocation
+reuse, and compares the result and cycles with a fresh core. Both
+vendored AUIPC tests passed. The generated assembly offsets matched the
+header and the AArch64 backend assembled successfully. The Go proof
+tests and frozen CometBFT feature check passed. The rebuilt node
+completed an immutable Metatype round trip on real CKB and a funded
+four-voter Jolteon handoff with historical Intercell delivery.
+
+The focused package build was interrupted when its separate feature
+graph started rebuilding RocksDB. The first workspace build exposed
+an ambiguous pointer type in the regression test. Both logs are
+included alongside the successful retry.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[All runs, signed workloads, CPU samples and regression logs](benchmarks/2026-11-26-stem-vm-trace-reset.json.xz).
