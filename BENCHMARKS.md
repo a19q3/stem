@@ -3399,3 +3399,76 @@ proof tests and frozen CometBFT feature check passed.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw writes, timing, signed workloads and regressions](benchmarks/2026-11-26-stem-patricia-storage.json.xz).
+
+## Bounded submission connection reuse
+
+This round tested whether opening a TCP connection for each signed
+payment limits sustained admission. The node accepts sequential
+`SUBMIT` frames on a socket for up to 256 requests. It closes a
+submission socket after a one-second idle read deadline. The Rust
+SDK exposes reuse explicitly with up to four idle sockets per
+client. Framing, validation, queue ordering and per-request admission
+responses are shared with the fresh-connection path.
+
+Four replicas used the same pinned fixture, a 250 ms proposal interval,
+a two-billion-cycle block cap and two VM workers per replica. Each
+comparison used byte-identical signed payments and genesis and a
+12-second drain allowance. The 700 TPS pair used 24 submitters and
+each other run used 64. The `e5b806f` node establishes the preceding
+single-request baseline. The fresh and reuse samples use the same new
+node binary. The 60-second pair ran in reuse-then-fresh order.
+
+| Planned TPS, duration, sockets | Written / admitted / common visible TPS in offer window | Confirmed by end | Client drops | Reused requests | p99 finality visibility |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 700, 20 s, fresh | 700.00 / 699.65 / 671.25 | 14,000 | 0 | 0 | 0.910 s |
+| 700, 20 s, reuse | 700.00 / 699.60 / 671.80 | 14,000 | 0 | 12,915 | 0.910 s |
+| 2,000, 20 s, prior node | 1,414.10 / 1,414.10 / 1,329.30 | 28,282 | 11,718 | 0 | 1.945 s |
+| 2,000, 20 s, fresh | 1,379.55 / 1,376.35 / 1,270.70 | 27,591 | 12,409 | 0 | 1.895 s |
+| 2,000, 20 s, reuse | 1,383.00 / 1,379.80 / 1,275.50 | 27,660 | 12,340 | 23,061 | 1.979 s |
+| 1,000, 60 s, fresh | 997.62 / 997.62 / 979.07 | 59,857 | 143 | 0 | 1.579 s |
+| 1,000, 60 s, reuse | 883.23 / 882.17 / 856.57 | 52,994 | 7,006 | 41,716 | 2.612 s |
+
+Every completed write in these comparisons became visible on all four
+replicas. Client drops are scheduled submissions lost before the start
+of a write. At 700 TPS, reuse saved 92.25% of connection establishments.
+Median socket readiness was 54 μs with fresh sockets and 3 μs with
+reuse. At the 2,000 TPS setting median readiness was 33 μs and 1 μs.
+The p95 response time from frame write was 190.31 ms and 195.48 ms.
+Mean node admission queue time was 29.15 ms and 29.46 ms. Mean handler
+service time was 0.30 ms and 0.32 ms. The run with reuse spent 59.44 aggregate replica CPU seconds
+against 58.86 for fresh connections.
+
+The long pair reached different actual offered rates. The fresh
+run consumed 151.26 aggregate replica CPU seconds, compared with
+182.01 for reuse. Uncached candidate verification averaged 88.92 ms
+and 144.40 ms, respectively. This single pair shows degradation in
+the reuse run with several node timings moving together. Reuse
+remains an explicit SDK option. The matched short samples show
+substantially fewer connections and essentially flat replicated
+throughput.
+
+A separate 30-second profile used the 2,000 TPS setting and enabled
+reuse. It fully wrote and confirmed 39,663 signed payments, with
+1,251.63 common-visible TPS during offer. `perf record` sampled the
+four replica processes for 12 seconds at a requested 199 Hz per
+active thread. The `cpu-clock:u` recording has 6,432 userspace
+samples and zero lost samples. Flat samples include
+`Decoder::decode_raw` (8.60%), `Decoder::decode` (5.18%),
+`rvc::factory` (5.01%), and `allocate_core` (8.26%).
+`memset` accounted for 11.32%. Flat samples leave its callers
+unattributed. The reusable assembly VM resets all 8,192 trace slots
+and lazily initializes guest frames. The sample identifies areas to
+isolate in a separate controlled VM experiment.
+
+The transport test exchanges all 256 request/reply pairs and checks
+connection closure. A four-replica test rejects an unsigned
+transaction, accepts the signed transaction on the same socket, and
+waits for all replicas to see it. The locked release workspace passed
+467 tests with 19 ignored. The Go proof suite and frozen CometBFT
+feature check passed. Sixteen replicas finalized 96 payments with two
+Leaders offline and agreed on the execution Header after restart.
+A real CKB devnet funded a four-voter handoff at height 40 and
+accepted a historical Intercell Outbox proof at a later checkpoint.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Signed workloads, raw latency, CPU samples and regression logs](benchmarks/2026-11-26-stem-submission-reuse.json.xz).
