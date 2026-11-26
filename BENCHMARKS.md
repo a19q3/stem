@@ -4905,3 +4905,56 @@ L1 Cell Reference regressions passed. Earlier build failures and the
 security fixture's missing argument are in the archive.
 
 [Signed transactions, measurements, proof traces and reproduction commands](benchmarks/2026-11-26-stem-reference-set.json.xz).
+
+## Reusing verified CKB reference sets
+
+The reference verifier keeps up to 64 successfully authenticated
+sets per bridge configuration. Admission and candidate execution
+can reuse signature checks. Intercell and StemVM share the decoded
+records, and the VM reuses the typed Cell Data projection when
+requested. The verifier checks the committed anchor and live age
+on every use, and binds its authorization to the whole witnessed
+transaction. Fixed signature cycles, logical reads and receipt
+encoding are identical on hits and misses.
+
+The verifier probe uses signed transactions from the preceding
+Metatype and Intercell devnets and compares against `bfab628`.
+Each sample runs 1,536 calls on one pinned logical CPU. The versions
+run in baseline, candidate, candidate, baseline order, with five
+samples per invocation. The figures are median calling-thread CPU
+time per invocation of the verifier, including transaction
+commitment hashing. Transaction decoding and database anchor lookup
+are outside the timed path. The cold probe uses a fresh verifier
+per call and constructs it outside the timer.
+
+| Fixture | Warm baseline / candidate | Cold baseline / candidate | Warm CPU reduction |
+| --- | ---: | ---: | ---: |
+| Two references, Metatype return | 98.82 / 5.09 µs | 102.99 / 97.19 µs | 94.9% |
+| Three references, Intercell receive | 131.67 / 25.56 µs | 126.72 / 135.58 µs | 80.6% |
+
+The three-reference cold path took 7.0% more CPU time. These samples
+measure repeated verification on fixed signed transactions. Network
+cache hit rates and throughput are outside the measurement.
+
+Separate paired runs on four Jolteon replicas and real CKB devnets
+produced the same fees, cycles and signed transaction sizes in both
+builds. The Metatype return used 14,153,635 cycles and 3,541 bytes.
+The Intercell receive used 13,925,148 cycles and 18,925 bytes. The
+WASM SDK independently checked all four finality and receipt
+proofs and the two restored three-Script Metatype Cells. The
+Intercell runs exercised restart, replay rejection and a CKB reorg.
+
+Warm-cache controls rejected a changed anchor, a stale live
+observation, altered signatures or records, use under a different
+network or guardian set, and reuse of an authorization on a
+different transaction. The workspace passed 486 tests with 22 ignored.
+Six more devnets verified both CKB reference modes, the CKB and
+xUDT bridge, four fee-fund payouts, capped Metatype UDT, Spore
+settlement preserving the original ID, and the funded Jolteon
+handoff with historical Intercell delivery. The Go proof suite and
+CometBFT build check passed. The archive includes the initial
+workspace and benchmark-helper build errors, an incompatible WASM
+binding tool version, and a fee-run command that combined mutually
+exclusive modes.
+
+[CPU samples, signed inputs, execution proofs, build fingerprints and commands](benchmarks/2026-11-26-stem-reference-cache.json.xz).
