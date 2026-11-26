@@ -4453,3 +4453,77 @@ Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Raw point reads, signed loads, contention evidence and CKB proofs](benchmarks/2026-11-26-stem-patricia-point-reads.json.xz).
+
+## Serial admission dispatch
+
+At `92d94d9`, serial checks use a blocking Rayon handoff for
+each submitted or relayed transaction. Revision `bbb21cf` runs
+the same check on the replica thread. The admission order,
+full witnessed identity, signed authorizations, protocol checks
+and block-execution worker pool are unchanged.
+
+The fixed-tip probe runs 512 signed AMM commands per trial.
+Each command touches two Lineage Heads and executes the real
+RISC-V contracts. Three stores start from the same Header.
+The probe rotates single-request pool dispatch, direct serial
+checks and groups of four using a two-worker pool. All three
+produce identical receipts. Each of three invocations discards
+one warm-up sample for the aggregates and retains it in the archive.
+
+| Check dispatch | Median for 512 commands |
+| --- | ---: |
+| Blocking pool handoff for each command | 52.412 ms |
+| Direct serial calls | 49.615 ms |
+| Parallel groups of four | 28.137 ms |
+
+Direct serial calls reduced the median by 5.34%, equivalent
+to 5.46 μs per command in this probe. The batched timing is
+a fixed-tip control. The earlier network experiment evaluated
+its runtime tradeoffs separately.
+
+The network runs use four local Jolteon replicas, 64 submitters,
+two VM workers per replica, a 250 ms proposal interval, a
+two-billion-cycle block budget and a 12-second drain limit.
+The 1,000 TPS payment profile uses fresh sockets for 22 seconds.
+The 2,400 TPS payment profile reuses connections for 24 seconds.
+The distributed AMM profile offers 140 commands per second for
+20 seconds. Each matched comparison pins the signed workload,
+genesis and resource limits. Host process and pressure samples
+are recorded every eight seconds.
+
+| Profile | Written / admitted / common-visible TPS in offer | Finalized TPS with drain | Confirmed / client drops | Visibility p50 / p95 / p99 | Replica CPU / peak RSS | Process writes / peer sends |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 baseline | 1,000.00 / 1,000.00 / 970.82 | 981.31 | 22,000 / 0 | 0.644 / 0.811 / 0.845 s | 36.99 s / 579.9 MiB | 366.43 / 28.71 MB |
+| 1,000 direct | 1,000.00 / 999.95 / 964.50 | 978.60 | 22,000 / 0 | 0.688 / 0.955 / 1.064 s | 40.78 s / 583.4 MiB | 373.71 / 29.91 MB |
+| 1,000 direct, reverse | 454.41 / 451.50 / 405.36 | 424.20 | 9,997 / 12,003 | 2.488 / 3.762 / 4.978 s | 46.50 s / 409.3 MiB | 155.39 / 20.86 MB |
+| 1,000 baseline, reverse | 428.91 / 426.00 / 380.64 | 406.11 | 9,436 / 12,564 | 2.361 / 3.526 / 4.438 s | 45.88 s / 407.5 MiB | 156.36 / 19.66 MB |
+| 2,400 direct | 739.46 / 736.79 / 690.12 | 702.73 | 17,747 / 39,853 | 1.829 / 3.478 / 4.888 s | 58.87 s / 763.4 MiB | 336.52 / 37.13 MB |
+| 2,400 baseline | 376.54 / 373.88 / 321.75 | 357.36 | 9,037 / 48,563 | 2.554 / 3.648 / 4.565 s | 46.67 s / 598.1 MiB | 167.49 / 18.38 MB |
+| 2,400 baseline, reverse | 371.00 / 368.33 / 336.04 | 344.50 | 8,904 / 48,696 | 2.544 / 4.106 / 4.717 s | 48.63 s / 598.4 MiB | 166.74 / 18.97 MB |
+| 2,400 direct, reverse | 469.54 / 466.88 / 412.00 | 429.08 | 11,269 / 46,331 | 2.751 / 4.076 / 5.246 s | 51.29 s / 641.5 MiB | 178.83 / 27.49 MB |
+| AMM baseline | 102.15 / 97.10 / 34.60 | 84.23 | 2,043 / 757 | 11.054 / 16.790 / 17.769 s | 50.97 s / 214.7 MiB | 62.64 / 17.31 MB |
+| AMM direct | 96.20 / 90.10 / 42.75 | 72.41 | 1,924 / 876 | 11.720 / 17.063 / 19.003 s | 55.59 s / 220.0 MiB | 48.19 / 21.66 MB |
+
+Both initial 1,000 TPS runs wrote and finalized all 22,000
+payments. The candidate's window overlapped a separate compiler
+process. An independent checker used roughly 17–18 cores' worth
+of CPU during the later experiments. Aggregate host activity
+stayed near 20 active cores before the reverse-order runs.
+Both 2,400-target pairs recorded higher actual admission and
+common-visible throughput on the candidate, alongside a higher
+p99 in each pair. The differences in offered traffic and host
+activity prevent attribution of those whole-network results to
+the dispatch change. The two AMM runs passed serial audits of
+every finalized receipt and both Head updates per command.
+
+The release workspace passed 480 tests with 20 ignored, including
+concurrent submission of signed and unsigned variants.
+Go proof tests and the frozen CometBFT feature check passed. A
+mixed four-replica network confirmed 96 payments with one
+validator offline and recovered to the same Header. Real CKB
+devnets verified the funded committee handoff and historical
+Intercell delivery, historical and live-at-anchor Cell references,
+and the Metatype return with a signed Capacity top-up.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Raw checks, signed workloads, per-run host samples and CKB proofs](benchmarks/2026-11-26-stem-inline-admission.json.xz).

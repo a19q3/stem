@@ -958,6 +958,16 @@ cargo test --locked --release --lib measure_patricia_point_reads \
   -- --ignored --nocapture
 ```
 
+For the fixed-tip admission comparison, run the signed AMM probe
+with direct serial checks, blocking single-request dispatch and
+parallel groups. All three paths compare receipts.
+
+```sh
+STEM_ADMISSION_REPORT=/tmp/stem-admission-dispatch.json \
+cargo test --locked --release --test native_store \
+  measure_lineage_admission_groups -- --ignored --nocapture
+```
+
 ### Measure sustained Lineage commands
 
 Run the native load fixture with real Lineage registration, signed fee
