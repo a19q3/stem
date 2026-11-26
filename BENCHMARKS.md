@@ -5281,3 +5281,57 @@ The Rust workspace passed 491 tests with 22 ignored. The Go proof
 suite and the CometBFT build check passed.
 
 [Signed payments, paired controls, rejection logs, proofs and reproduction commands](benchmarks/2026-11-26-stem-metatype-royalty.json.xz).
+
+## Metatype approval key rotation
+
+Four Jolteon replicas and a real CKB devnet used the same object
+and approval Scripts across a change of Ed25519 key. Stem issued
+and exported with generation 0, and CKB imported with that key.
+The CKB Type ID registry then advanced to generation 1. CKB
+transferred and burned with the new key, and Stem accepted the
+return after submitting a confirmed anchor and fresh registry
+observation. Inline and shared fixtures used three Type Groups.
+The revisable shared fixture added the independent live ceiling
+group, increased its ceiling from 120 to 200 bytes on CKB, and
+returned using one certificate with both live records and the
+historical mailbox output.
+
+| Fixture | CKB key rotation bytes / cycles | CKB transfer bytes / cycles | Stem export bytes / cycles | Stem return bytes / cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Inline, three groups | 772 / 1,793,740 | 1,772 / 6,683,822 | 2,609 / 18,203,027 | 3,246 / 16,277,231 |
+| Shared, three groups | 809 / 1,766,305 | 1,420 / 6,732,323 | 2,609 / 18,221,543 | 3,246 / 16,292,938 |
+| Shared, rotating key and ceiling | 920 / 1,794,368 | 1,557 / 7,146,679 | 3,098 / 18,278,278 | 4,129 / 16,361,918 |
+
+The CKB transfers each used 329 raw witness bytes. The
+representations occupied 684, 295 and 301 CKB respectively.
+The table measures individual transactions. All Stem operations
+fit the existing 20-million-cycle limit.
+
+CKB rejected changing the registry owner, repeating the key,
+skipping a generation, supplying an invalid key and retiring the
+registry. CKB also rejected the retired signer on transfer and
+burn and could no longer resolve the spent dependency. Stem
+rejected the previous signer against the current registry,
+a return with only historical registry data and a missing seal.
+The combined case also rejected omitting the ceiling while still
+supplying the correct current approval key and mailbox.
+
+Independent WASM checks authenticated finality, execution receipts
+and the restored Type Scripts in all three cases. Fifteen offline
+CKB inclusion checks covered both key records and the import,
+transfer and burn. Separate Ed25519 verification checked the
+recorded exact-transaction seals on both chains. Ten additional
+devnet runs covered royalties, workflow recovery, fungible and
+selective Metatype returns, live ceilings, Intercell, CKB/xUDT,
+Spore, fee payouts and a funded committee handoff. The Rust
+workspace passed 492 tests with 22 ignored. The Go proof tests
+and CometBFT build check passed.
+
+The archive includes the initial build and fixture failures.
+The combined runner originally used the wrong reserve position
+and then selected the wrong registry code dependency. It also
+needed a key-only attestation to isolate the missing-ceiling
+control. A separate fungible rerun moved to fresh ports after a
+CKB RPC bind conflict.
+
+[Signed registry changes, detached seals, proofs, commands and failures](benchmarks/2026-11-26-stem-metatype-rotation.json.xz).
