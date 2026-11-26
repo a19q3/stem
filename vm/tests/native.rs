@@ -699,3 +699,6 @@ fn measure_type_groups_with_matched_payment_fixture() -> Result<()> {
     }
     Ok(())
 }
+
+#[path = "../../research/scheduling/resolved_jobs.rs"]
+mod resolved_job_scheduling;
