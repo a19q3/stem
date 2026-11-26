@@ -240,6 +240,7 @@ impl Store {
                 .map(|m| (m, super::Purpose::Restore)),
         )?;
         self.tip = image.header;
+        self.stake_inputs = Arc::default();
         self.live_cache.lock().expect("Live Cell cache").clear();
         self.history = frontier;
         Ok(())

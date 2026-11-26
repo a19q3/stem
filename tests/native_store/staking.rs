@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, ensure};
 use ckb_types::packed::Byte32;
@@ -178,11 +178,21 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
             .prepare(&[tx.clone(), tx.clone()], TIME, false)
             .is_err()
     );
-    let pending = store.prepare(std::slice::from_ref(&tx), TIME, false)?;
+    let unchanged = Arc::new(store.prepare(&[], TIME, false)?);
+    let pending = Arc::new(store.prepare(std::slice::from_ref(&tx), TIME, false)?);
     assert_eq!(pending.receipts(), std::slice::from_ref(&admitted));
     assert_eq!(pending.receipts()[0].fee, 0);
     assert!(pending.validator_updates().is_empty());
-    store.commit(pending)?;
+    store.on_branch(std::slice::from_ref(&pending), |view| {
+        assert!(view.check(&tx).is_err());
+        Ok(())
+    })?;
+    assert_eq!(
+        store.on_branch(&[unchanged], |view| view.check(&tx))?,
+        admitted
+    );
+    assert_eq!(store.check(&tx)?, admitted);
+    store.commit(Arc::try_unwrap(pending).ok().context("shared candidate")?)?;
     assert!(store.check(&tx).is_err());
     drop(store);
 
@@ -326,6 +336,7 @@ fn snapshot_replay_and_deferred_committee_update_survive_restart() -> Result<()>
     );
     let local = tempfile::tempdir()?;
     let mut restored = Store::open(local.path(), &fixture.spec, Retention::Recent(4))?;
+    restored.prepare(&[], TIME, false)?;
     let snapshot = store.export_state()?;
     let app_hash = store.tip().app_hash(store.network());
     restored.install_state(snapshot, &app_hash)?;

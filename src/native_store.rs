@@ -47,7 +47,7 @@ use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
 
 use bridge::{Bridge, BridgeChanges, StagedBridge};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
-use staking::{StagedStake, Staking};
+use staking::{StagedStake, StakeInputs, Staking};
 pub use staking::{StakeGenesis, stake_registry_policy};
 pub use state_snapshot::{SnapshotReader, StateSnapshot};
 pub use stem_ledger::protocol::{FeeFundDestination, FeeFundPolicy};
@@ -258,6 +258,7 @@ pub struct Store {
     chain_id: String,
     genesis_validators: Vec<([u8; 32], i64)>,
     staking: Option<Arc<Staking>>,
+    stake_inputs: Arc<OnceLock<StakeInputs>>,
     bridge: Option<Arc<Bridge>>,
     lineage: Option<Byte32>,
     keeper: Option<KeeperPolicy>,
@@ -324,6 +325,7 @@ pub struct Prepared {
     keeper_receipts: usize,
     validator_updates: Vec<stem_stake::Member>,
     committee_change: Option<CommitteeChange>,
+    stake_inputs: Arc<OnceLock<StakeInputs>>,
     live: LiveChanges,
     batch: Batch,
 }
@@ -674,6 +676,7 @@ impl Store {
             chain_id: spec.chain_id.clone(),
             genesis_validators: validators,
             staking: staking.map(Arc::new),
+            stake_inputs: Arc::default(),
             bridge: bridge.map(Arc::new),
             lineage: spec.lineage_type.clone(),
             keeper: spec.keeper,
@@ -745,9 +748,9 @@ impl Store {
         branch: &[Arc<Prepared>],
         task: impl FnOnce(&Store) -> Result<T>,
     ) -> Result<T> {
-        if branch.is_empty() {
+        let Some(last) = branch.last() else {
             return task(self);
-        }
+        };
         ensure!(
             self.branch.is_empty(),
             "candidate view cannot own a nested branch"
@@ -769,12 +772,13 @@ impl Store {
             chain_id: self.chain_id.clone(),
             genesis_validators: self.genesis_validators.clone(),
             staking: self.staking.clone(),
+            stake_inputs: Arc::clone(&last.stake_inputs),
             bridge: self.bridge.clone(),
             lineage: self.lineage.clone(),
             keeper: self.keeper,
             genesis_id: self.genesis_id.clone(),
             tip: tip.clone(),
-            history: branch.last().unwrap().history.clone(),
+            history: last.history.clone(),
             cells: self.cells.clone(),
             system: self.system.clone(),
             retention: self.retention,
@@ -1026,7 +1030,7 @@ impl Store {
     fn stage_stake(&self) -> Result<Option<StagedStake>> {
         self.staking
             .as_ref()
-            .map(|staking| staking.load(self))
+            .map(|staking| staking.stage(self))
             .transpose()
     }
 
@@ -1366,6 +1370,16 @@ impl Store {
             system_changes.push((id, hash));
         }
         system_changes.sort_unstable_by_key(|(id, _)| *id);
+        // Carry the parent decode across writes to unrelated system records.
+        let stake_inputs = if self
+            .staking
+            .as_ref()
+            .is_some_and(|staking| staking.inputs_changed(&system_changes))
+        {
+            Arc::default()
+        } else {
+            Arc::clone(&self.stake_inputs)
+        };
         system.set_batch(&system_changes, |id, _, value| {
             if value.is_none() {
                 batch.delete(state_key(STATE_RECORD, Namespace::System, &id));
@@ -1405,6 +1419,7 @@ impl Store {
             keeper_receipts,
             validator_updates,
             committee_change,
+            stake_inputs,
             live: overlay.live,
             batch,
         })
@@ -1754,7 +1769,7 @@ impl Store {
             let stake = match stake {
                 Some(staged) => staged,
                 // Individual admission starts with no staged registry state.
-                None => stake.insert(staking.load(self)?),
+                None => stake.insert(staking.stage(self)?),
             };
             let receipt = staking.verify(self, context.height, tx, stake)?;
             *budget = next;
@@ -2082,6 +2097,7 @@ impl Store {
         )?;
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
+        self.stake_inputs = Arc::clone(&prepared.stake_inputs);
         if !prepared.live.is_empty() {
             self.live_cache
                 .lock()

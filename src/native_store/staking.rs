@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::{Context, Result, ensure};
 use ckb_types::{
@@ -9,6 +9,7 @@ use ckb_types::{
 use stem_ledger::{
     Transaction,
     block::Receipt,
+    patricia::{Key, Namespace, Patricia},
     protocol::{BlockBudget, FeeFund, Limits, Operation, SnapshotContext, snapshot_body},
     replay::Key as ReplayKey,
 };
@@ -23,12 +24,18 @@ use stem_stake::{
     rewards::{CURRENT_EPOCH, EpochRewards, epoch_key},
 };
 
-use super::Store;
+use super::{STATE_RECORD, Store, state_key};
 
 pub(super) const ACCEPTED: &[u8] = b"stake/accepted";
 pub(super) const SNAPSHOT: &[u8] = b"stake/snapshot";
 pub(super) const CONFIG: &[u8] = b"stake/config";
 const AUTHORITY: &[u8] = b"stake/authority";
+const INPUT_RECORDS: [&[u8]; 4] = [
+    ACCEPTED,
+    COMMITTEE_RECORD,
+    APPLIED_REGISTRY_SEQUENCE,
+    AUTHORITY,
+];
 
 /// Network parameters and the initial L1 Registry observation authenticated by guardians.
 #[derive(Clone)]
@@ -61,7 +68,8 @@ pub(super) struct Staking {
     window: u64,
     limits: Limits,
     domain: StakeDomain,
-    authority: Authority,
+    authority: Arc<Authority>,
+    input_keys: [Key; INPUT_RECORDS.len()],
 }
 
 pub(super) fn retirement_key(
@@ -143,13 +151,15 @@ impl Staking {
             snapshot.extend_from_slice(&attestation.guardian.to_le_bytes());
             snapshot.extend_from_slice(&attestation.signature);
         }
+        let system = Patricia::new(domain.stem_network_id.pack(), Namespace::System);
         Ok((
             Self {
                 config: genesis.config,
                 window: genesis.signing_window,
                 limits: genesis.limits,
                 domain,
-                authority,
+                authority: Arc::new(authority),
+                input_keys: INPUT_RECORDS.map(|name| system.record_key(name)),
             },
             state,
             config,
@@ -157,33 +167,50 @@ impl Staking {
         ))
     }
 
-    pub(super) fn load(&self, store: &Store) -> Result<StagedStake> {
+    fn load_inputs(&self, store: &Store) -> Result<StakeInputs> {
+        let [accepted, announced, applied, authority] = self
+            .input_keys
+            .map(|key| store.read(state_key(STATE_RECORD, Namespace::System, &key)));
+        let accepted = accepted?.context("missing accepted Stake Snapshot")?;
+        let announced = announced?.context("missing announced committee")?;
+        let applied = applied?.context("missing applied Registry sequence")?;
+        let applied_sequence = u64::from_le_bytes(applied.as_ref().try_into()?);
+        let authority = match authority? {
+            Some(encoded) => {
+                let members = decode_members(&encoded)?;
+                Arc::new(Authority::new(guardian_generation(&members), &members)?)
+            }
+            None => Arc::clone(&self.authority),
+        };
+        Ok(StakeInputs {
+            state: StakeState::decode(&accepted, &announced, applied_sequence)?,
+            authority,
+        })
+    }
+
+    pub(super) fn inputs_changed(&self, changes: &[(Key, Option<Key>)]) -> bool {
+        self.input_keys
+            .iter()
+            .any(|key| changes.binary_search_by_key(key, |(id, _)| *id).is_ok())
+    }
+
+    pub(super) fn stage(&self, store: &Store) -> Result<StagedStake> {
+        let inputs = match store.stake_inputs.get() {
+            Some(inputs) => inputs,
+            None => {
+                let loaded = self.load_inputs(store)?;
+                store.stake_inputs.get_or_init(|| loaded)
+            }
+        };
         let zero = Limits {
             operations: 0,
             bytes: 0,
             signatures: 0,
         };
-        let accepted = store
-            .system_record(ACCEPTED)?
-            .context("missing accepted Stake Snapshot")?;
-        let announced = store
-            .system_record(COMMITTEE_RECORD)?
-            .context("missing announced committee")?;
-        let applied = store
-            .system_record(APPLIED_REGISTRY_SEQUENCE)?
-            .context("missing applied Registry sequence")?;
-        let applied_sequence = u64::from_le_bytes(applied.as_slice().try_into()?);
-        let authority = match store.system_record(AUTHORITY)? {
-            Some(encoded) => {
-                let members = decode_members(&encoded)?;
-                Authority::new(guardian_generation(&members), &members)?
-            }
-            None => self.authority.clone(),
-        };
         Ok(StagedStake {
-            state: StakeState::decode(&accepted, &announced, applied_sequence)?,
+            state: inputs.state.clone(),
             budget: BlockBudget::new(zero, self.limits, zero, zero),
-            authority,
+            authority: Arc::clone(&inputs.authority),
             rotation: None,
             retirements: BTreeMap::new(),
         })
@@ -245,7 +272,8 @@ impl Staking {
             "block retirement record limit exceeded"
         );
         if let Some(committee) = verified.rotation {
-            staged.authority = Authority::new(guardian_generation(&committee), &committee)?;
+            staged.authority =
+                Arc::new(Authority::new(guardian_generation(&committee), &committee)?);
             staged.rotation = Some(committee);
         }
         staged.budget = budget;
@@ -386,14 +414,20 @@ impl Staking {
     }
 }
 
+pub(super) struct StakeInputs {
+    state: StakeState,
+    authority: Arc<Authority>,
+}
+
 pub(super) struct StagedStake {
     state: StakeState,
     budget: BlockBudget,
-    authority: Authority,
+    authority: Arc<Authority>,
     rotation: Option<Vec<Member>>,
     retirements: BTreeMap<Byte32, u64>,
 }
 
+#[derive(Clone)]
 pub(super) struct StakeState {
     accepted: AcceptedSnapshot,
     applied_sequence: u64,

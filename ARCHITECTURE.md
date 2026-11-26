@@ -200,6 +200,11 @@ on the replica thread. Parallel block execution uses the VM pool.
 Admission stages Registry state only when verifying a Stake Snapshot.
 Block preparation stages it once to process both snapshot operations
 and height-driven committee transitions.
+Prepared blocks reuse the parent's decoded stake inputs while the
+accepted snapshot, committee, applied Registry sequence and guardian
+authority records remain the same. Writes to those keys give the
+resulting view a fresh cache. Each staging pass owns its budget and
+pending changes. Snapshot installation resets the cache.
 The receiver computes the full witnessed wire digest once and reuses
 it for deduplication and the client reply. An admitted client
 transaction goes to the current and next Leader. The receiving replica

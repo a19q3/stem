@@ -299,18 +299,23 @@ pub(crate) fn verify_comet_genesis(spec: &Spec, path: &Path) -> Result<ckb_types
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, time::Instant};
+    use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Instant};
 
     use anyhow::{Context, Result, ensure};
     use ckb_hash::{blake2b_256, new_blake2b};
     use ckb_jsonrpc_types::JsonBytes;
     use serde_json::json;
-    use stem::native_store::{Retention, Store};
+    use stem::native_store::{Prepared, Retention, Store};
     use stem_ledger::Transaction;
 
-    #[test]
-    #[ignore = "uses a stopped CKB-funded Jolteon archive and signed payments"]
-    fn measure_funded_admission() -> Result<()> {
+    struct FundedFixture {
+        spec: super::Spec,
+        database: PathBuf,
+        payments: Vec<Transaction>,
+        workload_id: String,
+    }
+
+    fn funded_fixture() -> Result<FundedFixture> {
         let path = |name: &str| {
             std::env::var_os(name)
                 .map(std::path::PathBuf::from)
@@ -333,6 +338,23 @@ mod tests {
                 "expected distinct ordinary payments"
             );
         }
+        Ok(FundedFixture {
+            spec,
+            database,
+            payments,
+            workload_id: hex::encode(blake2b_256(&workload)),
+        })
+    }
+
+    #[test]
+    #[ignore = "uses a stopped CKB-funded Jolteon archive and signed payments"]
+    fn measure_funded_admission() -> Result<()> {
+        let FundedFixture {
+            spec,
+            database,
+            payments,
+            workload_id,
+        } = funded_fixture()?;
         let mut samples = Vec::new();
         let mut expected = None;
         for _ in 0..13 {
@@ -365,7 +387,7 @@ mod tests {
         let report = json!({
             "state": expected,
             "payments": payments.len(),
-            "workload_blake2b": hex::encode(blake2b_256(&workload)),
+            "workload_blake2b": workload_id,
             "samples": samples,
         });
         if let Some(output) = std::env::var_os("STEM_FUNDED_ADMISSION_REPORT") {
@@ -373,5 +395,78 @@ mod tests {
         }
         println!("{report}");
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "uses a stopped CKB-funded Jolteon archive and signed payments"]
+    fn measure_funded_stake_preparation() -> Result<()> {
+        let FundedFixture {
+            spec,
+            database,
+            payments,
+            workload_id,
+        } = funded_fixture()?;
+        let store = Store::open(&database, &spec, Retention::Archive)?;
+        let timestamp_ms = store.tip().context.timestamp_ms + 1;
+        let branch = [Arc::new(store.prepare(
+            &payments[..1],
+            timestamp_ms,
+            false,
+        )?)];
+        let mut samples = Vec::new();
+        let mut expected = None;
+        for trial in 0..13 {
+            let measure = |probe: usize| {
+                let result = |i| match probe {
+                    0 => store.prepare(&[], timestamp_ms, false),
+                    1 => store.prepare(std::slice::from_ref(&payments[i]), timestamp_ms, false),
+                    _ => {
+                        store.on_branch(&branch, |view| view.prepare(&[], timestamp_ms + 1, false))
+                    }
+                };
+                measure_preparations(payments.len(), result)
+            };
+            let mut times = [0; 3];
+            let mut digests = [String::new(), String::new(), String::new()];
+            for offset in 0..3 {
+                let index = (trial + offset) % 3;
+                (times[index], digests[index]) = measure(index)?;
+            }
+            assert_eq!(expected.get_or_insert_with(|| digests.clone()), &digests);
+            samples.push(times);
+        }
+        let report = json!({
+            "height": store.tip().context.height,
+            "header": hex::encode(store.tip().encode()),
+            "workload_blake2b": workload_id,
+            "preparations": payments.len(),
+            "columns": ["empty", "payment", "candidate_child"],
+            "result_digests": expected,
+            "samples_ns": samples,
+        });
+        if let Some(output) = std::env::var_os("STEM_FUNDED_PREPARATION_REPORT") {
+            std::fs::write(output, serde_json::to_vec(&report)?)?;
+        }
+        println!("{report}");
+        Ok(())
+    }
+
+    fn measure_preparations(
+        count: usize,
+        prepare: impl FnMut(usize) -> Result<Prepared>,
+    ) -> Result<(u128, String)> {
+        let started = Instant::now();
+        let blocks = (0..count).map(prepare).collect::<Result<Vec<_>>>()?;
+        let elapsed = started.elapsed().as_nanos();
+        let mut hash = new_blake2b();
+        for block in blocks {
+            hash.update(&block.header().encode());
+            for receipt in block.receipts() {
+                hash.update(&receipt.encode());
+            }
+        }
+        let mut digest = [0; 32];
+        hash.finalize(&mut digest);
+        Ok((elapsed, hex::encode(digest)))
     }
 }
