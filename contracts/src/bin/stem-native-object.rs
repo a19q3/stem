@@ -19,7 +19,7 @@ use stem_bridge_wire::{
     intercell::{Identity, MAX_MESSAGE, MESSAGE_HEADER, Message, RECEIVE_ACTION, SEND_ACTION},
     metatype::MAX_STATE_BYTES,
     object::{ObjectArgs, creation_id, revision},
-    spore::{MAX_SPORE_DATA, SporeTransfer, return_nonce},
+    spore::{MAX_SPORE_DATA, SporeTransfer, plain_spore, return_nonce},
 };
 
 use stem_contracts::metatype::bounded_data;
@@ -62,11 +62,25 @@ fn verify() -> Result<(), i8> {
     if let Some(object) = ObjectArgs::decode(&args) {
         return identity(&object, &network);
     }
-    let (fields, rest) = args.as_chunks::<32>();
+    let standard_route = args.len() == 257 && args[0] == 1;
+    let raw = if standard_route {
+        &args[1..]
+    } else {
+        &args[..]
+    };
+    let (fields, rest) = raw.as_chunks::<32>();
     if !rest.is_empty() || fields.contains(&[0; 32]) {
         return Err(116);
     }
-    escrow(&script, fields.try_into().map_err(|_| 116)?, &network)
+    if let [id, _counterpart] = fields {
+        return plain_identity(id, &network);
+    }
+    escrow(
+        &script,
+        fields.try_into().map_err(|_| 116)?,
+        &network,
+        standard_route,
+    )
 }
 
 fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
@@ -106,30 +120,60 @@ fn identity(object: &ObjectArgs<'_>, network: &Identity) -> Result<(), i8> {
     match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
         (Some(input), Some(output)) if object.permits(&input, &output) => Ok(()),
         (None, Some(output)) if !object.revisable || revision(&output) == Some(0) => {
-            let input = load_input_out_point(0, Source::Input).map_err(|_| 117)?;
-            let mut output = [0u8; 4];
-            if load(
-                LOAD_GROUP_INDEX,
-                Source::GroupOutput as u64,
-                0,
-                0,
-                &mut output,
-            ) != (0, 4)
-                || creation_id(
-                    network,
-                    input.as_slice().try_into().map_err(|_| 117)?,
-                    u32::from_le_bytes(output),
-                ) != *object.id
-            {
-                return Err(117);
-            }
+            verify_creation(network, object.id)?;
             Ok(())
         }
         _ => Err(117),
     }
 }
 
-fn escrow(script: &Script, fields: &[[u8; 32]; 8], network: &Identity) -> Result<(), i8> {
+fn verify_creation(network: &Identity, id: &Identity) -> Result<(), i8> {
+    let first = load_input_out_point(0, Source::Input).map_err(|_| 117)?;
+    let mut index = [0; 4];
+    if load(
+        LOAD_GROUP_INDEX,
+        Source::GroupOutput as u64,
+        0,
+        0,
+        &mut index,
+    ) != (0, 4)
+        || creation_id(
+            network,
+            first.as_slice().try_into().map_err(|_| 117)?,
+            u32::from_le_bytes(index),
+        ) != *id
+    {
+        return Err(117);
+    }
+    Ok(())
+}
+
+fn plain_identity(id: &Identity, network: &Identity) -> Result<(), i8> {
+    let read = |source| match bounded_data(0, source, MAX_SPORE_DATA) {
+        Ok(data)
+            if plain_spore(&data)
+                && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
+                && load(LOAD_TYPE_HASH, source as u64, 0, 1, &mut []).0 == INDEX_OUT_OF_BOUND =>
+        {
+            Ok(Some(data))
+        }
+        Err(SysError::IndexOutOfBound) => Ok(None),
+        _ => Err(117),
+    };
+    match (read(Source::GroupInput)?, read(Source::GroupOutput)?) {
+        (None, Some(_)) => verify_creation(network, id),
+        (Some(input), Some(output)) if input == output => Ok(()),
+        (Some(_), None) => Ok(()),
+        _ => Err(117),
+    }
+}
+
+fn escrow(
+    script: &Script,
+    fields: &[[u8; 32]; 8],
+    network: &Identity,
+    standard_route: bool,
+) -> Result<(), i8> {
     let [
         object,
         ckb,
@@ -138,10 +182,11 @@ fn escrow(script: &Script, fields: &[[u8; 32]; 8], network: &Identity) -> Result
         owner_code,
         checkpoint_code,
         checkpoint_id,
-        authority,
+        // Approved objects bind the CKB authority. Plain objects bind the complete CKB Spore Type Script hash.
+        binding,
     ] = fields;
     let lock = load_script_hash().map_err(|_| 116)?;
-    let owner_args = [type_id.as_slice(), &lock, object, mailbox_code, authority].concat();
+    let owner_args = [type_id.as_slice(), &lock, object, mailbox_code, binding].concat();
     let owner = Script::new_builder()
         .code_hash(owner_code.pack())
         .hash_type(ScriptHashType::Data2)
@@ -210,17 +255,19 @@ fn escrow(script: &Script, fields: &[[u8; 32]; 8], network: &Identity) -> Result
         Source::Input,
         script,
         object,
-        authority,
+        binding,
         &lock,
         transfer.data,
+        standard_route,
     )?;
     let right = inspect(
         Source::Output,
         script,
         object,
-        authority,
+        binding,
         &lock,
         transfer.data,
+        standard_route,
     )?;
     let (
         (Some(before_bond), Some((before, input_lock))),
@@ -245,9 +292,10 @@ fn inspect(
     source: Source,
     code: &Script,
     object: &Identity,
-    authority: &Identity,
+    binding: &Identity,
     escrow: &Identity,
     data: &[u8],
+    standard_route: bool,
 ) -> Result<Assets, i8> {
     let mut bond = None;
     let mut asset = None;
@@ -265,14 +313,31 @@ fn inspect(
             object.as_ptr() as u64,
             &mut raw,
         ) {
-            (0, size) if size == raw.len() => {
-                let ty = Script::from_slice(&raw).map_err(|_| 119)?;
+            (0, size)
+                if size
+                    == (if standard_route {
+                        53 + 2 * 32
+                    } else {
+                        raw.len()
+                    }) =>
+            {
+                let ty = Script::from_slice(&raw[..size]).map_err(|_| 119)?;
                 let args = ty.args().raw_data();
                 if ty.code_hash() != code.code_hash()
                     || ty.hash_type() != code.hash_type()
-                    || args[64..96] != *authority
-                    || load(LOAD_TYPE_HASH, source as u64, index, 2, &mut []).0
-                        != INDEX_OUT_OF_BOUND
+                    || (if standard_route {
+                        &args[32..64]
+                    } else {
+                        &args[64..96]
+                    }) != binding
+                    || load(
+                        LOAD_TYPE_HASH,
+                        source as u64,
+                        index,
+                        if standard_route { 1 } else { 2 },
+                        &mut [],
+                    )
+                    .0 != INDEX_OUT_OF_BOUND
                     || load_cell_data(index, source).map_err(|_| 119)? != data
                     || asset
                         .replace((load_cell_capacity(index, source).map_err(|_| 119)?, lock))

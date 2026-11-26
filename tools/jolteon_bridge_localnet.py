@@ -500,7 +500,7 @@ def bridge_round(args, l1, fixture, children):
     report = {"mint": mint}
     if args.stem_native_object:
         report["native_object"] = object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
-    elif args.stem_spore:
+    elif args.stem_spore or args.native_spore_origin:
         report["spore_settlement"] = spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     elif args.metatype_multiasset:
         report["metatype_multiasset"] = multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
@@ -564,6 +564,8 @@ def main():
     parser.add_argument("--stem-transaction-cycles", type=int, default=20_000_000,
                         help="explicit per-transaction cycle limit in the Stem development genesis")
     parser.add_argument("--fee-funds", action="store_true")
+    parser.add_argument("--native-spore-origin", type=lambda path: Path(path).resolve(),
+                        help="issue an unrestricted immutable object on Stem and export to standard Spore V2")
     parser.add_argument("--spore-immortal", action="store_true", help="use the published Spore V2 immortal lifecycle")
     parser.add_argument("--checkpoint-fee-fund", type=lambda path: Path(path).resolve(),
                         help="use restricted checkpoint Lock for the PoW Security Fund")
@@ -621,8 +623,10 @@ def main():
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
     if args.spore_immortal and not args.spore_v2:
         parser.error("--spore-immortal requires the original Spore V2 settlement fixture")
-    if any((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.spore_cluster_v2)) and (
-            not all((args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
+    if args.native_spore_origin and any((args.stem_spore, args.spore_cluster_v2, args.spore_immortal, args.stem_native_object, args.export_udt)):
+        parser.error("native Spore export requires the unrestricted immutable profile")
+    if any((args.native_spore_origin, args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.spore_cluster_v2)) and (
+            not all((args.stem_spore or args.native_spore_origin, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
             or args.export_udt):
         parser.error("Spore settlement requires its three binaries and the Intercell mailbox")
     metatype_object = all((*base, *object_adapters))
@@ -667,9 +671,9 @@ def main():
             not all((args.stem_native_object, args.object_policy, args.intercell_mailbox))
             or not (args.ckb_stem_object or metatype_object) or args.export_udt or args.stem_spore):
         parser.error("Native object settlement needs its Stem scripts and one CKB route")
-    if args.wasm_fixture and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
+    if args.wasm_fixture and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.native_spore_origin or args.stem_native_object):
         parser.error("--wasm-fixture uses the generic Intercell mailbox fixture")
-    if args.exercise_publisher and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.stem_native_object):
+    if args.exercise_publisher and (not args.intercell_mailbox or args.export_udt or args.stem_spore or args.native_spore_origin or args.stem_native_object):
         parser.error("--exercise-publisher uses the generic Intercell mailbox fixture")
     if args.full_udt_return and not args.export_udt:
         parser.error("--full-udt-return requires the UDT settlement fixture")
@@ -702,6 +706,8 @@ def main():
         if args.stem_native_object:
             name = "Metatype custody" if args.metatype_dispatcher else "native object policy"
             print(f"Verified {name} and CKB round trip at agreed height {report['agreed']['height']}")
+        elif args.native_spore_origin:
+            print(f"Verified standard Spore export from Stem at agreed height {report['agreed']['height']}")
         elif args.stem_spore:
             print(f"Verified Spore settlement and original ID at agreed height {report['agreed']['height']}")
         elif args.export_udt:
