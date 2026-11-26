@@ -5905,3 +5905,19 @@ initial Rust build failures from converting protobuf byte fields
 and the passing receive-buffer and canonical decoding tests.
 
 [Raw run records, signed workloads, build fingerprints and reproduction scripts](benchmarks/2026-11-26-stem-consensus-bytes.json.xz).
+
+## Canonical Lineage references
+
+The four-replica Jolteon integration test advanced a single Lineage from
+version 0 to version 4. Each replica returned the same state proof for
+`Latest` and `Exact(4)` at the new Head and rejected `Exact(0)` there.
+The Store regression also rejected a stale write later in the same block.
+Node.js replayed the two finality certificates and both state paths per
+Header through the compiled WASM SDK. `Latest` occupied 33 bytes.
+
+The archive includes the development run, a publication recheck, signed
+proof bundles, public test trust anchors, workspace output and build
+fingerprints. Reproduce with the four-replica integration test and the
+WASM proof runner described in [Operations](OPERATIONS.md).
+
+[Raw evidence](benchmarks/2026-11-26-stem-lineage-ref.json.xz).
