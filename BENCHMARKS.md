@@ -5335,3 +5335,47 @@ control. A separate fungible rerun moved to fresh ports after a
 CKB RPC bind conflict.
 
 [Signed registry changes, detached seals, proofs, commands and failures](benchmarks/2026-11-26-stem-metatype-rotation.json.xz).
+
+## Metatype freeze and thaw
+
+Four Jolteon replicas and a real CKB devnet exercised two freezes
+without changing the object, approval Script or Type ID. The inline
+fixture used three Type Groups. The shared revisable fixture also
+used an independently authenticated live ceiling. In both runs,
+the key rotated from generation 0 to 1. The registry then froze at
+generation 2, thawed for the CKB burn at generation 3, froze again
+while the return was pending at generation 4, and thawed for Stem
+release at generation 5. All four freeze and thaw updates retained
+the same public key.
+
+| Fixture | CKB freeze or thaw bytes / cycles range | CKB burn bytes / cycles | Stem release bytes / cycles |
+| --- | ---: | ---: | ---: |
+| Inline, three groups | 773 / 1,785,378–1,816,968 | 2,014 / 6,731,808 | 3,247 / 16,272,880 |
+| Shared, approval and live ceiling | 921 / 1,793,231–1,807,787 | 2,296 / 7,186,780 | 4,130 / 16,356,241 |
+
+CKB rejected transfers and burns signed against a frozen registry.
+Stem rejected release of the already burned object once the frozen
+record reached its committed anchor. Its trusted state showed a
+live escrow and an absent Inbox record. The next anchored thaw
+allowed release of the exact same message. Both hosts also rejected
+a seal from an earlier generation of the same public key. These
+measurements cover individual local transactions.
+
+Independent verification checked 18 CKB output inclusions, the
+accepted transaction seals and the valid Ed25519 seals on each
+rejected frozen operation. WASM verified the two finalized
+Inbox absence proofs during the freeze, later membership of the
+same messages, live escrow before thaw and restored Type Groups
+afterward. The 11 devnet regressions covered ordinary key rotation,
+live ceilings, royalties, workflow, single and composed UDTs,
+Intercell, CKB/xUDT, Spore, fee payouts and funded handoff.
+The Rust workspace passed 493 tests with 22 ignored. The Go proof
+suite and the CometBFT build check passed.
+
+The first two devnet runs stopped because the harness tried the
+generic missing-approval control while the freeze was still active.
+The reruns isolated each check. The archive also retains the first
+offline checker failure, which passed the new state byte to the
+public-key decoder.
+
+[Registry changes, signed tests, pending and released proofs, measurements and failed runs](benchmarks/2026-11-26-stem-metatype-freeze.json.xz).
