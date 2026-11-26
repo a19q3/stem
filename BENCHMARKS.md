@@ -4204,3 +4204,110 @@ Reference, and the revisable Metatype return with Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
 [Signed workloads, raw timings, state replay and proofs](benchmarks/2026-11-26-stem-live-cell-reuse.json.xz).
+
+## Deferred Live Cell record encoding
+
+Candidate branches retain the decoded Live Cell changes needed for
+execution. The Patricia leaf hashes the OutPoint, creation metadata
+and canonical Cell bytes directly. During finality, one reusable
+scratch buffer produces each created record in the atomic RocksDB
+batch. The change removes a second representation of the created
+record from the staged candidate.
+
+The baseline was `69f79e0`. Revision `9691f16` initially placed
+created records after the generic state mutations in the RocksDB
+batch. Native signed workloads ran on four local Jolteon replicas
+with two VM workers, 64 fresh-socket submitters, a 250 ms proposal
+interval, a two-billion-cycle block budget and a 12-second drain.
+Corresponding runs used identical signed workloads, genesis and
+limits. The equal 1,000 TPS runs lasted 28 seconds, the planned
+2,000 TPS and 140 TPS distributed AMM runs lasted 24 seconds, and
+the first 2 KiB-output runs lasted 20 seconds.
+
+| Sample | Written / admitted / common-visible TPS in offer | Confirmed / client drops | p50 / p95 / p99 | Replica CPU | Peak aggregate RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Payments 1,000 baseline | 1,000.00 / 1,000.00 / 977.25 | 28,000 / 0 | 0.649 / 0.815 / 0.856 s | 46.80 s | 620.4 MiB |
+| Payments 1,000 initial | 1,000.00 / 1,000.00 / 980.32 | 28,000 / 0 | 0.643 / 0.806 / 0.849 s | 44.89 s | 619.2 MiB |
+| Payments 2,000 baseline | 1,418.88 / 1,417.46 / 1,343.79 | 34,053 / 13,947 | 1.235 / 1.799 / 2.069 s | 76.08 s | 767.9 MiB |
+| Payments 2,000 initial | 1,585.29 / 1,582.67 / 1,517.75 | 38,048 / 9,952 | 1.056 / 1.694 / 1.821 s | 76.74 s | 805.6 MiB |
+| Payments 2,000 baseline repeat | 1,792.46 / 1,789.79 / 1,711.75 | 43,019 / 4,981 | 0.920 / 1.200 / 1.280 s | 68.56 s | 812.4 MiB |
+| Payments 2,000 initial repeat | 1,788.96 / 1,786.29 / 1,705.08 | 42,935 / 5,065 | 0.917 / 1.193 / 1.283 s | 67.20 s | 835.8 MiB |
+| 2 KiB payments 1,000 baseline | 988.30 / 986.55 / 937.05 | 19,766 / 234 | 0.908 / 1.263 / 1.358 s | 51.50 s | 753.3 MiB |
+| 2 KiB payments 1,000 initial | 957.70 / 954.50 / 903.70 | 19,154 / 846 | 0.968 / 1.442 / 1.628 s | 51.90 s | 780.9 MiB |
+| Distributed AMM 140 baseline | 140.00 / 140.00 / 136.33 | 3,360 / 0 | 0.625 / 0.787 / 0.812 s | 22.67 s | 261.4 MiB |
+| Distributed AMM 140 initial | 140.00 / 140.00 / 136.08 | 3,360 / 0 | 0.636 / 0.818 / 1.001 s | 22.86 s | 261.9 MiB |
+
+All written payments and AMM commands were visible by the end
+of drain. The two overloaded pairs reversed ordering and reached
+different actual ingress rates. Their results give no repeatable
+overload speedup. The first 2 KiB comparison observed slower
+RocksDB synchronization with deferred records, 7.85 to 11.46 ms
+per write. It reached 988.30 and 957.70 TPS written. Both the
+initial write order and the archived run data are useful for
+reproducing this difference.
+
+The two initial AMM runs each confirmed 3,360 commands with
+6,720 Head updates and identical fees and cycles. Independent
+serial replay verified every finalized Header and receipt,
+including market balances and total asset conservation.
+
+Revision `7d3fd94` restored the baseline RocksDB operation
+order, with created records before the other batch entries. A
+second ordinary-payment pair ran for 28 seconds with the candidate
+first. A 24-second three-way comparison offered 750 payments per
+second with 2 KiB per output. Its Cell Data used fixed repeated
+bytes. The byte-size check decoded the actual signed transactions.
+
+| Sample | Written / admitted / common-visible TPS in offer | Confirmed / client drops | p50 / p95 / p99 | Replica CPU | Peak aggregate RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Payments 1,000 baseline | 985.64 / 984.61 / 958.86 | 27,598 / 402 | 0.694 / 0.912 / 1.409 s | 49.80 s | 626.1 MiB |
+| Payments 1,000 original write order | 990.68 / 990.68 / 970.39 | 27,739 / 261 | 0.673 / 0.861 / 1.177 s | 49.52 s | 584.7 MiB |
+| 2 KiB payments 750 baseline | 748.25 / 748.25 / 730.83 | 17,958 / 42 | 0.620 / 0.792 / 0.875 s | 32.92 s | 697.1 MiB |
+| 2 KiB payments 750 initial | 750.00 / 749.96 / 727.88 | 18,000 / 0 | 0.630 / 0.803 / 0.847 s | 32.96 s | 716.2 MiB |
+| 2 KiB payments 750 original write order | 750.00 / 750.00 / 730.00 | 18,000 / 0 | 0.617 / 0.799 / 0.855 s | 34.77 s | 693.0 MiB |
+
+RocksDB synchronization in the nearly equal 2 KiB comparison
+averaged 7.07 ms on the baseline, 7.48 ms in the initial revision
+and 4.77 ms with the original write order. End-to-end certified
+commit averaged 7.96, 8.40 and 5.90 ms respectively. The final
+revision used 5.6% more aggregate CPU than the baseline in that
+single near-equal 24-second comparison. Common visibility and
+resident memory were roughly level between those two runs.
+Their process writes were 807.17 and 803.21 MB and peer sends
+were 208.86 and 202.19 MB. Persisted Live Cell batch bytes per
+payment per replica were 2,276 across all three 2 KiB runs,
+including the spent record deletion.
+
+The ordered 1,000 TPS run peaked at 584.7 MiB across four
+replicas, versus 626.1 MiB for its paired baseline at a slightly
+lower achieved ingress rate. The ordinary pair had almost equal
+CPU time, and mean RocksDB synchronization went from 5.48 to
+6.50 ms. These samples do not establish a general latency,
+RSS or TPS improvement.
+
+The byte accounting derives directly from the canonical record
+and from observed block sizes. Each ordinary output record is
+154 bytes. Each 2 KiB output record is 2,202 bytes. For the
+304-payment block observed in the final 750 TPS run, the prior
+candidate would retain 669,408 bytes of additional encoded
+record values. These bytes describe candidate representation.
+The process RSS samples include execution, caches and the
+database and are reported separately.
+
+The locked release workspace passed 480 tests with 19 ignored.
+A byte-level control checks the old field order, streaming hash,
+scratch buffer reuse across sizes and decoding of the persisted
+record. The RISC-V contracts were rebuilt from the updated
+commitment code. Go proofs and the frozen CometBFT feature
+check passed.
+
+A mixed four-replica network finalized 96 payments with one
+validator offline, then recovered and produced the same execution
+Header and finality proof on both revisions. With rebuilt RISC-V
+contracts, real CKB devnet accepted a funded committee handoff
+and historical Intercell message, historical and live-at-anchor
+CKB references, and the revisable Metatype return with a signed
+Capacity top-up.
+
+[Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
+[Signed workloads, ordered and initial timings, byte accounting and recovery evidence](benchmarks/2026-11-26-stem-live-cell-finality.json.xz).

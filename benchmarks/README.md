@@ -101,5 +101,6 @@ available. Published network evidence contains public genesis and proof data.
 | Revisable Metatype objects across CKB | [Report](../BENCHMARKS.md#revisable-metatype-objects-across-ckb), [signed round trips, capacity boundary controls and failed runs](2026-11-26-stem-metatype-revision.json.xz) |
 | VM verification reuse across parent changes | [Report](../BENCHMARKS.md#vm-verification-reuse-across-parent-changes), [paired payments, raw CPU profiles, CKB proofs and recovery](2026-11-26-stem-vm-parent-cache.json.xz) |
 | Live Cell reuse across candidate branches | [Report](../BENCHMARKS.md#live-cell-reuse-across-candidate-branches), [matched payments, AMM replay and recovery evidence](2026-11-26-stem-live-cell-reuse.json.xz) |
+| Deferred Live Cell record encoding | [Report](../BENCHMARKS.md#deferred-live-cell-record-encoding), [paired loads, write-order control and CKB proofs](2026-11-26-stem-live-cell-finality.json.xz) |
 
 Read compressed run records with `xz -dc benchmarks/<file>.json.xz`.
