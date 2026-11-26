@@ -505,7 +505,56 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         final = l1.call("get_live_cell", point(released["hash"], 1), True)["cell"]
         assert final["output"] == actual["output"] and final["data"] == actual["data"]
         melt_result = None
-        if not args.spore_immortal and not approved_origin:
+        if args.native_spore_sync_melt:
+            carried, last, fees = [point(released["hash"], i) for i in range(3)]
+            refund_lock = script_hash(buyer)
+            terminal = b"SPB1" + le(len(data), 4) + ckb_hash(data)
+            notice = packet("synchronized-melt", False, refund_lock, 1, wire_content=terminal)
+
+            def certified_melt(label, msg, *, burn=True):
+                inputs = [carried, last, fees]
+                outputs = [output(mailbox_cap, ckb_escrow, mailbox),
+                           output(spore_cap, fixture.owner_lock, None if burn else object_type),
+                           output(fee_capacity-5*FEE, fixture.standard)]
+                values = [hex_bytes(le(2, 8) + binary(next_encoded["successor_root"]) + binary(msg["record"])),
+                          "0x" if burn else hex_bytes(data), "0x"]
+                tx = transaction(inputs, outputs, values, deps)
+                tx["witnesses"] = ["0x"]*3 + [cobuild(object_type, object_id, fixture.owner_lock,
+                    None if burn else fixture.owner_lock)]
+                return fixture.sign(label, tx, [wallet_group(1, [fixture.owner]), wallet_group(2, [fixture.faucet])])
+
+            bad = packet("wrong-melt-hash", False, refund_lock, 1, wire_content=terminal[:-1] + bytes([terminal[-1] ^ 1]))
+            rejected["wrong_melt_content"] = ckb_reject(certified_melt("wrong-melt-hash", bad), 113)
+            rejected["melt_receipt_with_live_spore"] = ckb_reject(certified_melt("still-live", notice, burn=False), 111)
+            normal = packet("return-without-custody", False, refund_lock, 1)
+            rejected["melt_with_ordinary_return"] = ckb_reject(certified_melt("wrong-return", normal), 113)
+            melted = submit_ckb(certified_melt("certified-melt", notice))
+            assert l1.call("get_live_cell", last, True)["status"] != "live"
+            terminal_anchor, votes = observe_deposit("synchronized-melt", melted)
+            tag = b"SPB1" + original
+            refund = cell(object_cap, buyer, tag)
+
+            def retire(label, refund_output):
+                return stem_signed(label, at(relocked, 2), [cell(bond_cap, endpoint), refund_output,
+                    cell(remaining-4*FEE, owner)], bond=at(relocked, 0), extra_points=[at(relocked, 1)],
+                    message=notice, receive=True, observations=votes)
+
+            rejected["redirected_melt_refund"] = stem_reject(retire("redirect-refund",
+                cell(object_cap, owner, tag)), "exited with 119")
+            rejected["reduced_melt_refund"] = stem_reject(retire("reduced-refund",
+                cell(object_cap-1, buyer, tag)), "exited with 119")
+            rejected["untagged_melt_refund"] = stem_reject(retire("untagged-refund",
+                cell(object_cap, buyer)), "exited with 119")
+            retired = commit(retire("retire-original", refund))
+            final_original = cell_proof(at(relocked, 1))
+            assert final_original["cell"] is None and signing_cell(client, at(retired, 1))["cell"] == refund
+            rejected["replayed_terminal_receipt"] = stem_reject(stem_signed("replay-terminal", at(retired, 2),
+                [cell(bond_cap, endpoint), cell(remaining-5*FEE, owner)], bond=at(retired, 0),
+                message=notice, receive=True, observations=votes), "nonce already used")
+            melt_result = {"transaction": melted, "receipt": notice, "anchor": terminal_anchor,
+                           "retired": retired, "spent_original": final_original, "refund": cell_proof(at(retired, 1)),
+                           "authenticated_inbox": certified("/stem/intercell/inbox", notice["id"])}
+        elif not args.spore_immortal and not approved_origin:
             last = point(released["hash"], 1)
             melt = transaction([last], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"], deps[:2])
             melt["witnesses"] = ["0x", cobuild(object_type, object_id, fixture.owner_lock, None)]

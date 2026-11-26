@@ -16,7 +16,7 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
-    spore::{CKB_SPORE_CODE, CellTransfer, MAX_CELL_SPORE_DATA, SporeData},
+    spore::{CKB_SPORE_CODE, CellTransfer, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData},
 };
 
 entry!(main);
@@ -68,7 +68,44 @@ fn verify() -> Result<(), i8> {
     let next_bytes = load_cell_data(successor, Source::Output).map_err(|_| 110)?;
     let next = MailboxState::decode(&next_bytes).ok_or(110)?;
     let spore_input = matching(Source::Input, original)?;
-    let spore_output = find(Source::Output, original)?;
+    let Some(spore_output) = matching(Source::Output, original)? else {
+        // A terminal receipt is available only to the external holder of a
+        // meltable, plain native-origin counterpart.
+        let input = spore_input.ok_or(111)?;
+        if counterpart.is_none()
+            || approval.is_some()
+            || load_cell_type_hash(0, Source::GroupInput).map_err(|_| 110)? != Some(mailbox)
+            || load_cell_capacity(1, Source::GroupInput) != Err(SysError::IndexOutOfBound)
+            || load_cell_lock_hash(input, Source::Input).map_err(|_| 110)? == owner
+        {
+            return Err(111);
+        }
+        let ty = load_cell_type(input, Source::Input)
+            .map_err(|_| 110)?
+            .ok_or(112)?;
+        let bytes =
+            stem_contracts::metatype::bounded_data(input, Source::Input, MAX_CELL_SPORE_DATA)
+                .map_err(|_| 110)?;
+        if ty.code_hash().as_slice() != CKB_SPORE_CODE
+            || u8::from(ty.hash_type()) != ScriptHashType::Data1 as u8
+            || ty.args().raw_data().len() != 32
+            || !SporeData::unclustered(&bytes).is_some_and(|spore| !spore.immortal())
+        {
+            return Err(112);
+        }
+        let message = Message::decode(next.outgoing).ok_or(113)?;
+        let receipt = MeltReceipt::decode(message.payload).ok_or(113)?;
+        if message.receiver != *endpoint
+            || receipt.original_type != *origin
+            || receipt.recipient == *endpoint
+            || !receipt
+                .content
+                .matches(&bytes, || load_cell_data_hash(input, Source::Input).ok())
+        {
+            return Err(113);
+        }
+        return Ok(());
+    };
     let first_export = spore_input.is_none() && counterpart.is_some();
     let input_index = spore_input.unwrap_or(0);
     let held_before = if first_export {

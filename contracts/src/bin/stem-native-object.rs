@@ -20,8 +20,8 @@ use stem_bridge_wire::{
     metatype::MAX_STATE_BYTES,
     object::{ObjectArgs, creation_id, revision},
     spore::{
-        CellTransfer, MAX_CELL_SPORE_DATA, MAX_SPORE_DATA, SporeData, SporeTransfer,
-        TransferContent, return_nonce,
+        CellTransfer, MAX_CELL_SPORE_DATA, MAX_SPORE_DATA, MELT_TAG, MeltReceipt, SporeData,
+        SporeTransfer, TransferContent, return_nonce,
     },
 };
 
@@ -262,7 +262,14 @@ fn escrow(
     }
     let kind = u16::from_le_bytes(action[6..8].try_into().unwrap());
     let message = Message::decode(&action[12..len]).ok_or(118)?;
-    let transfer = CellTransfer::decode(message.payload).ok_or(118)?;
+    let melt = MeltReceipt::decode(message.payload);
+    let terminal = melt.is_some();
+    if terminal && !(kind == RECEIVE_ACTION && matches!(route, Route::Standard)) {
+        return Err(118);
+    }
+    let transfer = melt
+        .or_else(|| CellTransfer::decode(message.payload))
+        .ok_or(118)?;
     if matches!(route, Route::Original) && SporeTransfer::decode_plain(message.payload).is_none() {
         return Err(118);
     }
@@ -314,6 +321,18 @@ fn escrow(
         transfer.content,
         route,
     )?;
+    if terminal {
+        let ((Some(bond), Some((capacity, holder))), (Some(next_bond), None)) = (left, right)
+        else {
+            return Err(119);
+        };
+        if holder != lock || next_bond != bond {
+            return Err(119);
+        }
+        // The native identity independently authorizes destruction. A tagged
+        // refund makes each original's collateral independently accountable.
+        return melt_refund(object, &transfer.recipient, capacity);
+    }
     let (
         (Some(before_bond), Some((before, input_lock))),
         (Some(after_bond), Some((after, output_lock))),
@@ -332,6 +351,32 @@ fn escrow(
 }
 
 type Assets = (Option<u64>, Option<(u64, Identity)>);
+
+fn melt_refund(object: &Identity, recipient: &Identity, capacity: u64) -> Result<(), i8> {
+    let tag = [MELT_TAG.as_slice(), object].concat();
+    let mut found = false;
+    for index in 0.. {
+        match load_cell_lock_hash(index, Source::Output) {
+            Ok(lock)
+                if &lock == recipient
+                    && load(LOAD_TYPE_HASH, Source::Output as u64, index, 0, &mut []).0
+                        == INDEX_OUT_OF_BOUND
+                    && bounded_data(index, Source::Output, tag.len())
+                        .is_ok_and(|bytes| bytes == tag) =>
+            {
+                if found || load_cell_capacity(index, Source::Output).map_err(|_| 119)? != capacity
+                {
+                    return Err(119);
+                }
+                found = true;
+            }
+            Ok(_) => {}
+            Err(SysError::IndexOutOfBound) => return found.then_some(()).ok_or(119),
+            Err(_) => return Err(119),
+        }
+    }
+    unreachable!()
+}
 
 fn inspect(
     source: Source,

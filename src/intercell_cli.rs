@@ -9,7 +9,7 @@ use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
 use stem_bridge_wire::intercell::{Delivery, MAX_PAYLOAD, Message, record_key};
-use stem_bridge_wire::spore::{CellTransfer, MAX_CELL_SPORE_DATA};
+use stem_bridge_wire::spore::{CellTransfer, MAX_CELL_SPORE_DATA, MeltReceipt};
 use stem_ledger::block::Header;
 use stem_stake::{
     finality::NATIVE_HEADER_BYTES,
@@ -29,6 +29,9 @@ pub enum Intercell {
         recipient: H256,
         #[arg(long)]
         data: PathBuf,
+        /// Certify a holder's CKB melt and name the recipient of the native collateral.
+        #[arg(long)]
+        melt: bool,
     },
     /// Encode a canonical message and return its stable nonce identity.
     Encode {
@@ -132,16 +135,20 @@ impl Intercell {
                 original_type,
                 recipient,
                 data,
+                melt,
             } => {
                 let bytes = crate::bridge_cli::read_limited(&data, MAX_CELL_SPORE_DATA)?;
+                let (original, recipient) = (original_type.into(), recipient.into());
+                if melt {
+                    let receipt = MeltReceipt::encode(&original, &recipient, &bytes)
+                        .context("invalid meltable SporeData or settlement identity")?;
+                    return print_json(
+                        &json!({ "payload": JsonBytes::from_vec(receipt.to_vec()) }),
+                    );
+                }
                 let mut buffer = [0; MAX_PAYLOAD];
-                let payload = CellTransfer::encode(
-                    &original_type.into(),
-                    &recipient.into(),
-                    &bytes,
-                    &mut buffer,
-                )
-                .context("invalid SporeData or settlement identity")?;
+                let payload = CellTransfer::encode(&original, &recipient, &bytes, &mut buffer)
+                    .context("invalid SporeData or settlement identity")?;
                 print_json(&json!({ "payload": JsonBytes::from_vec(payload.to_vec()) }))
             }
             Self::RecoverInbox(args) => args.run(),

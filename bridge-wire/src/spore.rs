@@ -16,6 +16,50 @@ pub const MAX_SPORE_DATA: usize = MAX_PAYLOAD - TRANSFER_HEADER;
 /// The native transaction envelope is at most 512 KiB, including all Cell metadata.
 pub const MAX_CELL_SPORE_DATA: usize = 512 * 1024;
 pub const CONTENT_COMMITMENT_TAG: &[u8; 4] = b"SPH1";
+pub const MELT_TAG: &[u8; 4] = b"SPB1";
+
+/// A holder can certify a CKB melt and name the recipient of the native collateral.
+/// This receipt is disjoint from an ordinary return, including for small Cells.
+pub struct MeltReceipt;
+
+impl MeltReceipt {
+    pub fn decode(payload: &[u8]) -> Option<CellTransfer<'_>> {
+        let [original, recipient] = payload.get(..TRANSFER_HEADER)?.as_chunks::<32>().0 else {
+            return None;
+        };
+        let rest = payload[TRANSFER_HEADER..].strip_prefix(MELT_TAG)?;
+        let (size, digest) = rest.split_at_checked(4)?;
+        let length = u32::from_le_bytes(size.try_into().ok()?) as usize;
+        if original == &[0; 32]
+            || recipient == &[0; 32]
+            || !(1..=MAX_CELL_SPORE_DATA).contains(&length)
+        {
+            return None;
+        }
+        Some(CellTransfer {
+            original_type: *original,
+            recipient: *recipient,
+            content: TransferContent::Committed {
+                length,
+                digest: digest.try_into().ok()?,
+            },
+        })
+    }
+
+    pub fn encode(original: &Identity, recipient: &Identity, data: &[u8]) -> Option<[u8; 104]> {
+        if SporeData::unclustered(data)?.immortal() || original == &[0; 32] || recipient == &[0; 32]
+        {
+            return None;
+        }
+        let mut receipt = [0; 104];
+        receipt[..32].copy_from_slice(original);
+        receipt[32..64].copy_from_slice(recipient);
+        receipt[64..68].copy_from_slice(MELT_TAG);
+        receipt[68..72].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        receipt[72..].copy_from_slice(&hash(b"", &[data]));
+        Some(receipt)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransferContent<'a> {
@@ -293,7 +337,14 @@ mod tests {
         let mut buf = [0; MAX_PAYLOAD];
         for size in [MAX_SPORE_DATA, MAX_SPORE_DATA + 1, MAX_CELL_SPORE_DATA] {
             let bytes = make_data(size);
+            let melt = MeltReceipt::encode(&[1; 32], &[2; 32], &bytes).unwrap();
+            let terminal = MeltReceipt::decode(&melt).unwrap();
+            assert_eq!(terminal.recipient, [2; 32]);
+            assert!(terminal.content.matches(&bytes, || Some(hash(b"", &[&bytes]))));
+            assert!(CellTransfer::decode(&melt).is_none());
+            assert!(MeltReceipt::decode(&melt[..103]).is_none());
             let encoded = CellTransfer::encode(&[1; 32], &[2; 32], &bytes, &mut buf).unwrap();
+            assert!(MeltReceipt::decode(encoded).is_none());
             let transfer = CellTransfer::decode(encoded).unwrap();
             assert_eq!(transfer.original_type, [1; 32]);
             assert_eq!(transfer.recipient, [2; 32]);
@@ -379,6 +430,7 @@ mod tests {
             let mut message = [[1; 32], [2; 32]].concat();
             message.extend_from_slice(&data);
             assert_eq!(SporeData::decode(&data).unwrap().content_type, mime);
+            assert!(MeltReceipt::encode(&[1; 32], &[2; 32], &data).is_none());
             assert!(SporeTransfer::decode(&message).is_some());
             assert!(SporeTransfer::decode_plain(&message).is_none());
             assert!(!plain_spore(&data));

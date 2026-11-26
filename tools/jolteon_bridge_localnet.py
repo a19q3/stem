@@ -588,6 +588,8 @@ def main():
                         help="deploy the native approval Type and carry its policy in a CKB Spore holder Lock")
     parser.add_argument("--spore-content-bytes", type=int, default=0,
                         help="exercise commitment settlement with a plain text body of the requested size")
+    parser.add_argument("--native-spore-sync-melt", action="store_true",
+                        help="certify a CKB holder melt and redeem the native object's collateral")
     native_media = parser.add_mutually_exclusive_group()
     native_media.add_argument("--native-spore-json", action="store_true", help="use application/json data in the native asset fixture")
     native_media.add_argument("--native-spore-multipart", action="store_true", help="use a multipart/mixed native object with a boundary")
@@ -651,6 +653,8 @@ def main():
         parser.error("UDT settlement requires --export-udt, an escrow route and --intercell-mailbox")
     if (args.native_spore_json or args.native_spore_multipart) and not args.native_spore_origin:
         parser.error("the native media fixtures require --native-spore-origin")
+    if args.native_spore_sync_melt and (not args.native_spore_origin or args.native_spore_approval or args.spore_immortal):
+        parser.error("synchronized melt requires a meltable, unrestricted native-origin Spore")
     if args.native_spore_approval and (not args.native_spore_origin or args.native_spore_json
             or args.native_spore_multipart or args.spore_immortal):
         parser.error("the approved native identity uses the immutable plain Spore content profile")
