@@ -31,6 +31,14 @@
       "system_records": 1254
     }
   },
+  "inode_allocation_by_job_and_namespace": {
+    "compaction": {
+      "mixed": 878297088
+    },
+    "flush": {
+      "mixed": 393555968
+    }
+  },
   "files": {
     "node-0/000009.sst": {
       "bytes": 14269507,
@@ -318,7 +326,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 31879168
     },
     "node-0/000117.sst": {
       "bytes": 9812113,
@@ -370,7 +379,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9814016
     },
     "node-0/000119.sst": {
       "bytes": 9784713,
@@ -417,7 +427,8 @@
           "blocks": 15,
           "entries": 15
         }
-      }
+      },
+      "inode_allocated_bytes": 9785344
     },
     "node-0/000121.sst": {
       "bytes": 9493114,
@@ -469,7 +480,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9494528
     },
     "node-0/000123.sst": {
       "bytes": 10047564,
@@ -521,7 +533,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 10051584
     },
     "node-0/000124.sst": {
       "bytes": 32425387,
@@ -573,7 +586,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 32428032
     },
     "node-0/000126.sst": {
       "bytes": 9927192,
@@ -620,7 +634,8 @@
           "blocks": 15,
           "entries": 19
         }
-      }
+      },
+      "inode_allocated_bytes": 9928704
     },
     "node-0/000128.sst": {
       "bytes": 9707203,
@@ -672,7 +687,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9707520
     },
     "node-0/000130.sst": {
       "bytes": 9966718,
@@ -724,7 +740,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9969664
     },
     "node-0/000132.sst": {
       "bytes": 9535001,
@@ -780,7 +797,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 31334400
     },
     "node-0/000135.sst": {
       "bytes": 9930256,
@@ -827,7 +845,8 @@
           "blocks": 12,
           "entries": 15
         }
-      }
+      },
+      "inode_allocated_bytes": 9932800
     },
     "node-0/000137.sst": {
       "bytes": 9779821,
@@ -874,7 +893,8 @@
           "blocks": 16,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9781248
     },
     "node-0/000139.sst": {
       "bytes": 9934671,
@@ -921,7 +941,8 @@
           "blocks": 15,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9936896
     },
     "node-0/000141.sst": {
       "bytes": 9940204,
@@ -977,7 +998,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 30932992
     },
     "node-0/000144.sst": {
       "bytes": 9925703,
@@ -1029,7 +1051,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9928704
     },
     "node-1/000009.sst": {
       "bytes": 14269507,
@@ -1337,7 +1360,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 32428032
     },
     "node-1/000126.sst": {
       "bytes": 9927269,
@@ -1384,7 +1408,8 @@
           "blocks": 15,
           "entries": 19
         }
-      }
+      },
+      "inode_allocated_bytes": 9928704
     },
     "node-1/000128.sst": {
       "bytes": 9707203,
@@ -1436,7 +1461,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9707520
     },
     "node-1/000130.sst": {
       "bytes": 9966718,
@@ -1488,7 +1514,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9969664
     },
     "node-1/000132.sst": {
       "bytes": 9535001,
@@ -1535,7 +1562,8 @@
           "blocks": 12,
           "entries": 13
         }
-      }
+      },
+      "inode_allocated_bytes": 9535488
     },
     "node-1/000133.sst": {
       "bytes": 31331607,
@@ -1587,7 +1615,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 31334400
     },
     "node-1/000135.sst": {
       "bytes": 9930256,
@@ -1634,7 +1663,8 @@
           "blocks": 12,
           "entries": 15
         }
-      }
+      },
+      "inode_allocated_bytes": 9932800
     },
     "node-1/000137.sst": {
       "bytes": 9779821,
@@ -1681,7 +1711,8 @@
           "blocks": 16,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9781248
     },
     "node-1/000139.sst": {
       "bytes": 9934671,
@@ -1728,7 +1759,8 @@
           "blocks": 15,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9936896
     },
     "node-1/000141.sst": {
       "bytes": 9940260,
@@ -1784,7 +1816,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 30932992
     },
     "node-1/000144.sst": {
       "bytes": 9925703,
@@ -1836,7 +1869,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9928704
     },
     "node-2/000009.sst": {
       "bytes": 14269440,
@@ -2124,7 +2158,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 31879168
     },
     "node-2/000117.sst": {
       "bytes": 9812112,
@@ -2176,7 +2211,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9814016
     },
     "node-2/000119.sst": {
       "bytes": 9784796,
@@ -2223,7 +2259,8 @@
           "blocks": 15,
           "entries": 15
         }
-      }
+      },
+      "inode_allocated_bytes": 9785344
     },
     "node-2/000121.sst": {
       "bytes": 9493126,
@@ -2275,7 +2312,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9494528
     },
     "node-2/000123.sst": {
       "bytes": 10047535,
@@ -2327,7 +2365,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 10051584
     },
     "node-2/000124.sst": {
       "bytes": 32425372,
@@ -2379,7 +2418,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 32428032
     },
     "node-2/000126.sst": {
       "bytes": 9927364,
@@ -2426,7 +2466,8 @@
           "blocks": 15,
           "entries": 19
         }
-      }
+      },
+      "inode_allocated_bytes": 9928704
     },
     "node-2/000128.sst": {
       "bytes": 9707178,
@@ -2478,7 +2519,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9707520
     },
     "node-2/000130.sst": {
       "bytes": 9966699,
@@ -2530,7 +2572,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9969664
     },
     "node-2/000132.sst": {
       "bytes": 9534976,
@@ -2577,7 +2620,8 @@
           "blocks": 12,
           "entries": 13
         }
-      }
+      },
+      "inode_allocated_bytes": 9535488
     },
     "node-2/000133.sst": {
       "bytes": 31331607,
@@ -2629,7 +2673,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 31334400
     },
     "node-2/000135.sst": {
       "bytes": 9930198,
@@ -2676,7 +2721,8 @@
           "blocks": 12,
           "entries": 15
         }
-      }
+      },
+      "inode_allocated_bytes": 9932800
     },
     "node-2/000137.sst": {
       "bytes": 9779822,
@@ -2723,7 +2769,8 @@
           "blocks": 16,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9781248
     },
     "node-2/000139.sst": {
       "bytes": 9934661,
@@ -2770,7 +2817,8 @@
           "blocks": 15,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9936896
     },
     "node-2/000141.sst": {
       "bytes": 9940282,
@@ -2826,7 +2874,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 30932992
     },
     "node-2/000144.sst": {
       "bytes": 9925692,
@@ -2878,7 +2927,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9928704
     },
     "node-3/000009.sst": {
       "bytes": 14269489,
@@ -3196,7 +3246,8 @@
           "blocks": 1,
           "entries": 8
         }
-      }
+      },
+      "inode_allocated_bytes": 67252224
     },
     "node-3/000135.sst": {
       "bytes": 67307059,
@@ -3228,7 +3279,8 @@
           "blocks": 507,
           "entries": 525
         }
-      }
+      },
+      "inode_allocated_bytes": 67309568
     },
     "node-3/000136.sst": {
       "bytes": 30996885,
@@ -3270,7 +3322,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 30998528
     },
     "node-3/000138.sst": {
       "bytes": 9924101,
@@ -3317,7 +3370,8 @@
           "blocks": 15,
           "entries": 19
         }
-      }
+      },
+      "inode_allocated_bytes": 9924608
     },
     "node-3/000140.sst": {
       "bytes": 9703938,
@@ -3369,7 +3423,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9707520
     },
     "node-3/000142.sst": {
       "bytes": 9963802,
@@ -3421,7 +3476,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9965568
     },
     "node-3/000144.sst": {
       "bytes": 9532167,
@@ -3463,7 +3519,8 @@
           "blocks": 12,
           "entries": 13
         }
-      }
+      },
+      "inode_allocated_bytes": 9535488
     },
     "node-3/000145.sst": {
       "bytes": 67249812,
@@ -3485,7 +3542,8 @@
           "blocks": 1,
           "entries": 8
         }
-      }
+      },
+      "inode_allocated_bytes": 67252224
     },
     "node-3/000146.sst": {
       "bytes": 67336657,
@@ -3512,7 +3570,8 @@
           "blocks": 452,
           "entries": 469
         }
-      }
+      },
+      "inode_allocated_bytes": 67338240
     },
     "node-3/000147.sst": {
       "bytes": 42239910,
@@ -3554,7 +3613,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 42242048
     },
     "node-3/000149.sst": {
       "bytes": 9926806,
@@ -3601,7 +3661,8 @@
           "blocks": 12,
           "entries": 15
         }
-      }
+      },
+      "inode_allocated_bytes": 9928704
     },
     "node-3/000151.sst": {
       "bytes": 9776853,
@@ -3648,7 +3709,8 @@
           "blocks": 16,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9777152
     },
     "node-3/000153.sst": {
       "bytes": 9931643,
@@ -3695,7 +3757,8 @@
           "blocks": 15,
           "entries": 17
         }
-      }
+      },
+      "inode_allocated_bytes": 9932800
     },
     "node-3/000155.sst": {
       "bytes": 9937133,
@@ -3747,7 +3810,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9940992
     },
     "node-3/000156.sst": {
       "bytes": 67249867,
@@ -3769,7 +3833,8 @@
           "blocks": 1,
           "entries": 8
         }
-      }
+      },
+      "inode_allocated_bytes": 67252224
     },
     "node-3/000157.sst": {
       "bytes": 67240488,
@@ -3801,7 +3866,8 @@
           "blocks": 398,
           "entries": 408
         }
-      }
+      },
+      "inode_allocated_bytes": 67244032
     },
     "node-3/000158.sst": {
       "bytes": 53560424,
@@ -3843,7 +3909,8 @@
           "blocks": 1,
           "entries": 2
         }
-      }
+      },
+      "inode_allocated_bytes": 53563392
     },
     "node-3/000160.sst": {
       "bytes": 9922845,
@@ -3890,7 +3957,8 @@
           "blocks": 1,
           "entries": 1
         }
-      }
+      },
+      "inode_allocated_bytes": 9924608
     }
   }
 }

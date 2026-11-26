@@ -15,6 +15,7 @@ def attribute(archive, directory, reader):
     files = {}
     total, captured = Counter(), Counter()
     bytes_by_job = {}
+    allocated_by_job = {}
     for log, events in run["sst"]["logs"].items():
         node = Path(log).parts[0]
         for event in events:
@@ -42,11 +43,17 @@ def attribute(archive, directory, reader):
             with source.open("rb") as f:
                 files[name]["sha256"] = hashlib.file_digest(f, "sha256").hexdigest()
             files[name]["namespaces"] = counts
+            allocated = source.stat().st_blocks * 512
+            files[name]["inode_allocated_bytes"] = allocated
+            names = {k for k, v in counts.items() if v["blocks"]}
+            label = names.pop() if len(names) == 1 else "mixed"
+            allocated_by_job.setdefault(job, Counter())[label] += allocated
             by_category = bytes_by_job.setdefault(job, Counter())
             by_category.update({k: v["bytes"] for k, v in counts.items()})
     assert all(total[job] == run["sst"]["totals"][job]["bytes"] for job in total)
     return {"recorded_bytes": dict(total), "decoded_bytes": dict(captured),
-            "encoded_sst_bytes_by_job_and_namespace": bytes_by_job, "files": files}
+            "encoded_sst_bytes_by_job_and_namespace": bytes_by_job,
+            "inode_allocation_by_job_and_namespace": allocated_by_job, "files": files}
 
 
 if __name__ == "__main__":

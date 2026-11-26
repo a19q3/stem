@@ -1,0 +1,431 @@
+[
+  {
+    "file": "churn-aging.json.xz",
+    "offer_seconds": 1800,
+    "peak_acknowledged_waiting": 144,
+    "first_peak_us": 1150360626,
+    "waiting_at_offer_end": 18,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 507935,
+    "checkpoints": [
+      {
+        "time_us": 60000000,
+        "written": 3000,
+        "acknowledged": 2999,
+        "common_visible": 2971,
+        "acknowledged_awaiting_common_visibility": 28
+      },
+      {
+        "time_us": 120000000,
+        "written": 6000,
+        "acknowledged": 6000,
+        "common_visible": 5983,
+        "acknowledged_awaiting_common_visibility": 17
+      },
+      {
+        "time_us": 180000000,
+        "written": 9000,
+        "acknowledged": 9000,
+        "common_visible": 8978,
+        "acknowledged_awaiting_common_visibility": 22
+      },
+      {
+        "time_us": 240000000,
+        "written": 12000,
+        "acknowledged": 12000,
+        "common_visible": 11974,
+        "acknowledged_awaiting_common_visibility": 26
+      },
+      {
+        "time_us": 300000000,
+        "written": 15000,
+        "acknowledged": 14996,
+        "common_visible": 14956,
+        "acknowledged_awaiting_common_visibility": 40
+      },
+      {
+        "time_us": 360000000,
+        "written": 18000,
+        "acknowledged": 18000,
+        "common_visible": 17971,
+        "acknowledged_awaiting_common_visibility": 29
+      },
+      {
+        "time_us": 420000000,
+        "written": 21000,
+        "acknowledged": 21000,
+        "common_visible": 20971,
+        "acknowledged_awaiting_common_visibility": 29
+      },
+      {
+        "time_us": 480000000,
+        "written": 24000,
+        "acknowledged": 24000,
+        "common_visible": 23978,
+        "acknowledged_awaiting_common_visibility": 22
+      },
+      {
+        "time_us": 540000000,
+        "written": 27000,
+        "acknowledged": 27000,
+        "common_visible": 26977,
+        "acknowledged_awaiting_common_visibility": 23
+      },
+      {
+        "time_us": 600000000,
+        "written": 30000,
+        "acknowledged": 30000,
+        "common_visible": 29978,
+        "acknowledged_awaiting_common_visibility": 22
+      },
+      {
+        "time_us": 660000000,
+        "written": 33000,
+        "acknowledged": 33000,
+        "common_visible": 32969,
+        "acknowledged_awaiting_common_visibility": 31
+      },
+      {
+        "time_us": 720000000,
+        "written": 36000,
+        "acknowledged": 36000,
+        "common_visible": 35971,
+        "acknowledged_awaiting_common_visibility": 29
+      },
+      {
+        "time_us": 780000000,
+        "written": 39000,
+        "acknowledged": 39000,
+        "common_visible": 38982,
+        "acknowledged_awaiting_common_visibility": 18
+      },
+      {
+        "time_us": 840000000,
+        "written": 41997,
+        "acknowledged": 41965,
+        "common_visible": 41934,
+        "acknowledged_awaiting_common_visibility": 31
+      },
+      {
+        "time_us": 900000000,
+        "written": 45000,
+        "acknowledged": 45000,
+        "common_visible": 44980,
+        "acknowledged_awaiting_common_visibility": 20
+      },
+      {
+        "time_us": 960000000,
+        "written": 48000,
+        "acknowledged": 48000,
+        "common_visible": 47973,
+        "acknowledged_awaiting_common_visibility": 27
+      },
+      {
+        "time_us": 1020000000,
+        "written": 50985,
+        "acknowledged": 50953,
+        "common_visible": 50922,
+        "acknowledged_awaiting_common_visibility": 31
+      },
+      {
+        "time_us": 1080000000,
+        "written": 54000,
+        "acknowledged": 54000,
+        "common_visible": 53980,
+        "acknowledged_awaiting_common_visibility": 20
+      },
+      {
+        "time_us": 1140000000,
+        "written": 57000,
+        "acknowledged": 57000,
+        "common_visible": 56971,
+        "acknowledged_awaiting_common_visibility": 29
+      },
+      {
+        "time_us": 1200000000,
+        "written": 60000,
+        "acknowledged": 59994,
+        "common_visible": 59982,
+        "acknowledged_awaiting_common_visibility": 18
+      },
+      {
+        "time_us": 1260000000,
+        "written": 63000,
+        "acknowledged": 62986,
+        "common_visible": 62939,
+        "acknowledged_awaiting_common_visibility": 53
+      },
+      {
+        "time_us": 1320000000,
+        "written": 66000,
+        "acknowledged": 65994,
+        "common_visible": 65977,
+        "acknowledged_awaiting_common_visibility": 23
+      },
+      {
+        "time_us": 1380000000,
+        "written": 69000,
+        "acknowledged": 68994,
+        "common_visible": 68961,
+        "acknowledged_awaiting_common_visibility": 39
+      },
+      {
+        "time_us": 1440000000,
+        "written": 72000,
+        "acknowledged": 71994,
+        "common_visible": 71971,
+        "acknowledged_awaiting_common_visibility": 29
+      },
+      {
+        "time_us": 1500000000,
+        "written": 75000,
+        "acknowledged": 74994,
+        "common_visible": 74969,
+        "acknowledged_awaiting_common_visibility": 31
+      },
+      {
+        "time_us": 1560000000,
+        "written": 78000,
+        "acknowledged": 77994,
+        "common_visible": 77970,
+        "acknowledged_awaiting_common_visibility": 30
+      },
+      {
+        "time_us": 1620000000,
+        "written": 81000,
+        "acknowledged": 80994,
+        "common_visible": 80974,
+        "acknowledged_awaiting_common_visibility": 26
+      },
+      {
+        "time_us": 1680000000,
+        "written": 84000,
+        "acknowledged": 83994,
+        "common_visible": 83969,
+        "acknowledged_awaiting_common_visibility": 31
+      },
+      {
+        "time_us": 1740000000,
+        "written": 87000,
+        "acknowledged": 86994,
+        "common_visible": 86981,
+        "acknowledged_awaiting_common_visibility": 19
+      },
+      {
+        "time_us": 1800000000,
+        "written": 90000,
+        "acknowledged": 89994,
+        "common_visible": 89982,
+        "acknowledged_awaiting_common_visibility": 18
+      },
+      {
+        "time_us": 1800507935,
+        "written": 90000,
+        "acknowledged": 89994,
+        "common_visible": 90000,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "churn-pressure.json.xz",
+    "offer_seconds": 300,
+    "peak_acknowledged_waiting": 1287,
+    "first_peak_us": 14057909,
+    "waiting_at_offer_end": 251,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 329564,
+    "checkpoints": [
+      {
+        "time_us": 60000000,
+        "written": 71167,
+        "acknowledged": 69414,
+        "common_visible": 68690,
+        "acknowledged_awaiting_common_visibility": 724
+      },
+      {
+        "time_us": 120000000,
+        "written": 142990,
+        "acknowledged": 129952,
+        "common_visible": 129515,
+        "acknowledged_awaiting_common_visibility": 437
+      },
+      {
+        "time_us": 180000000,
+        "written": 211822,
+        "acknowledged": 183451,
+        "common_visible": 182730,
+        "acknowledged_awaiting_common_visibility": 721
+      },
+      {
+        "time_us": 240000000,
+        "written": 284806,
+        "acknowledged": 233550,
+        "common_visible": 232948,
+        "acknowledged_awaiting_common_visibility": 602
+      },
+      {
+        "time_us": 300000000,
+        "written": 357161,
+        "acknowledged": 277868,
+        "common_visible": 277617,
+        "acknowledged_awaiting_common_visibility": 251
+      },
+      {
+        "time_us": 300329564,
+        "written": 357161,
+        "acknowledged": 277868,
+        "common_visible": 277868,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "disk-aged.json.xz",
+    "offer_seconds": 600,
+    "peak_acknowledged_waiting": 413,
+    "first_peak_us": 306412891,
+    "waiting_at_offer_end": 82,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 435449,
+    "checkpoints": [
+      {
+        "time_us": 60000000,
+        "written": 9600,
+        "acknowledged": 9599,
+        "common_visible": 9502,
+        "acknowledged_awaiting_common_visibility": 97
+      },
+      {
+        "time_us": 120000000,
+        "written": 19200,
+        "acknowledged": 19200,
+        "common_visible": 19138,
+        "acknowledged_awaiting_common_visibility": 62
+      },
+      {
+        "time_us": 180000000,
+        "written": 28800,
+        "acknowledged": 28800,
+        "common_visible": 28723,
+        "acknowledged_awaiting_common_visibility": 77
+      },
+      {
+        "time_us": 240000000,
+        "written": 38400,
+        "acknowledged": 38400,
+        "common_visible": 38341,
+        "acknowledged_awaiting_common_visibility": 59
+      },
+      {
+        "time_us": 300000000,
+        "written": 48000,
+        "acknowledged": 47999,
+        "common_visible": 47896,
+        "acknowledged_awaiting_common_visibility": 103
+      },
+      {
+        "time_us": 360000000,
+        "written": 57600,
+        "acknowledged": 57600,
+        "common_visible": 57507,
+        "acknowledged_awaiting_common_visibility": 93
+      },
+      {
+        "time_us": 420000000,
+        "written": 67200,
+        "acknowledged": 67200,
+        "common_visible": 67097,
+        "acknowledged_awaiting_common_visibility": 103
+      },
+      {
+        "time_us": 480000000,
+        "written": 76800,
+        "acknowledged": 76800,
+        "common_visible": 76707,
+        "acknowledged_awaiting_common_visibility": 93
+      },
+      {
+        "time_us": 540000000,
+        "written": 86400,
+        "acknowledged": 86400,
+        "common_visible": 86334,
+        "acknowledged_awaiting_common_visibility": 66
+      },
+      {
+        "time_us": 600000000,
+        "written": 96000,
+        "acknowledged": 96000,
+        "common_visible": 95918,
+        "acknowledged_awaiting_common_visibility": 82
+      },
+      {
+        "time_us": 600435449,
+        "written": 96000,
+        "acknowledged": 96000,
+        "common_visible": 96000,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "disk-pressure.json.xz",
+    "offer_seconds": 60,
+    "peak_acknowledged_waiting": 4830,
+    "first_peak_us": 25627835,
+    "waiting_at_offer_end": 4326,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 4576843,
+    "checkpoints": [
+      {
+        "time_us": 10000000,
+        "written": 14465,
+        "acknowledged": 14433,
+        "common_visible": 10969,
+        "acknowledged_awaiting_common_visibility": 3464
+      },
+      {
+        "time_us": 20000000,
+        "written": 28141,
+        "acknowledged": 26777,
+        "common_visible": 22078,
+        "acknowledged_awaiting_common_visibility": 4699
+      },
+      {
+        "time_us": 30000000,
+        "written": 42051,
+        "acknowledged": 38048,
+        "common_visible": 33670,
+        "acknowledged_awaiting_common_visibility": 4378
+      },
+      {
+        "time_us": 40000000,
+        "written": 56263,
+        "acknowledged": 49750,
+        "common_visible": 45262,
+        "acknowledged_awaiting_common_visibility": 4488
+      },
+      {
+        "time_us": 50000000,
+        "written": 70379,
+        "acknowledged": 61347,
+        "common_visible": 56854,
+        "acknowledged_awaiting_common_visibility": 4493
+      },
+      {
+        "time_us": 60000000,
+        "written": 83130,
+        "acknowledged": 71806,
+        "common_visible": 67480,
+        "acknowledged_awaiting_common_visibility": 4326
+      },
+      {
+        "time_us": 64576843,
+        "written": 83130,
+        "acknowledged": 71806,
+        "common_visible": 71806,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  }
+]

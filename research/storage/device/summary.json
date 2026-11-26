@@ -1,5 +1,99 @@
 [
   {
+    "file": "churn-aging.json.xz",
+    "replicas": 4,
+    "seconds": 1800,
+    "planned": 90000,
+    "written": 90000,
+    "admitted": 89994,
+    "visible": 90000,
+    "drops": 0,
+    "visible_tps": 49.99,
+    "p99_common_us": 1767922,
+    "p99_client_queue_us": 27,
+    "p99_client_response_us": 486729,
+    "cpu_seconds": 238.58,
+    "peak_sampled_node_rss_kib": 170420,
+    "process_write_B_per_confirmed_replica": 31520.904533333334,
+    "wal_bytes": 5534692785,
+    "compaction_jobs_creating_files": 20,
+    "sst": {
+      "flush": {
+        "files": 88,
+        "bytes": 584626113
+      },
+      "compaction": {
+        "files": 20,
+        "bytes": 236503029
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 3938502340,
+      "finality_sync_microseconds": 259976215,
+      "finality_writes": 24240,
+      "journal_serialized": 1596190445,
+      "journal_sync_microseconds": 408256312,
+      "journal_writes": 48422
+    },
+    "agreed_height": 6062,
+    "workload_sha256": "737f4713b53c7c283673f478c7219779ed0b63a0d6c972ecd5f91361c5e0c10a",
+    "genesis_sha256": "c2e137070652c52f109699909ed2921999ab191d28b6dd5ee78a1b16bb94247c",
+    "observer_errors": 0,
+    "device": {
+      "mount": {
+        "target": "/home",
+        "source": "/dev/nvme0n1p2[/@home]",
+        "fstype": "btrfs",
+        "options": "rw,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@home"
+      },
+      "bytes_by_node_and_device": [
+        {
+          "259:0": 334405632,
+          "259:1": 2547949568
+        },
+        {
+          "259:0": 325169152,
+          "259:1": 2492989440
+        },
+        {
+          "259:0": 345669632,
+          "259:1": 2518228992
+        },
+        {
+          "259:0": 339300352,
+          "259:1": 2685382656
+        }
+      ],
+      "total_bytes": 11589095424,
+      "per_confirmed_replica": 32191.931733333335,
+      "logical_bytes_by_namespace": {
+        "cell_trie": 752983036,
+        "consensus_records": 53361448,
+        "execution": 1567353180,
+        "framing": 871944,
+        "headers_and_history": 12613144,
+        "live_cells": 1556640000,
+        "other": 5357040,
+        "proposal_journal": 1577870289,
+        "serialized": 5534692785,
+        "system_records": 1068120,
+        "system_trie": 6574584
+      },
+      "device_over_serialized_batch_bytes": 2.0939003977616437
+    },
+    "candidate_verify_mean_us": 2735.788668866887,
+    "proposal_mean_us": 1501.1541254125414,
+    "commit_mean_us": 10882.967656765677
+  },
+  {
     "file": "churn-pressure.json.xz",
     "replicas": 4,
     "seconds": 300,

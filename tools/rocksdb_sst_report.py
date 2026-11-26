@@ -21,7 +21,7 @@ def sst_events(path):
             _, separator, record = line.partition(marker)
             if separator:
                 event = json.loads(record)
-                if event["event"] in JOB_KINDS or event["event"] == "table_file_creation":
+                if event["event"] in JOB_KINDS or event["event"] in ("table_file_creation", "compaction_finished"):
                     events.append(event)
     return events
 
@@ -35,6 +35,7 @@ def report(directory):
         raise ValueError(f"no replica RocksDB logs under {directory}")
     counts = {kind: {"files": 0, "bytes": 0} for kind in (*JOB_KINDS.values(), "other")}
     reports = {}
+    compactions = {}
     for path in logs:
         events = sst_events(path)
         kinds = {
@@ -48,8 +49,10 @@ def report(directory):
                 counts[kind]["files"] += 1
                 counts[kind]["bytes"] += event["file_size"]
                 outputs.append({**event, "kind": kind})
-        reports[str(path.relative_to(directory))] = outputs
-    return {"totals": counts, "logs": reports}
+        name = str(path.relative_to(directory))
+        reports[name] = outputs
+        compactions[name] = [event for event in events if event["event"] in ("compaction_started", "compaction_finished")]
+    return {"totals": counts, "logs": reports, "compaction_events": compactions}
 
 
 def main():
