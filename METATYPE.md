@@ -100,7 +100,7 @@ Molecule Script encoding is exact, with no trailing fields.
 | Custody policy | mailbox code data hash, mailbox Type ID, gate code data hash, full source Manifest ID and data commitment |
 | Gate args | custody tag, source escrow Lock hash, physical Metatype Type hash, mailbox code data hash, mailbox Type ID, Manifest ID and data commitment |
 | Native escrow args | CKB genesis hash, physical Metatype Type hash, checkpoint code data hash, checkpoint Type ID, custody tag and custody policy |
-| Adapter argument | full physical Type hash, one-byte boundary, u16 length and complete logical Script, input and output index lists, then optional group witness fields |
+| Adapter argument | full physical Type hash, one-byte boundary and custody scope, u16 length and complete logical Script, input and output index lists, then optional group witness fields |
 | Index list | one-byte count and strictly ascending absolute u16 transaction indices |
 
 Adapter table records are ordered by logical code hash and addressing
@@ -112,9 +112,11 @@ commitment identifies the original data-bearing Script for the
 first three custody profiles and the ordered asset keys for the
 fourth.
 The dispatcher derives the boundary value from the authenticated
-deployment and actual input and output state. Boundary values
-are 0 for standalone, 1 for custody transfer, 2 for CKB import and
-3 for return to Stem. The dispatcher passes the argument as one hex C string. The
+deployment and actual input and output state. The low two bits of
+the scope byte encode 0 for standalone, 1 for custody transfer,
+2 for CKB import and 3 for return to Stem. The high six bits carry
+the custody tag. A standalone invocation uses scope zero. The
+dispatcher passes the argument as one hex C string. The
 adapter verifies that the spawned VM sees the same physical Script
 hash. The logical addressing modes are Stem Data (0) and Type (1).
 The physical dispatcher and resolved adapter binaries use CKB Data2.
@@ -557,9 +559,10 @@ checks. Confirmation and relay still occur between the two chains.
 
 Native fungible Cells can carry a canonical amount map. Data consists
 of a one-byte count from 2 to 8, followed by that many pairs of a full
-32-byte asset Script hash and a positive little-endian u128 quantity.
+32-byte asset Script hash and a little-endian u128 quantity.
 Keys are strictly increasing by bytes. The decoder rejects duplicate keys
-and zero quantities. Each UDT and its independent cap group requires its
+and maps with no positive quantity. Zero retains the Script's slot when
+the asset contributes no principal. Each UDT and its independent cap group requires its
 asset key to be present and every map key to match a Type Script carried
 by the Cell. The same
 asset Scripts can validate ordinary scalar Cells, enabling local
@@ -576,12 +579,15 @@ per-asset totals rather than a combined amount.
 
 The Intercell payload is the Manifest ID and recipient Lock hash
 followed by the canonical amount map of the export or burn deltas.
-An ordinary CKB transfer preserves every asset total. When tokens
-remain in custody after a partial return, the representation retains
-all asset keys and every asset decreases by the amount in the return
-message. A complete burn removes the representation. The native
-escrow keeps its Capacity and preserves any residual principal with
-the exact same amount keys and Type Scripts.
+An ordinary CKB transfer preserves every asset total. On return each
+asset's quantity must be nonincreasing, at least one must decrease,
+and the message records every exact difference. The complete Manifest
+and all its groups remain required even if a quantity reaches zero.
+The deployment's custody scope lets its UDT and cap adapters validate
+these zero slots. Standalone and single-asset custody keep requiring
+positive quantities on each asset Cell. When the last amount is
+returned, the CKB representation is consumed and the native escrow
+keeps only its Capacity bond.
 
 These profiles establish correspondence for the specified source
 rules. Other asset classes, state transition rules and external dependencies

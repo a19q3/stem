@@ -16,7 +16,7 @@ pub enum Profile {
 }
 
 impl Profile {
-    fn decode(tag: u8) -> Option<Self> {
+    pub(super) fn decode(tag: u8) -> Option<Self> {
         match tag {
             1 => Some(Self::Immutable),
             2 => Some(Self::Fungible),
@@ -376,6 +376,57 @@ mod tests {
             custody,
         };
         assert_eq!(Gate::decode(&gate.args(), custody.guard_code), Some(gate));
+    }
+
+    #[test]
+    fn composed_principal_can_exhaust_one_asset_and_then_retire() {
+        let first_script = LogicalScript::encode(&[1; 32], 0, b"asset").unwrap();
+        let second_script = LogicalScript::encode(&[2; 32], 0, b"asset").unwrap();
+        let ids = [&first_script, &second_script]
+            .map(|script| LogicalScript::decode(script).unwrap().id());
+        let vector = |first, second| {
+            let data = [first, second].map(u128::to_le_bytes);
+            Amounts::from_states(
+                ids.into_iter()
+                    .zip(data.iter().map(|value| value.as_slice())),
+            )
+            .unwrap()
+        };
+        let custody = Custody {
+            profile: Profile::MultiAsset,
+            mailbox_code: [3; 32],
+            mailbox_id: [4; 32],
+            guard_code: [5; 32],
+            manifest: manifest_id(&ids),
+            data_script: vector(160, 250).layout_id(),
+        };
+        let row = |first: u128, second: u128| {
+            frame(&[
+                (&first_script, &first.to_le_bytes()),
+                (&second_script, &second.to_le_bytes()),
+            ])
+        };
+        let full = row(160, 250);
+        let remainder = row(0, 250);
+        let input = [indexed(0, &full)];
+        let residual = [indexed(0, &remainder)];
+        assert_eq!(
+            custody.transition(&input, &residual),
+            Some((Boundary::Return, Principal::MultiAsset(vector(160, 0))))
+        );
+        assert_eq!(
+            custody.transition(&residual, &residual),
+            Some((Boundary::Transfer, Principal::MultiAsset(vector(0, 250))))
+        );
+        assert_eq!(
+            custody.transition(&residual, &[]),
+            Some((Boundary::Return, Principal::MultiAsset(vector(0, 250))))
+        );
+        assert_eq!(custody.transition(&input, &[indexed(0, &row(0, 0))]), None);
+        assert_eq!(
+            custody.transition(&input, &[indexed(0, &row(0, 251))]),
+            None
+        );
     }
 }
 

@@ -234,11 +234,7 @@ impl ManifestResolver {
         indices.iter().try_fold(0u128, |sum, &index| {
             let data = self.manifest_data(index, source)?;
             let manifest = data.view()?;
-            let units = amount(&manifest, index)?;
-            if units == 0 {
-                return None;
-            }
-            sum.checked_add(units)
+            sum.checked_add(amount(&manifest, index)?)
         })
     }
 }

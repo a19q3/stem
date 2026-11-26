@@ -86,6 +86,7 @@ fn verify() -> Result<(), i8> {
             &Invocation {
                 deployment_type: &own_type,
                 boundary,
+                profile: table.custody.map(|custody| custody.profile),
                 witness: witnesses.for_group(&own_type, group.script.id()),
                 group,
             }

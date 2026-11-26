@@ -4,7 +4,10 @@
 #![no_main]
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry};
-use stem_bridge_wire::metatype::fungible::AmountCap;
+use stem_bridge_wire::{
+    amount,
+    metatype::{custody::Profile, fungible::AmountCap},
+};
 use stem_contracts::metatype::with_invocation;
 
 entry!(main);
@@ -25,7 +28,11 @@ fn main() -> i8 {
                     .entries()
                     .iter()
                     .find(|entry| &entry.script.id() == cap.asset)?;
-                if !manifest.state_for(group.script)?.is_empty() || !cap.permits(asset.state) {
+                let units = amount(asset.state)?;
+                if !manifest.state_for(group.script)?.is_empty()
+                    || units > cap.ceiling
+                    || (units == 0 && invocation.profile != Some(Profile::MultiAsset))
+                {
                     return None;
                 }
             }

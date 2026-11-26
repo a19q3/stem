@@ -4,7 +4,7 @@
 #![no_main]
 
 use ckb_std::{ckb_constants::Source, default_alloc, entry, high_level::load_cell_lock_hash};
-use stem_bridge_wire::metatype::MetatypeManifest;
+use stem_bridge_wire::metatype::{MetatypeManifest, custody::positive_amount};
 use stem_contracts::metatype::{authorized, with_invocation};
 
 entry!(main);
@@ -28,7 +28,7 @@ fn main() -> i8 {
                 .entries()
                 .iter()
                 .find(|entry| &entry.script.id() == asset)?;
-            stem_bridge_wire::amount(entry.state)
+            positive_amount(entry.state)
         };
         let input = manifests.total(&group.input_indices, Source::Input, |manifest, _| {
             amount(manifest)

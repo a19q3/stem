@@ -11,7 +11,7 @@ pub mod fungible;
 pub mod object_policy;
 pub mod witness;
 pub mod workflow;
-use custody::{Boundary, Custody, manifest_id};
+use custody::{Boundary, Custody, Profile, manifest_id};
 use witness::{GroupWitness, MAX_FIELDS_BYTES};
 
 pub const MAX_TYPE_SCRIPTS: usize = 16;
@@ -339,6 +339,7 @@ pub const MAX_INVOCATION_BYTES: usize =
 pub struct Invocation<'a> {
     pub deployment_type: &'a Hash,
     pub boundary: Boundary,
+    pub profile: Option<Profile>,
     pub group: VirtualTypeGroup<'a>,
     pub witness: Option<GroupWitness<'a>>,
 }
@@ -346,7 +347,7 @@ pub struct Invocation<'a> {
 impl<'a> Invocation<'a> {
     pub fn encode(&self) -> Vec<u8> {
         let mut raw = self.deployment_type.to_vec();
-        raw.push(self.boundary as u8);
+        raw.push(self.profile.map_or(0, |profile| (profile as u8) << 2) | self.boundary as u8);
         let script = self.group.script.as_slice();
         raw.extend_from_slice(&(script.len() as u16).to_le_bytes());
         raw.extend_from_slice(script);
@@ -367,8 +368,13 @@ impl<'a> Invocation<'a> {
             return None;
         }
         let (deployment, raw) = raw.split_at_checked(HASH_SIZE)?;
-        let (&boundary, mut raw) = raw.split_first()?;
-        let boundary = Boundary::decode(boundary)?;
+        let (&scope, mut raw) = raw.split_first()?;
+        let boundary = Boundary::decode(scope & 3)?;
+        let profile = match (boundary, scope >> 2) {
+            (Boundary::Standalone, 0) => None,
+            (Boundary::Standalone, _) => return None,
+            (_, tag) => Some(Profile::decode(tag)?),
+        };
         let script = LogicalScript::decode(take_bytes(&mut raw)?)?;
         let input_indices = take_indices(&mut raw)?;
         let output_indices = take_indices(&mut raw)?;
@@ -383,6 +389,7 @@ impl<'a> Invocation<'a> {
         .then_some(Self {
             witness,
             boundary,
+            profile,
             deployment_type: deployment.try_into().ok()?,
             group: VirtualTypeGroup {
                 script,
@@ -469,6 +476,7 @@ mod tests {
             let invocation = Invocation {
                 deployment_type: &[8; HASH_SIZE],
                 boundary: Boundary::Standalone,
+                profile: None,
                 group,
                 witness: Some(GroupWitness {
                     action: 1,
@@ -482,7 +490,22 @@ mod tests {
             assert_eq!(decoded.group, invocation.group);
             assert_eq!(decoded.witness, invocation.witness);
             assert_eq!(decoded.boundary, invocation.boundary);
+            assert_eq!(decoded.profile, invocation.profile);
             assert_eq!(decoded.deployment_type, invocation.deployment_type);
+
+            let mut encoded = Invocation {
+                boundary: Boundary::Return,
+                profile: Some(Profile::MultiAsset),
+                ..invocation
+            }
+            .encode();
+            let decoded = Invocation::decode(&encoded).unwrap();
+            assert_eq!(decoded.boundary, Boundary::Return);
+            assert_eq!(decoded.profile, Some(Profile::MultiAsset));
+            for malformed in [3, 4 << 2, (5 << 2) | 3] {
+                encoded[HASH_SIZE] = malformed;
+                assert!(Invocation::decode(&encoded).is_none());
+            }
         }
     }
 

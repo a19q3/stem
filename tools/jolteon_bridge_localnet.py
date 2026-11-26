@@ -576,7 +576,9 @@ def main():
     parser.add_argument("--metatype-shared-manifest", action="store_true")
     parser.add_argument("--metatype-multiasset", action="store_true")
     parser.add_argument("--metatype-composed-cell", action="store_true")
-    parser.add_argument("--metatype-composed-partial", action="store_true")
+    composed_return = parser.add_mutually_exclusive_group()
+    composed_return.add_argument("--metatype-composed-partial", action="store_true")
+    composed_return.add_argument("--metatype-composed-selective", choices=("partial", "exhaust"))
     parser.add_argument("--metatype-revisable-object", action="store_true")
     parser.add_argument("--metatype-revision-topup", action="store_true")
     parser.add_argument("--metatype-workflow-early-return", action="store_true")
@@ -645,8 +647,8 @@ def main():
             not all(portable_udt) or args.full_udt_return or args.finish_udt_return
             or args.metatype_multiasset and args.metatype_composed_cell):
         parser.error("Choose one Metatype multiasset fixture and supply the Metatype UDT route")
-    if args.metatype_composed_partial and not args.metatype_composed_cell:
-        parser.error("--metatype-composed-partial exercises the composed Cell route")
+    if (args.metatype_composed_partial or args.metatype_composed_selective) and not args.metatype_composed_cell:
+        parser.error("partial and selective returns require --metatype-composed-cell")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--intercell-mailbox uses the native CKB lane on its own")
     if args.security_domain and not args.reference_script:

@@ -41,9 +41,10 @@ impl Amounts {
             {
                 return None;
             }
-            amounts.push((id, positive_amount(raw)?));
+            amounts.push((id, crate::amount(raw)?));
         }
-        (amounts.len() >= 2).then_some(Self(amounts))
+        (amounts.len() >= 2 && amounts.iter().any(|(_, amount)| *amount != 0))
+            .then_some(Self(amounts))
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &Hash> {
@@ -79,9 +80,8 @@ impl Amounts {
     }
 
     pub fn decrease(&self, other: &Self) -> Option<Self> {
-        self.combine(other, |before, after| {
-            before.checked_sub(after).filter(|delta| *delta != 0)
-        })
+        let delta = self.combine(other, u128::checked_sub)?;
+        (!delta.is_zero()).then_some(delta)
     }
 
     fn combine(&self, other: &Self, op: impl Fn(u128, u128) -> Option<u128>) -> Option<Self> {
@@ -136,10 +136,6 @@ impl<'a> AmountCap<'a> {
             ceiling: positive_amount(limit)?,
         })
     }
-
-    pub fn permits(&self, data: &[u8]) -> bool {
-        positive_amount(data).is_some_and(|value| value <= self.ceiling)
-    }
 }
 
 #[cfg(test)]
@@ -165,17 +161,17 @@ mod tests {
         assert_eq!(before.layout_id(), withdrawn.layout_id());
         let different = Amounts::decode(&pair((1, 90), (3, 35))).unwrap();
         assert!(before.decrease(&different).is_none());
-        assert!(
-            before
-                .decrease(&Amounts::decode(&pair((1, 125), (2, 35))).unwrap())
-                .is_none()
-        );
+        let selective = Amounts::decode(&pair((1, 0), (2, 45))).unwrap();
+        let selective_remainder = Amounts::decode(&pair((1, 125), (2, 35))).unwrap();
+        assert_eq!(before.decrease(&selective_remainder), Some(selective));
+        assert!(before.decrease(&before).is_none());
+        assert!(selective_remainder.decrease(&before).is_none());
         let max = Amounts::decode(&pair((1, u128::MAX), (2, 1))).unwrap();
         assert!(before.checked_add(&max).is_none());
         for malformed in [
             pair((2, 80), (1, 125)),
             pair((1, 125), (1, 80)),
-            pair((1, 125), (2, 0)),
+            pair((1, 0), (2, 0)),
         ] {
             assert!(Amounts::decode(&malformed).is_none());
         }

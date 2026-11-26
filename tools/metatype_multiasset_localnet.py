@@ -13,7 +13,8 @@ from stake_localnet import witness
 def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay):
     client = clients[0]
     composed = args.metatype_composed_cell
-    partial = args.metatype_composed_partial
+    selective = args.metatype_composed_selective
+    partial = args.metatype_composed_partial or selective is not None
     network, genesis = client.network, vault["genesis"]
     native_lock_code = hex_bytes(ckb_hash(args.native_lock.read_bytes()))
     owner, friend = [script(native_lock_code, fixture.key(key)["blake160"], "data")
@@ -239,6 +240,8 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         over_cap = altered(lane, lane["assets"][-1]["cap"] - lane["assets"][-1]["units"] + 1)
         rejections["native_component_cap"] = reject_stem(
             combine("native-component-cap", amount_data(lane, over_cap)), "exited with 55")
+        rejections["zero_native_principal"] = reject_stem(
+            combine("zero-native-principal", amount_data(lane, [0, 0])), "exited with 55", "exited with 92")
         combined = commit(combine("combine", data))
         combined_point = stem_point(combined, 0)
         funding = [(combined_point, owner)]
@@ -317,31 +320,35 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     assert [l1.call("get_live_cell", item, True)["cell"]["output"]["lock"] for item in wrapped] == holders
     returning = [[asset["units"] for asset in lane["assets"]] for lane in lanes]
     if partial:
-        returning[0] = [60, 110]
+        if selective is not None:
+            returning[0] = [160 if selective == "exhaust" else 60, 0]
+        else:
+            returning[0] = [60, 110]
     remaining = [[asset["units"] - amount for asset, amount in zip(lane["assets"], quantities, strict=True)]
                  for lane, quantities in zip(lanes, returning, strict=True)]
     inbound = [packet(f"return-{i}", lane, False, 0, lane["returning"], returning[i]) for i, lane in enumerate(lanes)]
     wrong_amount = returning[-1].copy()
-    wrong_amount[-1] -= 1
+    positive_index = max(i for i, units in enumerate(wrong_amount) if units)
+    wrong_amount[positive_index] -= 1
     wrong = packet("wrong-burn-amount", lanes[-1], False, 0, lanes[-1]["returning"], wrong_amount)
 
-    def burn_both(label, packets, retained=remaining):
+    def burn_both(label, packets, retained=remaining, sequence=1, *, keep_empty=False):
         retained_outputs = [output(token_capacity - (FEE if i == 0 else 0), lock,
-                                   lane["wrapper"] if any(retained[i]) else None)
+                                   lane["wrapper"] if keep_empty or any(retained[i]) else None)
                             for i, (lock, lane) in enumerate(zip(holders, lanes, strict=True))]
-        retained_data = [representation(lane, retained[i]) if any(retained[i]) else "0x"
+        retained_data = [representation(lane, retained[i]) if keep_empty or any(retained[i]) else "0x"
                          for i, lane in enumerate(lanes)]
         return signed_ckb(label, [*mailboxes, *wrapped, fee_point],
             [*successors, *retained_outputs, output(fee_capacity - FEE, fixture.standard)],
-            [*(hex_bytes(le(1, 8) + root + binary(msg["record"])) for root, msg in zip(roots, packets, strict=True)),
+            [*(hex_bytes(le(sequence, 8) + root + binary(msg["record"])) for root, msg in zip(roots, packets, strict=True)),
              *retained_data, "0x"],
             [*(wallet_group(i + lane_count, [key]) for i, key in enumerate(owners)),
              wallet_group(2 * lane_count, [fixture.faucet])])
 
-    rejections["wrong_second_burn"] = reject_ckb(burn_both("wrong-burn", [*inbound[:-1], wrong]), 51)
+    rejections["wrong_burn_delta"] = reject_ckb(burn_both("wrong-burn", [*inbound[:-1], wrong]), 51)
     if partial:
-        unchanged = [[lanes[0]["assets"][0]["units"], remaining[0][1]]]
-        rejections["unchanged_component"] = reject_ckb(burn_both("unchanged-component", inbound, unchanged), 48, 51)
+        inflated = [[remaining[0][0], lanes[0]["assets"][1]["units"] + 1]]
+        rejections["inflated_burn_component"] = reject_ckb(burn_both("inflated-burn", inbound, inflated), 48, 51)
     assert all(l1.call("get_live_cell", location, False)["status"] == "live" for location in [*mailboxes, *wrapped])
     burned = submit_ckb(burn_both("burn", inbound))
     burn_points = [point(burned["hash"], i) for i in range(lane_count)]
@@ -389,6 +396,14 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     redirected[lane_count] = cell(release_capacity, owner, amount_data(lanes[0], returning[0]), lanes[0]["types"])
     rejections["misdirected_native_release"] = reject_stem(stem_signed("redirect-native", return_inputs,
         redirected, messages=receives, observations=both), "exited with 54")
+    if selective is not None:
+        incorrect_split = release.copy()
+        incorrect_split[0] = cell(bond, lanes[0]["escrow"],
+                                  amount_data(lanes[0], [remaining[0][0], remaining[0][1] - 1]), lanes[0]["types"])
+        incorrect_split[1] = cell(release_capacity, lanes[0]["returning"],
+                                  amount_data(lanes[0], [returning[0][0], 1]), lanes[0]["types"])
+        rejections["uncertified_native_delta"] = reject_stem(stem_signed("uncertified-native-delta", return_inputs,
+            incorrect_split, messages=receives, observations=both), "exited with 54")
     before = [certified("/stem/intercell/inbox", msg["id"]) for msg in inbound]
     unspent = list(map(cell_proof, held))
     assert all(item["record"] is None for item in before)
@@ -409,10 +424,52 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     assert [item["record"] for item in finalized] == [msg["record"] for msg in inbound]
     released_proofs = list(map(cell_proof, released))
     retained_proofs = [cell_proof(stem_point(redeemed, i)) for i in range(lane_count)]
+    change_point = stem_point(redeemed, 2 * lane_count)
+    change = export_change - lane_count * release_capacity - FEE
+    followup = None
+    if selective == "exhaust":
+        lane = lanes[0]
+        mailboxes = burn_points
+        wrapped = [point(burned["hash"], 1)]
+        fee_point = point(burned["hash"], 2)
+        fee_capacity -= FEE
+        final_message = packet("return-rest", lane, False, 1, owner, remaining[0])
+        rejections["zero_ckb_principal"] = reject_ckb(burn_both("zero-ckb-principal", [final_message],
+            [[0, 0]], 2, keep_empty=True), 48, 51)
+        rest_burned = submit_ckb(burn_both("burn-rest", [final_message], [[0, 0]], 2))
+        assert l1.call("get_live_cell", wrapped[0], False)["status"] != "live"
+        assert l1.call("get_live_cell", point(rest_burned["hash"], 1), True)["cell"]["output"]["type"] is None
+        l1.mine(spec["bridge"]["confirmations"])
+        anchor = rest_burned["proof"]["header"]
+        final_height, final_hash = int(anchor["number"], 16), anchor["hash"]
+        anchor_votes = attest("attest-anchor", "rest-anchor", ["--previous-height", str(height),
+            "--previous-hash", hash_, "--height", str(final_height)])
+        rest_advance = commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", anchor_votes)))
+        height, hash_ = final_height, final_hash
+        rest_observations = observations("rest", [point(rest_burned["hash"], 0)])
+        rest_before = certified("/stem/intercell/inbox", final_message["id"])
+        assert rest_before["record"] is None
+        escrow_point = stem_point(redeemed, 0)
+        change -= release_capacity + FEE
+        next_outputs = [cell(bond, lane["escrow"]),
+                        cell(release_capacity, owner, amount_data(lane, remaining[0]), lane["types"]),
+                        cell(change, owner)]
+        rest = commit(stem_signed("redeem-rest", [(escrow_point, lane["escrow"]), (change_point, owner)],
+            next_outputs, messages=[(lane["escrow"], 0xff01, final_message)], observations=rest_observations))
+        change_point = stem_point(rest, 2)
+        assert signing_cell(client, stem_point(rest, 0))["cell"] == next_outputs[0]
+        assert signing_cell(client, stem_point(rest, 1))["cell"] == next_outputs[1]
+        rest_consumed = certified("/stem/intercell/inbox", final_message["id"])
+        assert rest_consumed["record"] == final_message["record"]
+        followup = {"burned": rest_burned, "advanced": rest_advance, "message": final_message, "before": rest_before,
+                    "consumed": rest_consumed, "escrow_spent": cell_proof(escrow_point),
+                    "bond": cell_proof(stem_point(rest, 0)), "released": cell_proof(stem_point(rest, 1)),
+                    "redeemed": rest, "execution": execution(rest)}
     if composed:
         lane = lanes[0]
-        pieces = [cell(release_capacity // 2 - (FEE if i == 0 else 0), friend,
-                       le(returning[0][i], 16), asset["types"]) for i, asset in enumerate(lane["assets"])]
+        positive = [(asset, units) for asset, units in zip(lane["assets"], returning[0], strict=True) if units]
+        pieces = [cell(release_capacity // len(positive) - (FEE if i == 0 else 0), friend,
+                       le(units, 16), asset["types"]) for i, (asset, units) in enumerate(positive)]
         divided = commit(stem_signed("divide", [(released[0], friend)], pieces, signers=[(friend, fixture.friend)]))
         piece_points = [stem_point(divided, i) for i in range(len(pieces))]
         assert [signing_cell(client, item)["cell"] for item in piece_points] == pieces
@@ -422,9 +479,9 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     limit_keys = [fixture.owner, fixture.friend, *fixture.l1_keys]
     limit_locks = [script(native_lock_code, fixture.key(key)["blake160"], "data") for key in limit_keys]
     tiny_cell = 60 * CKB
-    probe_funding = commit(stem_signed("limit-funding", [(stem_point(redeemed, 2 * lane_count), owner)],
+    probe_funding = commit(stem_signed("limit-funding", [(change_point, owner)],
         [*(cell(tiny_cell, lock) for lock in limit_locks),
-         cell(export_change - lane_count * release_capacity - len(limit_locks) * tiny_cell - 2 * FEE, owner)]))
+         cell(change - len(limit_locks) * tiny_cell - FEE, owner)]))
     probe_inputs = [(stem_point(probe_funding, i), lock) for i, lock in enumerate(limit_locks)]
     probes = [packet(f"limit-{i}", {**lanes[0], "escrow": lock}, True, 1, fixture.owner_lock)
               for i, lock in enumerate(limit_locks)]
@@ -458,7 +515,7 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         "deliveries": deliveries,
         "inboxes_before": before, "inboxes": finalized, "escrows_before": unspent,
         "escrows_spent": spent, "escrows_retained": retained_proofs, "released": released_proofs,
-        "rejections": rejections, "composition": bundle,
+        "rejections": rejections, "composition": bundle, "followup": followup,
         "execution": {"export": execution(exported), "redeem": execution(redeemed)},
         "result_ids": [[msg["id"] for _, _, msg in sorted(batch, key=lambda row: packed_script(row[0]))]
                        for batch in (sends, receives)],

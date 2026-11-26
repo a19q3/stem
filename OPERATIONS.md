@@ -1620,4 +1620,8 @@ the CKB custody stages, and splits the returned Cell into its original
 assets. Run with and without `--metatype-shared-manifest` and use fresh
 ports and output directories. Add `--metatype-composed-partial` to
 redeem 60 and 110 units and verify the residual 100 and 140 units on
-both chains.
+both chains. Use `--metatype-composed-selective partial` to redeem
+60 units of the first asset while keeping all 250 units of the second.
+Use `--metatype-composed-selective exhaust` to redeem all 160 units of
+the first asset and then redeem the second via the next CKB mailbox
+sequence. The runner checks rejection of an all-zero representation.

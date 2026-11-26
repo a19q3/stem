@@ -402,7 +402,10 @@ The multiasset profile also carries several UDTs in one Cell. The
 native amount map uses full asset Script hashes as keys, and the CKB
 Manifest stores each quantity under that same Script. The escrow and
 mailbox sum and compare each asset independently while the original
-UDT and cap groups validate the local transaction.
+UDT and cap groups validate the local transaction. A return can
+select any nonempty subset. A zero balance or delta keeps its
+asset key and the full constraint set. A later message with the
+next mailbox nonce can return the remaining principal.
 See the [Metatype specification and threat model](METATYPE.md).
 
 ## Historical proofs and CKB checkpoints
