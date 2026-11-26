@@ -1,0 +1,284 @@
+{
+  "nvme250.json.xz": {
+    "write_to_common_us": {
+      "p50": 1286515,
+      "p95": 103550468,
+      "p99": 175324186
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 85167,
+        "acknowledged": 85167,
+        "in_window": 75950,
+        "confirmed": 85167
+      },
+      "127.0.0.12:28890": {
+        "written": 85059,
+        "acknowledged": 85059,
+        "in_window": 75898,
+        "confirmed": 85059
+      },
+      "127.0.0.13:28890": {
+        "written": 85107,
+        "acknowledged": 85107,
+        "in_window": 76045,
+        "confirmed": 85107
+      },
+      "127.0.0.14:28890": {
+        "written": 85056,
+        "acknowledged": 85056,
+        "in_window": 75841,
+        "confirmed": 85056
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 551,
+    "cadence_ms": 250,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 340389,
+    "acknowledged": 340389,
+    "dropped_before_write": 199611,
+    "in_window": 303734,
+    "confirmed": 340389,
+    "window_tps": 1687.411111111111,
+    "in_window_by_minute": [
+      99958,
+      102400,
+      101376
+    ],
+    "after_window": 36655,
+    "window_nonempty_blocks": 297,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 296,
+    "window_block_sizes": {
+      "p50": 1024,
+      "p95": 1024,
+      "p99": 1024
+    },
+    "window_header_gap_us": {
+      "p50": 604000,
+      "p95": 655000,
+      "p99": 800000
+    },
+    "ack_after_header": 366,
+    "clock_offset_change_us": -1.0,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 1
+    },
+    "all": {
+      "acknowledged_and_visible": 340389,
+      "write_to_ack_us": {
+        "p50": 293,
+        "p95": 156938,
+        "p99": 232269
+      },
+      "ack_to_header_us": {
+        "p50": 199370,
+        "p95": 102316198,
+        "p99": 174039052
+      },
+      "header_to_common_us": {
+        "p50": 1058580,
+        "p95": 1288296,
+        "p99": 1405708
+      },
+      "write_to_common_us": {
+        "p50": 1286515,
+        "p95": 103550468,
+        "p99": 175324186
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 303734,
+      "write_to_ack_us": {
+        "p50": 293,
+        "p95": 156937,
+        "p99": 232494
+      },
+      "ack_to_header_us": {
+        "p50": 183940,
+        "p95": 602498,
+        "p99": 2919042
+      },
+      "header_to_common_us": {
+        "p50": 1038860,
+        "p95": 1187538,
+        "p99": 1598362
+      },
+      "write_to_common_us": {
+        "p50": 1249852,
+        "p95": 1755289,
+        "p99": 4010968
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 36655,
+      "write_to_ack_us": {
+        "p50": 294,
+        "p95": 157067,
+        "p99": 229429
+      },
+      "ack_to_header_us": {
+        "p50": 94746376,
+        "p95": 182601822,
+        "p99": 194318830
+      },
+      "header_to_common_us": {
+        "p50": 1246058,
+        "p95": 1357772,
+        "p99": 1364070
+      },
+      "write_to_common_us": {
+        "p50": 96060869,
+        "p95": 183826226,
+        "p99": 195549220
+      }
+    }
+  },
+  "nvme100.json.xz": {
+    "write_to_common_us": {
+      "p50": 851661,
+      "p95": 1390728,
+      "p99": 2237533
+    },
+    "per_submission_endpoint": {
+      "127.0.0.11:28890": {
+        "written": 82990,
+        "acknowledged": 82990,
+        "in_window": 82652,
+        "confirmed": 82990
+      },
+      "127.0.0.12:28890": {
+        "written": 82965,
+        "acknowledged": 82965,
+        "in_window": 82634,
+        "confirmed": 82965
+      },
+      "127.0.0.13:28890": {
+        "written": 83070,
+        "acknowledged": 83070,
+        "in_window": 82734,
+        "confirmed": 83070
+      },
+      "127.0.0.14:28890": {
+        "written": 83020,
+        "acknowledged": 83020,
+        "in_window": 82686,
+        "confirmed": 83020
+      }
+    },
+    "workload_id": "54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd",
+    "certified_height": 1068,
+    "cadence_ms": 100,
+    "block_transactions": 1024,
+    "block_cycles": 2000000000,
+    "senders": 64,
+    "per_endpoint_pools": false,
+    "scheduled": 540000,
+    "written": 332045,
+    "acknowledged": 332045,
+    "dropped_before_write": 207955,
+    "in_window": 330706,
+    "confirmed": 332045,
+    "window_tps": 1837.2555555555555,
+    "in_window_by_minute": [
+      109335,
+      114121,
+      107250
+    ],
+    "after_window": 1339,
+    "window_nonempty_blocks": 505,
+    "window_empty_blocks": 1,
+    "window_blocks_at_count_limit": 0,
+    "window_block_sizes": {
+      "p50": 663,
+      "p95": 718,
+      "p99": 745
+    },
+    "window_header_gap_us": {
+      "p50": 339000,
+      "p95": 419000,
+      "p99": 1033000
+    },
+    "ack_after_header": 570,
+    "clock_offset_change_us": -1.5,
+    "clock_sampling_span_us": {
+      "end": 3,
+      "start": 0
+    },
+    "all": {
+      "acknowledged_and_visible": 332045,
+      "write_to_ack_us": {
+        "p50": 536,
+        "p95": 140872,
+        "p99": 177615
+      },
+      "ack_to_header_us": {
+        "p50": 77812,
+        "p95": 348899,
+        "p99": 458026
+      },
+      "header_to_common_us": {
+        "p50": 675570,
+        "p95": 1118113,
+        "p99": 1672759
+      },
+      "write_to_common_us": {
+        "p50": 851661,
+        "p95": 1390728,
+        "p99": 2237533
+      }
+    },
+    "window": {
+      "acknowledged_and_visible": 330706,
+      "write_to_ack_us": {
+        "p50": 538,
+        "p95": 141000,
+        "p99": 177741
+      },
+      "ack_to_header_us": {
+        "p50": 77802,
+        "p95": 348981,
+        "p99": 458648
+      },
+      "header_to_common_us": {
+        "p50": 675891,
+        "p95": 1118113,
+        "p99": 1672759
+      },
+      "write_to_common_us": {
+        "p50": 852819,
+        "p95": 1391752,
+        "p99": 2239604
+      }
+    },
+    "drain": {
+      "acknowledged_and_visible": 1339,
+      "write_to_ack_us": {
+        "p50": 310,
+        "p95": 110507,
+        "p99": 139474
+      },
+      "ack_to_header_us": {
+        "p50": 108847,
+        "p95": 288239,
+        "p99": 299659
+      },
+      "header_to_common_us": {
+        "p50": 386027,
+        "p95": 541969,
+        "p99": 541969
+      },
+      "write_to_common_us": {
+        "p50": 600331,
+        "p95": 811188,
+        "p99": 828857
+      }
+    }
+  }
+}

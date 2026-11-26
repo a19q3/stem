@@ -43,6 +43,8 @@ With 128 shared senders, 424,821 payments reached a socket write. Of those, 20,9
 
 The two stock 250 ms runs delivered 1,698–1,721 window TPS. Both stock 100 ms trials exceeded 2,079 TPS. At 100 ms, doubling the genesis limits produced 2,042.55 TPS in one run. These measurements support carrying the shorter interval into a multi-host comparison. They give no measured throughput advantage to the larger block profile at that cadence.
 
+The same signed workload on a Btrfs volume spanning two NVMe devices produced 1,687.41 TPS at 250 ms and 1,837.26 TPS at 100 ms. Across the full 225 seconds, the shorter cadence increased scope-attributed device writes by approximately 10%. Both on-disk archives include certified histories and sampled native receipts. [Device measurements and payment evidence](nvme/README.md)
+
 ## Reproduce
 
 The CPU was a 16-core AMD Ryzen 9 7950X3D. Four validators shared twelve physical cores (2–7, 10–15 plus their SMT siblings 18–23, 26–31). The driver used two (8–9, 24–25). The remaining cores ran auxiliary builds, proof replays and small CKB fixtures during parts of the measurements. The processes shared memory, cache and a tmpfs-backed database directory. Three validators retained 64 heights and the last kept archive history. Each had two VM workers. The host and loopback network limit conclusions about physical storage and distributed throughput. Brief archive RPC sampling in the first 100 ms run also shared this host. The public testnet performance gates remain open.

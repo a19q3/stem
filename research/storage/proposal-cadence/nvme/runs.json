@@ -1,0 +1,256 @@
+{
+  "nvme250": {
+    "trial": {
+      "storage_settings": {
+        "RATE": 3000,
+        "SECONDS": 180,
+        "DRAIN": 45,
+        "SENDERS": 64,
+        "CADENCE": 250,
+        "VM_WORKERS": 2,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0,
+        "SHARD_SENDERS": 0,
+        "BLOCK_TRANSACTIONS": 1024,
+        "BLOCK_CYCLES": 2000000000
+      },
+      "harness_sha256": "1aac9b0f2afe547a73ad0946ca9d2057824b32770fc531317ce73da5ac1a262b",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "bc6b095e103faafa373d2f8de9693ba145044f2aff408de5dc4d60adb6aaf41e",
+      "genesis_sha256": "caf7a089b485490d33e402602e690bb307c8c8d2da5939a4a475cab7525c502b"
+    },
+    "genesis": {
+      "genesis_id": "8858b9bf207848ceb9a78467b178892a8158a3eb9aa39c6960f67a4748061d92",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "measurement_driver": {
+      "harness_sha256": "1aac9b0f2afe547a73ad0946ca9d2057824b32770fc531317ce73da5ac1a262b"
+    },
+    "source_report_sha256": "0cd0f5ed345c0545564d185896ce771917e8776c70a89b217a88590f0ec6bf33",
+    "archive_sha256": "06a0e4300b2cfe092909fd5bd7cfa14fa845825b5eec5aa417fb4c2e8fbee611",
+    "errors": {
+      "dispatch queue full": 199317,
+      "queue deadline": 294
+    },
+    "validator_counter_deltas": [
+      {
+        "received_bytes": 187328771,
+        "sent_bytes": 167932027,
+        "transport_drops": 282,
+        "invalid_messages": 91,
+        "committed_transactions": 340389,
+        "admission": {
+          "client_requests": 85167,
+          "relayed_requests": 155226,
+          "checks": 225917,
+          "verification_us": 41393460,
+          "relay_retry_attempts": 37873
+        }
+      },
+      {
+        "received_bytes": 190451105,
+        "sent_bytes": 166986093,
+        "transport_drops": 271,
+        "invalid_messages": 34,
+        "committed_transactions": 340389,
+        "admission": {
+          "client_requests": 85059,
+          "relayed_requests": 168119,
+          "checks": 225839,
+          "verification_us": 41079333,
+          "relay_retry_attempts": 37732
+        }
+      },
+      {
+        "received_bytes": 190150262,
+        "sent_bytes": 167172765,
+        "transport_drops": 332,
+        "invalid_messages": 35,
+        "committed_transactions": 340389,
+        "admission": {
+          "client_requests": 85107,
+          "relayed_requests": 166870,
+          "checks": 224814,
+          "verification_us": 40743079,
+          "relay_retry_attempts": 37220
+        }
+      },
+      {
+        "received_bytes": 189672315,
+        "sent_bytes": 167931951,
+        "transport_drops": 333,
+        "invalid_messages": 36,
+        "committed_transactions": 340389,
+        "admission": {
+          "client_requests": 85056,
+          "relayed_requests": 165892,
+          "checks": 224324,
+          "verification_us": 40688179,
+          "relay_retry_attempts": 37930
+        }
+      }
+    ],
+    "sampled_executions": [
+      {
+        "height": 296,
+        "count": 3
+      }
+    ],
+    "rocksdb_delta_by_validator": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1064717658,
+        "wal_syncs": 1218
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1064706452,
+        "wal_syncs": 1192
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1064713348,
+        "wal_syncs": 1208
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1064631992,
+        "wal_syncs": 1218
+      }
+    ]
+  },
+  "nvme100": {
+    "trial": {
+      "storage_settings": {
+        "RATE": 3000,
+        "SECONDS": 180,
+        "DRAIN": 45,
+        "SENDERS": 64,
+        "CADENCE": 100,
+        "VM_WORKERS": 2,
+        "PAYMENT_DATA_BYTES": 0,
+        "COMPLETE_VOLUME": 0,
+        "REPLICAS": 4,
+        "PREFUND_PAYMENTS": 1,
+        "REUSE_SUBMISSIONS": 0,
+        "SHARD_SENDERS": 0,
+        "BLOCK_TRANSACTIONS": 1024,
+        "BLOCK_CYCLES": 2000000000
+      },
+      "harness_sha256": "1aac9b0f2afe547a73ad0946ca9d2057824b32770fc531317ce73da5ac1a262b",
+      "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+      "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+      "genesis_sha256": "caf7a089b485490d33e402602e690bb307c8c8d2da5939a4a475cab7525c502b"
+    },
+    "genesis": {
+      "genesis_id": "8858b9bf207848ceb9a78467b178892a8158a3eb9aa39c6960f67a4748061d92",
+      "network": "8989898989898989898989898989898989898989898989898989898989898989"
+    },
+    "measurement_driver": {
+      "harness_sha256": "1aac9b0f2afe547a73ad0946ca9d2057824b32770fc531317ce73da5ac1a262b"
+    },
+    "source_report_sha256": "e7d49de4698ad1c8b4872265ae44ebd542e3d37eb5487ebfbe584ce3a0cec7a8",
+    "archive_sha256": "6377fc08bcdead801b7f33a45797690fd31c6a56023a0e9898834ef6b318ed17",
+    "errors": {
+      "dispatch queue full": 207166,
+      "queue deadline": 789
+    },
+    "validator_counter_deltas": [
+      {
+        "received_bytes": 143607321,
+        "sent_bytes": 121734677,
+        "transport_drops": 49,
+        "invalid_messages": 260,
+        "committed_transactions": 332045,
+        "admission": {
+          "client_requests": 82990,
+          "relayed_requests": 123215,
+          "checks": 206005,
+          "verification_us": 37071852,
+          "relay_retry_attempts": 340
+        }
+      },
+      {
+        "received_bytes": 143602808,
+        "sent_bytes": 121328586,
+        "transport_drops": 76,
+        "invalid_messages": 26,
+        "committed_transactions": 332045,
+        "admission": {
+          "client_requests": 82965,
+          "relayed_requests": 122592,
+          "checks": 205557,
+          "verification_us": 37479596,
+          "relay_retry_attempts": 411
+        }
+      },
+      {
+        "received_bytes": 144099125,
+        "sent_bytes": 119029556,
+        "transport_drops": 46,
+        "invalid_messages": 24,
+        "committed_transactions": 332045,
+        "admission": {
+          "client_requests": 83070,
+          "relayed_requests": 121271,
+          "checks": 204096,
+          "verification_us": 36845607,
+          "relay_retry_attempts": 318
+        }
+      },
+      {
+        "received_bytes": 141890855,
+        "sent_bytes": 125690273,
+        "transport_drops": 35,
+        "invalid_messages": 102,
+        "committed_transactions": 332045,
+        "admission": {
+          "client_requests": 83020,
+          "relayed_requests": 121420,
+          "checks": 204440,
+          "verification_us": 37095952,
+          "relay_retry_attempts": 354
+        }
+      }
+    ],
+    "sampled_executions": [
+      {
+        "height": 525,
+        "count": 3
+      }
+    ],
+    "rocksdb_delta_by_validator": [
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1099982692,
+        "wal_syncs": 2378
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1099986571,
+        "wal_syncs": 2387
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1099967176,
+        "wal_syncs": 2342
+      },
+      {
+        "compaction_bytes": 0,
+        "flush_bytes": 0,
+        "wal_bytes": 1099821885,
+        "wal_syncs": 2396
+      }
+    ]
+  }
+}
