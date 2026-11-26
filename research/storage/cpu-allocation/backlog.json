@@ -1,0 +1,292 @@
+[
+  {
+    "file": "six1.json.xz",
+    "offer_seconds": 45,
+    "peak_acknowledged_waiting": 41110,
+    "first_peak_us": 44875895,
+    "waiting_at_offer_end": 40537,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 31012137,
+    "checkpoints": [
+      {
+        "time_us": 10000000,
+        "written": 26797,
+        "acknowledged": 26733,
+        "common_visible": 17869,
+        "acknowledged_awaiting_common_visibility": 8864
+      },
+      {
+        "time_us": 20000000,
+        "written": 54496,
+        "acknowledged": 54432,
+        "common_visible": 36301,
+        "acknowledged_awaiting_common_visibility": 18131
+      },
+      {
+        "time_us": 30000000,
+        "written": 83929,
+        "acknowledged": 83865,
+        "common_visible": 55757,
+        "acknowledged_awaiting_common_visibility": 28108
+      },
+      {
+        "time_us": 40000000,
+        "written": 111589,
+        "acknowledged": 111525,
+        "common_visible": 75213,
+        "acknowledged_awaiting_common_visibility": 36312
+      },
+      {
+        "time_us": 45000000,
+        "written": 126000,
+        "acknowledged": 125990,
+        "common_visible": 85453,
+        "acknowledged_awaiting_common_visibility": 40537
+      },
+      {
+        "time_us": 76012137,
+        "written": 126000,
+        "acknowledged": 126000,
+        "common_visible": 126000,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "twelve1.json.xz",
+    "offer_seconds": 45,
+    "peak_acknowledged_waiting": 36747,
+    "first_peak_us": 44765058,
+    "waiting_at_offer_end": 36379,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 25991106,
+    "checkpoints": [
+      {
+        "time_us": 10000000,
+        "written": 27789,
+        "acknowledged": 27725,
+        "common_visible": 18891,
+        "acknowledged_awaiting_common_visibility": 8834
+      },
+      {
+        "time_us": 20000000,
+        "written": 55954,
+        "acknowledged": 55891,
+        "common_visible": 38347,
+        "acknowledged_awaiting_common_visibility": 17544
+      },
+      {
+        "time_us": 30000000,
+        "written": 83715,
+        "acknowledged": 83651,
+        "common_visible": 58827,
+        "acknowledged_awaiting_common_visibility": 24824
+      },
+      {
+        "time_us": 40000000,
+        "written": 111795,
+        "acknowledged": 111731,
+        "common_visible": 79307,
+        "acknowledged_awaiting_common_visibility": 32424
+      },
+      {
+        "time_us": 45000000,
+        "written": 125990,
+        "acknowledged": 125926,
+        "common_visible": 89547,
+        "acknowledged_awaiting_common_visibility": 36379
+      },
+      {
+        "time_us": 70991106,
+        "written": 126000,
+        "acknowledged": 126000,
+        "common_visible": 126000,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "twelve2.json.xz",
+    "offer_seconds": 45,
+    "peak_acknowledged_waiting": 39207,
+    "first_peak_us": 44984623,
+    "waiting_at_offer_end": 38281,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 26812379,
+    "checkpoints": [
+      {
+        "time_us": 10000000,
+        "written": 27766,
+        "acknowledged": 27702,
+        "common_visible": 18867,
+        "acknowledged_awaiting_common_visibility": 8835
+      },
+      {
+        "time_us": 20000000,
+        "written": 55831,
+        "acknowledged": 55767,
+        "common_visible": 38323,
+        "acknowledged_awaiting_common_visibility": 17444
+      },
+      {
+        "time_us": 30000000,
+        "written": 84000,
+        "acknowledged": 83944,
+        "common_visible": 56755,
+        "acknowledged_awaiting_common_visibility": 27189
+      },
+      {
+        "time_us": 40000000,
+        "written": 112000,
+        "acknowledged": 111982,
+        "common_visible": 77235,
+        "acknowledged_awaiting_common_visibility": 34747
+      },
+      {
+        "time_us": 45000000,
+        "written": 125820,
+        "acknowledged": 125756,
+        "common_visible": 87475,
+        "acknowledged_awaiting_common_visibility": 38281
+      },
+      {
+        "time_us": 71812379,
+        "written": 126000,
+        "acknowledged": 126000,
+        "common_visible": 126000,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "six2.json.xz",
+    "offer_seconds": 45,
+    "peak_acknowledged_waiting": 40783,
+    "first_peak_us": 45056200,
+    "waiting_at_offer_end": 40407,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 31189957,
+    "checkpoints": [
+      {
+        "time_us": 10000000,
+        "written": 28000,
+        "acknowledged": 27961,
+        "common_visible": 17210,
+        "acknowledged_awaiting_common_visibility": 10751
+      },
+      {
+        "time_us": 20000000,
+        "written": 55809,
+        "acknowledged": 55745,
+        "common_visible": 36666,
+        "acknowledged_awaiting_common_visibility": 19079
+      },
+      {
+        "time_us": 30000000,
+        "written": 84000,
+        "acknowledged": 83972,
+        "common_visible": 56122,
+        "acknowledged_awaiting_common_visibility": 27850
+      },
+      {
+        "time_us": 40000000,
+        "written": 112000,
+        "acknowledged": 111998,
+        "common_visible": 76602,
+        "acknowledged_awaiting_common_visibility": 35396
+      },
+      {
+        "time_us": 45000000,
+        "written": 125265,
+        "acknowledged": 125201,
+        "common_visible": 84794,
+        "acknowledged_awaiting_common_visibility": 40407
+      },
+      {
+        "time_us": 76189957,
+        "written": 126000,
+        "acknowledged": 126000,
+        "common_visible": 126000,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "six-pressure.json.xz",
+    "offer_seconds": 180,
+    "peak_acknowledged_waiting": 29702,
+    "first_peak_us": 179377769,
+    "waiting_at_offer_end": 29342,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 19916712,
+    "checkpoints": [
+      {
+        "time_us": 60000000,
+        "written": 110111,
+        "acknowledged": 110047,
+        "common_visible": 98506,
+        "acknowledged_awaiting_common_visibility": 11541
+      },
+      {
+        "time_us": 120000000,
+        "written": 219623,
+        "acknowledged": 219608,
+        "common_visible": 199882,
+        "acknowledged_awaiting_common_visibility": 19726
+      },
+      {
+        "time_us": 180000000,
+        "written": 327592,
+        "acknowledged": 327528,
+        "common_visible": 298186,
+        "acknowledged_awaiting_common_visibility": 29342
+      },
+      {
+        "time_us": 199916712,
+        "written": 327592,
+        "acknowledged": 327592,
+        "common_visible": 327592,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "twelve-pressure.json.xz",
+    "offer_seconds": 180,
+    "peak_acknowledged_waiting": 28942,
+    "first_peak_us": 180011881,
+    "waiting_at_offer_end": 28926,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 21197297,
+    "checkpoints": [
+      {
+        "time_us": 60000000,
+        "written": 109634,
+        "acknowledged": 109570,
+        "common_visible": 98449,
+        "acknowledged_awaiting_common_visibility": 11121
+      },
+      {
+        "time_us": 120000000,
+        "written": 212412,
+        "acknowledged": 212348,
+        "common_visible": 192657,
+        "acknowledged_awaiting_common_visibility": 19691
+      },
+      {
+        "time_us": 180000000,
+        "written": 319903,
+        "acknowledged": 319887,
+        "common_visible": 290961,
+        "acknowledged_awaiting_common_visibility": 28926
+      },
+      {
+        "time_us": 201197297,
+        "written": 319903,
+        "acknowledged": 319903,
+        "common_visible": 319903,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  }
+]

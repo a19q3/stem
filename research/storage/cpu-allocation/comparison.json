@@ -1,0 +1,134 @@
+[
+  {
+    "file": "six1.json.xz",
+    "binary_sha256": "7f40283509ef7d11de3f97944f6ec628d1d9c6b1e6156926f81267493669c555",
+    "genesis_sha256": "59efd828018506ef9ebecef4baae637148f298df698bbd648c4d747f8f1c29ad",
+    "workload_sha256": "e9231bf90020ca2e4b4763585761a8f7545aab0675d79aae3b662848638ba333",
+    "planned": 126000,
+    "written": 126000,
+    "admitted": 126000,
+    "visible": 126000,
+    "visible_in_window": 85453,
+    "window_tps": 1898.9555555555555,
+    "drain_tps": 1657.6300176904645,
+    "latency_us": {
+      "p50": 1343326,
+      "p95": 53967714,
+      "p99": 66055580
+    },
+    "cpu_seconds": 182.75,
+    "agreed_height": 194,
+    "observation_errors": 0,
+    "finalized_set_sha256": "78ea6da5304442f5730ffda9980a847d2d15344f2c5c743aebdea6f49016507a"
+  },
+  {
+    "file": "twelve1.json.xz",
+    "binary_sha256": "7f40283509ef7d11de3f97944f6ec628d1d9c6b1e6156926f81267493669c555",
+    "genesis_sha256": "59efd828018506ef9ebecef4baae637148f298df698bbd648c4d747f8f1c29ad",
+    "workload_sha256": "e9231bf90020ca2e4b4763585761a8f7545aab0675d79aae3b662848638ba333",
+    "planned": 126000,
+    "written": 126000,
+    "admitted": 126000,
+    "visible": 126000,
+    "visible_in_window": 89547,
+    "window_tps": 1989.9333333333334,
+    "drain_tps": 1774.8702210668475,
+    "latency_us": {
+      "p50": 1169301,
+      "p95": 50205440,
+      "p99": 62021832
+    },
+    "cpu_seconds": 174.46,
+    "agreed_height": 212,
+    "observation_errors": 0,
+    "finalized_set_sha256": "78ea6da5304442f5730ffda9980a847d2d15344f2c5c743aebdea6f49016507a"
+  },
+  {
+    "file": "twelve2.json.xz",
+    "binary_sha256": "7f40283509ef7d11de3f97944f6ec628d1d9c6b1e6156926f81267493669c555",
+    "genesis_sha256": "59efd828018506ef9ebecef4baae637148f298df698bbd648c4d747f8f1c29ad",
+    "workload_sha256": "e9231bf90020ca2e4b4763585761a8f7545aab0675d79aae3b662848638ba333",
+    "planned": 126000,
+    "written": 126000,
+    "admitted": 126000,
+    "visible": 126000,
+    "visible_in_window": 87475,
+    "window_tps": 1943.888888888889,
+    "drain_tps": 1754.572146955332,
+    "latency_us": {
+      "p50": 1268546,
+      "p95": 51775262,
+      "p99": 63155652
+    },
+    "cpu_seconds": 174.93,
+    "agreed_height": 205,
+    "observation_errors": 0,
+    "finalized_set_sha256": "78ea6da5304442f5730ffda9980a847d2d15344f2c5c743aebdea6f49016507a"
+  },
+  {
+    "file": "six2.json.xz",
+    "binary_sha256": "7f40283509ef7d11de3f97944f6ec628d1d9c6b1e6156926f81267493669c555",
+    "genesis_sha256": "59efd828018506ef9ebecef4baae637148f298df698bbd648c4d747f8f1c29ad",
+    "workload_sha256": "e9231bf90020ca2e4b4763585761a8f7545aab0675d79aae3b662848638ba333",
+    "planned": 126000,
+    "written": 126000,
+    "admitted": 126000,
+    "visible": 126000,
+    "visible_in_window": 84794,
+    "window_tps": 1884.3111111111111,
+    "drain_tps": 1653.7612693494498,
+    "latency_us": {
+      "p50": 1292573,
+      "p95": 55149905,
+      "p99": 66170827
+    },
+    "cpu_seconds": 179.39,
+    "agreed_height": 192,
+    "observation_errors": 0,
+    "finalized_set_sha256": "78ea6da5304442f5730ffda9980a847d2d15344f2c5c743aebdea6f49016507a"
+  },
+  {
+    "file": "six-pressure.json.xz",
+    "binary_sha256": "7f40283509ef7d11de3f97944f6ec628d1d9c6b1e6156926f81267493669c555",
+    "genesis_sha256": "d7733df774045b1fb442e12abaabf085203c3509693c7cbb4d0ba82fcd4f25df",
+    "workload_sha256": "c52e0078dcd5e74163c31d612d987000fc26c28d096c166496ccb92cce715e12",
+    "planned": 540000,
+    "written": 327592,
+    "admitted": 327592,
+    "visible": 327592,
+    "visible_in_window": 298186,
+    "window_tps": 1656.588888888889,
+    "drain_tps": 1638.64239623949,
+    "latency_us": {
+      "p50": 1300649,
+      "p95": 79688626,
+      "p99": 168019373
+    },
+    "cpu_seconds": 500.52,
+    "agreed_height": 504,
+    "observation_errors": 0,
+    "finalized_set_sha256": "786c19019053fa9ca27ec85b6d3b96bc4f83b18ed88c132eddd3c607c988b2d9"
+  },
+  {
+    "file": "twelve-pressure.json.xz",
+    "binary_sha256": "7f40283509ef7d11de3f97944f6ec628d1d9c6b1e6156926f81267493669c555",
+    "genesis_sha256": "d7733df774045b1fb442e12abaabf085203c3509693c7cbb4d0ba82fcd4f25df",
+    "workload_sha256": "c52e0078dcd5e74163c31d612d987000fc26c28d096c166496ccb92cce715e12",
+    "planned": 540000,
+    "written": 319903,
+    "admitted": 319903,
+    "visible": 319903,
+    "visible_in_window": 290961,
+    "window_tps": 1616.45,
+    "drain_tps": 1589.996509744363,
+    "latency_us": {
+      "p50": 1319125,
+      "p95": 78918521,
+      "p99": 168853944
+    },
+    "cpu_seconds": 495.54,
+    "agreed_height": 493,
+    "observation_errors": 0,
+    "finalized_set_sha256": "55d25db25911fa07a783f3015979ecfc3883baa8a35a2ec65dcdf96b5e237111"
+  }
+]

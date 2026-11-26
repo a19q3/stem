@@ -13,7 +13,7 @@
 | 07 Weighted Jolteon | 原生 TCP 节点执行加权投票、两链最终性、持久化重启及跨 epoch 交接。128 委员通过 CKB 交接。 | [共识运行](../BENCHMARKS.md#native-weighted-jolteon) · [128 委员实测](../BENCHMARKS.md#ckb-funded-128-member-jolteon-handoff) · [14 项研究决策](README.md) |
 | 08 StemVM 密码学 | 创世可选的 syscall 2131 提供确定性的批量验签和密码学操作，有真实 guest 计费与拒绝记录。 | [计费和差分结果](../benchmarks/2026-11-27-crypto-v1.json.xz) |
 | 09 StemVM 优化 | 候选复验和热点 Lineage 经过逐收据及整网比较。已采用不可变 ID 与签名承诺复用，三组配对 CPU 均下降。 | [候选复验](candidates/README.md) · [16 副本热点对照](lineage-hashes/README.md) |
-| 10 状态与存储 | Patricia 已批量更新共享路径。一小时 4 KiB 支付实验核对了四副本 34.809 GB 设备写入、414 个 SST 和 79 次压缩；另以独立输入实测饱和与排空。跨主机持续吞吐仍待验证。 | [批量算法](../BENCHMARKS.md#patricia-batch-update) · [设备与 SST](storage/device/README.md) · [独立输入持续实验](storage/sustained/README.md) |
+| 10 状态与存储 | Patricia 已批量更新共享路径。一小时 4 KiB 支付实验核对了四副本 34.809 GB 设备写入、414 个 SST 和 79 次压缩；另以独立输入实测饱和与排空。跨主机持续吞吐仍待验证。 | [批量算法](../BENCHMARKS.md#patricia-batch-update) · [设备与 SST](storage/device/README.md) · [独立输入持续实验](storage/sustained/README.md) · [6 核与 12 核持续对照](storage/cpu-allocation/README.md) |
 | 11 Native Keeper | 高度与父时间触发、预付、取消、执行和有界重试有四副本回执、重启与负载记录。 | [定时](../BENCHMARKS.md#consensus-time-keeper) · [有界重试](../BENCHMARKS.md#prepaid-bounded-keeper-retries) |
 | 12 OTX / Intent | 可独立签署的配对输入、唯一交付和固定 Action 清单支持 Solver 重组。真实合约验证原子交付。 | [四副本 OTX](../BENCHMARKS.md#native-otx-action-authorization) |
 | 13 Fee Sponsorship | 独立支付组及配对 OTX 代付绑定业务、Action 与净扣款上限。 | [代付 Lineage](../benchmarks/2026-11-25-stem-sponsored-lineage.json.xz) · [OTX 代付](../BENCHMARKS.md#native-otx-action-authorization) |
