@@ -1355,8 +1355,7 @@ pub struct ResolvedTransaction {
     groups: Vec<ScriptGroup>,
     messages: BTreeMap<u16, Bytes>,
     intent_scope: Option<IntentScope>,
-    programs_by_data: HashMap<Byte32, usize>,
-    programs_by_type: HashMap<Byte32, CodeMatch>,
+    programs: OnceLock<ProgramIndex>,
     fee: u64,
     capacity: CapacityPolicy,
     minted_asset: Option<(Script, u128)>,
@@ -1582,26 +1581,6 @@ impl ResolvedTransaction {
         let intent_scope = has_intent_dependencies
             .then(|| IntentScope::resolve(&transaction, &groups))
             .flatten();
-        let mut programs_by_data = HashMap::new();
-        let mut programs_by_type = HashMap::new();
-        for (index, cell) in cell_deps.iter().enumerate() {
-            let cell = &cell.cell;
-            let data_hash = cell.data_hash();
-
-            programs_by_data.entry(data_hash.clone()).or_insert(index);
-            for script in cell.type_scripts() {
-                programs_by_type
-                    .entry(script.calc_script_hash())
-                    .and_modify(|entry| match entry {
-                        CodeMatch::Unique(previous, _) if previous != data_hash => {
-                            *entry = CodeMatch::Ambiguous;
-                        }
-                        _ => {}
-                    })
-                    .or_insert_with(|| CodeMatch::Unique(data_hash.clone(), index));
-            }
-        }
-
         Ok(Self {
             network_id,
             transaction,
@@ -1621,8 +1600,7 @@ impl ResolvedTransaction {
             groups,
             messages,
             intent_scope,
-            programs_by_data,
-            programs_by_type,
+            programs: OnceLock::new(),
             capacity: block.capacity,
             minted_asset: mint.and_then(|(_, asset)| asset),
             resolved_cell_bytes: budget.bytes,
@@ -1825,15 +1803,67 @@ impl ResolvedTransaction {
     pub fn program_index(&self, script: &Script) -> Result<usize> {
         let hash_type = ScriptHashType::try_from(script.hash_type())?;
         let expected = script.code_hash();
+        match self.cell_deps.as_slice() {
+            [] => bail!("missing Script code dependency"),
+            [dep] => {
+                let matches = match hash_type {
+                    ScriptHashType::Type => dep
+                        .cell
+                        .type_scripts()
+                        .any(|script| script.calc_script_hash() == expected),
+                    _ => dep.cell.data_hash() == &expected,
+                };
+                matches
+                    .then_some(0)
+                    .context("missing Script code dependency")
+            }
+            deps => self
+                .programs
+                .get_or_init(|| ProgramIndex::build(deps))
+                .lookup(hash_type, &expected),
+        }
+    }
+}
+
+/// Shared by the Script Groups that actually execute against several Code deps.
+#[derive(Clone, Debug, Default)]
+struct ProgramIndex {
+    by_data: HashMap<Byte32, usize>,
+    by_type: HashMap<Byte32, CodeMatch>,
+}
+
+impl ProgramIndex {
+    fn build(deps: &[LiveCell]) -> Self {
+        let mut programs = Self::default();
+        for (index, dep) in deps.iter().enumerate() {
+            let data_hash = dep.cell.data_hash();
+            programs.by_data.entry(data_hash.clone()).or_insert(index);
+            for script in dep.cell.type_scripts() {
+                programs
+                    .by_type
+                    .entry(script.calc_script_hash())
+                    .and_modify(|entry| match entry {
+                        CodeMatch::Unique(previous, _) if previous != data_hash => {
+                            *entry = CodeMatch::Ambiguous;
+                        }
+                        _ => {}
+                    })
+                    .or_insert_with(|| CodeMatch::Unique(data_hash.clone(), index));
+            }
+        }
+        programs
+    }
+
+    fn lookup(&self, hash_type: ScriptHashType, expected: &Byte32) -> Result<usize> {
         match hash_type {
-            ScriptHashType::Type => match self.programs_by_type.get(&expected) {
+            ScriptHashType::Type => match self.by_type.get(expected) {
                 Some(CodeMatch::Unique(_, index)) => Ok(*index),
                 Some(CodeMatch::Ambiguous) => bail!("ambiguous Script code dependency"),
                 None => bail!("missing Script code dependency"),
             },
             _ => self
-                .programs_by_data
-                .get(&expected)
+                .by_data
+                .get(expected)
                 .copied()
                 .context("missing Script code dependency"),
         }
@@ -2211,6 +2241,111 @@ mod tests {
         assert!(verified.groups()[1].outputs.is_empty());
         assert_eq!(verified.groups()[0].script, verified.groups()[1].script);
         assert!(resolve(3).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_code_lazily_and_preserves_type_ambiguity() -> Result<()> {
+        let network = [7; 32].pack();
+        let parent = Header {
+            context: HeaderContext {
+                height: 0,
+                timestamp_ms: 123,
+                parent: Byte32::default(),
+                transaction_root: Byte32::default(),
+            },
+            state: StateCommitment {
+                cell_root: Byte32::default(),
+                system_root: Byte32::default(),
+                history_root: Byte32::default(),
+            },
+            receipt_root: Byte32::default(),
+        };
+        let candidate = HeaderContext::after(&network, &parent, 124, Byte32::default())?;
+        let origin = Origin::new(&network, &parent.context);
+        let lock = script(1);
+        let code_type = script(2);
+        let by_type = Script::new_builder()
+            .code_hash(code_type.calc_script_hash())
+            .hash_type(ScriptHashType::Type)
+            .build();
+        let by_data = Script::new_builder().code_hash(blake2b_256(b"ELF")).build();
+        let alternate = Script::new_builder()
+            .code_hash(blake2b_256(b"alternative ELF"))
+            .build();
+        let capacity = 100_000_000_000;
+        let cells = [
+            Cell::new(capacity, lock.clone(), vec![], Bytes::new())?,
+            Cell::new(
+                capacity,
+                lock.clone(),
+                vec![code_type.clone()],
+                Bytes::from_static(b"ELF"),
+            )?,
+            Cell::new(
+                capacity,
+                lock.clone(),
+                vec![code_type.clone()],
+                Bytes::from_static(b"ELF"),
+            )?,
+            Cell::new(
+                capacity,
+                lock.clone(),
+                vec![code_type],
+                Bytes::from_static(b"alternative ELF"),
+            )?,
+        ];
+        let point = |index| OutPoint::new([1; 32].pack(), index);
+        let resolve = |dep_count| {
+            let tx = Transaction::new(
+                (1..=dep_count)
+                    .map(|index| CellDep::new_builder().out_point(point(index)).build())
+                    .collect(),
+                vec![],
+                vec![CellInput::new(point(0), None)],
+                vec![cells[0].clone()],
+                vec![],
+            )?;
+            ResolvedTransaction::resolve(
+                network.clone(),
+                tx,
+                BlockContext {
+                    candidate: &candidate,
+                    parent: &parent,
+                    capacity: Default::default(),
+                },
+                |point| {
+                    let index: usize = point.index().unpack();
+                    Ok(LiveCell {
+                        cell: cells[index].clone(),
+                        origin: origin.clone(),
+                    })
+                },
+                |_| bail!("unexpected Header Dep"),
+            )
+        };
+        let absent = resolve(0)?;
+        assert!(absent.program_index(&by_data).is_err());
+
+        let single = resolve(1)?;
+        assert_eq!(single.program_index(&by_data)?, 0);
+        assert_eq!(single.program_index(&by_type)?, 0);
+        assert!(single.program_index(&alternate).is_err());
+        assert!(single.programs.get().is_none());
+
+        let matching = resolve(2)?;
+        let _ = matching.script_cache_key();
+        assert!(matching.programs.get().is_none());
+        assert_eq!(matching.program_index(&by_type)?, 0);
+        assert_eq!(matching.program_index(&by_data)?, 0);
+
+        let ambiguous = resolve(3)?;
+        assert_eq!(
+            ambiguous.program_index(&by_type).unwrap_err().to_string(),
+            "ambiguous Script code dependency"
+        );
+        assert_eq!(ambiguous.program_index(&by_data)?, 0);
+        assert_eq!(ambiguous.program_index(&alternate)?, 2);
         Ok(())
     }
 }
