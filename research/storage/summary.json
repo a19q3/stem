@@ -1,0 +1,314 @@
+[
+  {
+    "file": "stock.json.xz",
+    "replicas": 4,
+    "seconds": 120,
+    "planned": 90000,
+    "written": 78400,
+    "admitted": 78400,
+    "visible": 78400,
+    "drops": 11600,
+    "visible_tps": 649.0083333333333,
+    "p99_common_us": 2628639,
+    "p99_client_queue_us": 70097,
+    "p99_client_response_us": 242617,
+    "cpu_seconds": 120.41,
+    "peak_sampled_node_rss_kib": 251112,
+    "process_write_B_per_confirmed_replica": 14226.873469387756,
+    "wal_bytes": 2855634466,
+    "compaction_jobs_creating_files": 12,
+    "sst": {
+      "flush": {
+        "files": 48,
+        "bytes": 739352407
+      },
+      "compaction": {
+        "files": 13,
+        "bytes": 548419411
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 2134526558,
+      "finality_sync_microseconds": 58376547,
+      "finality_writes": 1420,
+      "journal_serialized": 721107908,
+      "journal_sync_microseconds": 47439427,
+      "journal_writes": 2829
+    },
+    "agreed_height": 357,
+    "workload_sha256": "c0b8b1b3b069c38a6478c25ce7b87e89eddb10c6d3eadde2e9ba3cc3ff452dd1",
+    "genesis_sha256": "2de23205b9bfd740729a80d4c5ebbc24f619c22e3c84d314c1c8d4ef1b4abf47",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 35437.61502347418,
+    "proposal_mean_us": 19894.895774647888,
+    "commit_mean_us": 42717.56307258633
+  },
+  {
+    "file": "small.json.xz",
+    "replicas": 4,
+    "seconds": 120,
+    "planned": 90000,
+    "written": 79406,
+    "admitted": 79406,
+    "visible": 79406,
+    "drops": 10594,
+    "visible_tps": 656.1416666666667,
+    "p99_common_us": 2176095,
+    "p99_client_queue_us": 90414,
+    "p99_client_response_us": 216992,
+    "cpu_seconds": 130.56,
+    "peak_sampled_node_rss_kib": 224148,
+    "process_write_B_per_confirmed_replica": 24619.690804221344,
+    "wal_bytes": 2888512906,
+    "compaction_jobs_creating_files": 88,
+    "sst": {
+      "flush": {
+        "files": 359,
+        "bytes": 956848496
+      },
+      "compaction": {
+        "files": 90,
+        "bytes": 3740962098
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 2158203694,
+      "finality_sync_microseconds": 50059422,
+      "finality_writes": 1400,
+      "journal_serialized": 730309212,
+      "journal_sync_microseconds": 44549751,
+      "journal_writes": 2792
+    },
+    "agreed_height": 353,
+    "workload_sha256": "c0b8b1b3b069c38a6478c25ce7b87e89eddb10c6d3eadde2e9ba3cc3ff452dd1",
+    "genesis_sha256": "2de23205b9bfd740729a80d4c5ebbc24f619c22e3c84d314c1c8d4ef1b4abf47",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 35563.100952380955,
+    "proposal_mean_us": 19810.16857142857,
+    "commit_mean_us": 37443.68142857143
+  },
+  {
+    "file": "equal-stock.json.xz",
+    "replicas": 4,
+    "seconds": 90,
+    "planned": 18000,
+    "written": 17759,
+    "admitted": 17759,
+    "visible": 17759,
+    "drops": 241,
+    "visible_tps": 196.1,
+    "p99_common_us": 1871588,
+    "p99_client_queue_us": 17,
+    "p99_client_response_us": 57195,
+    "cpu_seconds": 31.92,
+    "peak_sampled_node_rss_kib": 155904,
+    "process_write_B_per_confirmed_replica": 14421.914747451996,
+    "wal_bytes": 645928831,
+    "compaction_jobs_creating_files": 0,
+    "sst": {
+      "flush": {
+        "files": 8,
+        "bytes": 90339022
+      },
+      "compaction": {
+        "files": 0,
+        "bytes": 0
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 481053999,
+      "finality_sync_microseconds": 14149472,
+      "finality_writes": 1392,
+      "journal_serialized": 164874832,
+      "journal_sync_microseconds": 21986255,
+      "journal_writes": 2781
+    },
+    "agreed_height": 351,
+    "workload_sha256": "7b003c4df95468207c8d0a3833b3d8321014d8cc71d77b3b5fce24e6c6038d58",
+    "genesis_sha256": "41908139a354308d7a76a923a8e0e92a1058cafea15c3a5b1f6fca0705f219c5",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 7224.075670498084,
+    "proposal_mean_us": 3813.192528735632,
+    "commit_mean_us": 10517.051724137931
+  },
+  {
+    "file": "equal-small.json.xz",
+    "replicas": 4,
+    "seconds": 90,
+    "planned": 18000,
+    "written": 17978,
+    "admitted": 17978,
+    "visible": 17978,
+    "drops": 22,
+    "visible_tps": 198.2888888888889,
+    "p99_common_us": 1058859,
+    "p99_client_queue_us": 18,
+    "p99_client_response_us": 82475,
+    "cpu_seconds": 30.76,
+    "peak_sampled_node_rss_kib": 116152,
+    "process_write_B_per_confirmed_replica": 17505.968628323506,
+    "wal_bytes": 653941519,
+    "compaction_jobs_creating_files": 20,
+    "sst": {
+      "flush": {
+        "files": 88,
+        "bytes": 176259391
+      },
+      "compaction": {
+        "files": 20,
+        "bytes": 180674773
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 487068655,
+      "finality_sync_microseconds": 14188369,
+      "finality_writes": 1400,
+      "journal_serialized": 166872864,
+      "journal_sync_microseconds": 24910349,
+      "journal_writes": 2775
+    },
+    "agreed_height": 353,
+    "workload_sha256": "7b003c4df95468207c8d0a3833b3d8321014d8cc71d77b3b5fce24e6c6038d58",
+    "genesis_sha256": "41908139a354308d7a76a923a8e0e92a1058cafea15c3a5b1f6fca0705f219c5",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 7486.128571428571,
+    "proposal_mean_us": 4024.6457142857143,
+    "commit_mean_us": 10487.194285714286
+  },
+  {
+    "file": "fixed-stock.json.xz",
+    "replicas": 4,
+    "seconds": 90,
+    "planned": 27000,
+    "written": 27000,
+    "admitted": 27000,
+    "visible": 27000,
+    "drops": 0,
+    "visible_tps": 297.23333333333335,
+    "p99_common_us": 1516344,
+    "p99_client_queue_us": 18106,
+    "p99_client_response_us": 199134,
+    "cpu_seconds": 44.82,
+    "peak_sampled_node_rss_kib": 189508,
+    "process_write_B_per_confirmed_replica": 14007.713185185185,
+    "wal_bytes": 975541413,
+    "compaction_jobs_creating_files": 4,
+    "sst": {
+      "flush": {
+        "files": 16,
+        "bytes": 187005892
+      },
+      "compaction": {
+        "files": 4,
+        "bytes": 66955272
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 725947595,
+      "finality_sync_microseconds": 12480883,
+      "finality_writes": 1412,
+      "journal_serialized": 249593818,
+      "journal_sync_microseconds": 27818249,
+      "journal_writes": 2798
+    },
+    "agreed_height": 356,
+    "workload_sha256": "39ec8e725383b7e5db2ab28d5a0d64d9c90e2a61ea0bab0b940cac2c25ab0cea",
+    "genesis_sha256": "d9a8d0e6b7a67ad935d2e455f41578be46ca2f145d1c0b8c438ffa210a648f81",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 10783.356940509915,
+    "proposal_mean_us": 5758.203966005665,
+    "commit_mean_us": 9384.834985835694
+  },
+  {
+    "file": "fixed-small.json.xz",
+    "replicas": 4,
+    "seconds": 90,
+    "planned": 27000,
+    "written": 27000,
+    "admitted": 27000,
+    "visible": 27000,
+    "drops": 0,
+    "visible_tps": 296.73333333333335,
+    "p99_common_us": 2114117,
+    "p99_client_queue_us": 20197,
+    "p99_client_response_us": 90451,
+    "cpu_seconds": 44.57,
+    "peak_sampled_node_rss_kib": 134304,
+    "process_write_B_per_confirmed_replica": 18681.931851851852,
+    "wal_bytes": 976260082,
+    "compaction_jobs_creating_files": 36,
+    "sst": {
+      "flush": {
+        "files": 144,
+        "bytes": 282632367
+      },
+      "compaction": {
+        "files": 36,
+        "bytes": 494894754
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 726534310,
+      "finality_sync_microseconds": 13890757,
+      "finality_writes": 1460,
+      "journal_serialized": 249725772,
+      "journal_sync_microseconds": 23125357,
+      "journal_writes": 2911
+    },
+    "agreed_height": 368,
+    "workload_sha256": "39ec8e725383b7e5db2ab28d5a0d64d9c90e2a61ea0bab0b940cac2c25ab0cea",
+    "genesis_sha256": "d9a8d0e6b7a67ad935d2e455f41578be46ca2f145d1c0b8c438ffa210a648f81",
+    "observer_errors": 0,
+    "candidate_verify_mean_us": 10573.189041095891,
+    "proposal_mean_us": 5613.095890410959,
+    "commit_mean_us": 10037.514383561644
+  }
+]

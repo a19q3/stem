@@ -1,0 +1,14 @@
+diff --git a/src/native_store.rs b/src/native_store.rs
+index 5f96652..5ddb64d 100644
+--- a/src/native_store.rs
++++ b/src/native_store.rs
+@@ -489,6 +489,9 @@ impl Store {
+         if measured {
+             options.enable_statistics();
+         }
++        // Research-only candidate. Leave WAL and synchronous WriteBatch settings intact.
++        options.set_write_buffer_size(8 << 20);
++        options.set_max_write_buffer_number(3);
+         let db = DB::open(&options, path)?;
+         let marker = db.get(MARKER)?;
+         if let Some(marker) = &marker {

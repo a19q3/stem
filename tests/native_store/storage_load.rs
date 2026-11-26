@@ -39,6 +39,7 @@ struct Load {
     retention: u64,
     measured: bool,
     reuse_submissions: bool,
+    complete_volume: bool,
     payment_data_bytes: usize,
 }
 
@@ -63,12 +64,13 @@ impl Load {
             retention: read("STEM_STORAGE_RETENTION", 64)?,
             measured: read("STEM_STORAGE_METRICS", 1)? != 0,
             reuse_submissions: read("STEM_STORAGE_REUSE_SUBMISSIONS", 0)? != 0,
+            complete_volume: read("STEM_STORAGE_COMPLETE_VOLUME", 0)? != 0,
             payment_data_bytes: read("STEM_STORAGE_PAYMENT_DATA_BYTES", 0)?.try_into()?,
         };
         ensure!(
             (4..=16).contains(&load.replicas)
                 && (1..=5000).contains(&load.rate)
-                && (1..=120).contains(&load.seconds)
+                && (1..=600).contains(&load.seconds)
                 && (2..=45).contains(&load.drain)
                 && (1..=64).contains(&load.senders)
                 && (50..=1000).contains(&load.cadence_ms)
@@ -100,13 +102,20 @@ struct Delivery {
 const DISPATCH_GRACE_US: u64 = 250_000;
 
 impl Delivery {
-    fn expired(&self, now: u64, offer_end: u64) -> bool {
-        now >= offer_end || now > self.planned_us + DISPATCH_GRACE_US
+    fn expired(&self, now: u64, deadline: u64, complete_volume: bool) -> bool {
+        now >= deadline || (!complete_volume && now > self.planned_us + DISPATCH_GRACE_US)
     }
 
-    fn submit(&mut self, client: &Client, tx: &Transaction, start: Instant, offer_end: u64) {
+    fn submit(
+        &mut self,
+        client: &Client,
+        tx: &Transaction,
+        start: Instant,
+        deadline: u64,
+        complete_volume: bool,
+    ) {
         let now = micros(start);
-        if self.expired(now, offer_end) {
+        if self.expired(now, deadline, complete_volume) {
             self.error = Some("queue deadline".into());
             return;
         }
@@ -264,6 +273,11 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let start = Instant::now();
     let offer_us = load.seconds * 1_000_000;
     let end_us = (load.seconds + load.drain) * 1_000_000;
+    let dispatch_deadline = if load.complete_volume {
+        end_us
+    } else {
+        offer_us
+    };
     let (dispatch, pending) = mpsc::sync_channel::<(usize, Delivery)>(load.senders);
     let pending = Mutex::new(pending);
     let (deliveries, samples, failures) = thread::scope(|scope| {
@@ -302,7 +316,8 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
                             &clients[index % clients.len()],
                             &jobs[index].1,
                             start,
-                            offer_us,
+                            dispatch_deadline,
+                            load.complete_volume,
                         );
                         rows.push(row);
                     }
@@ -321,11 +336,15 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
                 planned_us,
                 ..Delivery::default()
             };
-            if row.expired(now, offer_us) {
+            if row.expired(now, dispatch_deadline, load.complete_volume) {
                 row.error = Some("dispatch deadline".into());
                 rows.push(row);
             } else {
                 row.queued_us = Some(now);
+                if load.complete_volume {
+                    assert!(dispatch.send((index, row)).is_ok(), "no load senders");
+                    continue;
+                }
                 match dispatch.try_send((index, row)) {
                     Ok(()) => {}
                     Err(mpsc::TrySendError::Full((_, mut row))) => {
@@ -491,7 +510,9 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     }
 
     // This separate process opens only the disposable archive and a new index.
-    let mut history = Command::new("/usr/bin/time");
+    let mut history = Command::new(
+        std::env::var_os("STEM_TEST_GNU_TIME").unwrap_or_else(|| "/usr/bin/time".into()),
+    );
     let index = output.join("history-index");
     let indexed = history
         .arg("-v")

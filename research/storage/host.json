@@ -1,0 +1,18 @@
+{
+  "cpu": "AMD Ryzen 9 7950X3D 16-Core Processor",
+  "physical_cores": 16,
+  "logical_cpus": 32,
+  "kernel": "7.3.5-2-cachyos",
+  "system": "Linux",
+  "filesystem": "btrfs",
+  "proc_clock_ticks_per_second": 100,
+  "memory_kib": 64911000,
+  "rust": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "client_affinity": "0-3",
+  "replica_affinity": "4-31",
+  "btrfs_member_devices": [
+    "ZHITAI Ti600 1TB (partition)",
+    "Samsung SSD 980 1TB"
+  ],
+  "mount_compression": "zstd:1"
+}
