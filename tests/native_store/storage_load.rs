@@ -42,6 +42,7 @@ struct Load {
     complete_volume: bool,
     payment_data_bytes: usize,
     payment_chains: usize,
+    prefund_payments: bool,
 }
 
 impl Load {
@@ -67,6 +68,7 @@ impl Load {
             reuse_submissions: read("STEM_STORAGE_REUSE_SUBMISSIONS", 0)? != 0,
             complete_volume: read("STEM_STORAGE_COMPLETE_VOLUME", 0)? != 0,
             payment_chains: read("STEM_STORAGE_PAYMENT_CHAINS", 0)?.try_into()?,
+            prefund_payments: read("STEM_STORAGE_PREFUND_PAYMENTS", 0)? != 0,
             payment_data_bytes: read("STEM_STORAGE_PAYMENT_DATA_BYTES", 0)?.try_into()?,
         };
         ensure!(
@@ -79,13 +81,16 @@ impl Load {
                 && (1..=16).contains(&load.vm_workers)
                 && (32..=512).contains(&load.retention)
                 && load.rate as u64 * load.seconds
-                    <= if load.payment_chains == 0 {
+                    <= if load.prefund_payments {
+                        2_000_000
+                    } else if load.payment_chains == 0 {
                         100_000
                     } else {
                         400_000
                     }
                 && load.payment_chains <= 100_000
                 && load.payment_chains <= load.rate * load.seconds as usize
+                && !(load.prefund_payments && load.payment_chains != 0)
                 && load.block_cycles >= 20_000_000
                 && load.payment_data_bytes <= 16_384,
             "invalid sustained storage experiment settings"
@@ -224,9 +229,14 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     limits.header_dep_age = 32;
     let work = load.rate * load.seconds as usize;
     ensure!(
-        mode.is_none() || load.payment_chains == 0,
-        "churn requires a payment workload"
+        mode.is_none() || (load.payment_chains == 0 && !load.prefund_payments),
+        "payment funding requires a payment workload"
     );
+    let funding = if load.prefund_payments {
+        funding_splits(&mut fixture, work)?
+    } else {
+        Vec::new()
+    };
     let (lineage, transactions_to_offer) = if let Some(mode) = mode {
         ensure!(
             (load.seconds + load.drain + 10) * 1000 / load.cadence_ms < 1000,
@@ -242,6 +252,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
                 work,
                 load.payment_data_bytes,
                 load.payment_chains,
+                &funding,
             )?,
         )
     };
@@ -287,6 +298,13 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         fs::write(
             output.join("lineage-registration.json"),
             serde_json::to_vec(&registration)?,
+        )?;
+    }
+    if !funding.is_empty() {
+        let proof = finalize_funding(&fixture, &clients, &funding)?;
+        fs::write(
+            output.join("payment-funding.json"),
+            serde_json::to_vec(&proof)?,
         )?;
     }
     let before = capture(&replicas, &clients, load.measured)?;
@@ -575,21 +593,126 @@ fn percentiles(from: impl Iterator<Item = u64>) -> Value {
     json!({"p50": at(50), "p95": at(95), "p99": at(99)})
 }
 
+const FUNDING_OUTPUTS: usize = 256;
+
+fn funding_splits(fixture: &mut Fixture, work: usize) -> Result<Vec<Transaction>> {
+    let leaf = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
+    let (code_point, code) = fixture.spec.development_cells[0].clone();
+    let mut parents = Vec::new();
+    for start in (0..work).step_by(FUNDING_OUTPUTS) {
+        let count = (work - start).min(FUNDING_OUTPUTS);
+        let seed = OutPoint::new([141; 32].pack(), u32::try_from(parents.len())?);
+        let cell = Cell::new(
+            FUND * count as u64 + FEE,
+            fixture.lock.clone(),
+            vec![],
+            Bytes::new(),
+        )?;
+        fixture
+            .spec
+            .development_cells
+            .push((seed.clone(), cell.clone()));
+        let split = Transaction::new(
+            fixture.deps.clone(),
+            vec![],
+            vec![stem_ledger::CellInput::new(seed.clone(), None)],
+            vec![leaf.clone(); count],
+            vec![],
+        )?;
+        parents.push(fixture.seal_with(split, |point| {
+            if point == &seed {
+                return Ok(cell.clone());
+            }
+            ensure!(point == &code_point, "unexpected funding dependency");
+            Ok(code.clone())
+        })?);
+    }
+    Ok(parents)
+}
+
+fn finalize_funding(
+    fixture: &Fixture,
+    clients: &[Client],
+    funding: &[Transaction],
+) -> Result<Value> {
+    let archive = clients.last().context("no archive replica")?;
+    let mut height = statuses(clients)?
+        .iter()
+        .map(|s| s.height)
+        .min()
+        .context("no replicas")?;
+    let mut committed = Vec::new();
+    for batch in funding.chunks(64) {
+        let mut pending: HashSet<_> = batch
+            .iter()
+            .map(|tx| hex::encode(tx.id(&fixture.spec.network).as_slice()))
+            .collect();
+        for (i, tx) in batch.iter().enumerate() {
+            clients[i % clients.len()].submit(tx)?;
+        }
+        super::comet::poll(
+            "payment funding on all replicas",
+            Duration::from_secs(120),
+            || {
+                let common = statuses(clients)?.iter().map(|s| s.height).min().unwrap();
+                while height < common {
+                    height += 1;
+                    for id in transactions(archive, height)? {
+                        if pending.remove(&id) {
+                            committed.push((height, id));
+                        }
+                    }
+                }
+                Ok(pending.is_empty().then_some(()))
+            },
+        )?;
+    }
+    let header = archive.header(height)?;
+    for client in clients {
+        ensure!(
+            client.header(height)? == header,
+            "funding header disagreement"
+        );
+    }
+    let outputs: usize = funding.iter().map(|tx| tx.outputs().len()).sum();
+    ensure!(
+        committed.len() == funding.len(),
+        "incomplete payment funding"
+    );
+    Ok(
+        json!({"height":height, "header":hex::encode(header.encode()),
+              "outputs": outputs,"outputs_per_split": FUNDING_OUTPUTS,"committed":committed}),
+    )
+}
+
 fn payments(
     fixture: &mut Fixture,
     work: usize,
     data_bytes: usize,
     chains: usize,
+    funding: &[Transaction],
 ) -> Result<Vec<Transaction>> {
     let base = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
     let data = Bytes::from(vec![0x6a; data_bytes]);
     let (code_point, code) = fixture.spec.development_cells[0].clone();
     let mut payments = Vec::with_capacity(work);
+    let parents: Vec<_> = funding
+        .iter()
+        .map(|tx| tx.id(&fixture.spec.network))
+        .collect();
     let width = if chains == 0 { work } else { chains };
     let mut heads: Vec<(OutPoint, Cell)> = Vec::with_capacity(chains);
     for index in 0..work {
         let slot = index % width;
-        let (point, spent) = if index < width {
+        let (point, spent) = if !parents.is_empty() {
+            (
+                OutPoint::new(
+                    parents[index / FUNDING_OUTPUTS].clone(),
+                    (index % FUNDING_OUTPUTS) as u32,
+                ),
+                base.clone(),
+            )
+        } else if index < width {
             let point = OutPoint::new([138; 32].pack(), index as u32);
             fixture
                 .spec

@@ -1,0 +1,278 @@
+[
+  {
+    "file": "prefund-10m.json.xz",
+    "offer_windows": [
+      {
+        "offer_end_s": 60,
+        "written": 74507,
+        "visible": 72864,
+        "common_tps": 1214.4,
+        "sample_us": 59869614,
+        "device_bytes": 3938095104,
+        "largest_replica_mempool_at_sample": 1246
+      },
+      {
+        "offer_end_s": 120,
+        "written": 74959,
+        "visible": 75041,
+        "common_tps": 1250.6833333333334,
+        "sample_us": 119947163,
+        "device_bytes": 2955452416,
+        "largest_replica_mempool_at_sample": 1271
+      },
+      {
+        "offer_end_s": 180,
+        "written": 71350,
+        "visible": 71071,
+        "common_tps": 1184.5166666666667,
+        "sample_us": 179832147,
+        "device_bytes": 2919387136,
+        "largest_replica_mempool_at_sample": 1249
+      },
+      {
+        "offer_end_s": 240,
+        "written": 75980,
+        "visible": 76334,
+        "common_tps": 1272.2333333333333,
+        "sample_us": 239952965,
+        "device_bytes": 3694686208,
+        "largest_replica_mempool_at_sample": 1106
+      },
+      {
+        "offer_end_s": 300,
+        "written": 70691,
+        "visible": 70619,
+        "common_tps": 1176.9833333333333,
+        "sample_us": 299963631,
+        "device_bytes": 4215889920,
+        "largest_replica_mempool_at_sample": 1258
+      },
+      {
+        "offer_end_s": 360,
+        "written": 70512,
+        "visible": 70398,
+        "common_tps": 1173.3,
+        "sample_us": 359929630,
+        "device_bytes": 3723849728,
+        "largest_replica_mempool_at_sample": 1191
+      },
+      {
+        "offer_end_s": 420,
+        "written": 69151,
+        "visible": 69255,
+        "common_tps": 1154.25,
+        "sample_us": 419958602,
+        "device_bytes": 3472621568,
+        "largest_replica_mempool_at_sample": 1167
+      },
+      {
+        "offer_end_s": 480,
+        "written": 75053,
+        "visible": 74533,
+        "common_tps": 1242.2166666666667,
+        "sample_us": 479704006,
+        "device_bytes": 2822283264,
+        "largest_replica_mempool_at_sample": 1359
+      },
+      {
+        "offer_end_s": 540,
+        "written": 72015,
+        "visible": 73021,
+        "common_tps": 1217.0166666666667,
+        "sample_us": 539933500,
+        "device_bytes": 3836080128,
+        "largest_replica_mempool_at_sample": 623
+      },
+      {
+        "offer_end_s": 600,
+        "written": 72224,
+        "visible": 71765,
+        "common_tps": 1196.0833333333333,
+        "sample_us": 599957058,
+        "device_bytes": 3876347904,
+        "largest_replica_mempool_at_sample": 1212
+      }
+    ],
+    "observation_errors": 7,
+    "longest_sample_gap_us": 2996440,
+    "delivery_errors": {
+      "dispatch queue full": 228572,
+      "queue deadline": 4986,
+      "Resource temporarily unavailable (os error 11)": 21,
+      "Connection reset by peer (os error 104)": 117,
+      "failed to fill whole buffer": 1
+    },
+    "before_file_mtime_ns": 1795718749896004477,
+    "compaction_by_approximate_offer_time": {
+      "before offer": {
+        "started": 16,
+        "finished": 16,
+        "input_bytes": 4288396856,
+        "output_bytes": 2906741895,
+        "compaction_us": 13351013,
+        "cpu_us": 11503428,
+        "output_levels": {
+          "6": 16
+        }
+      },
+      "0 to 60 s": {
+        "started": 16,
+        "finished": 16,
+        "input_bytes": 2883043322,
+        "output_bytes": 2097036859,
+        "compaction_us": 10129012,
+        "cpu_us": 8595697,
+        "output_levels": {
+          "5": 8,
+          "6": 8
+        }
+      },
+      "60 to 120 s": {
+        "started": 8,
+        "finished": 8,
+        "input_bytes": 1496367608,
+        "output_bytes": 1108209226,
+        "compaction_us": 5490404,
+        "cpu_us": 4925086,
+        "output_levels": {
+          "5": 4,
+          "6": 4
+        }
+      },
+      "120 to 180 s": {
+        "started": 8,
+        "finished": 8,
+        "input_bytes": 1604502076,
+        "output_bytes": 1138105521,
+        "compaction_us": 17303253,
+        "cpu_us": 4759079,
+        "output_levels": {
+          "5": 4,
+          "6": 4
+        }
+      },
+      "180 to 240 s": {
+        "started": 12,
+        "finished": 12,
+        "input_bytes": 2627982080,
+        "output_bytes": 1795738622,
+        "compaction_us": 8193010,
+        "cpu_us": 7461898,
+        "output_levels": {
+          "5": 4,
+          "6": 8
+        }
+      },
+      "240 to 300 s": {
+        "started": 16,
+        "finished": 16,
+        "input_bytes": 3088243287,
+        "output_bytes": 2364489590,
+        "compaction_us": 26390810,
+        "cpu_us": 9146262,
+        "output_levels": {
+          "5": 8,
+          "6": 8
+        }
+      },
+      "300 to 360 s": {
+        "started": 12,
+        "finished": 12,
+        "input_bytes": 2314611052,
+        "output_bytes": 1653698637,
+        "compaction_us": 25152000,
+        "cpu_us": 7479697,
+        "output_levels": {
+          "5": 4,
+          "6": 8
+        }
+      },
+      "360 to 420 s": {
+        "started": 11,
+        "finished": 11,
+        "input_bytes": 2353889161,
+        "output_bytes": 1680562251,
+        "compaction_us": 19920528,
+        "cpu_us": 6916552,
+        "output_levels": {
+          "5": 4,
+          "6": 7
+        }
+      },
+      "420 to 480 s": {
+        "started": 8,
+        "finished": 8,
+        "input_bytes": 1316311941,
+        "output_bytes": 923421791,
+        "compaction_us": 8233286,
+        "cpu_us": 3943755,
+        "output_levels": {
+          "5": 4,
+          "6": 4
+        }
+      },
+      "480 to 540 s": {
+        "started": 16,
+        "finished": 12,
+        "input_bytes": 3167837648,
+        "output_bytes": 1612076102,
+        "compaction_us": 21392892,
+        "cpu_us": 6517960,
+        "output_levels": {
+          "5": 4,
+          "6": 8
+        }
+      },
+      "540 to 600 s": {
+        "started": 14,
+        "finished": 18,
+        "input_bytes": 2558212873,
+        "output_bytes": 2497070096,
+        "compaction_us": 22050270,
+        "cpu_us": 9339483,
+        "output_levels": {
+          "5": 8,
+          "6": 10
+        }
+      }
+    }
+  },
+  {
+    "file": "prefund-3m.json.xz",
+    "offer_windows": [
+      {
+        "offer_end_s": 60,
+        "written": 110869,
+        "visible": 97752,
+        "common_tps": 1629.2,
+        "sample_us": 59551481,
+        "device_bytes": 2884595712,
+        "largest_replica_mempool_at_sample": 12311
+      },
+      {
+        "offer_end_s": 120,
+        "written": 111091,
+        "visible": 100352,
+        "common_tps": 1672.5333333333333,
+        "sample_us": 119972180,
+        "device_bytes": 3747946496,
+        "largest_replica_mempool_at_sample": 23242
+      },
+      {
+        "offer_end_s": 180,
+        "written": 105346,
+        "visible": 95232,
+        "common_tps": 1587.2,
+        "sample_us": 179932018,
+        "device_bytes": 2770206720,
+        "largest_replica_mempool_at_sample": 33111
+      }
+    ],
+    "observation_errors": 0,
+    "longest_sample_gap_us": 1820646,
+    "delivery_errors": {
+      "dispatch queue full": 211847,
+      "queue deadline": 847
+    }
+  }
+]

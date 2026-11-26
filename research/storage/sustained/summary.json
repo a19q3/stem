@@ -1,0 +1,204 @@
+[
+  {
+    "file": "prefund-3m.json.xz",
+    "replicas": 4,
+    "seconds": 180,
+    "planned": 540000,
+    "written": 327306,
+    "admitted": 327306,
+    "visible": 327306,
+    "drops": 212694,
+    "visible_tps": 1629.6444444444444,
+    "p99_common_us": 173667069,
+    "p99_client_queue_us": 197237,
+    "p99_client_response_us": 245825,
+    "cpu_seconds": 506.55,
+    "peak_sampled_node_rss_kib": 323824,
+    "process_write_B_per_confirmed_replica": 8496.863583313474,
+    "wal_bytes": 4097140206,
+    "compaction_jobs_creating_files": 28,
+    "sst": {
+      "flush": {
+        "files": 120,
+        "bytes": 4155457919
+      },
+      "compaction": {
+        "files": 84,
+        "bytes": 4930919140
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 3774132106,
+      "finality_sync_microseconds": 31590428,
+      "finality_writes": 1576,
+      "journal_serialized": 323008100,
+      "journal_sync_microseconds": 28018341,
+      "journal_writes": 3132
+    },
+    "agreed_height": 484,
+    "workload_sha256": "c52e0078dcd5e74163c31d612d987000fc26c28d096c166496ccb92cce715e12",
+    "genesis_sha256": "d7733df774045b1fb442e12abaabf085203c3509693c7cbb4d0ba82fcd4f25df",
+    "observer_errors": 0,
+    "device": {
+      "mount": {
+        "target": "/home",
+        "source": "/dev/nvme0n1p2[/@home]",
+        "fstype": "btrfs",
+        "options": "rw,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@home"
+      },
+      "bytes_by_node_and_device": [
+        {
+          "259:0": 1011818496,
+          "259:1": 1753993216
+        },
+        {
+          "259:0": 1165176832,
+          "259:1": 1596301312
+        },
+        {
+          "259:0": 912261120,
+          "259:1": 1848848384
+        },
+        {
+          "259:0": 978460672,
+          "259:1": 1886302208
+        }
+      ],
+      "total_bytes": 11153162240,
+      "per_confirmed_replica": 8518.910621864556,
+      "logical_bytes_by_namespace": {
+        "cell_trie": 3136662108,
+        "consensus_records": 3463990,
+        "execution": 335202134,
+        "framing": 56496,
+        "headers_and_history": 746900,
+        "live_cells": 298503072,
+        "other": 348296,
+        "proposal_journal": 321742474,
+        "serialized": 4097140206,
+        "system_records": 57960,
+        "system_trie": 356776
+      },
+      "device_over_serialized_batch_bytes": 2.7221822244859735
+    },
+    "candidate_verify_mean_us": 160764.3570219966,
+    "proposal_mean_us": 107949.08629441625,
+    "commit_mean_us": 24389.998730964468,
+    "independent_input_funding": {
+      "funding_transactions": 2110,
+      "outputs": 540000,
+      "common_height": 90
+    }
+  },
+  {
+    "file": "prefund-10m.json.xz",
+    "replicas": 4,
+    "seconds": 600,
+    "planned": 960000,
+    "written": 726442,
+    "admitted": 726303,
+    "visible": 726324,
+    "drops": 233558,
+    "visible_tps": 1208.1683333333333,
+    "p99_common_us": 3506686,
+    "p99_client_queue_us": 177239,
+    "p99_client_response_us": 270362,
+    "cpu_seconds": 1275.33,
+    "peak_sampled_node_rss_kib": 339508,
+    "process_write_B_per_confirmed_replica": 12126.126500019274,
+    "wal_bytes": 10170063064,
+    "compaction_jobs_creating_files": 137,
+    "sst": {
+      "flush": {
+        "files": 276,
+        "bytes": 9977074969
+      },
+      "compaction": {
+        "files": 375,
+        "bytes": 19777150590
+      },
+      "recovery": {
+        "files": 0,
+        "bytes": 0
+      },
+      "other": {
+        "files": 0,
+        "bytes": 0
+      }
+    },
+    "batch": {
+      "finality_serialized": 9449921585,
+      "finality_sync_microseconds": 129367001,
+      "finality_writes": 4592,
+      "journal_serialized": 720141479,
+      "journal_sync_microseconds": 124231968,
+      "journal_writes": 9156
+    },
+    "agreed_height": 1317,
+    "workload_sha256": "4e031b7c94bcaedf49ad6aa1fb721d1979954734febb417157ecf15405789c68",
+    "genesis_sha256": "8b4320db48a1714d70df6095e4664d1f9411c34aae895579ef34e8739cc676fe",
+    "observer_errors": 7,
+    "device": {
+      "mount": {
+        "target": "/home",
+        "source": "/dev/nvme0n1p2[/@home]",
+        "fstype": "btrfs",
+        "options": "rw,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@home"
+      },
+      "bytes_by_node_and_device": [
+        {
+          "253:0": 80728064,
+          "259:0": 5197656064,
+          "259:1": 3479392256
+        },
+        {
+          "253:0": 65343488,
+          "259:0": 5077159936,
+          "259:1": 3629793280
+        },
+        {
+          "253:0": 95506432,
+          "259:0": 4416126976,
+          "259:1": 4240904192
+        },
+        {
+          "253:0": 82284544,
+          "259:0": 5014831104,
+          "259:1": 4324798464
+        }
+      ],
+      "total_bytes": 35704524800,
+      "per_confirmed_replica": 12289.462003183153,
+      "logical_bytes_by_namespace": {
+        "cell_trie": 8031630184,
+        "consensus_records": 12773536,
+        "execution": 743875088,
+        "framing": 164976,
+        "headers_and_history": 2254236,
+        "live_cells": 662407488,
+        "other": 1014832,
+        "proposal_journal": 714661164,
+        "serialized": 10170063064,
+        "system_records": 179100,
+        "system_trie": 1102460
+      },
+      "device_over_serialized_batch_bytes": 3.5107476301092877
+    },
+    "candidate_verify_mean_us": 151128.4506387921,
+    "proposal_mean_us": 99770.12456445993,
+    "commit_mean_us": 31961.713632404182,
+    "independent_input_funding": {
+      "funding_transactions": 3750,
+      "outputs": 960000,
+      "common_height": 169
+    }
+  }
+]

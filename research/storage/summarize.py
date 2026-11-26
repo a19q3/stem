@@ -134,6 +134,17 @@ def summarize(path):
         result[kind + "_mean_us"] = (elapsed("after") - elapsed("before")) / (
             count("after") - count("before")
         )
+    if load.get("prefund_payments"):
+        funding = run["payment-funding.json"]
+        parents = {txid for _, txid in funding["committed"]}
+        assert len(parents) == len(funding["committed"])
+        assert funding["outputs"] == summary["planned"] and parents.isdisjoint(written)
+        assert all(height <= funding["height"] for height, _ in funding["committed"])
+        assert funding["height"] <= min(node["height"] for node in r["before"]["statuses"])
+        result["independent_input_funding"] = {
+            "funding_transactions": len(parents), "outputs": funding["outputs"],
+            "common_height": funding["height"],
+        }
     if "lineage-audit.json" in run:
         audit = run["lineage-audit.json"]
         assert audit["applied"] == visible and audit["head_updates"] == 2 * visible

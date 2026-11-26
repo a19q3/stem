@@ -7,6 +7,7 @@ import lzma
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,10 @@ def main():
     parser.add_argument("--rate", type=int, required=True)
     parser.add_argument("--seconds", type=int, required=True)
     parser.add_argument("--payment-chains", type=int, default=0, help="number of independently recycled payment outputs")
+    parser.add_argument("--prefund-payments", action="store_true",
+                        help="finalize disjoint payment inputs on all nodes before measurement")
+    parser.add_argument("--workload-output", type=Path,
+                        help="also save the exact length-prefixed signed transactions for independent replay")
     parser.add_argument("--data-bytes", type=int, default=0)
     parser.add_argument("--cadence-ms", type=int, default=250)
     parser.add_argument("--replicas", type=int, default=4)
@@ -46,6 +51,8 @@ def main():
     parser.add_argument("--node-cpus", default="4-31")
     args = parser.parse_args()
     assert not args.output.exists()
+    if args.workload_output and args.workload_output.exists():
+        parser.error("the workload output already exists")
     args.scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.scratch) as tmp:
         root = Path(tmp).resolve()
@@ -82,6 +89,7 @@ def main():
             STEM_STORAGE_REPLICAS=str(args.replicas),
             STEM_STORAGE_SENDERS=str(args.senders),
             STEM_STORAGE_PAYMENT_CHAINS=str(args.payment_chains),
+            STEM_STORAGE_PREFUND_PAYMENTS=str(int(args.prefund_payments)),
             STEM_STORAGE_PAYMENT_DATA_BYTES=str(args.data_bytes),
             STEM_STORAGE_DRAIN=str(args.drain),
         )
@@ -120,11 +128,14 @@ def main():
             archive["scratch_mount"] = mount
         if len(paths) == 1:
             folder = paths[0]
+            if (folder / "before.json").exists():
+                archive["before_file_mtime_ns"] = (folder / "before.json").stat().st_mtime_ns
             for name in (
                 "before.json",
                 "report.json",
                 "history-index-proof.json",
                 "lineage-audit.json",
+                "payment-funding.json",
             ):
                 path = folder / name
                 if path.exists():
@@ -133,6 +144,10 @@ def main():
                 path = folder / name
                 if path.exists():
                     archive[name + "_sha256"] = digest(path)
+            if args.workload_output and (folder / "workload.bin").is_file():
+                with (folder / "workload.bin").open("rb") as source, args.workload_output.open("xb") as dest:
+                    shutil.copyfileobj(source, dest)
+                assert digest(args.workload_output) == archive["workload.bin_sha256"]
             if (folder / "node-0/db/LOG").exists():
                 archive["sst"] = json.loads(
                     subprocess.check_output(
