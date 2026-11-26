@@ -571,6 +571,8 @@ def main():
                  "metatype-object-state-limit", "metatype-rule-registry", "native-object-append-only",
                  "metatype-object-append-only", "native-object-workflow", "metatype-object-workflow",
                  "native-object-royalty", "metatype-object-royalty",
+                 "native-object-rotating-approval", "metatype-object-rotating-approval",
+                 "metatype-approval-registry",
                  "native-amount-cap",
                  "metatype-udt-adapter", "metatype-amount-cap-adapter"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve())
@@ -633,6 +635,10 @@ def main():
     royalties = (args.native_object_royalty, args.metatype_object_royalty)
     if any(royalties) and not all((*royalties, metatype_object)):
         parser.error("The royalty fixture requires both binaries and the Metatype object route")
+    rotation = (args.native_object_rotating_approval, args.metatype_object_rotating_approval,
+                args.metatype_approval_registry)
+    if any(rotation) and not all((*rotation, metatype_object)):
+        parser.error("The rotation fixture requires its registry, both adapters and the Metatype object route")
     if args.metatype_shared_manifest and not (metatype_object or all(portable_udt)):
         parser.error("--metatype-shared-manifest requires the Metatype settlement fixture")
     if any((args.stem_native_object, args.object_policy, args.ckb_stem_object, *object_adapters)) and (

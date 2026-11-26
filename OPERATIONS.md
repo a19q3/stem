@@ -1480,6 +1480,17 @@ release. Run again with a shared Manifest or a revisable object.
 Inspect `native_object.royalty` for the payee Locks, payment
 markers, finality proofs and CKB output index.
 
+Build `metatype-approval-registry`, `stem-object-rotating-approval`
+and `metatype-object-rotating-approval` with the same RISC-V command.
+Pass their paths via `--metatype-approval-registry`,
+`--native-object-rotating-approval` and
+`--metatype-object-rotating-approval`. The runner registers an
+Ed25519 key on CKB, advances Stem's anchor and exports with that key.
+It rotates the key while the object is on CKB, then transfers, burns
+and releases using the next generation. It captures both registry
+transactions in `native_object.approval_rotation`. The same fixture
+can include a live capacity rule on a revisable object.
+
 Add `--metatype-revision-topup` to test an update that exceeds the
 original Stem Cell's storage budget. The original asset holds 8 CKB.
 The signed return adds 5 CKB and keeps the exact authenticated state

@@ -55,3 +55,25 @@ pub fn output_is_untyped(index: usize) -> Option<bool> {
         _ => None,
     }
 }
+
+/// Return the exact type-hash-prefixed native projection of one L1 record.
+pub fn live_ckb_data<const N: usize>(hash: &Hash32) -> Option<[u8; N]> {
+    let mut found = None;
+    for index in 0u64..4 {
+        let mut data = [0; N];
+        let mut len = N as u64;
+        let mut status = data.as_mut_ptr() as u64;
+        unsafe {
+            asm!("ecall", inout("a0") status, in("a1") &mut len, in("a2") 0u64,
+                in("a3") index, in("a4") 0u64, in("a5") 1u64, in("a7") 2130u64);
+        }
+        match status {
+            1 => break,
+            2 => continue,
+            0 if data.get(..32)? != hash => continue,
+            0 if len == N as u64 && found.is_none() => found = Some(data),
+            _ => return None,
+        }
+    }
+    found
+}

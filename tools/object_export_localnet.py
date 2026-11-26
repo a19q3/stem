@@ -7,10 +7,11 @@ import time
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request, le, output,
                              packed_script, point, script, script_hash, transaction, wallet_group)
 from localnet import run, write_json
+from metatype_approval_fixture import Rotation, type_scripts
 from metatype_localnet import (
     capacity as ckb_occupied, manifest_definition, metatype_data, metatype_reference,
 )
-from native_bridge_localnet import cell, signing_cell
+from native_bridge_localnet import cell, signing_cell, stem_id
 from spore_settlement_localnet import molecule_bytes, table
 from stake_localnet import witness
 
@@ -34,6 +35,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     append_only = args.native_object_append_only is not None
     use_workflow = args.native_object_workflow is not None
     use_royalty = args.native_object_royalty is not None
+    use_rotation = args.native_object_rotating_approval is not None
     early_return = args.metatype_workflow_early_return
     state_limit = (700 if topup else 120) if args.native_object_state_limit else None
     rule_records = [le(state_limit, 2), le(state_limit + 200, 2)] if state_limit else []
@@ -65,13 +67,24 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         royalty_adapter = args.metatype_object_royalty.read_bytes()
         codes.append(royalty_adapter)
     if live_rule:
-        codes.append(args.metatype_rule_registry.read_bytes())
+        live_registry_index = len(codes)
+        live_registry_code = args.metatype_rule_registry.read_bytes()
+        codes.append(live_registry_code)
+    if use_rotation:
+        rotation_code = args.metatype_approval_registry.read_bytes()
+        rotation_adapter = args.metatype_object_rotating_approval.read_bytes()
+        codes.extend((rotation_code, rotation_adapter))
     ckb_items = codes + ([b""] if live_rule else rule_records)
+    if use_rotation:
+        rotation_seed_index = len(ckb_items)
+        ckb_items.append(b"")
     mailbox_seed_index = len(ckb_items)
     auth_index, change_index = mailbox_seed_index + 1, mailbox_seed_index + 2
     item_caps = [(len(item) + 100) * CKB for item in ckb_items]
     if live_rule:
-        item_caps[-1] = 800 * CKB
+        item_caps[len(codes)] = 800 * CKB
+    if use_rotation:
+        item_caps[rotation_seed_index] = 450 * CKB
     funding_change = vault["change"] - sum(item_caps) - mailbox_cap - authority_funds - 2 * FEE
     funding = transaction([vault["change_point"]],
         [output(cap, fixture.standard) for cap in item_caps] +
@@ -84,7 +97,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     ckb_deps = [secp, *[dependency(point(funded, i)) for i in range(len(codes))]]
     native_deps = [mint["lock_dep"], point(mint["mint_id"], 2), point(mint["mint_id"], 3)]
     authority_point = point(funded, auth_index)
-    for index in range(sum((metatype, state_limit is not None, append_only, use_workflow, use_royalty))):
+    for index in range(sum((metatype, state_limit is not None, append_only, use_workflow, use_royalty, use_rotation))):
         native_deps.append(point(mint["mint_id"], 4 + index))
     if state_limit and not live_rule:
         l1_rule_point = point(funded, len(codes))
@@ -113,12 +126,12 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     registry_rejections = {}
     if live_rule:
         rule_seed = point(funded, len(codes))
-        registry_code = hex_bytes(ckb_hash(codes[-1]))
+        registry_code = hex_bytes(ckb_hash(live_registry_code))
         rule_types = [script(registry_code, hex_bytes(ckb_hash(le(0, 8) + packed(rule_seed) + le(i, 8))),
                              "data2") for i in range(2)]
         rule_cap = 350 * CKB
         birth = transaction([rule_seed], [output(rule_cap, fixture.standard, ty) for ty in rule_types]
-                            + [output(item_caps[-1] - 2 * rule_cap - FEE, fixture.standard)],
+                            + [output(item_caps[len(codes)] - 2 * rule_cap - FEE, fixture.standard)],
                             [hex_bytes(raw) for raw in rule_records] + ["0x"], ckb_deps)
         forged = transaction([rule_seed], [output(rule_cap, fixture.standard, rule_types[1])],
                              [hex_bytes(rule_records[0])], ckb_deps)
@@ -132,9 +145,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         ckb_deps.append(l1_rule_dep)
 
     live_votes = None
+    rotation = None
+    rotation_type = None
 
     def native_sign(label, spending, outputs, *, endpoint=None, message=None, receive=False, votes=None, deps=None,
-                    workflow_proof=b""):
+                    workflow_proof=b"", rotation_signature=None):
         locks = sorted({packed_script(lock): (lock, key) for _, lock, key in spending}.values(),
                        key=lambda pair: packed_script(pair[0]))
         points = [p for p, _, _ in spending]
@@ -152,17 +167,37 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         path = args.output / f"object-{label}-request.json"
         draft = args.output / f"object-{label}-draft.json"
         context = args.output / f"object-{label}-context.json"
-        write_json(path, request)
-        write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", path)))
         observations = votes if votes is not None else live_votes
-        if observations:
+
+        def build():
+            write_json(path, request)
+            write_json(draft, json.loads(run(args.binary, "wallet", "build", "--request", path)))
+            if not observations:
+                return draft
             observation_file = args.output / f"object-{label}-references.json"
             write_json(observation_file, observations)
             attached = args.output / f"object-{label}-attached.json"
             write_json(attached, json.loads(run(args.binary, "bridge", "attach-references", "--genesis", spec_path,
                 "--transaction", draft, "--observations", observation_file)))
-            draft = attached
-        write_json(context, {"cells": [signing_cell(client, p) for p in points + deps]})
+            return attached
+
+        inputs = [signing_cell(client, p) for p in points]
+        built = build()
+        if use_rotation and rotation_type is not None and rotation_signature is not False:
+            rule = packed_script(rotation_type)
+            types_in_tx = set().union(*(type_scripts(raw) for raw in [
+                *(entry["cell"] for entry in inputs), *outputs]))
+            if rule in types_in_tx:
+                group = len(locks) + sorted(types_in_tx).index(rule)
+                tx_id = stem_id(args, network, json.loads(built.read_text()))
+                generation = rotation.generation if rotation_signature is None else rotation_signature
+                proof = rotation.sign(tx_id, generation)
+                request["proofs"] = sorted([*request.get("proofs", []),
+                    {"group_index": group, "proof_data": hex_bytes(proof)}], key=lambda row: row["group_index"])
+                built = build()
+                assert stem_id(args, network, json.loads(built.read_text())) == tx_id
+        draft = built
+        write_json(context, {"cells": [*inputs, *(signing_cell(client, p) for p in deps)]})
         for index, (lock, key) in enumerate(locks):
             if key is None:
                 continue
@@ -215,6 +250,20 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         write_json(request, l1_reference_request(int(header["number"], 16), header["hash"], *targets))
         return attest("attest-reference", label, ["--request", request])
 
+    if use_rotation:
+        rotation = Rotation(fixture, genesis, network, ckb_hash(rotation_code), point(funded, rotation_seed_index))
+        rotation_birth = ckb_submit(rotation.update("birth", 0, ckb_deps))
+        rotation.applied(rotation_birth["hash"], 0)
+        old_registry_point = rotation.location
+        old_registry_dep = dependency(rotation.location)
+        ckb_deps.append(old_registry_dep)
+        rotation_header = rotation_birth["proof"]["header"]
+        l1.mine(spec["bridge"]["confirmations"])
+        rotation_initial_anchor = attest_anchor("approval-register", rotation_header)
+        initial_targets = [(rotation.location, True), *([(l1_rule_point, True)] if live_rule else [])]
+        rotation_votes = attest_references("approval-registered", rotation_header, *initial_targets)
+        live_votes = rotation_votes
+
     seed_cap, auth_cap, object_cap, bond_cap = [capacity * CKB for capacity in (450, 200, 200, 120)]
     if use_royalty:
         auth_cap = 500 * CKB
@@ -233,6 +282,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     identity_hash = script_hash(identity)
     policy = script(policy_code, hex_bytes(identity_hash + script_hash(authority)), "data")
     types = [identity, policy]
+    if use_rotation:
+        rotating_code = ckb_hash(args.native_object_rotating_approval.read_bytes())
+        rotation_type = script(hex_bytes(rotating_code), hex_bytes(identity_hash + script_hash(rotation.registry)), "data")
+        types.append(rotation_type)
+        rotation.rule = rotation_type
     if append_only:
         append_code = ckb_hash(args.native_object_append_only.read_bytes())
         append_script = script(hex_bytes(append_code), hex_bytes(identity_hash), "data")
@@ -244,12 +298,21 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         state_limit_code = ckb_hash(args.native_object_state_limit.read_bytes())
         types.append(script(hex_bytes(state_limit_code), hex_bytes(identity_hash + rule_tag + rule_hash), "data"))
         if live_rule:
-            birth_header = registry_birth["proof"]["header"]
-            l1.mine(spec["bridge"]["confirmations"])
-            first_rule_anchor = attest_anchor("rule-anchor-initial", birth_header)
-            initial_votes = attest_references("rule-initial", birth_header, (l1_rule_point, True))
-            other_votes = attest_references("rule-other", birth_header, (other_rule_point, True))
-            historical_votes = attest_references("rule-historical", birth_header, (l1_rule_point, False))
+            if use_rotation:
+                birth_header = rotation_header
+                first_rule_anchor = rotation_initial_anchor
+                initial_votes = rotation_votes
+                approval_target = [(rotation.location, True)]
+                approval_only_votes = attest_references("approval-only", birth_header, *approval_target)
+            else:
+                birth_header = registry_birth["proof"]["header"]
+                l1.mine(spec["bridge"]["confirmations"])
+                first_rule_anchor = attest_anchor("rule-anchor-initial", birth_header)
+                initial_votes = attest_references("rule-initial", birth_header, (l1_rule_point, True))
+                approval_target = []
+                approval_only_votes = []
+            other_votes = attest_references("rule-other", birth_header, *approval_target, (other_rule_point, True))
+            historical_votes = attest_references("rule-historical", birth_header, *approval_target, (l1_rule_point, False))
             live_votes = initial_votes
         else:
             native_rule_point, native_other_rule_point = [at(separated, i) for i in (3, 4)]
@@ -329,6 +392,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             adapter_entries.append(workflow_code + b"\0" + ckb_hash(workflow_adapter))
         if use_royalty:
             adapter_entries.append(royalty_code + b"\0" + ckb_hash(royalty_adapter))
+        if use_rotation:
+            adapter_entries.append(rotating_code + b"\0" + ckb_hash(rotation_adapter))
         adapter_table = bytes([len(adapter_entries)]) + b"".join(sorted(adapter_entries)) + profile + custody
         table_capacity = (len(adapter_table) + 100) * CKB
         table_outputs = [output(table_capacity, fixture.standard)]
@@ -402,6 +467,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     wrong_policy = dict(policy, args=hex_bytes(script_hash(wrong) + script_hash(authority)))
     rejected["stem_forged_id"] = reject_stem(native_sign("forged-object", [(seed, owner, owner_key), auth_input],
         [cell(object_cap, owner, data, [wrong, wrong_policy]), *issued_outputs[1:]]), "exited with 117")
+    if use_rotation:
+        rejected["stem_creation_missing_rotating_approval"] = reject_stem(native_sign("no-rotating-approval",
+            [(seed, owner, owner_key), auth_input], issued_outputs, rotation_signature=False), "exited with 62")
     if revisable:
         revision_errors = ("exited with 117",)
         if append_only or use_workflow:
@@ -424,7 +492,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             *revision_errors)
         if state_limit:
             valid_update = [cell(object_cap, owner, native_update, types), cheaper_auth]
-            absent = dict(votes=[]) if live_rule else dict(deps=native_deps[:-1])
+            absent = dict(votes=approval_only_votes) if live_rule else dict(deps=native_deps[:-1])
             unrelated = (dict(votes=other_votes) if live_rule else
                          dict(deps=[*native_deps[:-1], native_other_rule_point]))
             rejected["stem_revision_missing_external_rule"] = reject_stem(native_sign("missing-external-rule", previous,
@@ -437,7 +505,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rejected["stem_revision_removes_state_limit"] = reject_stem(native_sign("remove-state-limit", previous,
                 [cell(object_cap, owner, native_update, types[:-1]), cheaper_auth]), "exited with 56")
             substitute = dict(types[-1], args=hex_bytes(identity_hash + rule_tag + substitute_hash))
-            both = (dict(votes=attest_references("both-rules", birth_header,
+            both = (dict(votes=attest_references("both-rules", birth_header, *approval_target,
                                                 (l1_rule_point, True), (other_rule_point, True))) if live_rule else
                     dict(deps=[*native_deps, native_other_rule_point]))
             rejected["stem_revision_replaces_state_limit"] = reject_stem(native_sign("replace-state-limit", previous,
@@ -570,7 +638,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
 
     def mint_ckb(label, recipient=fixture.owner_lock, contents=data, *, include_checkpoint=True,
                  include_policy=True, output_type=wrapper, approve=True, include_definition=True,
-                 fund_mailbox=True):
+                 fund_mailbox=True, rotation_signature=None):
         input_point, amount, signer, fee_lock = (authority_point, authority_funds, authority_key, ckb_authority)
         if not approve:
             input_point, amount = point(table_deployed, fee_index), table_change
@@ -586,7 +654,9 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         tx["witnesses"] = [witness(path)]
         if metatype:
             tx["header_deps"] = [genesis]
-        return fixture.sign(f"object-{label}", tx, [wallet_group(1, [signer])])
+        signers = [wallet_group(1, [signer])]
+        return (rotation.ckb_sign(label, tx, signers, wrapper_hash, rotation_signature)
+                if use_rotation else fixture.sign(f"object-{label}", tx, signers))
 
     gate_invalid = 51 if metatype else 123
     rejected["ckb_mint_wrong_recipient"] = reject_ckb(mint_ckb("redirect-mint", recipient=fixture.friend_lock), gate_invalid)
@@ -613,14 +683,35 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     if revisable:
         rejected["ckb_import_unfunded_return_reserve"] = reject_ckb(
             mint_ckb("unfunded-return-reserve", fund_mailbox=False), gate_invalid)
+    if use_rotation:
+        rejected["ckb_import_missing_rotating_approval"] = reject_ckb(
+            mint_ckb("import-missing-rotating-approval", rotation_signature=False), 46)
     ckb_minted = ckb_submit(mint_ckb("mint"))
     live_mailbox, wrapped_point, authority_point = [point(ckb_minted["hash"], i) for i in range(3)]
     authority_funds -= token_cap + (funded_mailbox_cap - mailbox_cap) + FEE
     mailbox_cap = funded_mailbox_cap
+    if use_rotation:
+        registry_deps = [dep for dep in ckb_deps if dep != old_registry_dep]
+        for label, update in (
+            ("repeat_key", dict(data=le(1, 8) + rotation.record(0)[8:])),
+            ("skip_generation", dict(data=le(2, 8) + rotation.record(1)[8:])),
+            ("change_owner", dict(lock=fixture.owner_lock)),
+            ("invalid_key", dict(data=le(1, 8) + bytes(32))),
+        ):
+            rejected[f"ckb_rotation_{label}"] = reject_ckb(
+                rotation.update(label, 1, registry_deps, **update), 61)
+        retire_registry = transaction([rotation.location],
+            [output(rotation.capacity - FEE, fixture.standard)], ["0x"], registry_deps)
+        rejected["ckb_rotation_retire"] = reject_ckb(fixture.sign("object-approval-registry-retire", retire_registry,
+            [wallet_group(0, [fixture.faucet])]), 61)
+        rotated = ckb_submit(rotation.update("advance", 1, registry_deps))
+        rotation.applied(rotated["hash"], 1)
+        ckb_deps = [*registry_deps, dependency(rotation.location)]
+        assert l1.call("get_live_cell", old_registry_point, False)["status"] != "live"
 
     def transfer(label, authority_consent=True, include_policy=True, contents=data,
                  from_key=fixture.owner, *, selected=None, deps=None, workflow_proof=b"", recipient=None,
-                 payment=None):
+                 payment=None, rotation_signature=None):
         inputs = [wrapped_point]
         recipient = recipient or fixture.friend_lock
         outputs = [output(token_cap - (0 if authority_consent else FEE), recipient, wrapper)]
@@ -640,15 +731,30 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         tx = transaction(inputs, outputs, body, ckb_deps if deps is None else deps)
         if metatype:
             tx["header_deps"] = [genesis]
-        if workflow_proof:
-            row = (wrapper_hash, workflow_id, 1, b"", workflow_proof, b"")
-            tx["witnesses"] = ["0x"] * len(inputs) + [hex_bytes(encode_group_witnesses([row]))]
+        rows = [(wrapper_hash, workflow_id, 1, b"", workflow_proof, b"")] if workflow_proof else []
+        if use_rotation:
+            return rotation.ckb_sign(label, tx, keys, wrapper_hash, rotation_signature, rows)
+        if rows:
+            tx["witnesses"] = ["0x"] * len(inputs) + [hex_bytes(encode_group_witnesses(rows))]
         return fixture.sign(f"object-{label}", tx, keys)
 
     approval_invalid = 46 if metatype else 121
     rejected["ckb_transfer_without_approval"] = reject_ckb(transfer("no-transfer-approval", False), approval_invalid)
     if metatype:
         rejected["ckb_transfer_policy_removed"] = reject_ckb(transfer("transfer-without-policy", include_policy=False), 48)
+    if use_rotation:
+        next_content = object_data(ckb_content, 2) if revisable else data
+        rejected["ckb_transfer_retired_key"] = reject_ckb(transfer("transfer-retired-key",
+            contents=next_content, rotation_signature=0), 46)
+        expired = transfer("transfer-spent-registry", contents=next_content,
+            deps=[*registry_deps, old_registry_dep], rotation_signature=0)
+        try:
+            l1.call("send_transaction", expired["json"], "passthrough")
+        except RuntimeError as error:
+            assert any(word in str(error).lower() for word in ("resolve", "dead", "unknown")), error
+            rejected["ckb_transfer_spent_registry"] = str(error)
+        else:
+            raise RuntimeError("CKB accepted the consumed approval registry dependency")
     if use_royalty:
         ckb_payment = (royalty, ckb_payee, ckb_tag)
         payment_controls = (
@@ -722,7 +828,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             def rule_update(label, value, *, keep_type=True, lock=None):
                 tx = transaction([l1_rule_point], [output(rule_cap - FEE, lock or fixture.standard,
                     rule_types[0] if keep_type else None)], [hex_bytes(le(value, 2))],
-                    [secp, dependency(point(funded, len(codes) - 1))])
+                    [secp, dependency(point(funded, live_registry_index))])
                 return fixture.sign(f"object-{label}", tx, [wallet_group(0, [fixture.faucet])])
 
             registry_rejections["decrease"] = reject_ckb(rule_update("decrease-rule", state_limit - 1), 57)
@@ -775,7 +881,7 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             return_owner, return_lock = fixture.friend, fixture.friend_lock
 
     inbound = packet("return", False, script_hash(buyer), 0, content=return_state)
-    def return_ckb(label, *, consume=True, message=inbound, approve=True, deps=None):
+    def return_ckb(label, *, consume=True, message=inbound, approve=True, deps=None, rotation_signature=None):
         inputs = [live_mailbox]
         outputs = [output(mailbox_cap, ckb_owner, mailbox)]
         data_items = [hex_bytes(le(1, 8) + root + binary(message["record"]))]
@@ -793,13 +899,16 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         tx = transaction(inputs, outputs, data_items, ckb_deps if deps is None else deps)
         if metatype and consume:
             tx["header_deps"] = [genesis]
-        return fixture.sign(f"object-{label}", tx, keys)
+        return (rotation.ckb_sign(label, tx, keys, wrapper_hash, rotation_signature)
+                if use_rotation else fixture.sign(f"object-{label}", tx, keys))
 
     rejected["ckb_return_without_burn"] = reject_ckb(return_ckb("return-without-burn", consume=False), gate_invalid)
     rejected["ckb_return_to_escrow_lock"] = reject_ckb(return_ckb("return-to-escrow",
         message=packet("return-to-escrow", False, endpoint_id, 0)), gate_invalid)
     if metatype:
         rejected["ckb_return_without_approval"] = reject_ckb(return_ckb("no-return-approval", approve=False), 46)
+    if use_rotation:
+        rejected["ckb_burn_retired_key"] = reject_ckb(return_ckb("burn-retired-key", rotation_signature=0), 46)
     if revisable:
         rejected["ckb_return_stale_state"] = reject_ckb(return_ckb("return-stale-state",
             message=packet("return-stale-state", False, script_hash(buyer), 0, content=data)), gate_invalid)
@@ -818,6 +927,15 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
     advanced = attest_anchor("anchor", anchor)
     mailbox_votes = attest_references("return-mailbox", anchor, (live_mailbox, False))
     certified = mailbox_votes
+    if use_rotation:
+        targets = [(rotation.location, True), (live_mailbox, False)]
+        if live_rule:
+            targets.append((l1_rule_replacement, True))
+        rotation_certified = attest_references("approval-current", anchor, *targets)
+        old_targets = [(old_registry_point, False), (live_mailbox, False)]
+        if live_rule:
+            old_targets.append((l1_rule_replacement, True))
+        old_approval_history = attest_references("approval-spent-history", anchor, *old_targets)
     if live_rule:
         certified = attest_references("return", anchor, (l1_rule_replacement, True), (live_mailbox, False))
         old = args.output / "object-consumed-rule-request.json"
@@ -827,6 +945,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             "--journal", args.output / "object-consumed-rule"], capture_output=True, text=True)
         assert refused.returncode and "no longer live" in refused.stderr, refused
         rejected["stem_consumed_rule_observation"] = refused.stderr
+    if use_rotation:
+        certified = rotation_certified
 
     release_inputs = [(bond, endpoint, None), (original, endpoint, None)]
     release = [cell(bond_cap, endpoint), cell(object_cap + return_topup, buyer, return_state, types)]
@@ -885,7 +1005,11 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                             cell(native_auth_capacity - 2 * FEE, authority)],
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
     if state_limit:
-        without_rule = dict(votes=mailbox_votes) if live_rule else dict(votes=certified, **absent)
+        if live_rule and use_rotation:
+            without_rule = dict(votes=attest_references("return-no-ceiling", anchor,
+                (rotation.location, True), (live_mailbox, False)))
+        else:
+            without_rule = dict(votes=mailbox_votes) if live_rule else dict(votes=certified, **absent)
         rejected["stem_return_under_missing_rule"] = reject_stem(native_sign("return-missing-rule", with_approval,
             release + [cell(native_auth_capacity - 2 * FEE - return_topup, authority)],
             endpoint=endpoint, message=inbound, receive=True, **without_rule), "exited with 56")
@@ -905,6 +1029,13 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                             cell(native_auth_capacity - 2 * FEE + 1, authority)],
             endpoint=endpoint, message=inbound, receive=True, votes=certified), "exited with 54")
     restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup - royalty, authority)]
+    if use_rotation:
+        restored_with_payment = [*restored_outputs, cell(royalty, stem_payee, stem_tag)] if use_royalty else restored_outputs
+        for label, votes, signer in (("retired-key", certified, 0), ("historical-record", old_approval_history, 0),
+                                     ("missing-seal", certified, False)):
+            rejected[f"stem_return_rotating_approval_{label}"] = reject_stem(native_sign(f"return-{label}",
+                with_approval, restored_with_payment, endpoint=endpoint, message=inbound, receive=True,
+                votes=votes, workflow_proof=return_proof, rotation_signature=signer), "exited with 62")
     if use_royalty:
         rejected["stem_return_missing_royalty"] = reject_stem(native_sign("no-return-royalty", with_approval,
             restored_outputs, endpoint=endpoint, message=inbound, receive=True,
@@ -964,6 +1095,10 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                             "transfer": moved, "execution": execution(moved), "stem_payments": stem_payments,
                             "ckb_payment_index": 2}
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
+            "approval_rotation": ({"type": rotation_type, "registry": rotation.registry,
+                "birth": rotation_birth, "rotation": rotated, "birth_stem_anchor": rotation_initial_anchor,
+                "records": [hex_bytes(rotation.record(generation)) for generation in (0, 1)],
+                "birth_votes": rotation_votes, "return_votes": certified} if use_rotation else None),
             "royalty": royalty_evidence,
             "shared_manifest": shared_evidence,
             "external_rule": rule_evidence,
