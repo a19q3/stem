@@ -1,0 +1,133 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 2841212..53c74ed 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -11,6 +11,7 @@ publish = false
+ [features]
+ comet-benchmark = []
+ jolteon-certificate-experiment = []
++jolteon-decoded-candidate-experiment = []
+ 
+ [dependencies]
+ anyhow.workspace = true
+diff --git a/src/jolteon.rs b/src/jolteon.rs
+index ec292e5..3fe3d34 100644
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -115,6 +115,8 @@ struct Checked {
+ }
+ 
+ struct Candidate {
++    #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++    wire_ids: Option<Vec<Hash32>>,
+     proposal: Checked,
+     execution: Option<Arc<Prepared>>,
+     source: u16,
+@@ -570,6 +572,8 @@ impl Replica {
+             self.candidates.insert(
+                 point,
+                 Candidate {
++                    #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++                    wire_ids: None,
+                     proposal: checked,
+                     execution: None,
+                     source: peer,
+@@ -621,6 +625,8 @@ impl Replica {
+                     self.candidates.insert(
+                         point,
+                         Candidate {
++                            #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++                            wire_ids: None,
+                             proposal: checked,
+                             execution: None,
+                             source: self.directory.own,
+@@ -678,6 +684,25 @@ impl Replica {
+             );
+             if candidate.execution.is_none() {
+                 let started = Instant::now();
++                #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++                let (transactions, wire_ids) = {
++                    let mut transactions = Vec::with_capacity(proposal.wire.transactions.len());
++                    let mut ids = Vec::with_capacity(proposal.wire.transactions.len());
++                    for bytes in &proposal.wire.transactions {
++                        let id = ckb_hash::blake2b_256(bytes);
++                        let tx = if let Some(tx) = self.mempool.decoded(&id, bytes) {
++                            self.execution.reused_decodings += 1;
++                            tx.clone()
++                        } else {
++                            self.execution.fresh_decodings += 1;
++                            Transaction::from_bytes(bytes.clone())?
++                        };
++                        transactions.push(tx);
++                        ids.push(id);
++                    }
++                    (transactions, ids)
++                };
++                #[cfg(not(feature = "jolteon-decoded-candidate-experiment"))]
+                 let transactions = proposal
+                     .wire
+                     .transactions
+@@ -694,6 +719,8 @@ impl Replica {
+                     prepared.header() == &proposal.header,
+                     "candidate execution differs from the signed Header"
+                 );
++                #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++                { candidate.wire_ids = Some(wire_ids); }
+                 candidate.execution = Some(Arc::new(prepared));
+             }
+             let prepared = candidate.execution.clone().expect("prepared candidate");
+@@ -844,8 +871,18 @@ impl Replica {
+             if let Some(change) = prepared.committee_change() {
+                 self.pending = Some(change.clone());
+             }
+-            for tx in &proposal.transactions {
+-                self.mempool.remove(&ckb_hash::blake2b_256(tx));
++            #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++            let known = self.candidates[point].wire_ids.as_deref();
++            #[cfg(not(feature = "jolteon-decoded-candidate-experiment"))]
++            let known: Option<&[Hash32]> = None;
++            if let Some(ids) = known {
++                for id in ids {
++                    self.mempool.remove(id);
++                }
++            } else {
++                for tx in &proposal.transactions {
++                    self.mempool.remove(&ckb_hash::blake2b_256(tx));
++                }
+             }
+             let context = &prepared.header().context;
+             self.mempool.expire(context.height, context.timestamp_ms);
+diff --git a/src/jolteon/client.rs b/src/jolteon/client.rs
+index 7a22cec..f44c460 100644
+--- a/src/jolteon/client.rs
++++ b/src/jolteon/client.rs
+@@ -75,6 +75,12 @@ pub struct AdmissionMetrics {
+ 
+ #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+ pub struct ExecutionMetrics {
++    #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++    #[serde(default)]
++    pub reused_decodings: u64,
++    #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++    #[serde(default)]
++    pub fresh_decodings: u64,
+     pub proposal: LatencyHistogram,
+     pub candidate_verify: LatencyHistogram,
+     pub commit: LatencyHistogram,
+diff --git a/src/jolteon/mempool.rs b/src/jolteon/mempool.rs
+index afa8c8d..cc878e4 100644
+--- a/src/jolteon/mempool.rs
++++ b/src/jolteon/mempool.rs
+@@ -64,6 +64,12 @@ impl Mempool {
+         self.entries.contains_key(id)
+     }
+ 
++    #[cfg(feature = "jolteon-decoded-candidate-experiment")]
++    pub(super) fn decoded(&self, id: &Hash32, wire: &[u8]) -> Option<&Transaction> {
++        let tx = &self.entries.get(id)?.tx;
++        (tx.as_slice() == wire).then_some(tx)
++    }
++
+     pub(super) fn len(&self) -> usize {
+         self.entries.len()
+     }
