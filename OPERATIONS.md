@@ -1539,6 +1539,29 @@ an oversized local edit and then commits a revision within the lower
 ceiling. Inspect `native_object.ceiling_decrease` for the signed
 registry updates, route proof size and finality evidence.
 
+Use an archival CKB RPC to reconstruct Proof Data for an oversized
+Metatype return.
+
+```sh
+stem ckb-wallet recover-metatype-ceiling \
+  --request ceiling-recovery.json --l1-rpc "$CKB_RPC"
+```
+
+The request contains `escrow_cell`, `ceiling_script_hash`,
+`stem_network`, `burn` and `anchor`. Supply the canonical Cell
+bytes from an authenticated Stem escrow proof. The `burn` is the CKB
+JSON OutPoint of the mailbox successor. Use a trusted CKB block
+hash at or after that burn for `anchor`. The CLI verifies the exact
+burned object, mailbox, registry dependency and pinned adapter table.
+
+Place the returned `proof_data` in the ceiling Type Group before
+calculating approvals and signing Locks. Attach the normal
+historical mailbox and current live registry certificate at Stem's
+committed anchor. The CLI's `ceiling_at_burn` identifies the
+historical record resolved by CKB. Recovery applies the same
+4,096-Header, 512-transaction and 32 MiB retrieval bounds as
+workflow recovery.
+
 Build `stem-object-append-only` and `metatype-object-append-only`
 and add the following options to the revisable object command.
 Keep the two state-limit options and the registry option to test all

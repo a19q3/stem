@@ -381,6 +381,10 @@ Byte-identical transfers preserve previously admitted state. An
 oversized import or changed return requires the pinned dispatcher,
 gate, mailbox, adapter and native escrow to authenticate admission
 on the originating chain.
+The recovery CLI shares anchored CKB transaction and witness
+verification with workflow recovery. It reconstructs the ceiling
+Proof Data directly from the burned object's physical Script and
+the actual burn dependencies.
 An independent approval group reads a rotating Ed25519 key from a
 CKB Type ID registry. Both VM hosts verify an exact-transaction
 seal with the registry generation. CKB reads the actual dependency

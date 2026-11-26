@@ -24,6 +24,8 @@ use serde_json::json;
 
 use crate::bridge_cli::{parse_hash, print_json, read_json_limited, read_key};
 
+mod ceiling;
+mod metatype_history;
 mod workflow;
 
 #[derive(Subcommand)]
@@ -59,6 +61,13 @@ pub enum CkbWallet {
     },
     /// Recover a Metatype workflow return from witnessed CKB custody history.
     RecoverMetatypeWorkflow {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        l1_rpc: String,
+    },
+    /// Recover an oversized Metatype return's custody proof from anchored CKB history.
+    RecoverMetatypeCeiling {
         #[arg(long)]
         request: PathBuf,
         #[arg(long)]
@@ -142,6 +151,7 @@ impl CkbWallet {
             Self::RecoverMetatypeWorkflow { request, l1_rpc } => {
                 workflow::recover(&request, &l1_rpc)
             }
+            Self::RecoverMetatypeCeiling { request, l1_rpc } => ceiling::recover(&request, &l1_rpc),
         }
     }
 }

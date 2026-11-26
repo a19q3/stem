@@ -1111,7 +1111,27 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
                     "ownership_only": ownership_only}
     restored_outputs = release + [cell(native_auth_capacity - 2 * FEE - return_topup - royalty, authority)]
     if decrease:
-        return_ceiling_proof = route_codes + packed_script(wrapper) + adapter_table
+        expected_ceiling_proof = route_codes + packed_script(wrapper) + adapter_table
+        ceiling_request = {"escrow_cell": signing_cell(client, original)["cell"],
+            "ceiling_script_hash": hex_bytes(script_hash(ceiling_type)), "stem_network": network,
+            "burn": live_mailbox, "anchor": anchor["hash"]}
+
+        def recover_ceiling(label, params):
+            request_file = args.output / f"object-ceiling-recovery-{label}-request.json"
+            write_json(request_file, params)
+            started = time.monotonic()
+            result = subprocess.run([args.binary, "ckb-wallet", "recover-metatype-ceiling",
+                "--request", request_file, "--l1-rpc", l1.url], capture_output=True, text=True)
+            return result, (time.monotonic() - started) * 1000
+
+        recovered, recovery_ms = recover_ceiling("first", ceiling_request)
+        assert recovered.returncode == 0, recovered.stderr
+        ceiling_result = json.loads(recovered.stdout)
+        return_ceiling_proof = binary(ceiling_result["proof_data"])
+        assert return_ceiling_proof == expected_ceiling_proof
+        assert ceiling_result["record"] == inbound["record"] and ceiling_result["message_id"] == inbound["id"]
+        assert ceiling_result["ceiling_at_burn"] == state_limit and ceiling_result["registry_type"] == hex_bytes(rule_hash)
+        assert binary(ceiling_result["state"]) == return_state
         probe_outputs = [*restored_outputs, cell(royalty, stem_payee, stem_tag)] if use_royalty else restored_outputs
         if not use_freeze:
             for label, evidence in (("missing", b""), ("table", return_ceiling_proof[:-1] + bytes([return_ceiling_proof[-1] ^ 1])),
@@ -1146,6 +1166,26 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             rejected["stem_oversize_return_missing"] = reject_stem(native_sign("return-ceiling-missing",
                 with_approval, blocked_outputs, endpoint=endpoint, message=inbound, receive=True,
                 votes=certified, workflow_proof=return_proof, ceiling_proof=b""), "exited with 56")
+    if decrease:
+        ceiling_request["anchor"] = anchor["hash"]
+        l1.stop()
+        l1.start("l1-ceiling-recovery-restart.log")
+        recovered, restart_ms = recover_ceiling("after-ckb-restart", ceiling_request)
+        assert recovered.returncode == 0, recovered.stderr
+        restarted = json.loads(recovered.stdout)
+        assert restarted == dict(ceiling_result, anchor=anchor["hash"])
+        return_ceiling_proof = binary(restarted["proof_data"])
+        for label, parameters, reason in (
+            ("before-burn", dict(ceiling_request, anchor=preserved["proof"]["header"]["hash"]),
+             "after the trusted anchor"),
+            ("wrong-output", dict(ceiling_request, burn=point(burned["hash"], 1)), "outside the pinned mailbox"),
+            ("wrong-network", dict(ceiling_request, stem_network=hex_bytes(bytes([7]) * 32)), "outside the pinned mailbox"),
+            ("wrong-script", dict(ceiling_request, ceiling_script_hash=hex_bytes(empty)), "absent from the Stem escrow"),
+        ):
+            failed, _ = recover_ceiling(label, parameters)
+            assert failed.returncode and reason in failed.stderr, failed
+            rejected[f"ckb_ceiling_recovery_{label}"] = failed.stderr
+        ceiling_recovery = {"result": restarted, "first_ms": recovery_ms, "restart_ms": restart_ms}
     rejected["stem_return_without_policy_approval"] = reject_stem(native_sign("return-no-consent",
         release_inputs + [(native_fee, owner, owner_key)], release + [cell(remainder - FEE - return_topup, owner)],
         endpoint=endpoint, message=inbound, receive=True, votes=certified, workflow_proof=return_proof),
@@ -1228,6 +1268,16 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
         repaired = commit(native_sign("repair-oversize", spend,
             [cell(object_cap + return_topup, buyer, shorter, types), change], votes=certified))
         assert signing_cell(client, at(repaired, 0))["cell"] == cell(object_cap + return_topup, buyer, shorter, types)
+        if not use_freeze:
+            l1.call("truncate", anchor["parent_hash"])
+            l1.mine(spec["bridge"]["confirmations"] + 2)
+            replacement = l1.call("get_block_hash", anchor["number"])
+            assert replacement != anchor["hash"]
+            failed, _ = recover_ceiling("orphaned-anchor", ceiling_request)
+            assert failed.returncode and any(reason in failed.stderr for reason in (
+                "CKB RPC chain diverges at the trusted anchor", "CKB ancestor Header is unavailable")), failed
+            rejected["ckb_ceiling_recovery_orphaned_anchor"] = failed.stderr
+            ceiling_recovery["reorg"] = {"orphaned": anchor["hash"], "replacement": replacement}
     if append_only:
         rewritten = object_data(b"X" + content[1:], 5)
         rejected["stem_rewrite_after_return"] = reject_stem(native_sign("rewrite-after-return",
@@ -1274,7 +1324,8 @@ def object_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay
             "imported_bytes": len(data), "returned_bytes": len(return_state), "final_ceiling": final_ceiling,
             "proof_bytes": len(return_ceiling_proof), "ckb_preserved": preserved,
             "repaired": repaired, "repair_proof": certified_cell(at(repaired, 0)),
-            "repair_execution": execution(repaired), "repaired_state": hex_bytes(shorter)}
+            "repair_execution": execution(repaired), "repaired_state": hex_bytes(shorter),
+            "recovery": ceiling_recovery}
     return {"id": hex_bytes(object_id), "manifest": hex_bytes(manifest), "metatype": metatype,
             "approval_rotation": ({"type": rotation_type, "registry": rotation.registry,
                 "birth": rotation_birth, "rotation": rotated, "birth_stem_anchor": rotation_initial_anchor,

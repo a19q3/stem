@@ -448,6 +448,15 @@ exceptions use the existing CKB and Stem mailbox trust models.
 Arbitrary policies that depend on intermediate state still need
 their own replayable validation witness.
 
+`stem ckb-wallet recover-metatype-ceiling` reconstructs the return
+proof from a trusted CKB anchor and an authenticated Stem escrow Cell.
+It verifies CKB transaction and witness commitments for the burn and
+the consumed object, matches the exact mailbox state, and resolves the
+adapter table and registry actually used by the burn. It returns the
+proof bytes and the historical ceiling at the burn. The Stem wallet
+still attaches a guardian-authenticated live registry observation at
+the anchor currently committed by Stem.
+
 ### Rotating object approval and freeze
 
 An independent approval Type Script binds the full object Script
