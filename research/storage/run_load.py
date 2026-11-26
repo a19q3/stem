@@ -145,9 +145,12 @@ def main():
                 if path.exists():
                     archive[name + "_sha256"] = digest(path)
             if args.workload_output and (folder / "workload.bin").is_file():
-                with (folder / "workload.bin").open("rb") as source, args.workload_output.open("xb") as dest:
-                    shutil.copyfileobj(source, dest)
-                assert digest(args.workload_output) == archive["workload.bin_sha256"]
+                with tempfile.NamedTemporaryFile(dir=args.workload_output.parent) as copy:
+                    with (folder / "workload.bin").open("rb") as source:
+                        shutil.copyfileobj(source, copy)
+                    copy.flush()
+                    assert digest(Path(copy.name)) == archive["workload.bin_sha256"]
+                    os.link(copy.name, args.workload_output)
             if (folder / "node-0/db/LOG").exists():
                 archive["sst"] = json.loads(
                     subprocess.check_output(
