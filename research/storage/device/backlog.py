@@ -40,7 +40,8 @@ def backlog(path):
     duration = report["load"]["seconds"]
     cutoff = duration * 1_000_000
     step = 10 if duration < 180 else 60
-    last = max(visible[-1], cutoff)
+    last_visible = max(visible, default=0)
+    last = max(last_visible, cutoff, max(ack_times, default=0), max(writes, default=0))
     checkpoints = sorted({*range(step * 1_000_000, cutoff, step * 1_000_000), cutoff, last})
     rows = [{
         "time_us": t, "written": bisect_right(writes, t),
@@ -51,7 +52,8 @@ def backlog(path):
     return {
         "file": path.name, "offer_seconds": duration, "peak_acknowledged_waiting": peak,
         "first_peak_us": -peak_at, "waiting_at_offer_end": waiting(cutoff),
-        "waiting_at_last_observation": waiting(last), "last_visible_after_offer_us": last - cutoff,
+        "waiting_at_last_observation": waiting(last),
+        "last_visible_after_offer_us": max(0, last_visible - cutoff),
         "checkpoints": rows,
     }
 

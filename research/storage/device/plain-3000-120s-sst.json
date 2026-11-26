@@ -1,0 +1,2518 @@
+{
+  "recorded_bytes": {
+    "flush": 1245005314,
+    "compaction": 368878438
+  },
+  "decoded_bytes": {
+    "flush": 1245005314,
+    "compaction": 368878438
+  },
+  "encoded_sst_bytes_by_job_and_namespace": {
+    "flush": {
+      "cell_trie": 916339831,
+      "consensus_records": 565575,
+      "execution": 80086802,
+      "live_cells": 155760381,
+      "metadata": 4175044,
+      "mixed": 7722363,
+      "proposal_journal": 80137151,
+      "headers_and_history": 218167
+    },
+    "compaction": {
+      "cell_trie": 171119490,
+      "consensus_records": 333226,
+      "execution": 54587857,
+      "headers_and_history": 131787,
+      "live_cells": 85122734,
+      "metadata": 1149591,
+      "mixed": 1348931,
+      "proposal_journal": 55084822
+    }
+  },
+  "inode_allocation_by_job_and_namespace": {
+    "flush": {
+      "mixed": 1245097984
+    },
+    "compaction": {
+      "mixed": 368893952
+    }
+  },
+  "files": {
+    "node-0/000009.sst": {
+      "bytes": 33084923,
+      "job": "flush",
+      "sha256": "7850343cf07dda7a216f813cb4a8f368b73443aa1885c234289a6ddc4b036839",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 24828979,
+          "blocks": 6137,
+          "entries": 279529
+        },
+        "consensus_records": {
+          "bytes": 4218,
+          "blocks": 2,
+          "entries": 8
+        },
+        "execution": {
+          "bytes": 498775,
+          "blocks": 6,
+          "entries": 6
+        },
+        "live_cells": {
+          "bytes": 6899663,
+          "blocks": 4927,
+          "entries": 105048
+        },
+        "metadata": {
+          "bytes": 153814,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 60979,
+          "blocks": 5,
+          "entries": 113
+        },
+        "proposal_journal": {
+          "bytes": 638495,
+          "blocks": 8,
+          "entries": 10
+        }
+      },
+      "inode_allocated_bytes": 33087488
+    },
+    "node-0/000011.sst": {
+      "bytes": 26949001,
+      "job": "flush",
+      "sha256": "ed8d7e1a8827d8b11205c03a4a5eaf4572d73b5fcee8c05bc726827ebc80d1b3",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20281724,
+          "blocks": 4998,
+          "entries": 338875
+        },
+        "consensus_records": {
+          "bytes": 10912,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579919,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3431,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3215933,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 87132,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 178932,
+          "blocks": 5,
+          "entries": 187
+        },
+        "proposal_journal": {
+          "bytes": 1591018,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26951680
+    },
+    "node-0/000013.sst": {
+      "bytes": 26929384,
+      "job": "flush",
+      "sha256": "92f2ebf023f485864e0bfc5a34a4ac88423d4e553ce22c449588e72ee10b4396",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20258061,
+          "blocks": 4991,
+          "entries": 338525
+        },
+        "consensus_records": {
+          "bytes": 10949,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1580075,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3468,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3218281,
+          "blocks": 1227,
+          "entries": 40927
+        },
+        "metadata": {
+          "bytes": 86966,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 180315,
+          "blocks": 6,
+          "entries": 214
+        },
+        "proposal_journal": {
+          "bytes": 1591269,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26931200
+    },
+    "node-0/000015.sst": {
+      "bytes": 26924178,
+      "job": "flush",
+      "sha256": "41e8a10a0231e2d358f3ca97f7a719f3d925b9ea27a05a670249b9ff9d12ff7a",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20245751,
+          "blocks": 4989,
+          "entries": 338295
+        },
+        "consensus_records": {
+          "bytes": 10948,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579797,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3341,
+          "blocks": 1,
+          "entries": 25
+        },
+        "live_cells": {
+          "bytes": 3224570,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 87698,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 181051,
+          "blocks": 6,
+          "entries": 227
+        },
+        "proposal_journal": {
+          "bytes": 1591022,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26927104
+    },
+    "node-0/000016.sst": {
+      "bytes": 42637295,
+      "job": "compaction",
+      "sha256": "63de7e9bd566939436dbbfe0a478276a7485ea2971f8a20c76a33e597378b058",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21389036,
+          "blocks": 5312,
+          "entries": 196544
+        },
+        "consensus_records": {
+          "bytes": 34840,
+          "blocks": 16,
+          "entries": 64
+        },
+        "execution": {
+          "bytes": 5238463,
+          "blocks": 63,
+          "entries": 63
+        },
+        "headers_and_history": {
+          "bytes": 13336,
+          "blocks": 4,
+          "entries": 100
+        },
+        "live_cells": {
+          "bytes": 10281467,
+          "blocks": 4915,
+          "entries": 98297
+        },
+        "metadata": {
+          "bytes": 143416,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 178009,
+          "blocks": 5,
+          "entries": 115
+        },
+        "proposal_journal": {
+          "bytes": 5358728,
+          "blocks": 64,
+          "entries": 64
+        }
+      },
+      "inode_allocated_bytes": 42639360
+    },
+    "node-0/000018.sst": {
+      "bytes": 27888178,
+      "job": "flush",
+      "sha256": "19aefd718aa9094a1d2e5cab8b1a0efeb512442a410203ed0b9dcd0da2141255",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20236591,
+          "blocks": 4988,
+          "entries": 338154
+        },
+        "consensus_records": {
+          "bytes": 10945,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2075769,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3428,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3219194,
+          "blocks": 1220,
+          "entries": 40811
+        },
+        "metadata": {
+          "bytes": 89089,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 205226,
+          "blocks": 5,
+          "entries": 220
+        },
+        "proposal_journal": {
+          "bytes": 2047936,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27889664
+    },
+    "node-0/000020.sst": {
+      "bytes": 27850542,
+      "job": "flush",
+      "sha256": "44057f9e78f88f56e4257678d835ef7c0a4eda7f7e717edac1248bc7a6ea485d",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20186351,
+          "blocks": 4974,
+          "entries": 337654
+        },
+        "consensus_records": {
+          "bytes": 10928,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2079903,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3353,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3196874,
+          "blocks": 1211,
+          "entries": 40627
+        },
+        "metadata": {
+          "bytes": 88577,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 225520,
+          "blocks": 5,
+          "entries": 221
+        },
+        "proposal_journal": {
+          "bytes": 2059036,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27852800
+    },
+    "node-0/000022.sst": {
+      "bytes": 28076229,
+      "job": "flush",
+      "sha256": "1a5f985d33269d8bf70b290576f6ecbc6836785d8bb16f3dee764d5fcf828f7e",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20225898,
+          "blocks": 4984,
+          "entries": 337876
+        },
+        "consensus_records": {
+          "bytes": 10913,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2157253,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3403,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3223868,
+          "blocks": 1225,
+          "entries": 40898
+        },
+        "metadata": {
+          "bytes": 89170,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 240315,
+          "blocks": 6,
+          "entries": 271
+        },
+        "proposal_journal": {
+          "bytes": 2125409,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 28078080
+    },
+    "node-0/000024.sst": {
+      "bytes": 28213279,
+      "job": "flush",
+      "sha256": "d5f688acccb5af63f6a63e9fe770659de5b763e58dfe7c74ebec689ea08a37ad",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20519484,
+          "blocks": 5056,
+          "entries": 346340
+        },
+        "consensus_records": {
+          "bytes": 13627,
+          "blocks": 6,
+          "entries": 24
+        },
+        "execution": {
+          "bytes": 2108422,
+          "blocks": 25,
+          "entries": 25
+        },
+        "headers_and_history": {
+          "bytes": 7958,
+          "blocks": 2,
+          "entries": 91
+        },
+        "live_cells": {
+          "bytes": 3208198,
+          "blocks": 1202,
+          "entries": 40232
+        },
+        "metadata": {
+          "bytes": 90421,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 234067,
+          "blocks": 6,
+          "entries": 203
+        },
+        "proposal_journal": {
+          "bytes": 2031102,
+          "blocks": 25,
+          "entries": 25
+        }
+      },
+      "inode_allocated_bytes": 28217344
+    },
+    "node-0/000025.sst": {
+      "bytes": 45492264,
+      "job": "compaction",
+      "sha256": "401ff04486403f099ee08d9eb26ecd48af5b6c640645338d078f167b6eb43aff",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21388853,
+          "blocks": 5312,
+          "entries": 196544
+        },
+        "consensus_records": {
+          "bytes": 35401,
+          "blocks": 16,
+          "entries": 64
+        },
+        "execution": {
+          "bytes": 6353150,
+          "blocks": 63,
+          "entries": 63
+        },
+        "headers_and_history": {
+          "bytes": 14824,
+          "blocks": 4,
+          "entries": 100
+        },
+        "live_cells": {
+          "bytes": 10999063,
+          "blocks": 4915,
+          "entries": 98293
+        },
+        "metadata": {
+          "bytes": 143265,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 229775,
+          "blocks": 5,
+          "entries": 119
+        },
+        "proposal_journal": {
+          "bytes": 6327933,
+          "blocks": 64,
+          "entries": 64
+        }
+      },
+      "inode_allocated_bytes": 45494272
+    },
+    "node-0/000027.sst": {
+      "bytes": 28407764,
+      "job": "flush",
+      "sha256": "c745def96f237a185c93417dc0fe457593bc9ba89b1471449e60c03c3b852b0b",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20690416,
+          "blocks": 5098,
+          "entries": 351964
+        },
+        "consensus_records": {
+          "bytes": 18653,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2139482,
+          "blocks": 30,
+          "entries": 31
+        },
+        "headers_and_history": {
+          "bytes": 8055,
+          "blocks": 2,
+          "entries": 75
+        },
+        "live_cells": {
+          "bytes": 3180445,
+          "blocks": 1181,
+          "entries": 39425
+        },
+        "metadata": {
+          "bytes": 91546,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 136622,
+          "blocks": 6,
+          "entries": 309
+        },
+        "proposal_journal": {
+          "bytes": 2142545,
+          "blocks": 30,
+          "entries": 31
+        }
+      },
+      "inode_allocated_bytes": 28409856
+    },
+    "node-0/000029.sst": {
+      "bytes": 28445547,
+      "job": "flush",
+      "sha256": "95f0b2bbde0371c73b99c25c3d92b4ca2a80ea23d9276549c16ddac7b4d79198",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20792976,
+          "blocks": 5123,
+          "entries": 354032
+        },
+        "consensus_records": {
+          "bytes": 18580,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2103408,
+          "blocks": 32,
+          "entries": 32
+        },
+        "headers_and_history": {
+          "bytes": 8062,
+          "blocks": 2,
+          "entries": 72
+        },
+        "live_cells": {
+          "bytes": 3181775,
+          "blocks": 1179,
+          "entries": 39353
+        },
+        "metadata": {
+          "bytes": 92096,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 194786,
+          "blocks": 6,
+          "entries": 300
+        },
+        "proposal_journal": {
+          "bytes": 2053864,
+          "blocks": 32,
+          "entries": 32
+        }
+      },
+      "inode_allocated_bytes": 28446720
+    },
+    "node-0/000031.sst": {
+      "bytes": 28490738,
+      "job": "flush",
+      "sha256": "274ac233dd523f08cd706aacabc0806f8cc0642ca95f7edfeaccbe7378de02cc",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20818748,
+          "blocks": 5129,
+          "entries": 355602
+        },
+        "consensus_records": {
+          "bytes": 20773,
+          "blocks": 9,
+          "entries": 36
+        },
+        "execution": {
+          "bytes": 2118897,
+          "blocks": 33,
+          "entries": 35
+        },
+        "headers_and_history": {
+          "bytes": 11896,
+          "blocks": 3,
+          "entries": 144
+        },
+        "live_cells": {
+          "bytes": 3171414,
+          "blocks": 1173,
+          "entries": 39157
+        },
+        "metadata": {
+          "bytes": 92455,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 75944,
+          "blocks": 5,
+          "entries": 244
+        },
+        "proposal_journal": {
+          "bytes": 2180611,
+          "blocks": 34,
+          "entries": 36
+        }
+      },
+      "inode_allocated_bytes": 28491776
+    },
+    "node-1/000009.sst": {
+      "bytes": 33084923,
+      "job": "flush",
+      "sha256": "d567c14ce5105136bf52023c05e61168c51bf384e0a36c180e4927165b880c17",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 24828979,
+          "blocks": 6137,
+          "entries": 279529
+        },
+        "consensus_records": {
+          "bytes": 4218,
+          "blocks": 2,
+          "entries": 8
+        },
+        "execution": {
+          "bytes": 498775,
+          "blocks": 6,
+          "entries": 6
+        },
+        "live_cells": {
+          "bytes": 6899663,
+          "blocks": 4927,
+          "entries": 105048
+        },
+        "metadata": {
+          "bytes": 153814,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 60979,
+          "blocks": 5,
+          "entries": 113
+        },
+        "proposal_journal": {
+          "bytes": 638495,
+          "blocks": 8,
+          "entries": 10
+        }
+      },
+      "inode_allocated_bytes": 33087488
+    },
+    "node-1/000011.sst": {
+      "bytes": 26949001,
+      "job": "flush",
+      "sha256": "e2dfb1870d855fd323d55dbae0b5554b03d0eac377298c6cd6a23b22c93b7e05",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20281724,
+          "blocks": 4998,
+          "entries": 338875
+        },
+        "consensus_records": {
+          "bytes": 10912,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579919,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3431,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3215933,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 87132,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 178932,
+          "blocks": 5,
+          "entries": 187
+        },
+        "proposal_journal": {
+          "bytes": 1591018,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26951680
+    },
+    "node-1/000013.sst": {
+      "bytes": 26929384,
+      "job": "flush",
+      "sha256": "db9084bc88af13f30be838e1125b7f8c7e657e5a98615b8836c0a1e15893bda0",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20258061,
+          "blocks": 4991,
+          "entries": 338525
+        },
+        "consensus_records": {
+          "bytes": 10949,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1580075,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3468,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3218281,
+          "blocks": 1227,
+          "entries": 40927
+        },
+        "metadata": {
+          "bytes": 86966,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 180315,
+          "blocks": 6,
+          "entries": 214
+        },
+        "proposal_journal": {
+          "bytes": 1591269,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26931200
+    },
+    "node-1/000015.sst": {
+      "bytes": 26924178,
+      "job": "flush",
+      "sha256": "0e4cff5baf3aa309f07322c4728b9735abd909ab56f4a1be767cd3e4ad611d62",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20245751,
+          "blocks": 4989,
+          "entries": 338295
+        },
+        "consensus_records": {
+          "bytes": 10948,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579797,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3341,
+          "blocks": 1,
+          "entries": 25
+        },
+        "live_cells": {
+          "bytes": 3224570,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 87698,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 181051,
+          "blocks": 6,
+          "entries": 227
+        },
+        "proposal_journal": {
+          "bytes": 1591022,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26927104
+    },
+    "node-1/000016.sst": {
+      "bytes": 42637295,
+      "job": "compaction",
+      "sha256": "433b28048826b23d3af940085baf1caec2b0f6ea3ab212245cadaf642171e020",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21389036,
+          "blocks": 5312,
+          "entries": 196544
+        },
+        "consensus_records": {
+          "bytes": 34840,
+          "blocks": 16,
+          "entries": 64
+        },
+        "execution": {
+          "bytes": 5238463,
+          "blocks": 63,
+          "entries": 63
+        },
+        "headers_and_history": {
+          "bytes": 13336,
+          "blocks": 4,
+          "entries": 100
+        },
+        "live_cells": {
+          "bytes": 10281467,
+          "blocks": 4915,
+          "entries": 98297
+        },
+        "metadata": {
+          "bytes": 143416,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 178009,
+          "blocks": 5,
+          "entries": 115
+        },
+        "proposal_journal": {
+          "bytes": 5358728,
+          "blocks": 64,
+          "entries": 64
+        }
+      },
+      "inode_allocated_bytes": 42639360
+    },
+    "node-1/000018.sst": {
+      "bytes": 27888178,
+      "job": "flush",
+      "sha256": "63b1db3298177aa7ec98c50d0894614c828eaa3c2ea75ea331a7dd7fd0e9bf5d",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20236591,
+          "blocks": 4988,
+          "entries": 338154
+        },
+        "consensus_records": {
+          "bytes": 10945,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2075769,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3428,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3219194,
+          "blocks": 1220,
+          "entries": 40811
+        },
+        "metadata": {
+          "bytes": 89089,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 205226,
+          "blocks": 5,
+          "entries": 220
+        },
+        "proposal_journal": {
+          "bytes": 2047936,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27889664
+    },
+    "node-1/000020.sst": {
+      "bytes": 27850542,
+      "job": "flush",
+      "sha256": "10a73053cfec8787aad03840b52282af9a94f07cb2134ac23c489b51ba3a49a2",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20186351,
+          "blocks": 4974,
+          "entries": 337654
+        },
+        "consensus_records": {
+          "bytes": 10928,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2079903,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3353,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3196874,
+          "blocks": 1211,
+          "entries": 40627
+        },
+        "metadata": {
+          "bytes": 88577,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 225520,
+          "blocks": 5,
+          "entries": 221
+        },
+        "proposal_journal": {
+          "bytes": 2059036,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27852800
+    },
+    "node-1/000022.sst": {
+      "bytes": 28076229,
+      "job": "flush",
+      "sha256": "ff0521e12d2b933de8a36053be819bd2e2e620bf5b737bdff5b9da604915de1b",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20225898,
+          "blocks": 4984,
+          "entries": 337876
+        },
+        "consensus_records": {
+          "bytes": 10913,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2157253,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3403,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3223868,
+          "blocks": 1225,
+          "entries": 40898
+        },
+        "metadata": {
+          "bytes": 89170,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 240315,
+          "blocks": 6,
+          "entries": 271
+        },
+        "proposal_journal": {
+          "bytes": 2125409,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 28078080
+    },
+    "node-1/000024.sst": {
+      "bytes": 28213279,
+      "job": "flush",
+      "sha256": "550e3fcb75dcbbbdb59ec89e0610720dd08c4000fd41fbab4430a16fef898530",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20519484,
+          "blocks": 5056,
+          "entries": 346340
+        },
+        "consensus_records": {
+          "bytes": 13627,
+          "blocks": 6,
+          "entries": 24
+        },
+        "execution": {
+          "bytes": 2108422,
+          "blocks": 25,
+          "entries": 25
+        },
+        "headers_and_history": {
+          "bytes": 7958,
+          "blocks": 2,
+          "entries": 91
+        },
+        "live_cells": {
+          "bytes": 3208198,
+          "blocks": 1202,
+          "entries": 40232
+        },
+        "metadata": {
+          "bytes": 90421,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 234067,
+          "blocks": 6,
+          "entries": 203
+        },
+        "proposal_journal": {
+          "bytes": 2031102,
+          "blocks": 25,
+          "entries": 25
+        }
+      },
+      "inode_allocated_bytes": 28217344
+    },
+    "node-1/000025.sst": {
+      "bytes": 45492332,
+      "job": "compaction",
+      "sha256": "ec939a0ef004570a5a84c82993844dbf2bcc2e0ddb1d6c4b1c47f327f8d56189",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21388853,
+          "blocks": 5312,
+          "entries": 196544
+        },
+        "consensus_records": {
+          "bytes": 35465,
+          "blocks": 16,
+          "entries": 64
+        },
+        "execution": {
+          "bytes": 6353150,
+          "blocks": 63,
+          "entries": 63
+        },
+        "headers_and_history": {
+          "bytes": 14824,
+          "blocks": 4,
+          "entries": 100
+        },
+        "live_cells": {
+          "bytes": 10999063,
+          "blocks": 4915,
+          "entries": 98293
+        },
+        "metadata": {
+          "bytes": 143269,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 229775,
+          "blocks": 5,
+          "entries": 119
+        },
+        "proposal_journal": {
+          "bytes": 6327933,
+          "blocks": 64,
+          "entries": 64
+        }
+      },
+      "inode_allocated_bytes": 45494272
+    },
+    "node-1/000027.sst": {
+      "bytes": 28407733,
+      "job": "flush",
+      "sha256": "93c673a250b0cd3aca0a1ed780ebcec4780e0d4d03b2051489da962230810ccc",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20690416,
+          "blocks": 5098,
+          "entries": 351964
+        },
+        "consensus_records": {
+          "bytes": 18584,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2139482,
+          "blocks": 30,
+          "entries": 31
+        },
+        "headers_and_history": {
+          "bytes": 8055,
+          "blocks": 2,
+          "entries": 75
+        },
+        "live_cells": {
+          "bytes": 3180445,
+          "blocks": 1181,
+          "entries": 39425
+        },
+        "metadata": {
+          "bytes": 91584,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 136622,
+          "blocks": 6,
+          "entries": 309
+        },
+        "proposal_journal": {
+          "bytes": 2142545,
+          "blocks": 30,
+          "entries": 31
+        }
+      },
+      "inode_allocated_bytes": 28409856
+    },
+    "node-1/000029.sst": {
+      "bytes": 28445547,
+      "job": "flush",
+      "sha256": "2e520dac37699606201e1a8e1f5c6fd07dea4d5937928f22dec4603159b05657",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20792976,
+          "blocks": 5123,
+          "entries": 354032
+        },
+        "consensus_records": {
+          "bytes": 18580,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2103408,
+          "blocks": 32,
+          "entries": 32
+        },
+        "headers_and_history": {
+          "bytes": 8062,
+          "blocks": 2,
+          "entries": 72
+        },
+        "live_cells": {
+          "bytes": 3181775,
+          "blocks": 1179,
+          "entries": 39353
+        },
+        "metadata": {
+          "bytes": 92096,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 194786,
+          "blocks": 6,
+          "entries": 300
+        },
+        "proposal_journal": {
+          "bytes": 2053864,
+          "blocks": 32,
+          "entries": 32
+        }
+      },
+      "inode_allocated_bytes": 28446720
+    },
+    "node-1/000031.sst": {
+      "bytes": 28490738,
+      "job": "flush",
+      "sha256": "d37f363bad303556f6b8a7df9190cd74297404984358d6831641b5e046766926",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20818748,
+          "blocks": 5129,
+          "entries": 355602
+        },
+        "consensus_records": {
+          "bytes": 20773,
+          "blocks": 9,
+          "entries": 36
+        },
+        "execution": {
+          "bytes": 2118897,
+          "blocks": 33,
+          "entries": 35
+        },
+        "headers_and_history": {
+          "bytes": 11896,
+          "blocks": 3,
+          "entries": 144
+        },
+        "live_cells": {
+          "bytes": 3171414,
+          "blocks": 1173,
+          "entries": 39157
+        },
+        "metadata": {
+          "bytes": 92455,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 75944,
+          "blocks": 5,
+          "entries": 244
+        },
+        "proposal_journal": {
+          "bytes": 2180611,
+          "blocks": 34,
+          "entries": 36
+        }
+      },
+      "inode_allocated_bytes": 28491776
+    },
+    "node-2/000009.sst": {
+      "bytes": 33084861,
+      "job": "flush",
+      "sha256": "5ed957709c7a65ffe543378e0ce2d4f367ca73771ad3caf7cbb60a18f0345938",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 24828979,
+          "blocks": 6137,
+          "entries": 279529
+        },
+        "consensus_records": {
+          "bytes": 4148,
+          "blocks": 2,
+          "entries": 8
+        },
+        "execution": {
+          "bytes": 498775,
+          "blocks": 6,
+          "entries": 6
+        },
+        "live_cells": {
+          "bytes": 6899663,
+          "blocks": 4927,
+          "entries": 105048
+        },
+        "metadata": {
+          "bytes": 153822,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 60979,
+          "blocks": 5,
+          "entries": 113
+        },
+        "proposal_journal": {
+          "bytes": 638495,
+          "blocks": 8,
+          "entries": 10
+        }
+      },
+      "inode_allocated_bytes": 33087488
+    },
+    "node-2/000011.sst": {
+      "bytes": 26949001,
+      "job": "flush",
+      "sha256": "ef052203faa2c8aaa718b599f1cc369f89953ad63fc28aee3a1d53805ad106e1",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20281724,
+          "blocks": 4998,
+          "entries": 338875
+        },
+        "consensus_records": {
+          "bytes": 10912,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579919,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3431,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3215933,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 87132,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 178932,
+          "blocks": 5,
+          "entries": 187
+        },
+        "proposal_journal": {
+          "bytes": 1591018,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26951680
+    },
+    "node-2/000013.sst": {
+      "bytes": 26929384,
+      "job": "flush",
+      "sha256": "d8dd5f53cd4546f200348dd86f67058aa51a11045809eacbf11607bc7e4952c1",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20258061,
+          "blocks": 4991,
+          "entries": 338525
+        },
+        "consensus_records": {
+          "bytes": 10949,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1580075,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3468,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3218281,
+          "blocks": 1227,
+          "entries": 40927
+        },
+        "metadata": {
+          "bytes": 86966,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 180315,
+          "blocks": 6,
+          "entries": 214
+        },
+        "proposal_journal": {
+          "bytes": 1591269,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26931200
+    },
+    "node-2/000015.sst": {
+      "bytes": 26924178,
+      "job": "flush",
+      "sha256": "2de7a9b4dc6467cdd70dd5f61b5827b54c966be562ea9db6fe7e3b1d89af2d77",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20245751,
+          "blocks": 4989,
+          "entries": 338295
+        },
+        "consensus_records": {
+          "bytes": 10948,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579797,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3341,
+          "blocks": 1,
+          "entries": 25
+        },
+        "live_cells": {
+          "bytes": 3224570,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 87698,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 181051,
+          "blocks": 6,
+          "entries": 227
+        },
+        "proposal_journal": {
+          "bytes": 1591022,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26927104
+    },
+    "node-2/000016.sst": {
+      "bytes": 42637295,
+      "job": "compaction",
+      "sha256": "5c9cf196f01e6820e82e4fa8b6a9436500e49e207b01174edf48b19f86fc27a1",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21389036,
+          "blocks": 5312,
+          "entries": 196544
+        },
+        "consensus_records": {
+          "bytes": 34840,
+          "blocks": 16,
+          "entries": 64
+        },
+        "execution": {
+          "bytes": 5238463,
+          "blocks": 63,
+          "entries": 63
+        },
+        "headers_and_history": {
+          "bytes": 13336,
+          "blocks": 4,
+          "entries": 100
+        },
+        "live_cells": {
+          "bytes": 10281467,
+          "blocks": 4915,
+          "entries": 98297
+        },
+        "metadata": {
+          "bytes": 143416,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 178009,
+          "blocks": 5,
+          "entries": 115
+        },
+        "proposal_journal": {
+          "bytes": 5358728,
+          "blocks": 64,
+          "entries": 64
+        }
+      },
+      "inode_allocated_bytes": 42639360
+    },
+    "node-2/000018.sst": {
+      "bytes": 27888178,
+      "job": "flush",
+      "sha256": "ae89b0a7ccc7353dca6632e5382d622300fab8519d30241a250a8e2c3b582661",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20236591,
+          "blocks": 4988,
+          "entries": 338154
+        },
+        "consensus_records": {
+          "bytes": 10945,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2075769,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3428,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3219194,
+          "blocks": 1220,
+          "entries": 40811
+        },
+        "metadata": {
+          "bytes": 89089,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 205226,
+          "blocks": 5,
+          "entries": 220
+        },
+        "proposal_journal": {
+          "bytes": 2047936,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27889664
+    },
+    "node-2/000020.sst": {
+      "bytes": 27850542,
+      "job": "flush",
+      "sha256": "fb9cd4a8364a6a0d6c51e9231e65f6dbc087ea2269bcb166a584db3bb15cb9f1",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20186351,
+          "blocks": 4974,
+          "entries": 337654
+        },
+        "consensus_records": {
+          "bytes": 10928,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2079903,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3353,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3196874,
+          "blocks": 1211,
+          "entries": 40627
+        },
+        "metadata": {
+          "bytes": 88577,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 225520,
+          "blocks": 5,
+          "entries": 221
+        },
+        "proposal_journal": {
+          "bytes": 2059036,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27852800
+    },
+    "node-2/000022.sst": {
+      "bytes": 28076229,
+      "job": "flush",
+      "sha256": "324af5265534184c8f846d7ea1b3478192759173731146f1f4dd6f83cb6f6d63",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20225898,
+          "blocks": 4984,
+          "entries": 337876
+        },
+        "consensus_records": {
+          "bytes": 10913,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2157253,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3403,
+          "blocks": 1,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3223868,
+          "blocks": 1225,
+          "entries": 40898
+        },
+        "metadata": {
+          "bytes": 89170,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 240315,
+          "blocks": 6,
+          "entries": 271
+        },
+        "proposal_journal": {
+          "bytes": 2125409,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 28078080
+    },
+    "node-2/000024.sst": {
+      "bytes": 28213279,
+      "job": "flush",
+      "sha256": "28b0f9ce5c9f65066a42849d9266d2e203f5fd0c56d8a436d8f8d0e042f234a2",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20519484,
+          "blocks": 5056,
+          "entries": 346340
+        },
+        "consensus_records": {
+          "bytes": 13627,
+          "blocks": 6,
+          "entries": 24
+        },
+        "execution": {
+          "bytes": 2108422,
+          "blocks": 25,
+          "entries": 25
+        },
+        "headers_and_history": {
+          "bytes": 7958,
+          "blocks": 2,
+          "entries": 91
+        },
+        "live_cells": {
+          "bytes": 3208198,
+          "blocks": 1202,
+          "entries": 40232
+        },
+        "metadata": {
+          "bytes": 90421,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 234067,
+          "blocks": 6,
+          "entries": 203
+        },
+        "proposal_journal": {
+          "bytes": 2031102,
+          "blocks": 25,
+          "entries": 25
+        }
+      },
+      "inode_allocated_bytes": 28217344
+    },
+    "node-2/000025.sst": {
+      "bytes": 45492332,
+      "job": "compaction",
+      "sha256": "8876427cc22b4dd4e9d94537b1e49a7d495bc201f721138269dafaf5eb946001",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21388853,
+          "blocks": 5312,
+          "entries": 196544
+        },
+        "consensus_records": {
+          "bytes": 35465,
+          "blocks": 16,
+          "entries": 64
+        },
+        "execution": {
+          "bytes": 6353150,
+          "blocks": 63,
+          "entries": 63
+        },
+        "headers_and_history": {
+          "bytes": 14824,
+          "blocks": 4,
+          "entries": 100
+        },
+        "live_cells": {
+          "bytes": 10999063,
+          "blocks": 4915,
+          "entries": 98293
+        },
+        "metadata": {
+          "bytes": 143269,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 229775,
+          "blocks": 5,
+          "entries": 119
+        },
+        "proposal_journal": {
+          "bytes": 6327933,
+          "blocks": 64,
+          "entries": 64
+        }
+      },
+      "inode_allocated_bytes": 45494272
+    },
+    "node-2/000027.sst": {
+      "bytes": 28407835,
+      "job": "flush",
+      "sha256": "598532bac637bf375db0f3684af0b8e26ec9927bfc4c74b32bc1853e04b35d82",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20690416,
+          "blocks": 5098,
+          "entries": 351964
+        },
+        "consensus_records": {
+          "bytes": 18726,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2139482,
+          "blocks": 30,
+          "entries": 31
+        },
+        "headers_and_history": {
+          "bytes": 8055,
+          "blocks": 2,
+          "entries": 75
+        },
+        "live_cells": {
+          "bytes": 3180445,
+          "blocks": 1181,
+          "entries": 39425
+        },
+        "metadata": {
+          "bytes": 91544,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 136622,
+          "blocks": 6,
+          "entries": 309
+        },
+        "proposal_journal": {
+          "bytes": 2142545,
+          "blocks": 30,
+          "entries": 31
+        }
+      },
+      "inode_allocated_bytes": 28409856
+    },
+    "node-2/000029.sst": {
+      "bytes": 28445547,
+      "job": "flush",
+      "sha256": "d066683c9dc923dcf979636ada0c2dc0478bf1332cbfb6176297e861e44d7b95",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20792976,
+          "blocks": 5123,
+          "entries": 354032
+        },
+        "consensus_records": {
+          "bytes": 18580,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2103408,
+          "blocks": 32,
+          "entries": 32
+        },
+        "headers_and_history": {
+          "bytes": 8062,
+          "blocks": 2,
+          "entries": 72
+        },
+        "live_cells": {
+          "bytes": 3181775,
+          "blocks": 1179,
+          "entries": 39353
+        },
+        "metadata": {
+          "bytes": 92096,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 194786,
+          "blocks": 6,
+          "entries": 300
+        },
+        "proposal_journal": {
+          "bytes": 2053864,
+          "blocks": 32,
+          "entries": 32
+        }
+      },
+      "inode_allocated_bytes": 28446720
+    },
+    "node-2/000031.sst": {
+      "bytes": 28490631,
+      "job": "flush",
+      "sha256": "d6cf5c224613b6119564de60fe62c9a6cbaaf0ba5914f5c94734f68753d1930b",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20818748,
+          "blocks": 5129,
+          "entries": 355602
+        },
+        "consensus_records": {
+          "bytes": 20703,
+          "blocks": 9,
+          "entries": 36
+        },
+        "execution": {
+          "bytes": 2118897,
+          "blocks": 33,
+          "entries": 35
+        },
+        "headers_and_history": {
+          "bytes": 11896,
+          "blocks": 3,
+          "entries": 144
+        },
+        "live_cells": {
+          "bytes": 3171414,
+          "blocks": 1173,
+          "entries": 39157
+        },
+        "metadata": {
+          "bytes": 92418,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 75944,
+          "blocks": 5,
+          "entries": 244
+        },
+        "proposal_journal": {
+          "bytes": 2180611,
+          "blocks": 34,
+          "entries": 36
+        }
+      },
+      "inode_allocated_bytes": 28491776
+    },
+    "node-3/000009.sst": {
+      "bytes": 33084930,
+      "job": "flush",
+      "sha256": "3a7f1123aa2e798e9719505fafea0b5acc09009547f60d3ee1ef43a6e377aee6",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 24828979,
+          "blocks": 6137,
+          "entries": 279529
+        },
+        "consensus_records": {
+          "bytes": 4218,
+          "blocks": 2,
+          "entries": 8
+        },
+        "execution": {
+          "bytes": 498775,
+          "blocks": 6,
+          "entries": 6
+        },
+        "live_cells": {
+          "bytes": 6899663,
+          "blocks": 4927,
+          "entries": 105048
+        },
+        "metadata": {
+          "bytes": 153824,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 60976,
+          "blocks": 5,
+          "entries": 113
+        },
+        "proposal_journal": {
+          "bytes": 638495,
+          "blocks": 8,
+          "entries": 10
+        }
+      },
+      "inode_allocated_bytes": 33087488
+    },
+    "node-3/000011.sst": {
+      "bytes": 26948974,
+      "job": "flush",
+      "sha256": "862c0ede96d93efee1cbe229e68396419e0cbfa2bee8aff27782a278559e6a7c",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20281724,
+          "blocks": 4998,
+          "entries": 338875
+        },
+        "consensus_records": {
+          "bytes": 10912,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579919,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3431,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3215933,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 87107,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 178930,
+          "blocks": 5,
+          "entries": 187
+        },
+        "proposal_journal": {
+          "bytes": 1591018,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26951680
+    },
+    "node-3/000013.sst": {
+      "bytes": 26929394,
+      "job": "flush",
+      "sha256": "3d2136ecb5d1af165ea018273afd2ed0bc5c2cdb8af6ba9f7a0074f8694ef353",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20258061,
+          "blocks": 4991,
+          "entries": 338525
+        },
+        "consensus_records": {
+          "bytes": 10949,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1580075,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3468,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3218281,
+          "blocks": 1227,
+          "entries": 40927
+        },
+        "metadata": {
+          "bytes": 86978,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 180313,
+          "blocks": 6,
+          "entries": 214
+        },
+        "proposal_journal": {
+          "bytes": 1591269,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26931200
+    },
+    "node-3/000015.sst": {
+      "bytes": 26922932,
+      "job": "flush",
+      "sha256": "ca7fccdf4533a0db0d592d63583419f43ced1692d81259bdb86d2e051ad5e81f",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20245710,
+          "blocks": 4989,
+          "entries": 338294
+        },
+        "consensus_records": {
+          "bytes": 10948,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 1579797,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3466,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3224612,
+          "blocks": 1225,
+          "entries": 40921
+        },
+        "metadata": {
+          "bytes": 86941,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 180436,
+          "blocks": 6,
+          "entries": 211
+        },
+        "proposal_journal": {
+          "bytes": 1591022,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 26923008
+    },
+    "node-3/000016.sst": {
+      "bytes": 43082926,
+      "job": "compaction",
+      "sha256": "9f9aa46e67917ea6a60856a8d7f7f359928aef7d62dfce708489e610c0fc9def",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21393000,
+          "blocks": 5313,
+          "entries": 196581
+        },
+        "consensus_records": {
+          "bytes": 36835,
+          "blocks": 17,
+          "entries": 68
+        },
+        "execution": {
+          "bytes": 5487895,
+          "blocks": 66,
+          "entries": 66
+        },
+        "headers_and_history": {
+          "bytes": 13201,
+          "blocks": 4,
+          "entries": 73
+        },
+        "live_cells": {
+          "bytes": 10283547,
+          "blocks": 4915,
+          "entries": 98291
+        },
+        "metadata": {
+          "bytes": 143459,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 62118,
+          "blocks": 5,
+          "entries": 134
+        },
+        "proposal_journal": {
+          "bytes": 5662871,
+          "blocks": 68,
+          "entries": 71
+        }
+      },
+      "inode_allocated_bytes": 43085824
+    },
+    "node-3/000018.sst": {
+      "bytes": 27884932,
+      "job": "flush",
+      "sha256": "9a3f89fe04f426725a583f091ceed0faaeba7df78df31a094130027847cb5dbc",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20236591,
+          "blocks": 4988,
+          "entries": 338154
+        },
+        "consensus_records": {
+          "bytes": 10945,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2075769,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3473,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3219302,
+          "blocks": 1220,
+          "entries": 40811
+        },
+        "metadata": {
+          "bytes": 86908,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 204008,
+          "blocks": 5,
+          "entries": 179
+        },
+        "proposal_journal": {
+          "bytes": 2047936,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27885568
+    },
+    "node-3/000020.sst": {
+      "bytes": 27847655,
+      "job": "flush",
+      "sha256": "87fc141555744715328ac82063a0c8ce65a0a8ddda196e22840a6f9bff6922b1",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20186351,
+          "blocks": 4974,
+          "entries": 337654
+        },
+        "consensus_records": {
+          "bytes": 10928,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2079903,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3427,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3196975,
+          "blocks": 1211,
+          "entries": 40627
+        },
+        "metadata": {
+          "bytes": 86481,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 224554,
+          "blocks": 5,
+          "entries": 180
+        },
+        "proposal_journal": {
+          "bytes": 2059036,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 27848704
+    },
+    "node-3/000022.sst": {
+      "bytes": 28072684,
+      "job": "flush",
+      "sha256": "1967ed9082993f8cd9b4284a0bf475d881e045cfc2ba99dfc63b8667f02f0e9b",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20225898,
+          "blocks": 4984,
+          "entries": 337876
+        },
+        "consensus_records": {
+          "bytes": 10913,
+          "blocks": 5,
+          "entries": 20
+        },
+        "execution": {
+          "bytes": 2157253,
+          "blocks": 19,
+          "entries": 19
+        },
+        "headers_and_history": {
+          "bytes": 3459,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3223690,
+          "blocks": 1225,
+          "entries": 40898
+        },
+        "metadata": {
+          "bytes": 86952,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 239110,
+          "blocks": 6,
+          "entries": 230
+        },
+        "proposal_journal": {
+          "bytes": 2125409,
+          "blocks": 19,
+          "entries": 19
+        }
+      },
+      "inode_allocated_bytes": 28073984
+    },
+    "node-3/000024.sst": {
+      "bytes": 28208195,
+      "job": "flush",
+      "sha256": "fc08e8326c64838927a86b63e8a75425feb800e9918d4fa788f5a682a538ccc6",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20519440,
+          "blocks": 5056,
+          "entries": 346339
+        },
+        "consensus_records": {
+          "bytes": 13627,
+          "blocks": 6,
+          "entries": 24
+        },
+        "execution": {
+          "bytes": 2108422,
+          "blocks": 25,
+          "entries": 25
+        },
+        "headers_and_history": {
+          "bytes": 4011,
+          "blocks": 1,
+          "entries": 18
+        },
+        "live_cells": {
+          "bytes": 3208024,
+          "blocks": 1202,
+          "entries": 40232
+        },
+        "metadata": {
+          "bytes": 87630,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 235939,
+          "blocks": 6,
+          "entries": 199
+        },
+        "proposal_journal": {
+          "bytes": 2031102,
+          "blocks": 25,
+          "entries": 25
+        }
+      },
+      "inode_allocated_bytes": 28209152
+    },
+    "node-3/000025.sst": {
+      "bytes": 61406699,
+      "job": "compaction",
+      "sha256": "436a3ba3b721142aee08509cbba72ed0dc14d344a588dc237c12b3b88e235f75",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 21392823,
+          "blocks": 5313,
+          "entries": 196581
+        },
+        "consensus_records": {
+          "bytes": 85540,
+          "blocks": 39,
+          "entries": 156
+        },
+        "execution": {
+          "bytes": 14325123,
+          "blocks": 152,
+          "entries": 152
+        },
+        "headers_and_history": {
+          "bytes": 34106,
+          "blocks": 10,
+          "entries": 257
+        },
+        "live_cells": {
+          "bytes": 10997597,
+          "blocks": 4914,
+          "entries": 98277
+        },
+        "metadata": {
+          "bytes": 146081,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 63461,
+          "blocks": 5,
+          "entries": 135
+        },
+        "proposal_journal": {
+          "bytes": 14361968,
+          "blocks": 154,
+          "entries": 156
+        }
+      },
+      "inode_allocated_bytes": 61407232
+    },
+    "node-3/000027.sst": {
+      "bytes": 28402216,
+      "job": "flush",
+      "sha256": "4edcf6b784b42a7700a396e4555da2b444e519d770675618cde0b4e2dd3bd143",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20690416,
+          "blocks": 5098,
+          "entries": 351964
+        },
+        "consensus_records": {
+          "bytes": 18580,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2139482,
+          "blocks": 30,
+          "entries": 31
+        },
+        "headers_and_history": {
+          "bytes": 8106,
+          "blocks": 2,
+          "entries": 51
+        },
+        "live_cells": {
+          "bytes": 3180267,
+          "blocks": 1181,
+          "entries": 39425
+        },
+        "metadata": {
+          "bytes": 88162,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 134658,
+          "blocks": 6,
+          "entries": 237
+        },
+        "proposal_journal": {
+          "bytes": 2142545,
+          "blocks": 30,
+          "entries": 31
+        }
+      },
+      "inode_allocated_bytes": 28405760
+    },
+    "node-3/000029.sst": {
+      "bytes": 28440019,
+      "job": "flush",
+      "sha256": "9e439aa8056a438b88d4d3ab8e0546c705e6b2ff62fcd6979faca0a164abef71",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20792976,
+          "blocks": 5123,
+          "entries": 354032
+        },
+        "consensus_records": {
+          "bytes": 18580,
+          "blocks": 8,
+          "entries": 32
+        },
+        "execution": {
+          "bytes": 2103408,
+          "blocks": 32,
+          "entries": 32
+        },
+        "headers_and_history": {
+          "bytes": 8066,
+          "blocks": 2,
+          "entries": 47
+        },
+        "live_cells": {
+          "bytes": 3181634,
+          "blocks": 1179,
+          "entries": 39353
+        },
+        "metadata": {
+          "bytes": 88603,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 192888,
+          "blocks": 6,
+          "entries": 226
+        },
+        "proposal_journal": {
+          "bytes": 2053864,
+          "blocks": 32,
+          "entries": 32
+        }
+      },
+      "inode_allocated_bytes": 28442624
+    },
+    "node-3/000031.sst": {
+      "bytes": 28484223,
+      "job": "flush",
+      "sha256": "288613c7c84407941b172a774ec7934553e0c340e488312eb1f6ff74012b346b",
+      "namespaces": {
+        "cell_trie": {
+          "bytes": 20818748,
+          "blocks": 5129,
+          "entries": 355602
+        },
+        "consensus_records": {
+          "bytes": 20773,
+          "blocks": 9,
+          "entries": 36
+        },
+        "execution": {
+          "bytes": 2118899,
+          "blocks": 33,
+          "entries": 35
+        },
+        "headers_and_history": {
+          "bytes": 8075,
+          "blocks": 2,
+          "entries": 37
+        },
+        "live_cells": {
+          "bytes": 3171355,
+          "blocks": 1173,
+          "entries": 39157
+        },
+        "metadata": {
+          "bytes": 88559,
+          "blocks": 0,
+          "entries": 0
+        },
+        "mixed": {
+          "bytes": 149280,
+          "blocks": 6,
+          "entries": 244
+        },
+        "proposal_journal": {
+          "bytes": 2108534,
+          "blocks": 33,
+          "entries": 35
+        }
+      },
+      "inode_allocated_bytes": 28487680
+    }
+  }
+}

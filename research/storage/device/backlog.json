@@ -427,5 +427,146 @@
         "acknowledged_awaiting_common_visibility": 0
       }
     ]
+  },
+  {
+    "file": "plain-3000-120s.json.xz",
+    "offer_seconds": 120,
+    "peak_acknowledged_waiting": 10159,
+    "first_peak_us": 33109986,
+    "waiting_at_offer_end": 1532,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 754372,
+    "checkpoints": [
+      {
+        "time_us": 10000000,
+        "written": 24787,
+        "acknowledged": 24787,
+        "common_visible": 21109,
+        "acknowledged_awaiting_common_visibility": 3678
+      },
+      {
+        "time_us": 20000000,
+        "written": 47358,
+        "acknowledged": 47294,
+        "common_visible": 40565,
+        "acknowledged_awaiting_common_visibility": 6729
+      },
+      {
+        "time_us": 30000000,
+        "written": 70233,
+        "acknowledged": 70169,
+        "common_visible": 61045,
+        "acknowledged_awaiting_common_visibility": 9124
+      },
+      {
+        "time_us": 40000000,
+        "written": 94028,
+        "acknowledged": 90192,
+        "common_visible": 82549,
+        "acknowledged_awaiting_common_visibility": 7643
+      },
+      {
+        "time_us": 50000000,
+        "written": 115920,
+        "acknowledged": 106090,
+        "common_visible": 100981,
+        "acknowledged_awaiting_common_visibility": 5109
+      },
+      {
+        "time_us": 60000000,
+        "written": 138525,
+        "acknowledged": 125524,
+        "common_visible": 121461,
+        "acknowledged_awaiting_common_visibility": 4063
+      },
+      {
+        "time_us": 70000000,
+        "written": 160149,
+        "acknowledged": 141231,
+        "common_visible": 139878,
+        "acknowledged_awaiting_common_visibility": 1353
+      },
+      {
+        "time_us": 80000000,
+        "written": 186599,
+        "acknowledged": 155981,
+        "common_visible": 155240,
+        "acknowledged_awaiting_common_visibility": 741
+      },
+      {
+        "time_us": 90000000,
+        "written": 213559,
+        "acknowledged": 172393,
+        "common_visible": 170428,
+        "acknowledged_awaiting_common_visibility": 1965
+      },
+      {
+        "time_us": 100000000,
+        "written": 235209,
+        "acknowledged": 184142,
+        "common_visible": 183966,
+        "acknowledged_awaiting_common_visibility": 176
+      },
+      {
+        "time_us": 110000000,
+        "written": 259908,
+        "acknowledged": 196356,
+        "common_visible": 195085,
+        "acknowledged_awaiting_common_visibility": 1271
+      },
+      {
+        "time_us": 120000000,
+        "written": 286705,
+        "acknowledged": 210453,
+        "common_visible": 208921,
+        "acknowledged_awaiting_common_visibility": 1532
+      },
+      {
+        "time_us": 120754372,
+        "written": 286705,
+        "acknowledged": 210503,
+        "common_visible": 210503,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
+  },
+  {
+    "file": "plain-3000-30s.json.xz",
+    "offer_seconds": 30,
+    "peak_acknowledged_waiting": 9496,
+    "first_peak_us": 29899040,
+    "waiting_at_offer_end": 8806,
+    "waiting_at_last_observation": 0,
+    "last_visible_after_offer_us": 5670128,
+    "checkpoints": [
+      {
+        "time_us": 10000000,
+        "written": 24918,
+        "acknowledged": 24886,
+        "common_visible": 20201,
+        "acknowledged_awaiting_common_visibility": 4685
+      },
+      {
+        "time_us": 20000000,
+        "written": 48839,
+        "acknowledged": 48822,
+        "common_visible": 42729,
+        "acknowledged_awaiting_common_visibility": 6093
+      },
+      {
+        "time_us": 30000000,
+        "written": 72015,
+        "acknowledged": 72015,
+        "common_visible": 63209,
+        "acknowledged_awaiting_common_visibility": 8806
+      },
+      {
+        "time_us": 35670128,
+        "written": 72015,
+        "acknowledged": 72015,
+        "common_visible": 72015,
+        "acknowledged_awaiting_common_visibility": 0
+      }
+    ]
   }
 ]
