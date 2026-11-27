@@ -17,7 +17,7 @@ use stem_ledger::{
 
 use super::{
     Context, Fixture, Result, Retention, Store, TIME, Transaction,
-    comet::poll,
+    clob, comet::poll,
     keeper_load::{statuses, transactions},
     lineage::{DynamicLineage, FixtureLineage, fund_amm_market, swap_payload},
 };
@@ -35,6 +35,7 @@ pub(super) enum Mode {
     DistributedAmm,
     Atomic,
     Mixed,
+    Clob,
 }
 
 impl Mode {
@@ -45,6 +46,7 @@ impl Mode {
             Ok("distributed_amm") => Ok(Self::DistributedAmm),
             Ok("atomic") => Ok(Self::Atomic),
             Ok("mixed") => Ok(Self::Mixed),
+            Ok("clob") => Ok(Self::Clob),
             value => anyhow::bail!("invalid STEM_LINEAGE_WORKLOAD: {value:?}"),
         }
     }
@@ -260,13 +262,17 @@ impl Workload {
         let pools = pools.unwrap_or(TRADERS);
         ensure!((1..=1024).contains(&pools), "invalid STEM_LINEAGE_AMM_POOLS");
         let traders = TRADERS.max(pools);
-        let dynamic = if mode.amm() {
+        let mut dynamic = if mode.amm() {
             ensure!(count.div_ceil(traders) as u128 * 10 <= TRADER_INVENTORY);
             fund_amm_market(fixture, count, pools, traders, TRADER_INVENTORY)?
         } else {
             let registry = FixtureLineage::fund(fixture)?;
             DynamicLineage::fund_using(fixture, &registry, count, counters, None)?
         };
+        if mode == Mode::Clob {
+            let (registrations, commands) = clob::fund(fixture, &mut dynamic)?;
+            return Ok((Self { mode, dynamic, registrations, pools, traders }, commands));
+        }
         let registrations = (0..dynamic.ids.len())
             .map(|index| dynamic.register(fixture, index))
             .collect::<Result<_>>()?;
@@ -303,6 +309,7 @@ impl Workload {
                     let offset = usize::from(index % 3 != 0);
                     dynamic.signed(fixture, index, &targets[offset..], versions, 1)
                 }
+                Mode::Clob => unreachable!("CLOB fixture was funded above"),
             })
             .collect::<Result<_>>()?;
         Ok((
@@ -369,6 +376,8 @@ impl Workload {
         )?;
         let mut counts = BTreeMap::<Byte32, u64>::new();
         let mut market = self.mode.amm().then(|| AmmOracle::new(&self.dynamic.ids, self.traders));
+        let mut books = (self.mode == Mode::Clob).then(|| clob::Oracle::new(&self.dynamic.ids));
+        let mut included = 0usize;
         let mut applied = 0usize;
         let mut cycle_sum = 0u64;
         let mut total_fee = 0u64;
@@ -385,13 +394,23 @@ impl Workload {
             let mut changed_reserves = HashSet::new();
             for (tx, receipt) in txs.iter().zip(receipts) {
                 if let Some(command) = tx.lineage_command() {
+                    included += 1;
+                    let outcome = Outcome::decode(&receipt.protocol_result)?;
+                    if let Some(books) = &mut books {
+                        ensure!(matches!(outcome, Outcome::Applied | Outcome::Rejected));
+                        books.apply(&self.dynamic, &fixture.spec.network, tx, command, outcome == Outcome::Applied)?;
+                        changed_reserves.extend(command.targets.iter().map(|target| target.reference.id()));
+                    }
+                    cycle_sum += receipt.cycles;
+                    total_fee += receipt.fee;
+                    if books.is_some() && outcome == Outcome::Rejected {
+                        continue;
+                    }
                     ensure!(
-                        Outcome::decode(&receipt.protocol_result)? == Outcome::Applied,
+                        outcome == Outcome::Applied,
                         "unexpected business rejection at height {index}"
                     );
                     applied += 1;
-                    cycle_sum += receipt.cycles;
-                    total_fee += receipt.fee;
                     if let Some(market) = &mut market {
                         market.apply(command)?;
                         changed_reserves.extend(command.targets.iter().map(|target| target.reference.id()));
@@ -402,15 +421,18 @@ impl Workload {
                 }
             }
             serial.commit(replay)?;
-            if let Some(market) = &market {
-                for id in changed_reserves {
-                    let (_, cell, _) = serial.prove_current_lineage(id)?.head.context("missing AMM reserve")?;
+            for id in changed_reserves {
+                let (_, cell, _) = serial.prove_current_lineage(id)?.head.context("missing market Head")?;
+                if let Some(market) = &market {
                     market.verify(id, &cell.cell.data())?;
+                }
+                if let Some(books) = &books {
+                    books.verify(id, &cell.cell.data())?;
                 }
             }
         }
         ensure!(
-            applied == expected_count,
+            included == expected_count,
             "sampled command count differs after replay"
         );
         let mut reserves = [0u128; 2];
@@ -436,6 +458,8 @@ impl Workload {
                 reserves[0] += first;
                 reserves[1] += second;
                 ensure!(cell.cell.type_scripts().len() == 3);
+            } else if let Some(books) = &books {
+                books.verify(id, &data)?;
             } else {
                 ensure!(
                     u128::from_le_bytes(data[..16].try_into()?) == 240 + u128::from(count),
@@ -463,7 +487,8 @@ impl Workload {
             );
         }
         Ok(json!({
-            "height": height, "applied": applied, "cycles": cycle_sum, "fee": total_fee,
+            "height": height, "included": included, "applied": applied, "cycles": cycle_sum, "fee": total_fee,
+            "clob": books.as_ref().map(clob::Oracle::evidence),
             "registered_heads": self.dynamic.ids.len(),
             "market_active": market_fills.len(), "market_minimum_fills": market_fills.iter().min(),
             "market_maximum_fills": market_fills.iter().max(),

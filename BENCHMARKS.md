@@ -3105,7 +3105,7 @@ No scheduled write, acknowledgement or applied swap was lost in the eight runs. 
 
 The node SHA-256 was `c0f18145f7693ca3a447e6515d16119573f18c99280a7c1f72ccac1bfdbc1fb8`, the harness was `3debf8d89fdc51dbbc9fab800df7af08bba9841a34c27927f57411ead1d918b5`, and the swap and reserve Type binaries were `27db7850c72dd13b779d3132429c63519513ce630f195cbfd62e06a5775ff946` and `e029067c7f0686e1c75df88c9923d5e8fd1ec736803f8791206d895f381ca2af`. The four-replica hot and distributed signed corpus digests were `b7944d9ccd2508b856e89b0b86a6c1ccc708d3e872199ed1557648c17282019e` and `0d770470e6f023e77ef933addfa13d5251adb55daa12ff88df723477b213447f`, in order.
 
-The [bilateral settlement Executor](contracts/src/bin/stem-lineage-match.rs) settles two actor-authorized reserve transfers. The native tree has no executable order-placement, cancellation or price-time matching path. CLOB qualification in [#30](https://github.com/a19q3/stem/issues/30) remains open until an executable native CLOB workload exists.
+The [bilateral settlement Executor](contracts/src/bin/stem-lineage-match.rs) settles two actor-authorized reserve transfers. The closed CLOB benchmark has its own order-placement, cancellation and price-time matching Executor, workload and independent accounting oracle. [CLOB qualification](research/clob/README.md)
 
 ## Proposal selection after the Lineage read limit
 

@@ -251,6 +251,8 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     );
     (fixture.spec.chain_id, fixture.spec.network) = if polytype {
         ("stem-polytype-load".into(), [142; 32].pack())
+    } else if mode == Some(lineage_load::Mode::Clob) {
+        ("stem-clob-load".into(), [143; 32].pack())
     } else if mode.is_some() {
         ("stem-lineage-load".into(), [139; 32].pack())
     } else {

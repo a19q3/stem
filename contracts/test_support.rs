@@ -55,6 +55,8 @@ fn build(workspace: &Path, target: &Path) -> Result<()> {
             "--bin",
             "stem-lineage-match",
             "--bin",
+            "stem-lineage-clob",
+            "--bin",
             "stem-lineage-reserve-udt",
         ])
         .arg("--manifest-path")

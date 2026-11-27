@@ -719,6 +719,8 @@ mod keeper_load;
 mod lineage;
 #[path = "native_store/lineage_load.rs"]
 mod lineage_load;
+#[path = "native_store/clob.rs"]
+mod clob;
 #[path = "native_store/lineage_selection.rs"]
 mod lineage_selection;
 #[path = "native_store/storage_load.rs"]
