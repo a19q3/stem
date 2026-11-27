@@ -256,13 +256,13 @@ pub fn encode_agenda(entries: &[AgendaEntry]) -> Bytes {
 }
 
 pub fn decode_agenda(bytes: &[u8]) -> Result<Vec<AgendaEntry>> {
-    let agenda = wire::KeeperAgenda::from_slice(bytes)?;
+    let agenda = wire::KeeperAgendaReader::from_slice(bytes)?;
     ensure!(
         (1..=MAX_AGENDA_PENDING).contains(&agenda.len()),
         "invalid Keeper agenda size"
     );
     let mut entries: Vec<AgendaEntry> = Vec::with_capacity(agenda.len());
-    for item in agenda {
+    for item in agenda.iter() {
         let entry = AgendaEntry {
             trigger: Trigger::decode(item.trigger().as_slice())?,
             eligible_height: u64::from_le_bytes(item.eligible_height().as_slice().try_into()?),
@@ -270,7 +270,7 @@ pub fn decode_agenda(bytes: &[u8]) -> Result<Vec<AgendaEntry>> {
                 item.valid_before_height().as_slice().try_into()?,
             ),
             fee_input: OutPoint::from_slice(item.fee_input().as_slice())?,
-            attempts_left: u8::from(item.attempts_left()),
+            attempts_left: item.attempts_left().as_slice()[0],
         };
         ensure!(
             (1..=MAX_ATTEMPTS).contains(&entry.attempts_left)

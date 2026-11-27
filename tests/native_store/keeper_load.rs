@@ -360,7 +360,73 @@ fn sustained_keeper_load() -> Result<()> {
             "expired Keeper bookings remain in a replica mempool"
         );
     }
+    drop(replicas);
+    let replay = replay_keeper(&fixture, &output, clients.len() - 1, latest)?;
+    fs::write(
+        output.join("keeper-replay.json"),
+        serde_json::to_vec_pretty(&replay)?,
+    )?;
     Ok(())
+}
+
+fn replay_keeper(fixture: &Fixture, output: &Path, replica: usize, height: u64) -> Result<Value> {
+    let archive = Store::open(
+        &output.join(format!("node-{replica}/db")),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    let mut serial = Store::open(&output.join("serial-replay"), &fixture.spec, Retention::Archive)?;
+    let mut outcomes = BTreeMap::new();
+    let mut timed_lateness_ms = Vec::new();
+    let mut wake_cycles = 0;
+    let mut wake_fees = 0;
+    for index in 1..=height {
+        let header = archive.header(index)?.context("missing archived Header")?;
+        let (transactions, receipts) = archive
+            .execution(index)?
+            .context("missing archived execution")?;
+        let due = transactions
+            .iter()
+            .take_while(|tx| tx.keeper_schedule().is_some())
+            .count();
+        let block = serial.prepare(&transactions[due..], header.context.timestamp_ms, false)?;
+        ensure!(
+            block.header() == &header && block.receipts() == receipts,
+            "Keeper replay diverged at height {index}"
+        );
+        for (tx, receipt) in transactions[..due].iter().zip(&receipts) {
+            let outcome = Outcome::decode(&receipt.protocol_result)?;
+            *outcomes.entry(format!("{outcome:?}")).or_insert(0_u64) += 1;
+            wake_cycles += receipt.cycles;
+            wake_fees += receipt.fee;
+            if let (Outcome::Applied, Some(Trigger::Time(target))) = (outcome, tx.keeper_trigger()) {
+                let elapsed = serial
+                    .tip()
+                    .context
+                    .timestamp_ms
+                    .checked_sub(target)
+                    .context("Keeper woke before its time trigger")?;
+                timed_lateness_ms.push(elapsed);
+            }
+        }
+        serial.commit(block)?;
+    }
+    let (agenda, proof) = serial.prove_keeper_agenda()?;
+    ensure!(Store::verify_keeper_agenda(
+        serial.network(),
+        serial.tip(),
+        agenda.as_deref(),
+        &proof,
+    ));
+    let pending = agenda
+        .as_deref()
+        .map(decode_agenda)
+        .transpose()?
+        .map_or(0, |agenda| agenda.len());
+    Ok(json!({
+        "height": height, "outcomes": outcomes, "wake_cycles": wake_cycles, "wake_fees": wake_fees,
+        "timed_lateness_ms": timed_lateness_ms, "pending": pending,
+    }))
 }
 
 fn start_network(

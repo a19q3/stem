@@ -2317,6 +2317,37 @@ delivery reorg, and reached common Stem height 45 after restart.
 [Reproduction](OPERATIONS.md#wallet-and-proofs) ·
 [Raw RPC observations, proofs, controls and regressions](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-keeper-load.json.xz).
 
+### Keeper agenda decoding and wake replay
+
+The decode comparison held the canonical agenda encoding and checks fixed, using `34f34ef` as the owned-decode control. The borrowed reader no longer copies the full vector before decoding entries. The decoder still checks the entry count, trigger, height range, retry bound, canonical order and unique fee OutPoint.
+
+Each timing below is the median of fourteen batches of 40,000 decodes in alternating order in one release process. The deterministic corpus uses alternating height/time triggers, eligible height `1 + i`, expiry `256 + i`, attempts `1 + i % 4`, and an OutPoint with repeated hash byte `i + 1` and index `i`, sorted by the normal agenda comparison. The comparison also flips bits 0, 3 and 7 individually at every byte position. Both decoders returned identical entries or rejected the same mutated input.
+
+| Agenda entries | Owned decode | Borrowed decode |
+| ---: | ---: | ---: |
+| 1 | 124 ns | 48 ns |
+| 4 | 371 ns | 143 ns |
+| 8 | 720 ns | 283 ns |
+| 16 | 1,486 ns | 637 ns |
+| 32 | 3,554 ns | 1,976 ns |
+
+Four paired native Store runs alternated order with `keeper::measure_keeper_time_agenda`. Each run performed 31 empty and 31 full sleeping preparations, then drained all 32 commands at four per block. Sleeping prepare medians for the four pairs were 20.52→18.43, 22.81→21.59, 20.76→24.59 and 21.19→21.04 µs. Due bursts had mixed timing results and charged the same 123,853,376 cycles in every run. The 33rd booking was rejected in every run. This supports the simpler reader and its local cost reduction. Whole-block speedup is still unestablished.
+
+| Single-host workload | Booking offers / admitted / confirmed | Applied / retrying / skipped | Sampled peak agenda | Payment p99 | Applied timed wake lateness p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4 replicas, 6 bookings/s | 180 / 180 / 180 | 135 / 45 / 45 | 14 | 682 ms | 303 ms |
+| 16 replicas, 6 bookings/s | 180 / 180 / 180 | 135 / 45 / 45 | 14 | 726 ms | 368 ms |
+| 4 replicas, 12 bookings/s | 360 / 262 / 262 | 206 / 56 / 56 | 32 | 701 ms | 3,854 ms |
+| 4 replicas, 12 bookings/s at one exact height | 72 / 7 / 2 | 2 / 0 / 0 | 0 | 675 ms | — |
+
+All payments confirmed, and the agenda and replica mempools emptied after drain. In the timed pressure trial all 98 booking rejections reported the agenda cap. For the exact-height burst, five acknowledged carriers never booked and were pruned from the mempool. Timed lateness uses the executing block's parent consensus timestamp minus the signed trigger and covers applied timed wakes only. The pressure trial had 116 such wakes. This series qualifies wake accounting and scheduling at the existing bound. Live commands carry time- or height-derived values signed during submission, so the live rows are workload controls and provide no matched throughput comparison between decoders.
+
+The post-shutdown audit replayed 657 heights and 770 wakes from a fresh genesis-derived Store, recomputing due transactions from the user's submitted suffix. Each complete Header and receipt list matched the archive. It authenticated the final agenda proof, and the independent verifier checked the common finality proof. Five native Keeper regressions and all 25 ledger unit tests passed. The measurement binary SHA-256 was `c0f18145f7693ca3a447e6515d16119573f18c99280a7c1f72ccac1bfdbc1fb8`.
+
+Reproduce the live checks with `keeper_load::sustained_keeper_load`, 24 payments/s, 30 s of traffic and 18 s of drain for the first three profiles. The exact-height profile uses `STEM_KEEPER_HOT_HEIGHT=1`, six seconds of traffic and 20 seconds of drain. Set `STEM_KEEPER_REPLICAS`, `STEM_KEEPER_RATE`, `STEM_KEEPER_SECONDS`, `STEM_KEEPER_DRAIN` and `STEM_KEEPER_PAYMENTS` for each profile. The harness writes `observations.json`, `keeper-load.json` and `keeper-replay.json` under `STEM_TEST_EVIDENCE_ROOT`.
+
+**Decision.** Use the borrowed reader. The full timed agenda has 1,988 canonical bytes and is decoded faster, while the hard cap and existing per-block wake shares govern the observed pressure case. Larger research cardinalities would require a separate consensus limit decision and a bounded indexed scheduler. The current consolidation keeps the validated agenda size and execution order.
+
 ## CKB checkpoint publisher handoff
 
 Revision `01df462` ran two publishers with separate fee keys and
