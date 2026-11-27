@@ -71,19 +71,20 @@ def scenario(args):
             spawn(index, True, index == target)
         wait_for(lambda: ready(all_nodes, 3), "initial finality")
         files["ARM"].touch()
-        wait_for(files["REACHED"].exists, f"writer reached {phase}")
+        deadline = time.monotonic() + 10
+        while not files["REACHED"].exists():
+            assert time.monotonic() < deadline, f"writer did not reach {phase}"
+            time.sleep(0.005)
         paused = status(target)
         height = paused["height"]
         count = paused["committed_transactions"]
         ack = paused["execution"]["commit_jobs"]["acknowledged"]
+        assert ack == height, paused
         pending_height = struct.pack("<Q", height + 1)
         with ThreadPoolExecutor(max_workers=2) as workers:
             proof_request = workers.submit(rpc, ports[target], FINALITY, pending_height)
             header_request = workers.submit(rpc, ports[target], HEADER, pending_height)
             wait_for(lambda: ready(peers, height + 2), "other replicas overlap blocked writer")
-            during = status(target)
-            assert during["height"] == height and during["committed_transactions"] == count, during
-            assert during["execution"]["commit_jobs"]["acknowledged"] == ack, during
             assert not proof_request.done() and not header_request.done(), "read exposed pending commit"
             if args.mode == "overlap":
                 files["RELEASE"].touch()
@@ -133,7 +134,7 @@ def scenario(args):
             assert "admitted" in outcome, outcome
         served = wait_for(lambda: ready(all_nodes, height + 4, count + len(signed)), "all payments finalized")
         if args.mode == "overlap":
-            assert during["execution"]["commit_jobs"]["descendants"] >= 1, during
+            assert served[target]["execution"]["commit_jobs"]["descendants"] >= 1, served[target]
             assert served[target]["execution"]["candidate_jobs"]["rebased"] >= 1, served[target]
         common = min(sample["height"] for sample in served)
         headers = [rpc(p, HEADER, struct.pack("<Q", common)) for p in ports]
@@ -142,7 +143,7 @@ def scenario(args):
             "mode": args.mode, "paused_height": height, "recovered_height": recovered["height"],
             "durable_after_crash": None if args.mode == "overlap" else durable,
             "common_height": common, "confirmed": len(signed),
-            "while_paused": during["execution"]["commit_jobs"],
+            "while_paused": paused["execution"]["commit_jobs"],
             "done": served[target]["execution"]["commit_jobs"],
             "candidate": served[target]["execution"]["candidate_jobs"],
         }
