@@ -1,0 +1,1210 @@
+{
+  "trials": {
+    "a1": {
+      "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+      "genesis": "1fac5b0862abd77e7f3839ceafa28209f2de74632863434a43d69cf342a0bbc1",
+      "vm_workers": 2,
+      "rate": 3000,
+      "seconds": 120,
+      "written_per_second": [
+        3000,
+        3000,
+        3000,
+        3000,
+        2925,
+        3075,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2995,
+        2957,
+        3048,
+        3000,
+        3000,
+        3000,
+        3000,
+        2966,
+        2974,
+        3060,
+        3000,
+        3000,
+        3000,
+        2998,
+        3000,
+        2975,
+        2992,
+        3035,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2946,
+        2906,
+        3077,
+        2941,
+        3081,
+        3049,
+        3000,
+        3000,
+        2993,
+        3007,
+        3000,
+        3000,
+        2990,
+        2997,
+        2953,
+        3047,
+        2873,
+        3140,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2972,
+        3013,
+        2975,
+        3012,
+        3028,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2903,
+        2976,
+        3070,
+        3051,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2971,
+        3029,
+        3000,
+        2955,
+        3045,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000
+      ],
+      "schedule_to_write_us": {
+        "p50": 68,
+        "p95": 27381,
+        "p99": 47663,
+        "p100": 537407
+      },
+      "window_writes": 360000,
+      "window_acks": 335177,
+      "window_common": 246532,
+      "window_tps": 2054.4333333333334,
+      "end_common": 330500,
+      "end_backlog": 4742,
+      "common_each_minute": [
+        119556,
+        126976
+      ],
+      "payment_blocks": 167,
+      "full_payment_blocks": 155,
+      "blocks_at_least_256_payments": 166,
+      "summary": {
+        "admission_tps": 2793.141666666667,
+        "admitted": 335242,
+        "admitted_during_offer": 335177,
+        "attempted": 360000,
+        "client_drops": 0,
+        "finalized_tps_with_drain": 2012.1833837817032,
+        "latency_us": {
+          "p50": 5042322,
+          "p95": 116159505,
+          "p99": 141026611
+        },
+        "offer_tps": 3000.0,
+        "offered": 360000,
+        "offered_during_window": 360000,
+        "planned": 360000,
+        "reused_connections": 306260,
+        "submission_us": {
+          "connect": {
+            "p50": 1,
+            "p95": 25,
+            "p99": 35
+          },
+          "dispatch": {
+            "p50": 52,
+            "p95": 54,
+            "p99": 56
+          },
+          "queue": {
+            "p50": 5,
+            "p95": 25969,
+            "p99": 43248
+          },
+          "response": {
+            "p50": 17699,
+            "p95": 416497,
+            "p99": 508699
+          },
+          "write": {
+            "p50": 6,
+            "p95": 10,
+            "p99": 12
+          }
+        },
+        "transport_write_failures": 0,
+        "visibility_tps": 2054.4333333333334,
+        "visible": 330500,
+        "visible_during_offer": 246532,
+        "visible_without_ack": 0
+      },
+      "driver_errors": {
+        "mempool capacity exceeded": 24758
+      },
+      "storage": {
+        "wal_bytes": 3578519241,
+        "wal_syncs": 2028,
+        "journal_writes": 1352,
+        "journal_sync_microseconds": 26296119,
+        "finality_writes": 676,
+        "finality_sync_microseconds": 18626661
+      },
+      "writes_by_replica": [
+        88149,
+        90292,
+        88389,
+        93170
+      ],
+      "write_to_common_p99_us": 141026611,
+      "cpu_offer": {
+        "node-0": [
+          112.74,
+          112.87
+        ],
+        "node-1": [
+          111.91,
+          112.08
+        ],
+        "node-2": [
+          112.3,
+          112.66
+        ],
+        "node-3": [
+          112.61,
+          112.8
+        ],
+        "driver": [
+          7.66,
+          7.68
+        ],
+        "validators": [
+          449.56,
+          450.40999999999997
+        ]
+      },
+      "cpu_offer_and_drain": {
+        "node-0": [
+          139.44,
+          139.75
+        ],
+        "node-1": [
+          138.27,
+          138.63
+        ],
+        "node-2": [
+          138.56,
+          138.69
+        ],
+        "node-3": [
+          138.51,
+          138.84
+        ],
+        "driver": [
+          7.72,
+          7.73
+        ],
+        "validators": [
+          554.78,
+          555.91
+        ]
+      },
+      "node_sha256": "95d52f21d833cd00068e62d85509eec359babd005be296cd8f41517c196a2d45",
+      "configuration": {
+        "storage_settings": {
+          "RATE": 3000,
+          "SECONDS": 120,
+          "DRAIN": 45,
+          "SENDERS": 256,
+          "CADENCE": 100,
+          "VM_WORKERS": 2,
+          "PAYMENT_DATA_BYTES": 0,
+          "COMPLETE_VOLUME": 1,
+          "REPLICAS": 4,
+          "PREFUND_PAYMENTS": 1,
+          "REUSE_SUBMISSIONS": 1,
+          "PAUSE_ON_FULL": 0,
+          "SHARD_SENDERS": 0,
+          "READY_SENDERS": 1,
+          "BLOCK_TRANSACTIONS": 2048,
+          "BLOCK_CYCLES": 4000000000
+        },
+        "harness_sha256": "4f2ae78acd78ce6b35cbdde9bab8c620c8f69c9cfaaf03baa2214d43d60a87f6",
+        "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+        "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+        "genesis_sha256": "94f1a0baf4f2ff4e466140fe5291a298164ebf19ba7e76be37b8688fbfeec2bc"
+      }
+    },
+    "b1": {
+      "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+      "genesis": "1fac5b0862abd77e7f3839ceafa28209f2de74632863434a43d69cf342a0bbc1",
+      "vm_workers": 2,
+      "rate": 3000,
+      "seconds": 120,
+      "written_per_second": [
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2985,
+        2972,
+        3013,
+        2928,
+        3068,
+        3034,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2979,
+        2999,
+        3022,
+        3000,
+        3000,
+        2982,
+        3003,
+        3015,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2998,
+        2985,
+        3017,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2999,
+        3001,
+        3000,
+        2993,
+        3007,
+        3000,
+        3000,
+        3000,
+        3000,
+        2985,
+        3015,
+        3000,
+        3000,
+        3000,
+        3000,
+        2990,
+        2969,
+        3023,
+        2998,
+        3020,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2971,
+        3029,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2995,
+        3005,
+        3000,
+        3000,
+        3000,
+        2987,
+        3013,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2999,
+        2993,
+        3008,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2137,
+        192,
+        6671,
+        3000,
+        3000,
+        3000,
+        3000
+      ],
+      "schedule_to_write_us": {
+        "p50": 70,
+        "p95": 23123,
+        "p99": 276503,
+        "p100": 1270657
+      },
+      "window_writes": 360000,
+      "window_acks": 347486,
+      "window_common": 264169,
+      "window_tps": 2201.4083333333333,
+      "end_common": 347499,
+      "end_backlog": 0,
+      "common_each_minute": [
+        131049,
+        133120
+      ],
+      "payment_blocks": 176,
+      "full_payment_blocks": 162,
+      "blocks_at_least_256_payments": 174,
+      "summary": {
+        "admission_tps": 2895.7166666666667,
+        "admitted": 347499,
+        "admitted_during_offer": 347486,
+        "attempted": 360000,
+        "client_drops": 0,
+        "finalized_tps_with_drain": 2144.196844426712,
+        "latency_us": {
+          "p50": 4552347,
+          "p95": 112134853,
+          "p99": 138074479
+        },
+        "offer_tps": 3000.0,
+        "offered": 360000,
+        "offered_during_window": 360000,
+        "planned": 360000,
+        "reused_connections": 300124,
+        "submission_us": {
+          "connect": {
+            "p50": 1,
+            "p95": 26,
+            "p99": 35
+          },
+          "dispatch": {
+            "p50": 52,
+            "p95": 54,
+            "p99": 190860
+          },
+          "queue": {
+            "p50": 5,
+            "p95": 20310,
+            "p99": 40817
+          },
+          "response": {
+            "p50": 19067,
+            "p95": 390846,
+            "p99": 481177
+          },
+          "write": {
+            "p50": 6,
+            "p95": 10,
+            "p99": 13
+          }
+        },
+        "transport_write_failures": 0,
+        "visibility_tps": 2201.4083333333333,
+        "visible": 347499,
+        "visible_during_offer": 264169,
+        "visible_without_ack": 0
+      },
+      "driver_errors": {
+        "mempool capacity exceeded": 12501
+      },
+      "storage": {
+        "wal_bytes": 3736948603,
+        "wal_syncs": 2393,
+        "journal_writes": 1593,
+        "journal_sync_microseconds": 21635005,
+        "finality_writes": 800,
+        "finality_sync_microseconds": 19563386
+      },
+      "writes_by_replica": [
+        87448,
+        89053,
+        91046,
+        92453
+      ],
+      "write_to_common_p99_us": 138074479,
+      "cpu_offer": {
+        "node-0": [
+          113.69,
+          114.13
+        ],
+        "node-1": [
+          114.54,
+          114.93
+        ],
+        "node-2": [
+          114.16,
+          114.45
+        ],
+        "node-3": [
+          113.84,
+          114.09
+        ],
+        "driver": [
+          7.76,
+          7.82
+        ],
+        "validators": [
+          456.23,
+          457.6
+        ]
+      },
+      "cpu_offer_and_drain": {
+        "node-0": [
+          140.27,
+          140.45
+        ],
+        "node-1": [
+          141.67,
+          141.9
+        ],
+        "node-2": [
+          140.82,
+          141.09
+        ],
+        "node-3": [
+          140.11,
+          140.42
+        ],
+        "driver": [
+          7.86,
+          7.98
+        ],
+        "validators": [
+          562.87,
+          563.86
+        ]
+      },
+      "node_sha256": "ee0dfe5530008d9e4c22e637f469aeb008e77d899ac4be728753611c4a3c7c88",
+      "configuration": {
+        "storage_settings": {
+          "RATE": 3000,
+          "SECONDS": 120,
+          "DRAIN": 45,
+          "SENDERS": 256,
+          "CADENCE": 100,
+          "VM_WORKERS": 2,
+          "PAYMENT_DATA_BYTES": 0,
+          "COMPLETE_VOLUME": 1,
+          "REPLICAS": 4,
+          "PREFUND_PAYMENTS": 1,
+          "REUSE_SUBMISSIONS": 1,
+          "PAUSE_ON_FULL": 0,
+          "SHARD_SENDERS": 0,
+          "READY_SENDERS": 1,
+          "BLOCK_TRANSACTIONS": 2048,
+          "BLOCK_CYCLES": 4000000000
+        },
+        "harness_sha256": "4f2ae78acd78ce6b35cbdde9bab8c620c8f69c9cfaaf03baa2214d43d60a87f6",
+        "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+        "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+        "genesis_sha256": "94f1a0baf4f2ff4e466140fe5291a298164ebf19ba7e76be37b8688fbfeec2bc"
+      }
+    },
+    "b2": {
+      "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+      "genesis": "1fac5b0862abd77e7f3839ceafa28209f2de74632863434a43d69cf342a0bbc1",
+      "vm_workers": 2,
+      "rate": 3000,
+      "seconds": 120,
+      "written_per_second": [
+        3000,
+        2734,
+        3258,
+        3008,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2997,
+        3003,
+        3000,
+        2998,
+        3002,
+        3000,
+        3000,
+        3000,
+        2998,
+        2978,
+        3024,
+        3000,
+        3000,
+        2979,
+        3017,
+        3004,
+        3000,
+        3000,
+        3000,
+        3000,
+        2975,
+        2993,
+        3032,
+        2964,
+        2979,
+        3029,
+        3019,
+        3009,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2874,
+        2683,
+        3443,
+        3000,
+        3000,
+        2993,
+        2974,
+        3033,
+        2151,
+        3734,
+        2724,
+        3034,
+        3146,
+        3082,
+        3018,
+        3111,
+        3000,
+        3000,
+        2932,
+        3068,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2391,
+        3485,
+        3003,
+        3121,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2950,
+        2870,
+        3084,
+        2967,
+        3129,
+        3000,
+        3000,
+        2988,
+        3012,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2980,
+        2977,
+        3043,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2994
+      ],
+      "schedule_to_write_us": {
+        "p50": 78,
+        "p95": 54021,
+        "p99": 199314,
+        "p100": 528792
+      },
+      "window_writes": 359994,
+      "window_acks": 341412,
+      "window_common": 255238,
+      "window_tps": 2126.983333333333,
+      "end_common": 341674,
+      "end_backlog": 0,
+      "common_each_minute": [
+        118022,
+        137216
+      ],
+      "payment_blocks": 174,
+      "full_payment_blocks": 160,
+      "blocks_at_least_256_payments": 172,
+      "summary": {
+        "admission_tps": 2845.1,
+        "admitted": 341674,
+        "admitted_during_offer": 341412,
+        "attempted": 360000,
+        "client_drops": 0,
+        "finalized_tps_with_drain": 2131.073075509546,
+        "latency_us": {
+          "p50": 5337616,
+          "p95": 112202112,
+          "p99": 136962590
+        },
+        "offer_tps": 2999.95,
+        "offered": 360000,
+        "offered_during_window": 359994,
+        "planned": 360000,
+        "reused_connections": 304750,
+        "submission_us": {
+          "connect": {
+            "p50": 1,
+            "p95": 26,
+            "p99": 37
+          },
+          "dispatch": {
+            "p50": 52,
+            "p95": 55,
+            "p99": 113645
+          },
+          "queue": {
+            "p50": 6,
+            "p95": 42990,
+            "p99": 101029
+          },
+          "response": {
+            "p50": 19974,
+            "p95": 411477,
+            "p99": 540320
+          },
+          "write": {
+            "p50": 6,
+            "p95": 11,
+            "p99": 14
+          }
+        },
+        "transport_write_failures": 0,
+        "visibility_tps": 2126.983333333333,
+        "visible": 341674,
+        "visible_during_offer": 255238,
+        "visible_without_ack": 0
+      },
+      "driver_errors": {
+        "mempool capacity exceeded": 18326
+      },
+      "storage": {
+        "wal_bytes": 3675579086,
+        "wal_syncs": 2521,
+        "journal_writes": 1677,
+        "journal_sync_microseconds": 16805139,
+        "finality_writes": 844,
+        "finality_sync_microseconds": 28642757
+      },
+      "writes_by_replica": [
+        87733,
+        90869,
+        91173,
+        90225
+      ],
+      "write_to_common_p99_us": 136962590,
+      "cpu_offer": {
+        "node-0": [
+          115.03,
+          115.39
+        ],
+        "node-1": [
+          115.3,
+          115.63
+        ],
+        "node-2": [
+          115.41,
+          115.73
+        ],
+        "node-3": [
+          115.24,
+          115.56
+        ],
+        "driver": [
+          7.8,
+          7.83
+        ],
+        "validators": [
+          460.98,
+          462.31
+        ]
+      },
+      "cpu_offer_and_drain": {
+        "node-0": [
+          141.26,
+          141.36
+        ],
+        "node-1": [
+          141.21,
+          141.37
+        ],
+        "node-2": [
+          140.98,
+          141.12
+        ],
+        "node-3": [
+          140.17,
+          140.26
+        ],
+        "driver": [
+          7.91,
+          7.94
+        ],
+        "validators": [
+          563.62,
+          564.11
+        ]
+      },
+      "node_sha256": "ee0dfe5530008d9e4c22e637f469aeb008e77d899ac4be728753611c4a3c7c88",
+      "configuration": {
+        "storage_settings": {
+          "RATE": 3000,
+          "SECONDS": 120,
+          "DRAIN": 45,
+          "SENDERS": 256,
+          "CADENCE": 100,
+          "VM_WORKERS": 2,
+          "PAYMENT_DATA_BYTES": 0,
+          "COMPLETE_VOLUME": 1,
+          "REPLICAS": 4,
+          "PREFUND_PAYMENTS": 1,
+          "REUSE_SUBMISSIONS": 1,
+          "PAUSE_ON_FULL": 0,
+          "SHARD_SENDERS": 0,
+          "READY_SENDERS": 1,
+          "BLOCK_TRANSACTIONS": 2048,
+          "BLOCK_CYCLES": 4000000000
+        },
+        "harness_sha256": "4f2ae78acd78ce6b35cbdde9bab8c620c8f69c9cfaaf03baa2214d43d60a87f6",
+        "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+        "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+        "genesis_sha256": "94f1a0baf4f2ff4e466140fe5291a298164ebf19ba7e76be37b8688fbfeec2bc"
+      }
+    },
+    "a2": {
+      "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+      "genesis": "1fac5b0862abd77e7f3839ceafa28209f2de74632863434a43d69cf342a0bbc1",
+      "vm_workers": 2,
+      "rate": 3000,
+      "seconds": 120,
+      "written_per_second": [
+        3000,
+        3000,
+        2951,
+        3049,
+        2970,
+        2921,
+        3054,
+        2972,
+        3083,
+        3000,
+        3000,
+        2997,
+        2983,
+        3020,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2971,
+        3029,
+        3000,
+        3000,
+        3000,
+        3000,
+        2942,
+        3033,
+        3025,
+        3000,
+        3000,
+        2984,
+        3016,
+        3000,
+        3000,
+        3000,
+        2969,
+        3031,
+        2935,
+        2947,
+        2997,
+        3064,
+        3012,
+        3040,
+        3005,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2984,
+        3011,
+        3005,
+        3000,
+        3000,
+        3000,
+        2962,
+        2983,
+        3055,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2980,
+        2975,
+        2976,
+        2940,
+        3046,
+        3018,
+        3014,
+        3051,
+        3000,
+        2974,
+        3026,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000,
+        2974,
+        3026,
+        3000,
+        3000,
+        3000,
+        3000,
+        3000
+      ],
+      "schedule_to_write_us": {
+        "p50": 68,
+        "p95": 24683,
+        "p99": 45273,
+        "p100": 149335
+      },
+      "window_writes": 360000,
+      "window_acks": 339721,
+      "window_common": 252831,
+      "window_tps": 2106.925,
+      "end_common": 339755,
+      "end_backlog": 0,
+      "common_each_minute": [
+        123807,
+        129024
+      ],
+      "payment_blocks": 172,
+      "full_payment_blocks": 159,
+      "blocks_at_least_256_payments": 170,
+      "summary": {
+        "admission_tps": 2831.008333333333,
+        "admitted": 339755,
+        "admitted_during_offer": 339721,
+        "attempted": 360000,
+        "client_drops": 0,
+        "finalized_tps_with_drain": 2076.858426413172,
+        "latency_us": {
+          "p50": 4741599,
+          "p95": 116172683,
+          "p99": 140826395
+        },
+        "offer_tps": 3000.0,
+        "offered": 360000,
+        "offered_during_window": 360000,
+        "planned": 360000,
+        "reused_connections": 303064,
+        "submission_us": {
+          "connect": {
+            "p50": 1,
+            "p95": 26,
+            "p99": 35
+          },
+          "dispatch": {
+            "p50": 52,
+            "p95": 54,
+            "p99": 55
+          },
+          "queue": {
+            "p50": 5,
+            "p95": 24449,
+            "p99": 44329
+          },
+          "response": {
+            "p50": 18113,
+            "p95": 407743,
+            "p99": 503961
+          },
+          "write": {
+            "p50": 6,
+            "p95": 10,
+            "p99": 13
+          }
+        },
+        "transport_write_failures": 0,
+        "visibility_tps": 2106.925,
+        "visible": 339755,
+        "visible_during_offer": 252831,
+        "visible_without_ack": 0
+      },
+      "driver_errors": {
+        "mempool capacity exceeded": 20245
+      },
+      "storage": {
+        "wal_bytes": 3653720907,
+        "wal_syncs": 2211,
+        "journal_writes": 1475,
+        "journal_sync_microseconds": 15981771,
+        "finality_writes": 736,
+        "finality_sync_microseconds": 22128698
+      },
+      "writes_by_replica": [
+        87008,
+        90604,
+        91151,
+        91237
+      ],
+      "write_to_common_p99_us": 140826395,
+      "cpu_offer": {
+        "node-0": [
+          113.37,
+          113.78
+        ],
+        "node-1": [
+          112.95,
+          113.2
+        ],
+        "node-2": [
+          113.37,
+          113.52
+        ],
+        "node-3": [
+          113.23,
+          113.42
+        ],
+        "driver": [
+          7.72,
+          7.74
+        ],
+        "validators": [
+          452.92,
+          453.92
+        ]
+      },
+      "cpu_offer_and_drain": {
+        "node-0": [
+          139.89,
+          140.05
+        ],
+        "node-1": [
+          139.29,
+          139.41
+        ],
+        "node-2": [
+          139.43,
+          139.55
+        ],
+        "node-3": [
+          138.8,
+          139.05
+        ],
+        "driver": [
+          7.8,
+          7.91
+        ],
+        "validators": [
+          557.41,
+          558.0600000000001
+        ]
+      },
+      "node_sha256": "95d52f21d833cd00068e62d85509eec359babd005be296cd8f41517c196a2d45",
+      "configuration": {
+        "storage_settings": {
+          "RATE": 3000,
+          "SECONDS": 120,
+          "DRAIN": 45,
+          "SENDERS": 256,
+          "CADENCE": 100,
+          "VM_WORKERS": 2,
+          "PAYMENT_DATA_BYTES": 0,
+          "COMPLETE_VOLUME": 1,
+          "REPLICAS": 4,
+          "PREFUND_PAYMENTS": 1,
+          "REUSE_SUBMISSIONS": 1,
+          "PAUSE_ON_FULL": 0,
+          "SHARD_SENDERS": 0,
+          "READY_SENDERS": 1,
+          "BLOCK_TRANSACTIONS": 2048,
+          "BLOCK_CYCLES": 4000000000
+        },
+        "harness_sha256": "4f2ae78acd78ce6b35cbdde9bab8c620c8f69c9cfaaf03baa2214d43d60a87f6",
+        "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+        "topology_sha256": "7a2fba6978cac0bdc363ae4e44673420089111cead6ef6a802b85ee834e8a502",
+        "genesis_sha256": "94f1a0baf4f2ff4e466140fe5291a298164ebf19ba7e76be37b8688fbfeec2bc"
+      }
+    }
+  },
+  "pairs": [
+    {
+      "indexed": "a1",
+      "buffered": "b1",
+      "window_write_difference": 0,
+      "max_cumulative_write_difference_at_second_boundary": 3671,
+      "common_tps_difference": 146.9749999999999,
+      "write_to_common_p99_difference_us": -2952132,
+      "acknowledged_and_certified_in_both": 322020,
+      "matched_with_same_receiving_replica": 82766,
+      "matched_faster_in_buffered": 224071,
+      "matched_latency_difference_us": {
+        "p10": -6124722,
+        "p50": -1274197,
+        "p90": 1680921
+      }
+    },
+    {
+      "indexed": "a2",
+      "buffered": "b2",
+      "window_write_difference": -6,
+      "max_cumulative_write_difference_at_second_boundary": 849,
+      "common_tps_difference": 20.05833333333294,
+      "write_to_common_p99_difference_us": -3863805,
+      "acknowledged_and_certified_in_both": 325653,
+      "matched_with_same_receiving_replica": 85499,
+      "matched_faster_in_buffered": 172040,
+      "matched_latency_difference_us": {
+        "p10": -3357873,
+        "p50": -83855,
+        "p90": 4468433
+      }
+    }
+  ]
+}

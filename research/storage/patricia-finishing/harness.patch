@@ -1,0 +1,16 @@
+diff --git a/tests/native_store.rs b/tests/native_store.rs
+index 82c606d..941cc19 100644
+--- a/tests/native_store.rs
++++ b/tests/native_store.rs
+@@ -22,6 +22,11 @@ const FUND: u64 = 100_000_000_000;
+ const FEE: u64 = 2_000;
+ const TIME: u64 = 10_000;
+
++#[path = "../research/storage/queue-attribution/receipt-equivalence.rs"]
++mod receipt_equivalence;
++#[path = "../research/storage/patricia-finishing/blocks.rs"]
++mod patricia_finishing;
++
+ struct Fixture {
+     spec: Spec,
+     key: Privkey,

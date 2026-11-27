@@ -22,6 +22,8 @@ Two different SDK Lua programs settled together on ordinary Cluster members in f
 
 The wallet checked the exact collection OutPoint and owner Lock in 13 CKB member transitions across two funded four-validator settlements. A public testnet mint independently pinned a registration's new owner four blocks after transfer. [Witnessed transactions, expanded DepGroups and replay](research/spore-permit/upstream/beta2/dependency-uses/README.md)
 
+Buffering Patricia node writes reduced median preparation time for identical 2,048-payment blocks by 2.99–3.34% on a committed parent and 1.84–2.74% on a speculative parent. The four-validator overload crossover gained 146.98 and 20.06 common TPS across its two pairs. The buffered node confirmed 2,201.41 and 2,126.98 TPS during the 120-second offer. Both implementations reopened each other's stores and certified a new spend. [Fixed blocks, raw signed network trials, memory cost and mixed-version proofs](research/storage/patricia-finishing/README.md)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two

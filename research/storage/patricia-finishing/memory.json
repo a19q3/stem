@@ -1,0 +1,28 @@
+{
+  "cpus": [
+    0,
+    1
+  ],
+  "runs": [
+    {
+      "variant": "reference",
+      "binary_sha256": "159a66c4672e0bedac5e247db8614e0b2446f03b039adb16eac2484927e5fb2d",
+      "process_peak_rss_kib": 80180
+    },
+    {
+      "variant": "candidate",
+      "binary_sha256": "ba84ae8b87a099d711cd69429d2fd7bd8d405dfecc77b3d53f6724a4c2f25cb2",
+      "process_peak_rss_kib": 83772
+    },
+    {
+      "variant": "candidate",
+      "binary_sha256": "ba84ae8b87a099d711cd69429d2fd7bd8d405dfecc77b3d53f6724a4c2f25cb2",
+      "process_peak_rss_kib": 81848
+    },
+    {
+      "variant": "reference",
+      "binary_sha256": "159a66c4672e0bedac5e247db8614e0b2446f03b039adb16eac2484927e5fb2d",
+      "process_peak_rss_kib": 78644
+    }
+  ]
+}

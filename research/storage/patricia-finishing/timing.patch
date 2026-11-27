@@ -1,0 +1,71 @@
+diff --git a/src/native_store.rs b/src/native_store.rs
+index d479077..5d46bf7 100644
+--- a/src/native_store.rs
++++ b/src/native_store.rs
+@@ -1289,10 +1289,22 @@ impl Store {
+         keeper_receipts: usize,
+         fees: u64,
+     ) -> Result<Prepared> {
++        let began = std::time::Instant::now();
+         let height = context.height;
++        let mut loads = 0;
++        let mut overlay_hits = 0;
++        let mut read_ns = 0;
++        let mut read_bytes = 0;
+         let mut batch = Batch::default();
+         let mut cells = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
+-            self.node(Namespace::Cells, id)
++            let start = std::time::Instant::now();
++            let result = self.read(state_key(STATE_NODE, Namespace::Cells, id))?;
++            overlay_hits += u64::from(matches!(result, Some(ReadValue::Candidate(_))));
++            read_bytes += result.as_ref().map_or(0, |value| value.len());
++            let canonical = result.as_deref().map(node_storage::canonical).transpose();
++            loads += 1;
++            read_ns += start.elapsed().as_nanos();
++            canonical
+         });
+         let mut cell_changes = Vec::with_capacity(overlay.live.len());
+         for (point, record) in &overlay.live {
+@@ -1302,14 +1314,20 @@ impl Store {
+                 .map(|record| record::cell_value(&self.cells, point, record));
+             cell_changes.push((id, value));
+         }
++        let hashed = std::time::Instant::now();
+         cell_changes.sort_unstable_by_key(|(id, _)| *id);
++        let sorted = std::time::Instant::now();
+         cells.set_batch(&cell_changes, |id, _, value| {
+             if value.is_none() {
+                 batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
+             }
+         })?;
++        let edited = std::time::Instant::now();
+         let cell_root = cells.root().pack();
+-        put_nodes(&mut batch, Namespace::Cells, cells.into_writes());
++        let nodes = cells.into_writes();
++        let writes = nodes.len();
++        put_nodes(&mut batch, Namespace::Cells, nodes);
++        let packed = std::time::Instant::now();
+         let mut system = self.system.edit(as_key(&self.tip.state.system_root), |id| {
+             self.node(Namespace::System, id)
+         });
+@@ -1389,6 +1407,7 @@ impl Store {
+         })?;
+         let system_root = system.root().pack();
+         put_nodes(&mut batch, Namespace::System, system.into_writes());
++        let system = std::time::Instant::now();
+         let (execution_bytes, receipt_root) =
+             encode_execution(&self.network, execution, &receipts)?;
+         let mut history = self.history.clone();
+@@ -1412,6 +1431,12 @@ impl Store {
+             }
+             batch.delete(index_key(EXECUTION, &pruned.to_be_bytes()));
+         }
++        if height == 2 {
++            let end = std::time::Instant::now();
++            println!("FINISH {} {} {} {} {} {} {} {} {} {} {}", loads, overlay_hits, read_bytes, writes,
++                (hashed-began).as_nanos(), (sorted-hashed).as_nanos(), (edited-sorted).as_nanos(), read_ns,
++                (packed-edited).as_nanos(), (system-packed).as_nanos(), (end-system).as_nanos());
++        }
+         Ok(Prepared {
+             parent: self.tip.id(&self.network),
+             next,
