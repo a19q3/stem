@@ -1,0 +1,51 @@
+{
+  "previous": {
+    "block_hash": "0x729369d492061cbb90b355a3431dc48896b950f249c13774379bbb78fb4bcad8",
+    "block_number": "0x161ea32"
+  },
+  "tip": {
+    "block_hash": "0xbf59956863577444eb6c922068f928b9c0d5e4e63bf76d7199fd2aa1057f3af8",
+    "block_number": "0x161ee32"
+  },
+  "rpc": "https://testnet.ckb.dev",
+  "datasets": [
+    {
+      "query": {
+        "script": {
+          "code_hash": "0x0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058",
+          "args": "0x",
+          "hash_type": "data1"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x161ea33",
+            "0x161ee33"
+          ]
+        }
+      },
+      "index_entries": 0,
+      "outputs": []
+    },
+    {
+      "query": {
+        "script": {
+          "code_hash": "0xc11dd38a124e544722bb6f473cb1224022f39919960dbddc364fc0e71ace3c5e",
+          "args": "0x",
+          "hash_type": "type"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x161ea33",
+            "0x161ee33"
+          ]
+        }
+      },
+      "index_entries": 0,
+      "outputs": []
+    }
+  ]
+}
