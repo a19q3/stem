@@ -1,0 +1,133 @@
+# Causal finality timing
+
+## Mixed-contract trace at 100 ms proposal cadence
+
+This follow-up resolves the post-preparation remainder in the [critical-path report](README.md#critical-path-wall-time). A timing-only build of `eeefe97` recorded proposal, vote, quorum and commit events under exact epoch, view and Header digest. All 55,000 signed transactions and 267 certified blocks independently replayed. Its 2,122.84 common TPS, 95.61 validator CPU seconds and 1.402 s write-to-common p99 were within the spread of recent uninstrumented mixed controls. These comparisons check for obvious probe distortion and do not isolate a performance effect.
+
+Each measured non-empty committed parent names its actual certified child in the recorded finality proof path. We joined 100 such parent and child pairs with all four local durable commits. The three matched Follower records per view use each validator's first corresponding proposal ingress and handler before preparation. Times below are medians and p95s of separate populations. Their column totals do not represent a single observed path.
+
+| Event interval | Count | Median | p95 |
+| --- | ---: | ---: | ---: |
+| Parent proposal enqueue to Follower ingress | 300 | 0.202 ms | 0.346 ms |
+| Follower inbound proposal queue | 300 | 0.010 ms | 0.367 ms |
+| Follower proposal handler to preparation | 300 | 5.398 ms | 9.802 ms |
+| Follower verification and materialization | 300 | 90.963 ms | 132.549 ms |
+| Follower vote journal and dispatch | 300 | 3.422 ms | 5.721 ms |
+| Parent proposal enqueue to assembled QC | 100 | 104.224 ms | 139.175 ms |
+| Parent QC assembly to child Leader view entry | 100 | 2.894 ms | 7.933 ms |
+| Child Leader view entry to build start | 100 | 104.766 ms | 109.391 ms |
+| Child Leader builds candidate | 100 | 26.021 ms | 35.657 ms |
+| Child durable publication and encoding | 100 | 4.203 ms | 12.776 ms |
+| Child proposal enqueue to assembled QC | 100 | 104.513 ms | 139.175 ms |
+| Child QC assembly to each replica learning it | 400 | 0.209 ms | 25.373 ms |
+| Learned quorum journal write | 400 | 3.319 ms | 5.317 ms |
+| Journal completion to finalization tick | 400 | 2.529 ms | 7.217 ms |
+| Build finality records | 400 | 0.049 ms | 0.133 ms |
+| Finality database batch and sync | 400 | 14.376 ms | 20.643 ms |
+| Post-commit mempool cleanup | 400 | 0.595 ms | 0.746 ms |
+| Child QC assembly to last replica durable visibility | 100 | 35.748 ms | 59.189 ms |
+| Parent proposal enqueue to last replica durable visibility | 100 | 389.598 ms | 452.080 ms |
+| Last replica durable visibility to common observer | 100 | 219.875 ms | 327.666 ms |
+| Parent proposal enqueue to common observer | 100 | 591.955 ms | 738.183 ms |
+
+The two preparation rounds and the child Leader's proposal interval take the largest parts of the node-side path. The observer adds another median 220 ms. That interval contains status sampling, RPC queueing, receipt of all four status responses and evidence assembly. It is part of observed client visibility. The measured 0.2 ms loopback transport delay and 14.4 ms per-replica finality commit are too small to explain the entire gap on this fixture. A controlled cadence comparison can test the 100 ms pacing cost while holding execution and durability fixed.
+
+Within the 25-second offer, every timed successful preparation matched a committed block by digest, comprising 102 Leader and 303 Follower preparations. The Leader and Follower elapsed totals were 2.663 and 27.309 aggregate seconds across replicas. This run had zero repeated preparation of an identical point by the same replica, zero successful preparations superseded by a different canonical point at that height, and zero reported replica errors or transport drops. Repeated proposal envelopes that did not retrigger execution were excluded from per-Follower timing. The result covers the mixed test on a local healthy network.
+
+`CLOCK_MONOTONIC` is shared by all node processes on this Linux host. Input enqueue timestamps come from the existing transport control timestamp paired with the current monotonic clock. The earliest collector QC is used for each point. The last `commit_visible` on the four replica threads establishes durable visibility. The observer comes from the independent driver's common-height ledger. The clocks and observer translation are same-host only. The trace has fresh RocksDB stores and the same parameters and signed corpus as the [mixed profile](README.md#measurement-and-reproduction). Node SHA-256 `38bc15cd78d27bf0b500ea60eb18cbd2e6323e0d5b5c132956035020de70c1db`.
+
+<details>
+<summary>Digest-labelled timing patch</summary>
+
+Apply to the pinned baseline with `git apply --unidiff-zero`. Create a private output directory and give every validator on the host its path through `STEM_PROFILE_SPANS`. Run the usual load driver and offline verifier. Align the CSV timestamps with `driver_clock.start.unix_us` using a simultaneous sample of the monotonic and realtime clocks. Match `proof_child` by committed parent view and height. Match all other rows by epoch, point view and full Header digest, separating replicas by filename.
+
+```diff
+diff --git a/src/jolteon.rs b/src/jolteon.rs
+index b25566f..c7c2932 100644
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -35,0 +36,2 @@ mod client;
++mod finality_timing;
++use finality_timing::{event as trace, clock as trace_clock};
+@@ -568,0 +571 @@ impl Replica {
++            trace("view_enter", self.committee.epoch(), next, self.high.point, 0, None);
+@@ -598,0 +602,2 @@ impl Replica {
++            let epoch = self.committee.epoch();
++            trace("learn_before_wal", epoch, self.high.point.view, self.high.point, 0, None);
+@@ -599,0 +605 @@ impl Replica {
++            trace("learn_after_wal", epoch, self.high.point.view, self.high.point, 0, None);
+@@ -868,0 +875 @@ impl Replica {
++                trace("follower_begin", self.committee.epoch(), point.view, *point, proposal.header.context.height, None);
+@@ -890,0 +898 @@ impl Replica {
++                trace("follower_end", self.committee.epoch(), point.view, *point, proposal.header.context.height, None);
+@@ -1000,0 +1009,2 @@ impl Replica {
++            trace("commit_build", old_epoch, point.view, *point, height, None);
++            trace("proof_child", old_epoch, point.view, high.point, height, None);
+@@ -1047,0 +1058 @@ impl Replica {
++            trace("commit_before_wal", old_epoch, point.view, *point, height, None);
+@@ -1062,0 +1074 @@ impl Replica {
++            trace("commit_after_wal", old_epoch, point.view, *point, height, None);
+@@ -1072,0 +1085 @@ impl Replica {
++            trace("commit_visible", old_epoch, point.view, *point, height, None);
+@@ -1194,0 +1208 @@ impl Replica {
++        trace("vote_before_wal", self.committee.epoch(), point.view, point, 0, None);
+@@ -1211,0 +1226 @@ impl Replica {
++        trace("vote_send", self.committee.epoch(), point.view, point, u64::from(member), None);
+@@ -1276,0 +1292 @@ impl Replica {
++        trace("vote_accept", self.committee.epoch(), point.view, point, u64::from(share.member), None);
+@@ -1277,0 +1294 @@ impl Replica {
++            trace("quorum_built", self.committee.epoch(), point.view, point, 0, None);
+@@ -1433,0 +1451 @@ impl Replica {
++            trace("leader_begin", self.committee.epoch(), self.view, parent.point, parent_header.context.height.saturating_add(1), None);
+@@ -1486,0 +1505 @@ impl Replica {
++        trace("leader_prepared", self.committee.epoch(), self.view, point, header.context.height, None);
+@@ -1506,0 +1526 @@ impl Replica {
++        trace("proposal_send", self.committee.epoch(), self.view, point, header.context.height, None);
+@@ -1673,0 +1694 @@ impl Replica {
++        let arrival = event.control_received_at.map(|received| trace_clock().saturating_sub(received.elapsed().as_nanos() as u64));
+@@ -1721 +1742,10 @@ impl Replica {
+-            wire::PROPOSAL => self.admit_proposal(wire::canonical_bytes(frame.body)?, peer)?,
++            wire::PROPOSAL => {
++                let handled = trace_clock();
++                let proposal: wire::Proposal = wire::canonical_bytes(frame.body)?;
++                let header = Header::decode(&proposal.header)?;
++                let id: Hash32 = header.id(self.store.network()).unpack();
++                let point = Point { view: proposal.view, parent_view: 0, header: if proposal.seal { self.committee.seal_header(id) } else { id } };
++                trace("proposal_handle", epoch, point.view, point, header.context.height, Some(handled));
++                trace("proposal_ingress", epoch, point.view, point, header.context.height, arrival);
++                self.admit_proposal(proposal, peer)?;
++            }
+diff --git a/src/jolteon/finality_timing.rs b/src/jolteon/finality_timing.rs
+new file mode 100644
+index 0000000..acf179c
+--- /dev/null
++++ b/src/jolteon/finality_timing.rs
+@@ -0,0 +1,25 @@
++use std::{cell::RefCell, fs::File, io::{BufWriter, Write}, path::PathBuf, sync::OnceLock};
++use stem_stake::jolteon::Point;
++
++#[repr(C)]
++struct Timespec { sec: i64, nsec: i64 }
++unsafe extern "C" { fn clock_gettime(clock: i32, result: *mut Timespec) -> i32; }
++
++pub(super) fn clock() -> u64 {
++    let mut result = Timespec { sec: 0, nsec: 0 };
++    assert_eq!(unsafe { clock_gettime(1, &mut result) }, 0);
++    result.sec as u64 * 1_000_000_000 + result.nsec as u64
++}
++
++static DIRECTORY: OnceLock<Option<PathBuf>> = OnceLock::new();
++thread_local! { static WRITER: RefCell<Option<BufWriter<File>>> = const { RefCell::new(None) }; }
++
++pub(super) fn event(kind: &str, epoch: u64, view: u64, point: Point, value: u64, time: Option<u64>) {
++    let Some(directory) = DIRECTORY.get_or_init(|| std::env::var_os("STEM_PROFILE_SPANS").map(PathBuf::from)) else { return };
++    let at = time.unwrap_or_else(clock);
++    WRITER.with_borrow_mut(|slot| {
++        let writer = slot.get_or_insert_with(|| BufWriter::new(File::create(directory.join(format!("{}.trace", std::process::id()))).unwrap()));
++        writeln!(writer, "{at},{kind},{epoch},{view},{},{},{value}", point.view, hex::encode(point.header)).unwrap();
++        if kind == "commit_visible" { writer.flush().unwrap(); }
++    });
++}
+```
+
+</details>
