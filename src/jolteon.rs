@@ -61,6 +61,7 @@ const MAX_PENDING: usize = 512;
 const MAX_MEMPOOL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROPOSAL_BYTES: u64 = 16 * 1024 * 1024;
 const RELAY_RETRIES_PER_TICK: usize = 8;
+const MAX_VERIFICATION_CACHE_ENTRIES: usize = 131_072;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +75,9 @@ pub struct Config {
     pub proposal_interval_ms: u64,
     #[serde(default = "worker_count")]
     pub vm_workers: usize,
+    /// Local successful script verifications retained by the LRU.
+    #[serde(default)]
+    pub verification_cache_entries: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -226,6 +230,13 @@ struct Replica {
 }
 
 pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
+    if let Some(entries) = config.verification_cache_entries {
+        ensure!(
+            (1..=MAX_VERIFICATION_CACHE_ENTRIES).contains(&entries),
+            "invalid verification cache entry limit"
+        );
+        store.resize_verification_cache(entries);
+    }
     let genesis_members = members(&store)?;
     let genesis_committee = Committee::new(
         store.network().unpack(),
@@ -1811,6 +1822,7 @@ impl Replica {
                     "mempool_bytes": self.mempool.bytes(),
                     "admission": self.admission,
                     "execution": self.execution,
+                    "verification_cache": self.store.verification_cache_stats(),
                 });
                 #[cfg(feature = "jolteon-certificate-experiment")]
                 let status = {

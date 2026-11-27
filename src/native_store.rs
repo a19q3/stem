@@ -840,6 +840,14 @@ impl Store {
         })
     }
 
+    pub(crate) fn resize_verification_cache(&self, entries: usize) {
+        self.cache.resize_verified(entries);
+    }
+
+    pub(crate) fn verification_cache_stats(&self) -> stem_vm::VerificationCacheStats {
+        self.cache.stats()
+    }
+
     pub fn storage_metrics(&self) -> Result<Option<StorageSample>> {
         self.metrics
             .as_ref()

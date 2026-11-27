@@ -235,6 +235,9 @@ fn block_context_uses_committed_parent_time_and_partitions_cache() -> Result<()>
             assert_eq!(cache.verify(accepted, expected, true)?, expected);
             Ok(())
         })?;
+        let stats = cache.stats();
+        assert_eq!((stats.hits, stats.misses, stats.wrong_parent), (1, 2, 1));
+        assert_eq!((stats.entries, stats.capacity), (1, 4));
     }
     Ok(())
 }
@@ -253,7 +256,7 @@ fn payment_verification_reuses_cycles_after_the_parent_changes() -> Result<()> {
     let expected = verify(second.clone(), CYCLE_LIMIT, false)?;
     assert_eq!(cache.verify(first, CYCLE_LIMIT, true)?, expected);
     assert_eq!(cache.verify(second.clone(), expected, true)?, expected);
-    assert!(cache.verify(second, expected - 1, true).is_err());
+    assert!(cache.verify(second.clone(), expected - 1, true).is_err());
     let unsigned = signed.with_witnesses(Vec::new())?;
     assert_eq!(signed.id(&network.id), unsigned.id(&network.id));
     assert!(
@@ -265,6 +268,19 @@ fn payment_verification_reuses_cycles_after_the_parent_changes() -> Result<()> {
             )
             .is_err()
     );
+    let stats = cache.stats();
+    assert_eq!((stats.hits, stats.misses, stats.wrong_parent), (2, 2, 0));
+    assert_eq!(stats.entries, 1);
+
+    let replacement = network.output(vec![], b"next".to_vec())?;
+    let replacement_input = network.add_input(replacement.clone());
+    let replacement = network.signed(vec![replacement_input], vec![replacement])?;
+    cache.resize_verified(1);
+    cache.verify(network.resolve(&network.id, replacement)?, CYCLE_LIMIT, true)?;
+    assert_eq!(cache.verify(second, expected, true)?, expected);
+    let stats = cache.stats();
+    assert_eq!((stats.hits, stats.misses, stats.wrong_parent), (2, 4, 0));
+    assert_eq!((stats.entries, stats.capacity), (1, 1));
     Ok(())
 }
 

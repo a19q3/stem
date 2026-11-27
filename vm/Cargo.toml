@@ -15,6 +15,7 @@ ckb-types.workspace = true
 ckb-vm.workspace = true
 stem-ledger = { path = "../ledger" }
 lru.workspace = true
+serde = { workspace = true, features = ["derive"] }
 rayon.workspace = true
 secp256k1 = { version = "=0.30.0", features = ["recovery"] }
 

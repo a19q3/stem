@@ -249,8 +249,38 @@ fn verify_groups(
 /// Caches verified transactions and remembers recent Script Group costs for scheduling.
 pub struct VerificationCache {
     crypto_v1: bool,
-    verified: Mutex<LruCache<Byte32, CachedVerification>>,
+    verified: Mutex<VerifiedTransactions>,
     estimates: Mutex<LruCache<(u8, Byte32), u64>>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+pub struct VerificationCacheStats {
+    pub capacity: usize,
+    pub entries: usize,
+    pub hits: u64,
+    pub misses: u64,
+    pub wrong_parent: u64,
+}
+
+struct VerifiedTransactions {
+    entries: LruCache<Byte32, CachedVerification>,
+    hits: u64,
+    misses: u64,
+    wrong_parent: u64,
+}
+
+impl VerifiedTransactions {
+    fn lookup(&mut self, key: &Byte32, parent: &Byte32) -> Option<u64> {
+        if let Some(entry) = self.entries.get(key) {
+            if entry.parent.as_ref().is_none_or(|required| required == parent) {
+                self.hits = self.hits.saturating_add(1);
+                return Some(entry.cycles);
+            }
+            self.wrong_parent = self.wrong_parent.saturating_add(1);
+        }
+        self.misses = self.misses.saturating_add(1);
+        None
+    }
 }
 
 struct CachedVerification {
@@ -267,13 +297,38 @@ impl VerificationCache {
     pub fn for_genesis(capacity: usize, crypto_v1: bool) -> Self {
         Self {
             crypto_v1,
-            verified: Mutex::new(LruCache::new(capacity)),
+            verified: Mutex::new(VerifiedTransactions {
+                entries: LruCache::new(capacity),
+                hits: 0,
+                misses: 0,
+                wrong_parent: 0,
+            }),
             estimates: Mutex::new(LruCache::new(capacity)),
         }
     }
 
     pub fn crypto_v1_enabled(&self) -> bool {
         self.crypto_v1
+    }
+
+    /// Resize the success cache independently of the per-group cost estimates.
+    pub fn resize_verified(&self, capacity: usize) {
+        self.verified
+            .lock()
+            .expect("VM cache lock")
+            .entries
+            .resize(capacity);
+    }
+
+    pub fn stats(&self) -> VerificationCacheStats {
+        let cache = self.verified.lock().expect("VM cache lock");
+        VerificationCacheStats {
+            capacity: cache.entries.cap(),
+            entries: cache.entries.len(),
+            hits: cache.hits,
+            misses: cache.misses,
+            wrong_parent: cache.wrong_parent,
+        }
     }
 
     pub fn verify(
@@ -288,14 +343,7 @@ impl VerificationCache {
             .verified
             .lock()
             .expect("VM cache lock")
-            .get(&key)
-            .filter(|entry| {
-                entry
-                    .parent
-                    .as_ref()
-                    .is_none_or(|required| required == &parent)
-            })
-            .map(|entry| entry.cycles);
+            .lookup(&key, &parent);
         if let Some(cycles) = found {
             return charge(0, cycles, max_cycles);
         }
@@ -341,13 +389,17 @@ impl VerificationCache {
             }
             cycles
         };
-        self.verified.lock().expect("VM cache lock").put(
-            key,
-            CachedVerification {
-                cycles,
-                parent: parent_read.load(Ordering::Relaxed).then_some(parent),
-            },
-        );
+        self.verified
+            .lock()
+            .expect("VM cache lock")
+            .entries
+            .put(
+                key,
+                CachedVerification {
+                    cycles,
+                    parent: parent_read.load(Ordering::Relaxed).then_some(parent),
+                },
+            );
         Ok(cycles)
     }
 }

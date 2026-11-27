@@ -23,7 +23,13 @@ Compute `stem genesis-hash --genesis stem.json` and verify that every replica
 uses the same specification. The configuration file lists `peers` as
 `{key, address}` entries in ascending Ed25519 public-key order, as well as
 `view_timeout_ms`, `proposal_interval_ms` and optional `vm_workers`. A
-replica uses one private 32-byte Ed25519 seed.
+replica uses one private 32-byte Ed25519 seed. The optional local
+`verification_cache_entries` may be set to 1–131,072. The default is 4,096
+retained successful VM verifications. This value has no effect on consensus
+limits or on charged cycles. Native status reports `verification_cache`
+capacity and occupancy, cumulative hit and miss counts, and the subset of
+misses caused by a different parent. Hits include lookups whose cached cycle
+charge exceeds the current budget. Counters start at zero on process restart.
 
 ```sh
 stem run --initialize --home /srv/stem/app --genesis /srv/stem/stem.json \

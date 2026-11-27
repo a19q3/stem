@@ -174,6 +174,8 @@ pub struct Status {
     pub certificate_experiment: Option<CertificateExperimentMetrics>,
     #[serde(default)]
     pub execution: ExecutionMetrics,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_cache: Option<stem_vm::VerificationCacheStats>,
 }
 
 #[derive(Debug, Deserialize)]

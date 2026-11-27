@@ -3736,6 +3736,7 @@ dependencies = [
  "lru",
  "rayon",
  "secp256k1",
+ "serde",
  "stem-ledger",
  "tempfile",
 ]
