@@ -15,6 +15,8 @@ use rand::{SeedableRng, prelude::RngCore};
 use std::alloc::{Layout, alloc};
 use std::os::raw::c_uchar;
 
+mod shared_trace;
+
 use crate::{
     CoreMachine, DefaultMachine, DefaultMachineRunner, Error, MEMORY_FRAME_SHIFTS, Machine, Memory,
     RISCV_PAGES, RISCV_PAGESIZE, SupportMachine,
@@ -558,6 +560,21 @@ where
     }
 
     fn run(&mut self) -> Result<i8, Error> {
+        self.run_inner(None)
+    }
+}
+
+impl<R: AsmCoreMachineRevealer> AsmMachine<R> {
+    /// Reuse decoded traces when the embedding VM protects executable pages
+    /// and resets its decoder and installed traces on executable-image changes.
+    pub fn run_with_shared_traces(&mut self) -> Result<i8, Error> {
+        let mut shared = shared_trace::Lease::take();
+        self.run_inner(shared.cache())
+    }
+
+    fn run_inner(&mut self, mut shared: Option<&mut shared_trace::Cache>) -> Result<i8, Error> {
+        let isa = self.machine.isa();
+        let version = self.machine.version();
         if self.machine.isa() & ISA_MOP != 0 && self.machine.version() == VERSION0 {
             return Err(Error::InvalidVersion);
         }
@@ -576,6 +593,23 @@ where
             match result {
                 RET_DECODE_TRACE => {
                     let pc = *self.machine.pc();
+                    let mut save_to = None;
+                    if let Some(cache) = shared.as_deref_mut()
+                        && let Some(code) = shared_trace::code(self.machine.memory_mut(), pc)
+                    {
+                        let slot = cache.slot(isa, version, pc, code);
+                        if let Some(cached) = cache.get(slot, isa, version, pc, code) {
+                            let mut trace = cached.trace.clone();
+                            trace.cycles = 0;
+                            for &instruction in &trace.instructions[..cached.decoded] {
+                                trace.cycles += self.machine.instruction_cycle_func()(instruction);
+                            }
+                            self.machine.inner_mut().as_mut().install_trace(trace);
+                            continue;
+                        }
+                        decoder.start_trace_range(pc);
+                        save_to = Some(slot);
+                    }
                     let mut trace = Trace::default();
                     let mut current_pc = pc;
                     let mut i = 0;
@@ -608,6 +642,14 @@ where
                     trace.length = (current_pc - pc) as u8;
                     if trace.length == 0 {
                         return Err(Error::TraceLengthError);
+                    }
+                    if let Some(slot) = save_to
+                        && let Some(length) = decoder.take_trace_length()
+                        && length <= shared_trace::CODE_BYTES as u64
+                        && let Some(code) = shared_trace::code(self.machine.memory_mut(), pc)
+                        && let Some(cache) = shared.as_deref_mut()
+                    {
+                        cache.insert(slot, isa, version, code, length as usize, i, &trace);
                     }
                     self.machine.inner_mut().as_mut().install_trace(trace);
                 }

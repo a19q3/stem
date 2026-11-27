@@ -54,7 +54,7 @@ impl DefaultMachineRunner for ReusableMachine {
     }
 
     fn run(&mut self) -> Result<i8, Error> {
-        self.0.as_mut().expect("live VM").run()
+        self.0.as_mut().expect("live VM").run_with_shared_traces()
     }
 }
 
@@ -197,6 +197,28 @@ mod tests {
         assert_eq!(std::ptr::from_ref(&**reused.inner_mut()), address);
         assert_eq!(reused.run(), Ok(14));
         assert_eq!(fresh.run(), Ok(14));
+        assert_eq!(reused.inner_mut().cycles(), fresh.inner_mut().cycles());
+    }
+
+    #[test]
+    fn reused_trace_charges_the_current_cycle_model() {
+        let program = [0x0070_0513, 0x05d0_0893, 0x0000_0073];
+        let mut warm = machine::<ReusableMachine>(allocate_core, VERSION2, 10_000, &program);
+        assert_eq!(warm.run(), Ok(7));
+        drop(warm);
+
+        let build = |allocate: crate::scheduler::CoreAllocator<ReusableMachine>| {
+            let mut core = allocate(ISA_IMC | ISA_B | ISA_MOP, VERSION2, 10_000);
+            load_at_same_address(&mut core, &program);
+            DefaultMachineBuilder::new(core)
+                .instruction_cycle_func(Box::new(|_| 31))
+                .build()
+        };
+        let mut reused = ReusableMachine::new(build(allocate_core));
+        let mut fresh = AsmMachine::new(build(<Box<AsmCoreMachine> as SupportMachine>::new));
+        assert_eq!(reused.run(), Ok(7));
+        assert_eq!(fresh.run(), Ok(7));
+        assert_eq!(reused.inner_mut().cycles(), 3 * 31);
         assert_eq!(reused.inner_mut().cycles(), fresh.inner_mut().cycles());
     }
 }

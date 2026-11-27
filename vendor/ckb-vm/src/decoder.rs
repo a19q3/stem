@@ -17,6 +17,8 @@ pub struct Decoder {
     factories: Vec<InstructionFactory>,
     mop: bool,
     version: u32,
+    #[cfg(has_asm)]
+    trace_range: Option<(u64, u64)>,
     // Use a cache of instructions to avoid decoding the same instruction
     // twice, pc is the key and the instruction is the value.
     //
@@ -32,6 +34,8 @@ impl Decoder {
             factories: vec![],
             mop,
             version,
+            #[cfg(has_asm)]
+            trace_range: None,
             instructions_cache: vec![(u64::MAX as u64, 0); INSTRUCTION_CACHE_SIZE],
         }
     }
@@ -93,6 +97,16 @@ impl Decoder {
     }
 
     pub fn decode_raw<M: Memory>(&mut self, memory: &mut M, pc: u64) -> Result<Instruction, Error> {
+        #[cfg(has_asm)]
+        if let Some((start, end)) = self.trace_range {
+            // Account for every requested PC, including hits in the current
+            // decoder and speculative lookahead used by macro-op fusion.
+            if pc < start {
+                self.trace_range = None;
+            } else {
+                self.trace_range = Some((start, end.max(pc.saturating_add(4))));
+            }
+        }
         // since we are using u64::MAX as the default key in the instruction cache, have to check out of bound
         // error first.
         if pc as usize >= memory.memory_size() {
@@ -858,6 +872,16 @@ impl Decoder {
         } else {
             self.decode_raw(memory, pc)
         }
+    }
+
+    #[cfg(has_asm)]
+    pub(crate) fn start_trace_range(&mut self, pc: u64) {
+        self.trace_range = Some((pc, pc));
+    }
+
+    #[cfg(has_asm)]
+    pub(crate) fn take_trace_length(&mut self) -> Option<u64> {
+        self.trace_range.take().map(|(start, end)| end - start)
     }
 
     pub fn reset_instructions_cache(&mut self) {

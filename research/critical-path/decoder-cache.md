@@ -236,3 +236,30 @@ index 09a3c73..16e1803 100644
 ```
 
 </details>
+
+## Round 3 · Share whole verified decode traces
+
+A bounded per-worker cache remembers a successfully decoded assembly trace. The key includes the exact PC, ISA, VM version and every executable byte requested by the decoder through the end of macro-op lookahead. Cached bytes must still reside on one currently executable page. Traces that cross the allowed region use ordinary decoding. The runner recomputes the cycle charge from the current cycle model in the original instruction order. It does not cache authorization, guest execution, receipts, locks, state, or VM memory. The path is used by Stem's reusable assembly runner and retains the ordinary entry point for other users of the vendored VM.
+
+The mixed A–B–B–A comparison used the same settings and input digest as rounds 1 and 2. Both B trials below ran the same binary. The extra final-source run uses explicit running addition matching the uncached cycle accounting operation, including checked-overflow behaviour under the release profile. All five histories independently replayed 275,000 signed transactions over 1,313 archived blocks.
+
+| Run | Common TPS | Write-to-common p99 | Validator CPU | Mean admission check | Mean Follower prepare |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline A1 | 2,115.12 | 1.319 s | 93.89 s | 303.21 μs | 87.80 ms |
+| Whole trace B1 | 2,125.48 | 1.333 s | 90.62 s | 287.70 μs | 90.68 ms |
+| Whole trace B2 | 2,120.28 | 1.241 s | 90.80 s | 288.68 μs | 87.47 ms |
+| Baseline A2 | 2,098.80 | 1.359 s | 94.44 s | 305.75 μs | 87.58 ms |
+| Final-source candidate | 2,114.40 | 1.425 s | 90.98 s | 289.24 μs | 92.01 ms |
+
+Mean validator CPU fell from 94.16 to 90.71 seconds, or 3.7%. Admission checks fell from 304.48 to 288.19 μs, or 5.4%, with the same direction in both pairs. Common throughput rose 0.8% across the matched runs, within the narrow offered-rate headroom. Follower prepare time and p99 did not show a stable improvement. The final-source repeat preserved the CPU and admission gains. Its p99 rose against the two uninstrumented baselines, so these runs support CPU savings without a stable latency claim.
+
+The locked release workspace passed 530 tests with 29 ignored, and the separate vendor assembly suite passed 169. Focused checks exercised mismatched code bytes across the full compared range, ISA/version and PC mismatch, core resets with different code at the same address, executable-page and address-range guards, and replay of an identical trace with a different cycle model. The candidate prototypes and final node have SHA-256 values `32e9d3793b578e210ed3224bb15ef18ce7914c8c75370f0d44fda183f99a88ea` and `40ffeb09a44faa3ed543c7d15bfbd3b356e6bfcf9794011cb02fd3b886d4c481`. Replay of signed workloads independently validates the certified histories and available receipt witnesses. The focused direct test verifies the cycle count explicitly.
+
+The sustained comparison ran the final-source build first and the uninstrumented `eeefe97` reference second. It offered the fixed 720,000-payment corpus over 60 seconds of warmup and 180 seconds of measurement, then drained for 45 seconds. Stage means use counter deltas within the measurement window. The p99 population includes payments written in that window and finalized during the offer or drain. Both histories independently replayed, including 1,698 blocks.
+
+| Build in run order | Common TPS | Write-to-common p99 | Validator CPU | Mean Leader build | Mean Follower prepare | Mean control queue |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Whole trace | 2,996.26 | 4.329 s | 816.02 s | 132.20 ms | 242.44 ms | 39.55 ms |
+| Baseline | 2,991.93 | 4.687 s | 849.78 s | 137.81 ms | 263.74 ms | 44.66 ms |
+
+Trace reuse cut validator CPU by 4.0%, mean Follower preparation by 8.1% and mean control queue wait by 11.4% in this sustained pair. p99 improved 7.6%. Mean admission check fell from 166.19 to 161.93 μs. Both runs acknowledged and finalized all 720,000 payments, with no local view timeouts. The common TPS difference was 0.14%. The near-fixed arrival rate constrains what this pair can say about capacity. The p99 direction is a result of one sustained pair, and mixed p99 varied. Keep the implementation on the optimisation branch for its repeated CPU savings and sustained preparation improvement. The cache uses about 0.45 MiB per participating thread on x86-64. Extra memory and CKB portability remain part of evaluating other deployments.
