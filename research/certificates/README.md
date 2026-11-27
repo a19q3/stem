@@ -46,6 +46,21 @@ The reference binary SHA-256 was `1cedbf66faddde2f6bfdab9b5732c2213f5494d7cec33e
 
 For the paired burst, point `STEM_TEST_REPLICA_BIN` at each build and invoke `storage_load::sustained_payment_storage` from the native integration suite. Set `STEM_STORAGE_REPLICAS=16`, `RATE=600`, `SECONDS=15`, `DRAIN=12`, `SENDERS=128`, `VM_WORKERS=2`, `RETENTION=256`, `BLOCK_CYCLES=4000000000` and `BLOCK_TRANSACTIONS=2048`, all under the `STEM_STORAGE_` prefix. Use the indicated `CADENCE` and set `PREFUND_PAYMENTS`, `COMPLETE_VOLUME`, `READY_SENDERS` and `REUSE_SUBMISSIONS` to `1`. Use the same driver with the optional status field in both conditions.
 
+## Matched reuse with two stopped leaders
+
+At `f4f0f94`, sixteen same-host weighted replicas ran a fixed, reuse, reuse, fixed order. Both builds used default parallel Cell commitments. The reuse build added `jolteon-certificate-experiment`. Each trial used identical genesis and 600 signed payments, offered at 40/s. The fixture stopped two consecutively scheduled leaders, waited for all serving replicas to observe all payments plus consecutive timeout certificates, then restarted the stopped nodes. CPUs `2-7,10-15,18-23,26-31` were shared across all processes. The cadence was 550 ms and the timeout 2,400 ms.
+
+| Run | Fault visibility, s | Restart visibility, s | Serving validator CPU, s | Mean fault control wait, ms | QC hits / encodes | TC hits / encodes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Fixed A1 | 26.457 | 1.162 | 5.63 | 0.459 | — | — |
+| Reuse B1 | 26.399 | 1.109 | 5.60 | 0.387 | 756 / 280 | 364 / 56 |
+| Reuse B2 | 26.363 | 1.294 | 5.46 | 0.383 | 756 / 280 | 377 / 56 |
+| Fixed A2 | 26.444 | 1.173 | 5.64 | 0.385 | — | — |
+
+Counters subtract the pre-fault snapshot for the 14 surviving processes. CPU includes the recovery observation interval for those same PIDs. All runs observed 56 local timeout events and 600 common confirmations. Each opted-in run had 28 parent-view TC checks and zero memo hits. The independent reference verifier checked four saved proofs per run, including the three requested checkpoint heights 23 through 25. Every replica converged at height 25 after restart. Both canonical frame and memo reset regressions passed. Fault, restart and mean control-wait results leave the feature opt-in. CPU moved by −0.5% and −3.2% in the two pairs. Frame reuse avoided encoding work while fault visibility stayed within 0.4%. Whole-process allocations and independent links were outside this comparison.
+
+Use `tools/jolteon_localnet.py` with `--validators 16 --transactions 600 --offered 40 --offline 2 --offline-blocks 16 --cadence 550 --timeout 2400 --recovery-seconds 60 --covered-checkpoint-proofs 3` and the release lock binary. Independently run the fixed binary's `jolteon-proof` on every saved proof and compare the full Header result against the live report. The node SHA-256 fingerprints were `d09f92203af1b5c6c494120ac2989d1da7a362868cac0c120ff312794f9518ef` and `04e0e3c7d08a59e6295583e9d6c84f58844958f751e53986e96ae8448e1baaea` in fixed/reuse order. Genesis SHA-256 was `b5a4ce90ca00b0fee9f6d71de96474278227d5469894d2b3ac4ae53ef8f02e3b` and signed-workload SHA-256 was `76dafd210cdc81a1770fb42ef934d9103e7a5d86e9279aee164c4795d8fd5557`.
+
 ## Unsuccessful runs
 
 The first large run used listener ports inside the host's ephemeral range and some 128-member listeners failed to bind. Subsequent runs used lower ports. Some requests for two exact-height proofs received a later anchor. One request at 64 returned a proof that verified at 65. The matrix uses the fixture's normal common-header and two-chain checks. The historical coverage mode now checks ancestry to a later signed anchor. The exact-height mode remains available for CKB checkpoint fixtures. [Initial failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/certificates/initial-runs.json.xz) · [Proof coverage and replay](../finality/README.md)
