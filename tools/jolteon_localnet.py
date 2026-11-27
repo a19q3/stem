@@ -49,6 +49,31 @@ def rpc(port, method, body=b""):
             return json.loads(response.read(length))
 
 
+def covered_header(network, anchor, height, read_header):
+    """Resolve a requested Header against the independently verified anchor."""
+    if height > anchor["height"]:
+        raise ValueError("finality proof predates the requested Header")
+    cursor = anchor
+    ancestry = []
+    while cursor["height"] > height:
+        parent = read_header(cursor["height"] - 1)
+        header = bytes.fromhex(cursor["header"])
+        raw = bytes.fromhex(parent["header"])
+        parent_id = ckb_hash(b"Stem Header\0" + network + raw)
+        app_hash = ckb_hash(b"Stem AppHash\0" + network + raw[:8] + parent_id)
+        if (
+            len(raw) != 208
+            or int.from_bytes(raw[:8], "little") + 1 != cursor["height"]
+            or parent["height"] + 1 != cursor["height"]
+            or header[16:48] != parent_id
+            or parent["app_hash"] != app_hash.hex()
+        ):
+            raise ValueError("retained Header is outside the certified ancestry")
+        ancestry.append(parent)
+        cursor = parent
+    return cursor, ancestry
+
+
 def evidence_keys(args):
     result = []
     for slot in range(args.validators):
@@ -274,7 +299,13 @@ def scenario(args):
         proof_file = args.output / "two-chain.json"
         write_json(proof_file, proof["proof"])
         checked = json.loads(run(args.binary, "jolteon-proof", "--genesis", spec, "--proof", proof_file))
-        if checked["height"] < agreed_height or (checked["height"] == agreed_height and checked != headers[0]):
+        network = bytes.fromhex(json.loads(spec.read_text())["network_id"].removeprefix("0x"))
+
+        def read_header(height):
+            return rpc(peers[-1], HEADER, struct.pack("<Q", height))
+
+        covered_common, proof_ancestry = covered_header(network, checked, agreed_height, read_header)
+        if covered_common != headers[0]:
             raise AssertionError("proof and committed Header disagree")
         pruning = []
         if args.check_pruning:
@@ -293,12 +324,15 @@ def scenario(args):
             "archival_replica": everybody[-1], "ordinary_history_window": args.history_window or 256, "pruning": pruning,
             "replica_binaries": [str(path) for path in binaries],
             "before": initial, "with_fault": active, "resumed": resumed, "agreement": headers[0], "two_chain_proof": proof["proof"], "proof_verification": checked,
+            "proof_ancestry": proof_ancestry,
             "relay_retry": relay_retry,
             "processes": [process_resources(nodes[i].pid) for i in everybody],
             "processes_before": start_metrics,
         }
-        if args.checkpoint_proofs:
-            heights = range(agreed_height - args.checkpoint_proofs + 1, agreed_height + 1)
+        covered = getattr(args, "covered_checkpoint_proofs", 0)
+        count = args.checkpoint_proofs or covered
+        if count:
+            heights = range(agreed_height - count + 1, agreed_height + 1)
             assert heights.start > 0, "not enough finalized blocks for the requested checkpoint proofs"
             checkpoints = []
             for height in heights:
@@ -307,8 +341,14 @@ def scenario(args):
                 assert not signed["handoff"] and signed["epoch"] == 0, signed.keys()
                 write_json(path, signed["proof"])
                 verified = json.loads(run(args.binary, "jolteon-proof", "--genesis", spec, "--proof", path))
-                assert verified == rpc(peers[-1], HEADER, struct.pack("<Q", height)), verified
-                checkpoints.append({"height": height, "proof_file": path.name, "header": verified})
+                entry = {"height": height, "proof_file": path.name}
+                if covered:
+                    target, ancestry = covered_header(network, verified, height, read_header)
+                    entry.update(header=target, anchor=verified, ancestry=ancestry)
+                else:
+                    assert verified == read_header(height), verified
+                    entry["header"] = verified
+                checkpoints.append(entry)
             report["checkpoint_proofs"] = checkpoints
         if args.fee_calibration:
             query = json.dumps({"path": "/stem/extinguished-fees", "height": agreed_height, "prove": True}).encode()
@@ -359,8 +399,11 @@ def main():
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)
     parser.add_argument("--offered", type=float, default=16)
-    parser.add_argument("--checkpoint-proofs", type=int, choices=range(0, 5), default=0,
-                        help="save verified consecutive exact-height proofs from the live archive")
+    checkpoints = parser.add_mutually_exclusive_group()
+    checkpoints.add_argument("--checkpoint-proofs", type=int, choices=range(0, 5), default=0,
+                             help="save verified consecutive exact-height proofs from the live archive")
+    checkpoints.add_argument("--covered-checkpoint-proofs", type=int, choices=range(1, 5), default=0,
+                             help="save requested Headers and ancestry to their finality anchors")
     parser.add_argument("--vm-crypto-v1", action="store_true", help="activate crypto syscall 2131 in the fixture genesis")
     parser.add_argument("--fee-calibration", action="store_true")
     parser.add_argument("--require-relay-retry", action="store_true",

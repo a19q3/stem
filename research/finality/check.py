@@ -46,6 +46,21 @@ def digest(domain, network, *fields):
     ).digest()
 
 
+def requested_header(record, authenticated, network):
+    assert authenticated == record.get("anchor", record["header"])
+    cursor = authenticated
+    for parent in record.get("ancestry", []):
+        raw = bytes.fromhex(parent["header"])
+        parent_id = digest(b"Stem Header\0", network, raw)
+        assert len(raw) == 208 and int.from_bytes(raw[:8], "little") == parent["height"]
+        assert parent["height"] + 1 == cursor["height"]
+        assert bytes.fromhex(cursor["header"])[16:48] == parent_id
+        assert digest(b"Stem AppHash\0", network, raw[:8], parent_id).hex() == parent["app_hash"]
+        cursor = parent
+    assert cursor == record["header"]
+    return cursor
+
+
 def check(bundle, binary):
     report = bundle["report"]
     spec = bundle["genesis"]
@@ -69,8 +84,7 @@ def check(bundle, binary):
                     root / "proof.json",
                 ]
             )
-            verified = json.loads(raw)
-            assert verified == record["header"]
+            verified = requested_header(record, json.loads(raw), network)
             header = bytes.fromhex(verified["header"])
             height = int.from_bytes(header[:8], "little")
             assert len(header) == 208 and height == verified["height"]
@@ -115,6 +129,10 @@ def check(bundle, binary):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
+    parser.add_argument(
+        "observations", type=Path, nargs="?",
+        default=Path(__file__).with_name("observations.json.xz"),
+    )
     args = parser.parse_args()
-    with lzma.open(Path(__file__).with_name("observations.json.xz"), "rt") as f:
+    with lzma.open(args.observations, "rt") as f:
         print(json.dumps([check(b, args.binary) for b in json.load(f)], sort_keys=True))
