@@ -112,6 +112,28 @@ pub struct ProposalScan {
     pub cycle_scan_stops: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct LineageSchedule {
+    pub access_analysis_us: u64,
+    pub parallel_materialize_us: u64,
+    pub parallel_waves: u64,
+    pub parallel_commands: u64,
+    pub serial_commands: u64,
+}
+
+impl LineageSchedule {
+    pub(crate) fn record(&mut self, other: Self) {
+        self.access_analysis_us = self.access_analysis_us.saturating_add(other.access_analysis_us);
+        self.parallel_materialize_us = self
+            .parallel_materialize_us
+            .saturating_add(other.parallel_materialize_us);
+        self.parallel_waves = self.parallel_waves.saturating_add(other.parallel_waves);
+        self.parallel_commands = self.parallel_commands.saturating_add(other.parallel_commands);
+        self.serial_commands = self.serial_commands.saturating_add(other.serial_commands);
+    }
+}
+
 impl ProposalScan {
     pub(crate) fn record(&mut self, scan: Self) {
         self.inspected = self.inspected.saturating_add(scan.inspected);
@@ -471,6 +493,7 @@ pub struct Prepared {
     live: LiveChanges,
     batch: Batch,
     commitments: CommitmentTiming,
+    lineage_schedule: LineageSchedule,
 }
 
 pub(crate) struct CommitmentTiming {
@@ -556,6 +579,10 @@ impl Prepared {
 
     pub(crate) fn commitment_timing(&self) -> &CommitmentTiming {
         &self.commitments
+    }
+
+    pub(crate) fn lineage_schedule(&self) -> LineageSchedule {
+        self.lineage_schedule
     }
 
     /// CometBFT expects results only for transactions submitted with the proposal.
@@ -1429,6 +1456,7 @@ impl Store {
         };
 
         let work_stealing = cfg!(feature = "native-work-stealing") && width > 1;
+        let mut lineage_schedule = LineageSchedule::default();
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
         for mut segment in transactions
@@ -1459,18 +1487,36 @@ impl Store {
                         count = count.max(ready);
                     }
                 }
+                let mut parallel_commands = false;
+                if count > 1
+                    && lineage
+                    && budget.cycles / count as u64 >= self.limits.transaction_cycles
+                {
+                    let started = Instant::now();
+                    let ready =
+                        lineage::independent_prefix(self, &segment[..count], &overlay.lineages)?;
+                    lineage_schedule.access_analysis_us += started.elapsed().as_micros() as u64;
+                    if cfg!(feature = "native-lineage-ready-prefix") {
+                        count = ready.max(1);
+                    }
+                    parallel_commands = count > 1 && ready == count;
+                }
                 let (wave, rest) = segment.split_at(count);
                 segment = rest;
-                let parallel_commands = wave.len() > 1
-                    && lineage
-                    && budget.cycles / wave.len() as u64 >= self.limits.transaction_cycles
-                    && lineage::independent(self, wave, &overlay.lineages)?;
                 let mut commands = if parallel_commands {
-                    wave.par_iter()
+                    let started = Instant::now();
+                    let materials = wave
+                        .par_iter()
                         .map(|tx| self.materialize_lineage(tx, &block, &overlay, budget))
-                        .collect::<Result<Vec<_>>>()?
-                        .into_iter()
+                        .collect::<Result<Vec<_>>>()?;
+                    lineage_schedule.parallel_materialize_us += started.elapsed().as_micros() as u64;
+                    lineage_schedule.parallel_waves += 1;
+                    lineage_schedule.parallel_commands += wave.len() as u64;
+                    materials.into_iter()
                 } else {
+                    if lineage {
+                        lineage_schedule.serial_commands += wave.len() as u64;
+                    }
                     Vec::new().into_iter()
                 };
                 let mut jobs = Vec::with_capacity(wave.len());
@@ -1515,7 +1561,7 @@ impl Store {
                 }
             }
         }
-        self.finish_block(
+        let mut prepared = self.finish_block(
             block.into_candidate(),
             overlay,
             execution,
@@ -1523,7 +1569,9 @@ impl Store {
             due.commands.len(),
             fees,
             parallel,
-        )
+        )?;
+        prepared.lineage_schedule = lineage_schedule;
+        Ok(prepared)
     }
 
     fn finish_block(
@@ -1610,6 +1658,7 @@ impl Store {
                 system: system_time,
                 execution: execution_time,
             },
+            lineage_schedule: LineageSchedule::default(),
         })
     }
 

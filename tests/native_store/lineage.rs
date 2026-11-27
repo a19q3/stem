@@ -965,6 +965,116 @@ fn measure_dynamic_lineage_updates() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "native-lineage-ready-prefix")]
+#[test]
+fn lineage_prefix_keeps_live_dependencies_versions_and_fee_only_rollback() -> Result<()> {
+    use ckb_types::{core::DepType, packed::OutPointVec};
+
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 16;
+    fixture.spec.limits.transaction_cycles = 20_000_000;
+    fixture.spec.limits.cell_reads = 512;
+    fixture.spec.limits.cell_write_bytes = 1024 * 1024;
+    let registry = FixtureLineage::fund(&mut fixture)?;
+    let dynamic = DynamicLineage::fund_using(&mut fixture, &registry, 10, 6, None)?;
+    let group_point = OutPoint::new([61; 32].pack(), 0);
+    let group_members = OutPointVec::new_builder().push(dynamic.fee_points[8].clone()).build();
+    fixture.spec.development_cells.push((
+        group_point.clone(),
+        Cell::new(FUND, fixture.lock.clone(), vec![], group_members.as_bytes())?,
+    ));
+    let with_dep = |tx: &Transaction, dep| {
+        dynamic.sign_command(
+            &fixture,
+            Transaction::new_lineage_command(
+                tx.cell_deps().chain([dep]).collect(),
+                tx.input(0).unwrap().previous_output,
+                tx.valid_before_height().unwrap(),
+                tx.lineage_command().unwrap().clone(),
+            )?,
+        )
+    };
+    let direct = |point| CellDep::new_builder().out_point(point).build();
+    let first = dynamic.signed(&fixture, 0, &[0], (0, 0), 1)?;
+    let next = dynamic.signed(&fixture, 1, &[0], (1, 1), 1)?;
+    let generated = OutPoint::new(next.id(&fixture.spec.network), 0);
+    let reads_new_fee = with_dep(&dynamic.signed(&fixture, 2, &[1], (0, 0), 1)?, direct(generated))?;
+    let reads_future_fee =
+        with_dep(&dynamic.signed(&fixture, 3, &[2], (0, 0), 1)?, direct(dynamic.fee_points[4].clone()))?;
+    let consumes_read_fee = dynamic.signed(&fixture, 4, &[3], (0, 0), 1)?;
+    let fails_two_heads = dynamic.signed(&fixture, 5, &[0, 4], (0, 10), 0)?;
+    let follows_failed_head = dynamic.signed(&fixture, 6, &[4], (0, 0), 1)?;
+    let reads_group = with_dep(
+        &dynamic.signed(&fixture, 7, &[5], (0, 0), 1)?,
+        CellDep::new_builder().out_point(group_point).dep_type(DepType::DepGroup).build(),
+    )?;
+    let consumes_group_member = dynamic.signed(&fixture, 8, &[5], (1, 1), 1)?;
+    let ordered = [
+        first,
+        next,
+        reads_new_fee,
+        reads_future_fee,
+        consumes_read_fee,
+        fails_two_heads,
+        follows_failed_head,
+        reads_group,
+        consumes_group_member,
+    ];
+    let registrations =
+        (0..dynamic.ids.len()).map(|i| dynamic.register(&fixture, i)).collect::<Result<Vec<_>>>()?;
+    let home = tempfile::tempdir()?;
+    let mut serial = Store::open(&home.path().join("serial"), &fixture.spec, Retention::Archive)?;
+    let mut threaded = Store::open(&home.path().join("parallel"), &fixture.spec, Retention::Archive)?;
+    for store in [&mut serial, &mut threaded] {
+        store.commit(store.prepare(&registrations, TIME, false)?)?;
+    }
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let expected = serial.prepare(&ordered, TIME + 1, false)?;
+    let actual = pool.install(|| threaded.prepare(&ordered, TIME + 1, true))?;
+    assert_eq!(expected.header(), actual.header());
+    assert_eq!(expected.receipts(), actual.receipts());
+    for (index, receipt) in actual.receipts().iter().enumerate() {
+        assert_eq!(
+            lineage::Outcome::decode(&receipt.protocol_result)?,
+            if index == 5 { lineage::Outcome::Rejected } else { lineage::Outcome::Applied },
+        );
+    }
+    serial.commit(expected)?;
+    threaded.commit(actual)?;
+    for (id, version) in dynamic.ids.iter().zip([2, 1, 1, 1, 1, 2]) {
+        let a = serial.prove_current_lineage(id)?;
+        let b = threaded.prove_current_lineage(id)?;
+        assert_eq!(a.system_path.encode()?, b.system_path.encode()?);
+        let (expected_head, expected_cell, expected_path) = a.head.context("missing serial Head")?;
+        let (actual_head, actual_cell, actual_path) = b.head.context("missing parallel Head")?;
+        assert_eq!(expected_head, actual_head);
+        assert_eq!(actual_head.version, version);
+        assert_eq!(expected_path.encode()?, actual_path.encode()?);
+        assert_eq!(
+            stem_ledger::record::encode_cell(&expected_head.out_point, &expected_cell),
+            stem_ledger::record::encode_cell(&actual_head.out_point, &actual_cell),
+        );
+    }
+    let stale = dynamic.signed(&fixture, 9, &[0], (0, 0), 1)?;
+    assert!(serial.prepare(std::slice::from_ref(&stale), TIME + 2, false).is_err());
+    assert!(pool.install(|| threaded.prepare(&[stale], TIME + 2, true)).is_err());
+    assert_eq!(serial.tip(), threaded.tip());
+
+    fixture.spec.limits.cell_reads = 40;
+    let mut limited = Store::open(&home.path().join("limited"), &fixture.spec, Retention::Archive)?;
+    for registration in &registrations {
+        limited.commit(limited.prepare(std::slice::from_ref(registration), TIME, false)?)?;
+    }
+    let pinned_tip = limited.tip().clone();
+    assert!(limited.prepare(&ordered[..1], TIME + 1, false).is_ok());
+    for parallel in [false, true] {
+        assert!(pool.install(|| limited.prepare(&ordered, TIME + 1, parallel)).is_err());
+        assert_eq!(limited.tip(), &pinned_tip);
+        assert!(limited.live_cell(&dynamic.fee_points[0])?.is_some());
+    }
+    Ok(())
+}
+
 fn measure_dynamic_batches(
     name: &str,
     fixture: &Fixture,
@@ -973,7 +1083,11 @@ fn measure_dynamic_batches(
 ) -> Result<()> {
     use std::time::Instant;
     let blocks = batches.len();
-    let workers = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let threads = std::env::var("STEM_LINEAGE_BENCH_WORKERS")
+        .ok()
+        .map_or(Ok(4), |value| value.parse::<usize>())?;
+    anyhow::ensure!((1..=32).contains(&threads), "invalid worker count");
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build()?;
     let registrations = (0..dynamic.ids.len())
         .map(|i| dynamic.register(fixture, i))
         .collect::<Result<Vec<_>>>()?;
@@ -1023,6 +1137,7 @@ fn measure_dynamic_batches(
         "{}",
         serde_json::json!({
             "workload": name, "blocks": blocks, "commands_per_block": batches[0].len(),
+            "workers": threads, "ready_prefix": cfg!(feature = "native-lineage-ready-prefix"),
             "head_updates_per_block": batches[0].iter().map(|tx| tx.lineage_command().unwrap().targets.len()).sum::<usize>(),
             "serial_prepare_us": percentiles(serial_us),
             "parallel_prepare_us": percentiles(parallel_us),

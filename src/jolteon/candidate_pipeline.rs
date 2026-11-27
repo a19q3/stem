@@ -175,6 +175,9 @@ impl Replica {
             self.execution
                 .candidate_commitments
                 .record(execution.commitment_timing());
+            self.execution
+                .candidate_lineage
+                .record(execution.lineage_schedule());
         }
         if !self.preparation_is_current(&binding) || matches!(prepared, Ok(None)) {
             self.execution.candidate_jobs.stale =

@@ -156,39 +156,45 @@ fn current_head(store: &Store, stage: &Heads, id: &Byte32) -> Result<Option<Head
     }
 }
 
-/// Conservative access analysis for one materialization wave. Commands using a
-/// Dep Group may expand to arbitrary OutPoints and use the serial path.
-pub(super) fn independent(store: &Store, wave: &[Transaction], heads: &Heads) -> Result<bool> {
+/// Return the first prefix that can materialize against one immutable view.
+/// A Dep Group may expand to unknown OutPoints, so it stops the prefix.
+pub(super) fn independent_prefix(
+    store: &Store,
+    wave: &[Transaction],
+    heads: &Heads,
+) -> Result<usize> {
     let mut writes = BTreeSet::new();
     let mut code_reads = BTreeSet::new();
-    for tx in wave {
+    for (index, tx) in wave.iter().enumerate() {
+        let mut add_write = |point| !code_reads.contains(&point) && writes.insert(point);
         let command = tx.lineage_command().expect("command wave");
         let fee = tx.input(0).expect("validated fee input").previous_output;
-        if !writes.insert(fee) {
-            return Ok(false);
+        if !add_write(fee) {
+            return Ok(index);
         }
         for target in &command.targets {
             let Some(head) = current_head(store, heads, target.reference.id())? else {
-                return Ok(false);
+                return Ok(index);
             };
-            if !writes.insert(head.out_point) {
-                return Ok(false);
+            if !add_write(head.out_point) {
+                return Ok(index);
             }
         }
         let id = tx.id(store.network());
-        for index in 0..=command.targets.len() as u32 {
-            if !writes.insert(OutPoint::new(id.clone(), index)) {
-                return Ok(false);
+        for output in 0..=command.targets.len() as u32 {
+            if !add_write(OutPoint::new(id.clone(), output)) {
+                return Ok(index);
             }
         }
         for dep in tx.cell_deps() {
-            if dep.dep_type().as_slice() != [0] {
-                return Ok(false);
+            let point = dep.out_point();
+            if dep.dep_type().as_slice() != [0] || writes.contains(&point) {
+                return Ok(index);
             }
-            code_reads.insert(dep.out_point());
+            code_reads.insert(point);
         }
     }
-    Ok(writes.is_disjoint(&code_reads))
+    Ok(wave.len())
 }
 
 pub(super) struct Materialized {

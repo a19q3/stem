@@ -19,6 +19,7 @@ jolteon-bounded-cycle-scan = []
 jolteon-aged-proposal-selection = []
 native-commitment-pipeline = []
 native-cell-subtree-parallel = ["stem-ledger/parallel-patricia"]
+native-lineage-ready-prefix = []
 native-work-stealing = []
 
 [dependencies]

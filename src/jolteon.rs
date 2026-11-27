@@ -881,6 +881,9 @@ impl Replica {
                 self.execution
                     .candidate_commitments
                     .record(prepared.commitment_timing());
+                self.execution
+                    .candidate_lineage
+                    .record(prepared.lineage_schedule());
                 ensure!(
                     prepared.header() == &proposal.header,
                     "candidate execution differs from the signed Header"
