@@ -111,6 +111,23 @@ For the 430,782 measurement payments acknowledged and confirmed in both large-ca
 
 The node, harness and genesis SHA-256 values and signed corpus BLAKE2b digest match the [earlier subtree comparisons](#single-host-sustained-payment-comparison). Replay each report with the standard `drive.py verify` command against the prepared trial. The same qualifier bounds apply to each run. [Driver and replay](../storage/external/README.md#measure-and-replay) · [Acceptance bounds](../storage/external/qualification.md#sustainable-load-and-overload)
 
+### Mixed Type Group ablation and default
+
+On the `6327b9b` node source, four loopback validators ran serial, parallel, parallel and serial Cell commitments on fresh stores. The feature was the only build difference. Each run used two VM workers, a 65,536-entry verification cache, a 100 ms proposal interval, 2,048 items and 4 billion cycles. The externally paced driver offered 55,000 independent payments at 2,200/s for 25 seconds, then drained for 20 seconds. The workload cycled through zero to twelve Type Groups. Every run acknowledged and confirmed the complete signed corpus. Independent replay authenticated 927 observed blocks, twelve sampled receipts and the four terminal certificates.
+
+| Run | Common TPS | p99 | Mean Leader Cell phase | Mean Follower Cell phase | Validator CPU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Serial first | 1,991.04 | 2.618 s | 8.727 ms | 9.255 ms | 96.57 s |
+| Parallel first | 2,094.76 | 2.412 s | 5.295 ms | 5.713 ms | 98.01 s |
+| Parallel second | 2,042.72 | 2.374 s | 5.099 ms | 5.568 ms | 96.80 s |
+| Serial second | 2,097.44 | 3.996 s | 8.724 ms | 9.433 ms | 95.97 s |
+
+Both pairings lowered Leader and Follower Cell phase time by approximately 38–42% and lowered p99 on the same 55,000 payments. Window throughput changed by +5.2% and −2.6%. Process CPU rose by 0.9–1.5%. There were zero cycle rejections in the first pair. The second pair saw 701 rejections with parallel commitments and 2,693 with serial commitments. The second pair's end-to-end latency includes that resource pressure. The comparison covers one same-host workload with one Lock and varying Type Groups.
+
+Enable parallel Cell subtree mutation in the default build based on the repeated Cell phase savings, the payment comparisons in both run orders, and the matched root, ordered batch, receipt and reopened-proof checks. Keep the existing serial fallback for smaller batches and a single worker. Build the serial reference with `cargo build --release --locked --no-default-features --bin stem`. This selection is independent of subsequent throughput qualification.
+
+For reproduction, use `drive.py prepare --payment-type-groups 12 --rate 2200 --seconds 25 --drain 20 --senders 64 --block-transactions 2048 --block-cycles 4000000000 --ready-senders --reuse-submissions --complete-volume` with a pinned four-replica topology, then run the same prepared trial and the existing independent verifier for every arm. The workload identifier was `85f80e6e8a2448944da69b7faaa3e662d6e8506c12749a0dc2ed4aa1ba7f652e`. The serial node, parallel node and measuring harness SHA-256 values were `ab7b9b6f117bb3771f74d1030b48019eeaf51a6c11755bca34df1cf902689423`, `105ce8fb9af2781efd897898bc95362efe1b6e0042e061bddca3940d15cde8c6` and `09908d1f00bf406952ea21968793c80d898ddf6d4a0d65926e6df04aad99ded0`. [Driver and replay](../storage/external/README.md#measure-and-replay)
+
 ## Bounded RocksDB prefetch before editing
 
 The probe at `5c697c2` compared direct `get_opt` calls with two RocksDB prefetch frontiers. The frontier walked compressed prefixes on a pinned snapshot, issuing at most 256 reads at once with `multi_get_opt` or `batched_multi_get_cf_opt`. It passed the fetched canonical bytes to the existing authenticated editor. The comparison charges planning, buffering, canonical revalidation, edit and prefetch-buffer release. The probe uses compact nodes on one pinned core, a 128 MiB write buffer and no speculative ancestry. Twelve warm samples per configuration follow three warmup rounds in rotating method order.
