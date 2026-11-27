@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, ensure};
-use ckb_hash::blake2b_256;
+use ckb_hash::{blake2b_256, new_blake2b};
 use ckb_types::{packed::Byte32, prelude::*};
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use prost::Message as _;
 use stem_bridge_wire::intercell::{Identity, Message, record_key};
 use stem_ledger::{
@@ -16,7 +16,7 @@ use stem_ledger::{
 };
 use stem_stake::{
     Member,
-    jolteon::{Committee, FinalityProof, Point},
+    jolteon::{COMMITTEE_RECORD, Committee, CommitteeChange, FinalityProof, HandoffProof, Point},
 };
 
 struct Head {
@@ -28,14 +28,26 @@ struct Head {
 impl Head {
     fn advance(&mut self, certificate: &[u8]) -> Result<()> {
         let next = self.verifier.verify(certificate, false)?;
-        let header = next.header();
+        self.check_successor(next.header())?;
+        self.current = next.header().clone();
+        Ok(())
+    }
+
+    fn advance_handoff(&mut self, certificate: &[u8]) -> Result<()> {
+        let boundary = self.verifier.verify(certificate, true)?;
+        self.check_successor(boundary.header())?;
+        self.verifier.accept_handoff(certificate)?;
+        self.current = boundary.header().clone();
+        Ok(())
+    }
+
+    fn check_successor(&self, header: &Header) -> Result<()> {
         ensure!(
             self.current.context.height.checked_add(1) == Some(header.context.height)
                 && header.context.parent == self.current.id(&self.network)
                 && header.context.timestamp_ms > self.current.context.timestamp_ms,
             "checkpoint does not extend the accepted head"
         );
-        self.current = header.clone();
         Ok(())
     }
 
@@ -44,6 +56,80 @@ impl Head {
             verify_system_record(&self.network, &self.current, key, Some(value), proof),
             "record is outside the accepted checkpoint"
         );
+        Ok(())
+    }
+}
+
+struct Registration<'a> {
+    network: Identity,
+    deployment: Identity,
+    genesis: &'a Header,
+    manager: VerifyingKey,
+    members: &'a [Member],
+    initial_checkpoint: Byte32,
+}
+
+impl Registration<'_> {
+    fn digest(&self, primary_network: &Identity, primary_genesis: &Byte32) -> Identity {
+        let mut hash = new_blake2b();
+        hash.update(b"Stem Primary native registration v1\0");
+        hash.update(primary_network);
+        hash.update(primary_genesis.as_slice());
+        hash.update(&self.network);
+        hash.update(&self.deployment);
+        hash.update(self.genesis.id(&self.network.pack()).as_slice());
+        hash.update(self.manager.as_bytes());
+        hash.update(self.initial_checkpoint.as_slice());
+        // Committee entries have fixed widths and occupy the end of the message.
+        for member in self.members {
+            hash.update(&member.key);
+            hash.update(&member.power.to_le_bytes());
+        }
+        let mut digest = [0; 32];
+        hash.finalize(&mut digest);
+        digest
+    }
+}
+
+struct Registry {
+    network: Identity,
+    genesis: Byte32,
+    registrar: VerifyingKey,
+    chains: BTreeMap<Identity, RegisteredChain>,
+}
+
+struct RegisteredChain {
+    statement: Identity,
+    head: Head,
+}
+
+impl Registry {
+    fn register(
+        &mut self,
+        request: &Registration<'_>,
+        registrar_signature: &Signature,
+        manager_signature: &Signature,
+        certificate: &[u8],
+    ) -> Result<()> {
+        ensure!(request.network != self.network && !self.chains.contains_key(&request.network), "network identity is unavailable");
+        ensure!(request.deployment != [0; 32], "missing deployment identity");
+        ensure!(
+            request.genesis.context.height == 0 && request.genesis.context.parent == Byte32::default(),
+            "registration requires a genesis Header"
+        );
+        let digest = request.digest(&self.network, &self.genesis);
+        self.registrar.verify_strict(&digest, registrar_signature)?;
+        request.manager.verify_strict(&digest, manager_signature)?;
+        let network: Byte32 = request.network.pack();
+        let genesis = request.genesis.id(&network);
+        let mut head = Head {
+            verifier: FinalityVerifier::new(network.clone(), genesis, request.members)?,
+            current: request.genesis.clone(),
+            network,
+        };
+        head.advance(certificate)?;
+        ensure!(head.current.id(&head.network) == request.initial_checkpoint, "finality proof authenticates a different checkpoint");
+        self.chains.insert(request.network, RegisteredChain { statement: digest, head });
         Ok(())
     }
 }
@@ -230,16 +316,21 @@ struct Fixture {
     head: Head,
     committee: Committee,
     keys: Vec<SigningKey>,
+    view_origin: u64,
     history: History,
     headers: Vec<Header>,
 }
 
+fn fixture_roster(seed: u8) -> (Vec<SigningKey>, Vec<Member>) {
+    let mut keys: Vec<_> = (seed..seed + 4).map(|key| SigningKey::from_bytes(&[key; 32])).collect();
+    keys.sort_by_key(|key| key.verifying_key().to_bytes());
+    let members = keys.iter().zip([1, 2, 1, 3]).map(|(key, power)| Member { key: key.verifying_key().to_bytes(), power }).collect();
+    (keys, members)
+}
+
 impl Fixture {
     fn new(network: Identity, seed: u8) -> Result<Self> {
-        let mut keys: Vec<_> = (seed..seed + 4).map(|key| SigningKey::from_bytes(&[key; 32])).collect();
-        keys.sort_by_key(|key| key.verifying_key().to_bytes());
-        let members: Vec<_> =
-            keys.iter().zip([1, 2, 1, 3]).map(|(key, power)| Member { key: key.verifying_key().to_bytes(), power }).collect();
+        let (keys, members) = fixture_roster(seed);
         let network: Byte32 = network.pack();
         let history = History::empty(network.clone());
         let genesis = Header {
@@ -255,7 +346,7 @@ impl Fixture {
         let committee = Committee::new(network.unpack(), genesis_id.unpack(), 0, &members)?;
         let verifier = FinalityVerifier::new(network.clone(), genesis_id, &members)?;
         let head = Head { network, verifier, current: genesis.clone() };
-        Ok(Self { head, committee, keys, history, headers: vec![genesis] })
+        Ok(Self { head, committee, keys, view_origin: 0, history, headers: vec![genesis] })
     }
 
     fn append(&mut self, root: Byte32) -> Result<()> {
@@ -274,11 +365,16 @@ impl Fixture {
     }
 
     fn quorum(&self, header: &Header) -> Result<Vec<u8>> {
-        let point = Point {
-            view: header.context.height,
-            parent_view: header.context.height - 1,
-            header: header.id(&self.head.network).unpack(),
-        };
+        let view = header
+            .context
+            .height
+            .checked_sub(self.view_origin)
+            .filter(|&view| view != 0)
+            .context("fixture Header predates this committee's first vote")?;
+        self.sign_quorum(Point { view, parent_view: view - 1, header: header.id(&self.head.network).unpack() })
+    }
+
+    fn sign_quorum(&self, point: Point) -> Result<Vec<u8>> {
         let votes = self
             .keys
             .iter()
@@ -304,18 +400,37 @@ impl Fixture {
         // An earlier QC has fixed the current fixture tip. Fill the remaining
         // heights on that same parent chain before building the requested record.
         ensure!(height >= self.headers.len() as u64, "record height was already proposed");
+        let (root, proof) = self.record_root(key, value)?;
+        while self.headers.len() < height as usize {
+            self.append(self.headers.last().unwrap().state.system_root.clone())?;
+        }
+        self.append(root.clone())?;
+        self.append(root)?;
+        self.advance_head(height)?;
+        Ok(proof)
+    }
+
+    fn record_root(&self, key: &[u8], value: &[u8]) -> Result<(Byte32, Proof)> {
         let tree = Patricia::new(self.head.network.clone(), Namespace::System);
         let mut edit = tree.edit(tree.empty_root(), |_| Ok(None::<Vec<u8>>));
         let key = tree.record_key(key);
         edit.set(key, Some(tree.value_hash(value)))?;
         let proof = edit.prove(&key)?.1;
-        while self.headers.len() < height as usize {
-            self.append(self.headers.last().unwrap().state.system_root.clone())?;
+        Ok((edit.root().pack(), proof))
+    }
+
+    fn handoff(&self, announcement: &[u8], path: &Proof) -> Result<Vec<u8>> {
+        let boundary = self.headers.last().context("missing handoff boundary")?;
+        let view = boundary.context.height - self.view_origin;
+        let seal = self.committee.seal_header(boundary.id(&self.head.network).unpack());
+        Ok(HandoffProof {
+            boundary_header: boundary.encode().to_vec(),
+            parent_qc: self.quorum(boundary)?,
+            seal_qc: self.sign_quorum(Point { view: view + 1, parent_view: view, header: seal })?,
+            announcement: announcement.to_vec(),
+            path: path.encode()?.to_vec(),
         }
-        self.append(edit.root().pack())?;
-        self.append(edit.root().pack())?;
-        self.advance_head(height)?;
-        Ok(proof)
+        .encode_to_vec())
     }
 
     fn advance_head(&mut self, height: u64) -> Result<()> {
@@ -353,6 +468,143 @@ fn reserved(route: &Route) -> Result<(Fixture, Workflow, Vec<u8>, Proof)> {
     let proof = source.commit_record(1, &record_key(false, &message.id()), &raw)?;
     let request = Request::authenticate(route, &source.head, &raw, &proof)?;
     Ok((source, Workflow::open(request), raw, proof))
+}
+
+#[test]
+fn signed_registration_pins_the_initial_checkpoint_and_ancestor_of_the_handoff() -> Result<()> {
+    let route = make_route();
+    let primary = Fixture::new(route.primary, 11)?;
+    let primary_genesis = primary.head.current.id(&primary.head.network);
+    let registrar = SigningKey::from_bytes(&[90; 32]);
+    let manager = SigningKey::from_bytes(&[91; 32]);
+    let mut registry = Registry {
+        network: route.primary,
+        genesis: primary_genesis.clone(),
+        registrar: registrar.verifying_key(),
+        chains: BTreeMap::new(),
+    };
+
+    let mut source = Fixture::new(route.source, 1)?;
+    let (_, initial_members) = fixture_roster(1);
+    let (successor_keys, successor_members) = fixture_roster(31);
+    let announcement = CommitteeChange { epoch: 1, activation_height: 3, members: successor_members.clone() }.encode();
+    let (root, path) = source.record_root(COMMITTEE_RECORD, &announcement)?;
+    source.append(source.head.current.state.system_root.clone())?;
+    source.append(root.clone())?;
+    let initial = source.certificate(1)?;
+    let mut request = Registration {
+        network: route.source,
+        deployment: [12; 32],
+        genesis: &source.headers[0],
+        manager: manager.verifying_key(),
+        members: &initial_members,
+        initial_checkpoint: source.headers[1].id(&source.head.network),
+    };
+    let statement = request.digest(&route.primary, &primary_genesis);
+    let registrar_signature = registrar.sign(&statement);
+    let manager_signature = manager.sign(&statement);
+    let another_primary = request.digest(&route.primary, &[99; 32].pack());
+    assert!(registry
+        .register(&request, &registrar.sign(&another_primary), &manager.sign(&another_primary), &initial)
+        .is_err());
+    assert!(registry.register(&request, &registrar_signature, &registrar_signature, &initial).is_err());
+    assert!(registry.register(&request, &manager_signature, &manager_signature, &initial).is_err());
+
+    let checkpoint = request.initial_checkpoint.clone();
+    request.initial_checkpoint = source.headers[2].id(&source.head.network);
+    let wrong_checkpoint = request.digest(&route.primary, &primary_genesis);
+    assert!(registry
+        .register(&request, &registrar.sign(&wrong_checkpoint), &manager.sign(&wrong_checkpoint), &initial)
+        .is_err());
+    request.initial_checkpoint = checkpoint;
+    request.members = &successor_members;
+    let wrong_roster = request.digest(&route.primary, &primary_genesis);
+    assert!(registry
+        .register(&request, &registrar.sign(&wrong_roster), &manager.sign(&wrong_roster), &initial)
+        .is_err());
+    request.members = &initial_members;
+    request.deployment = [13; 32];
+    assert!(registry.register(&request, &registrar_signature, &manager_signature, &initial).is_err());
+    request.deployment = [12; 32];
+    assert!(registry.chains.is_empty());
+    registry.register(&request, &registrar_signature, &manager_signature, &initial)?;
+    assert!(registry.register(&request, &registrar_signature, &manager_signature, &initial).is_err());
+
+    let mut destination = Fixture::new(route.destination, 21)?;
+    destination.extend_unchanged(1)?;
+    let destination_manager = SigningKey::from_bytes(&[92; 32]);
+    let (_, destination_members) = fixture_roster(21);
+    let destination_request = Registration {
+        network: route.destination,
+        deployment: [15; 32],
+        genesis: &destination.headers[0],
+        manager: destination_manager.verifying_key(),
+        members: &destination_members,
+        initial_checkpoint: destination.head.current.id(&destination.head.network),
+    };
+    let destination_statement = destination_request.digest(&route.primary, &primary_genesis);
+    let destination_proof = destination.certificate(1)?;
+    registry.register(
+        &destination_request,
+        &registrar.sign(&destination_statement),
+        &destination_manager.sign(&destination_statement),
+        &destination_proof,
+    )?;
+
+    let handoff = source.handoff(&announcement, &path)?;
+    let mut fork = Fixture::new(route.source, 1)?;
+    fork.append([88; 32].pack())?;
+    fork.append(root)?;
+    let fork_handoff = fork.handoff(&announcement, &path)?;
+    let admitted = registry.chains.get_mut(&route.source).context("source registration")?;
+    assert_eq!(admitted.statement, statement);
+    assert_eq!(admitted.head.current, source.headers[1]);
+    // Even a signed terminal proof must extend the exact accepted checkpoint.
+    assert!(admitted.head.verifier.verify(&fork_handoff, true).is_ok());
+    assert!(admitted.head.advance_handoff(&fork_handoff).is_err());
+    assert_eq!(admitted.head.verifier.epoch(), 0);
+    assert_eq!(admitted.head.current, source.headers[1]);
+
+    source.advance_head(1)?;
+    source.head.advance_handoff(&handoff)?;
+    let boundary = source.head.current.id(&source.head.network);
+    source.committee = Committee::at_anchor(
+        route.source,
+        source.headers[0].id(&source.head.network).unpack(),
+        1,
+        boundary.unpack(),
+        &successor_members,
+    )?;
+    source.keys = successor_keys;
+    source.view_origin = source.head.current.context.height;
+
+    let payload = [600u64, 5, 4].into_iter().flat_map(u64::to_le_bytes).collect::<Vec<_>>();
+    let message = Message {
+        source: route.source,
+        destination: route.destination,
+        sender: route.sender,
+        receiver: route.receiver,
+        nonce: 0,
+        payload: &payload,
+    };
+    let raw = [message.header().as_slice(), &payload].concat();
+    let outbox_path = source.commit_record(3, &record_key(false, &message.id()), &raw)?;
+    let successor = source.certificate(3)?;
+    assert!(admitted.head.advance(&successor).is_err());
+    admitted.head.advance_handoff(&handoff)?;
+    assert_eq!(admitted.head.verifier.epoch(), 1);
+    assert_eq!(admitted.head.current.id(&source.head.network), boundary);
+    assert!(admitted.head.advance_handoff(&handoff).is_err());
+    assert!(admitted.head.advance(&initial).is_err());
+    admitted.head.advance(&successor)?;
+    let request = Request::authenticate(&route, &admitted.head, &raw, &outbox_path)?;
+    assert_eq!(request.id, message.id());
+    assert_eq!(request.amount, 600);
+    let independent = &registry.chains[&route.destination];
+    assert_eq!(independent.statement, destination_statement);
+    assert_eq!(independent.head.verifier.epoch(), 0);
+    assert_eq!(independent.head.current, destination.head.current);
+    Ok(())
 }
 
 #[test]
