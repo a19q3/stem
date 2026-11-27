@@ -2,7 +2,7 @@
 
 Baseline `main@eeefe975aede7c7aef433a2ab4639c0dfaed5a3f`. The first optimisation target is **instruction decoding and trace construction during VM verification**. These costs account for at least 16.1% of sampled user CPU in sustained payments and 20.1% in mixed contracts, counting only samples with a confirmed admission or Follower role. Reducing the work at this shared point helps both synchronous admission and proposal validation. For Leader preparation alone, Patricia access and traversal is the largest target.
 
-[Decoder experiments](decoder-cache.md) · [Digest-labelled finality timeline](finality.md) · [RocksDB cache comparison](storage-cache.md)
+[Decoder experiments](decoder-cache.md) · [Digest-labelled finality timeline](finality.md) · [RocksDB cache comparison](storage-cache.md) · [Integrated pressure results](integrated.md)
 
 ## Ranked bottlenecks
 
