@@ -8,7 +8,7 @@ Stem V1 votes authenticate the executed Header and use unified state finality. T
 
 | Area | Local decision entering qualification |
 | --- | --- |
-| Admission and Follower | Exercise Follower first on physical hosts. Compare the separate Admission toggle under the same resource budget. The combined same-host build improved both window TPS pairs and worsened both p99 pairs. |
+| Admission and Follower | Keep both opt-in. In the long single-host pair the Follower worker lowered mean control wait from 39.84 ms to 23.52 ms while common TPS fell from 2,082 to 1,911. The combined short-window build improved both TPS pairs and worsened both p99 pairs. [Long-window pair](research/storage/external/README.md#follower-only-sustainable-profile-pair) |
 | Leader | Keep the worker opt-in. Both short pairs favored synchronous construction. A separate opt-in lane for aged requests reduced overload p99 by 22.9% and 29.5% in two single-host pairs, with more than 55,000 pending at peak. [Selection comparison](research/storage/admission-order/README.md#bounded-priority-for-aged-payments) |
 | Work Stealing and commitments | Keep both opt-in. Mixed Work Stealing pairs reversed direction. Concurrent commitments reduced mean Follower prep and control wait in both pairs, with less than 0.4% difference in window TPS. |
 | Certified Commit | Sixty-second writer-only pairs confirmed all 156,000 payments per run. Window TPS fell 0.5–1.1%, p99 fell by 19 ms and 7.072 s, and both pairs used more CPU. Continue on independent hosts. The paused-writer and crash probes cover the descendant-reuse and publication boundary separately. |
