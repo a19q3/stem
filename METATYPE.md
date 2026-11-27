@@ -774,6 +774,25 @@ STEM_TEST_EVIDENCE_ROOT=/tmp/stem-fungible-conformance \
   fungible_conformance::native_and_metatype_fungible_groups_match -- --exact --nocapture
 ```
 
+### Replace an adapter through settlement
+
+An asset ID identifies the complete logical asset Script. A Manifest ID identifies its complete ordered Script set, including every mandatory cap. The physical CKB Type identifies the deployment, with its CKB genesis, namespace and immutable adapter table hash. Replacing an adapter keeps the first two identities when the logical Scripts stay the same. The new table and mailbox give the replacement a distinct physical Type and message namespace.
+
+The tested migration settles through Stem under the old rules, then exports the released native position into the replacement route. The CKB holder signs the old burn, and Stem releases the exact per-asset delta only after accepting anchored evidence of the old mailbox output. The native holder signs the successor export. The replacement CKB mailbox consumes its own finalized Stem delivery and dispatches the same logical Script set through its pinned table. An outstanding position remains payable through the old adapter and mailbox. Each stage consumes the relevant Cell or message exactly once.
+
+The devnet starts with 160 and 250 units. It migrates `[60, 0]` while `[100, 250]` remains live under the original table. Both deployments redeem in sequence and restore the native amounts. CKB rejects direct physical Type substitution, use of the old delivery proof on the new mailbox, and an old-route return that supplies the new table while omitting the original table. The holder can retry from the original position with the exact dependency restored. A defective old adapter still needs an executable settlement path under its existing rules.
+
+The test stops CKB after the replacement burn and before its evidence reaches Stem. Stem continues finalizing, rejects the release without a certified mailbox output and keeps both native escrows and the pending Inbox absence proof. After CKB restarts, the burn still has the same canonical inclusion. The guardians certify a deeper anchor, the replacement redemption succeeds, and the old remainder is later redeemed through its own mailbox. This test covers outage on the same canonical CKB history. Reorganisations, permanent guardian loss and approval-based unique-object migration have separate acceptance cases.
+
+Shared and inline Manifests both passed with four Stem replicas and CKB 0.210.0. Independent WASM replay checked ten execution receipts, twelve Live Cell membership proofs and both Inbox transitions, including the per-asset sum and exact Type bytes. Changed receipts and changed Live Cell records were rejected. [Devnet procedure](OPERATIONS.md#exercise-metatype-adapter-migration) · [Proof replay](sdk/wasm/tests/metatype_migration.mjs)
+
+| Manifest | Replacement CKB mint cycles | Replacement CKB burn cycles | Replacement wrapper occupied CKB | Replacement Stem return cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Shared | 5,768,076 | 4,933,919 | 263 | 14,256,855 |
+| Inline | 5,687,358 | 4,806,891 | 771 | 14,256,855 |
+
+The CKB devnet used its 10B cycles per-block limit. The highest Stem redemption charge was 14,342,495 against the 20M per-transaction limit, leaving 5,657,505 cycles in these runs. The original and replacement cap adapter ELF SHA-256 values were `17a09979501a0b7eeaccd9dbcc1dad8eea417756ec796760e84aae4963231134` and `f4c6d7501d42e29e80b619d9db64aea2008302ffb0c6406215d5970e8d72b7c1`. Both were built from the same cap validation source with different optimization settings. A replacement with changed rules needs its own comparison and authorization.
+
 ## Threat model
 
 The protected assets are supply, object identity, custody, script

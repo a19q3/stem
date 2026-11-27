@@ -1,4 +1,4 @@
-"""Settle two independently capped Metatype assets atomically on both chains."""
+"""Settle independently capped Metatype assets across Stem and CKB."""
 
 import json
 
@@ -15,6 +15,7 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     composed = args.metatype_composed_cell
     selective = args.metatype_composed_selective
     partial = args.metatype_composed_partial or selective is not None
+    migration = args.metatype_migration_cap_adapter
     network, genesis = client.network, vault["genesis"]
     native_lock_code = hex_bytes(ckb_hash(args.native_lock.read_bytes()))
     owner, friend = [script(native_lock_code, fixture.key(key)["blake160"], "data")
@@ -24,6 +25,12 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     code = [path.read_bytes() for path in (args.intercell_mailbox, args.metatype_mailbox_lock,
             args.metatype_dispatcher, args.metatype_udt_adapter, args.metatype_amount_cap_adapter)]
     mailbox_code, gate_code, dispatcher, udt_adapter, cap_adapter = map(ckb_hash, code)
+    replacement = None
+    if migration is not None:
+        code.append(migration.read_bytes())
+        replacement = ckb_hash(code[-1])
+        if replacement == cap_adapter:
+            raise ValueError("migration requires a different cap adapter executable")
     udt_code = ckb_hash(args.export_udt.read_bytes())
     cap_code = ckb_hash(args.native_amount_cap.read_bytes())
     escrow_code = ckb_hash(args.stem_metatype_escrow.read_bytes())
@@ -34,6 +41,7 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     fee_capacity = 10_000 * CKB
     assets_by_lane = [(0, 1)] if composed else [(0,), (1,)]
     lane_count = len(assets_by_lane)
+    mailbox_count = lane_count + int(replacement is not None)
 
     def signed_ckb(label, inputs, outputs, data, keys, *, deps=None, witnesses=None):
         tx = transaction(inputs, outputs, data, dependencies if deps is None else deps)
@@ -55,10 +63,10 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         return result
 
     deploy_capacity = [(len(program) + 100) * CKB for program in code]
-    reserve = vault["change"] - sum(deploy_capacity) - lane_count * mailbox_capacity - fee_capacity - FEE
+    reserve = vault["change"] - sum(deploy_capacity) - mailbox_count * mailbox_capacity - fee_capacity - FEE
     funding = signed_ckb("fund", [vault["change_point"]],
         [output(capacity, fixture.standard) for capacity in [
-            *deploy_capacity, lane_count * mailbox_capacity, fee_capacity, reserve]],
+            *deploy_capacity, mailbox_count * mailbox_capacity, fee_capacity, reserve]],
         [*map(hex_bytes, code), "0x", "0x", "0x"],
         [wallet_group(0, [fixture.faucet])], deps=[secp])
     funded = l1.send(funding)
@@ -67,9 +75,37 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     fee_point = point(funded, len(code) + 1)
     metadata = []
     lanes = []
+
+    def route(index, assets, receiver, returning, adapter):
+        mailbox_id = ckb_hash(le(0, 8) + seed_bytes + le(index, 8))
+        types = [item for asset in assets for item in asset["types"]]
+        scripts = sorted(map(packed_script, types))
+        manifest = ckb_hash(b"Stem Metatype manifest\0" + b"".join(map(ckb_hash, scripts)))
+        profile = bytes([4 if composed else 2])
+        ids = sorted(asset["id"] for asset in assets)
+        principal = ckb_hash(b"Stem Metatype amount keys\0" + b"".join(ids)) if composed else ids[0]
+        custody = profile + mailbox_code + mailbox_id + gate_code + manifest + principal
+        table = bytes([2]) + b"".join(sorted((
+            udt_code + b"\0" + udt_adapter, cap_code + b"\0" + adapter))) + custody
+        metadata.append(table)
+        definition = None
+        if args.metatype_shared_manifest:
+            definition = manifest_definition([(raw, b"") for raw in scripts])
+            if definition not in metadata:
+                metadata.append(definition)
+        wrapper = script(hex_bytes(dispatcher), hex_bytes(binary(genesis)
+            + ckb_hash(b"Stem Metatype batch deployment" + manifest) + ckb_hash(table)), "data2")
+        escrow = script(hex_bytes(escrow_code), hex_bytes(binary(genesis)
+            + script_hash(wrapper) + checkpoint_code + checkpoint_id + custody), "data")
+        gate = script(hex_bytes(gate_code), hex_bytes(profile + script_hash(escrow)
+            + script_hash(wrapper) + mailbox_code + mailbox_id + manifest + principal), "data2")
+        mailbox = script(hex_bytes(mailbox_code), hex_bytes(mailbox_id + binary(genesis)
+            + binary(network) + script_hash(gate) + checkpoint_code + checkpoint_id), "data2")
+        return dict(assets=assets, types=types, manifest=manifest, definition=definition, receiver=receiver,
+                    returning=returning, escrow=escrow, gate=gate, mailbox=mailbox, wrapper=wrapper)
+
     for i, asset_indices in enumerate(assets_by_lane):
         receiver, returning = (fixture.owner_lock, fixture.friend_lock)[i], (friend, owner)[i]
-        mailbox_id = ckb_hash(le(0, 8) + seed_bytes + le(i, 8))
         assets = []
         for index in asset_indices:
             units, cap = (160, 250)[index], (200, 300)[index]
@@ -80,30 +116,13 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
             asset_id = script_hash(asset)
             policy = script(hex_bytes(cap_code), hex_bytes(asset_id + le(cap, 16)), "data")
             assets.append(dict(id=asset_id, units=units, cap=cap, types=[asset, policy]))
-        types = [item for asset in assets for item in asset["types"]]
-        scripts = sorted(map(packed_script, types))
-        manifest = ckb_hash(b"Stem Metatype manifest\0" + b"".join(map(ckb_hash, scripts)))
-        profile = bytes([4 if composed else 2])
-        ids = sorted(asset["id"] for asset in assets)
-        principal = ckb_hash(b"Stem Metatype amount keys\0" + b"".join(ids)) if composed else ids[0]
-        custody = profile + mailbox_code + mailbox_id + gate_code + manifest + principal
-        table = bytes([2]) + b"".join(sorted((
-            udt_code + b"\0" + udt_adapter, cap_code + b"\0" + cap_adapter))) + custody
-        metadata.append(table)
-        definition = None
-        if args.metatype_shared_manifest:
-            definition = manifest_definition([(raw, b"") for raw in scripts])
-            metadata.append(definition)
-        wrapper = script(hex_bytes(dispatcher), hex_bytes(binary(genesis)
-            + ckb_hash(b"Stem Metatype batch deployment" + manifest) + ckb_hash(table)), "data2")
-        escrow = script(hex_bytes(escrow_code), hex_bytes(binary(genesis)
-            + script_hash(wrapper) + checkpoint_code + checkpoint_id + custody), "data")
-        gate = script(hex_bytes(gate_code), hex_bytes(profile + script_hash(escrow)
-            + script_hash(wrapper) + mailbox_code + mailbox_id + manifest + principal), "data2")
-        mailbox = script(hex_bytes(mailbox_code), hex_bytes(mailbox_id + binary(genesis)
-            + binary(network) + script_hash(gate) + checkpoint_code + checkpoint_id), "data2")
-        lanes.append(dict(assets=assets, types=types, manifest=manifest, definition=definition, receiver=receiver,
-                          returning=returning, escrow=escrow, gate=gate, mailbox=mailbox, wrapper=wrapper))
+        lanes.append(route(i, assets, receiver, returning, cap_adapter))
+    replacement_lane = None
+    if replacement is not None:
+        replacement_lane = route(lane_count, lanes[0]["assets"], fixture.friend_lock, friend, replacement)
+        assert replacement_lane["manifest"] == lanes[0]["manifest"]
+        assert replacement_lane["types"] == lanes[0]["types"]
+        assert replacement_lane["wrapper"] != lanes[0]["wrapper"]
     metadata_cap = [(61 + len(raw)) * CKB for raw in metadata]
     published = l1.send(signed_ckb("publish", [point(funded, len(code) + 2)],
         [output(capacity, fixture.standard) for capacity in [*metadata_cap, reserve - sum(metadata_cap) - FEE]],
@@ -114,8 +133,11 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     mailbox_caps[-1] -= FEE
     successors = [output(capacity, lane["gate"], lane["mailbox"])
                   for capacity, lane in zip(mailbox_caps, lanes, strict=True)]
-    created = l1.send(signed_ckb("create-mailboxes", [seed], successors,
-        [hex_bytes(le(0, 8) + empty)] * lane_count, [wallet_group(0, [fixture.faucet])]))
+    new_mailbox = (None if replacement_lane is None else
+                   output(mailbox_capacity, replacement_lane["gate"], replacement_lane["mailbox"]))
+    initial_mailboxes = successors if new_mailbox is None else [*successors, new_mailbox]
+    created = l1.send(signed_ckb("create-mailboxes", [seed], initial_mailboxes,
+        [hex_bytes(le(0, 8) + empty)] * mailbox_count, [wallet_group(0, [fixture.faucet])]))
     mailboxes = [point(created, i) for i in range(lane_count)]
 
     def amounts(lane, units=None):
@@ -216,14 +238,15 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         return {**json.loads(bytes.fromhex(reply["value"])), "height": height,
                 "finality": client.finality(height)["proof"]}
 
-    initial_change = mint["payment_capacity"] - (bond + native_asset_capacity) * lane_count - FEE
+    new_bond = [] if replacement_lane is None else [cell(bond, replacement_lane["escrow"])]
+    initial_change = mint["payment_capacity"] - (bond + native_asset_capacity) * lane_count - len(new_bond) * bond - FEE
     if composed:
         asset_outputs = [cell(native_asset_capacity // 2, owner, le(asset["units"], 16), asset["types"])
                          for asset in lanes[0]["assets"]]
     else:
         asset_outputs = [cell(native_asset_capacity, owner, amount_data(lane), lane["types"]) for lane in lanes]
     issue = commit(stem_signed("issue", [(mint["payment"], owner)],
-        [*(cell(bond, lane["escrow"]) for lane in lanes), *asset_outputs, cell(initial_change, owner)]))
+        [*(cell(bond, lane["escrow"]) for lane in lanes), *asset_outputs, cell(initial_change, owner), *new_bond]))
     rejections = {}
     bond_inputs = [(stem_point(issue, i), lane["escrow"]) for i, lane in enumerate(lanes)]
     bundle = None
@@ -332,7 +355,7 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     wrong_amount[positive_index] -= 1
     wrong = packet("wrong-burn-amount", lanes[-1], False, 0, lanes[-1]["returning"], wrong_amount)
 
-    def burn_both(label, packets, retained=remaining, sequence=1, *, keep_empty=False):
+    def burn_both(label, packets, retained=remaining, sequence=1, *, keep_empty=False, selected_deps=None):
         retained_outputs = [output(token_capacity - (FEE if i == 0 else 0), lock,
                                    lane["wrapper"] if keep_empty or any(retained[i]) else None)
                             for i, (lock, lane) in enumerate(zip(holders, lanes, strict=True))]
@@ -343,7 +366,7 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
             [*(hex_bytes(le(sequence, 8) + root + binary(msg["record"])) for root, msg in zip(roots, packets, strict=True)),
              *retained_data, "0x"],
             [*(wallet_group(i + lane_count, [key]) for i, key in enumerate(owners)),
-             wallet_group(2 * lane_count, [fixture.faucet])])
+             wallet_group(2 * lane_count, [fixture.faucet])], deps=selected_deps)
 
     rejections["wrong_burn_delta"] = reject_ckb(burn_both("wrong-burn", [*inbound[:-1], wrong]), 51)
     if partial:
@@ -426,16 +449,133 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     retained_proofs = [cell_proof(stem_point(redeemed, i)) for i in range(lane_count)]
     change_point = stem_point(redeemed, 2 * lane_count)
     change = export_change - lane_count * release_capacity - FEE
+    followup_fee = point(burned["hash"], 2) if composed else None
+    migration_report = None
+    if replacement_lane is not None:
+        old, new = lanes[0], replacement_lane
+        old_wrapped = point(burned["hash"], 1)
+        old_escrow = stem_point(redeemed, 0)
+        old_l1 = l1.call("get_live_cell", old_wrapped, True)
+        migrated = returning[0]
+        assert [a + b for a, b in zip(migrated, remaining[0], strict=True)] == [item["units"] for item in old["assets"]]
+        direct = signed_ckb("replace-wrapper-without-settlement", [old_wrapped],
+            [output(token_capacity - 2 * FEE, fixture.friend_lock, new["wrapper"])],
+            [representation(new, remaining[0])], [wallet_group(0, [fixture.friend])])
+        rejections["direct_deployment_substitution"] = reject_ckb(direct, 48)
+        assert l1.call("get_live_cell", old_wrapped, True) == old_l1
+
+        def joint_cells(points, expected):
+            keys = [binary(item["tx_hash"]) + le(int(item["index"], 16), 4) for item in points]
+            at, entries = query("/stem/cells", hex_bytes(b"".join(keys)))
+            for key, entry, wanted in zip(keys, entries, expected, strict=True):
+                raw = bytes.fromhex(entry["cell"])
+                assert raw[:36] == key and raw[84:] == binary(wanted)
+            return {"height": at, "finality": client.finality(at)["proof"],
+                    "positions": [{**entry, "point": hex_bytes(key)} for key, entry in zip(keys, entries, strict=True)]}
+
+        new_bond_point = stem_point(issue, lane_count + len(asset_outputs) + 1)
+        bound_nonce = binary(new_bond_point["tx_hash"]) + le(int(new_bond_point["index"], 16), 4)
+        nonce = int.from_bytes(ckb_hash(b"Stem Metatype escrow nonce\0" + bound_nonce)[:8], "little")
+        send = packet("migration-export", new, True, nonce, new["receiver"], migrated)
+        new_escrow = cell(bond, new["escrow"], amount_data(new, migrated), new["types"])
+        new_export = commit(stem_signed("migration-export", [(new_bond_point, new["escrow"]), (released[0], friend)],
+            [new_escrow, cell(release_capacity - FEE, friend)],
+            messages=[(new["escrow"], 0xff00, send)], signers=[(friend, fixture.friend)]))
+        assert cell_proof(released[0])["cell"] is None
+        outbox_height, outbox_proof = query("/stem/intercell/outbox", send["id"])
+        new_checkpoint = relay.advance(outbox_height, secp)
+        migration_header = args.output / "migration-checkpoint-header.json"
+        migration_request = args.output / "migration-delivery-request.json"
+        write_json(migration_header, hex_bytes(relay.header(outbox_height)))
+        write_json(migration_request, {**outbox_proof, "consumed": [], "expected_root": hex_bytes(empty)})
+        delivery = json.loads(run(args.binary, "intercell", "delivery-witness", "--request", migration_request,
+                                  "--header", migration_header))
+        root = binary(delivery["successor_root"])
+        fee_capacity -= FEE + token_capacity + FEE
+        new_mint_outputs = [new_mailbox, output(token_capacity, new["receiver"], new["wrapper"]),
+                            output(fee_capacity, fixture.standard)]
+        new_mint_data = [hex_bytes(le(0, 8) + root), representation(new, migrated), "0x"]
+
+        def mint_replacement(label, proof):
+            return signed_ckb(label, [point(created, lane_count), followup_fee], new_mint_outputs,
+                              new_mint_data, [wallet_group(1, [fixture.faucet])],
+                              deps=[*dependencies, new_checkpoint], witnesses=[proof])
+
+        rejections["cross_deployment_delivery"] = reject_ckb(mint_replacement("migration-old-proof", mail_input[0]), 51, 84)
+        assert l1.call("get_live_cell", point(created, lane_count), False)["status"] == "live"
+        new_minted = submit_ckb(mint_replacement("migration-mint", witness(binary(delivery["input_type"]))))
+        new_wrapper = point(new_minted["hash"], 1)
+        new_l1 = l1.call("get_live_cell", new_wrapper, True)["cell"]
+        assert new_l1["data"]["content"] == new_mint_data[1] and new_l1["output"]["type"] == new["wrapper"]
+        assert l1.call("get_live_cell", old_wrapped, True) == old_l1
+        dual_escrow = joint_cells([old_escrow, stem_point(new_export, 0)], [release[0], new_escrow])
+
+        receive = packet("migration-return", new, False, 0, friend, migrated)
+        fee_capacity -= FEE
+        new_burned = submit_ckb(signed_ckb("migration-burn",
+            [point(new_minted["hash"], 0), new_wrapper, point(new_minted["hash"], 2)],
+            [new_mailbox, output(token_capacity, fixture.friend_lock), output(fee_capacity, fixture.standard)],
+            [hex_bytes(le(1, 8) + root + binary(receive["record"])), "0x", "0x"],
+            [wallet_group(1, [fixture.friend]), wallet_group(2, [fixture.faucet])]))
+        followup_fee = point(new_burned["hash"], 2)
+        assert l1.call("get_live_cell", new_wrapper, False)["status"] != "live"
+        returned = cell(release_capacity - 2 * FEE, friend, amount_data(new, migrated), new["types"])
+        redemption_inputs = [(stem_point(new_export, 0), new["escrow"]), (stem_point(new_export, 1), friend)]
+        redemption_outputs = [cell(bond, new["escrow"]), returned]
+        redemption_action = [(new["escrow"], 0xff01, receive)]
+        outage_start = client.status()["height"]
+        l1.stop()
+        try:
+            rejections["return_during_ckb_outage"] = reject_stem(stem_signed("migration-outage-return",
+                redemption_inputs, redemption_outputs, messages=redemption_action,
+                signers=[(friend, fixture.friend)]), "uniquely matching certified CKB mailbox output")
+            wait_for(lambda: client.status()["height"] > outage_start, "Stem progress during CKB outage")
+            held_during_outage = joint_cells([old_escrow, stem_point(new_export, 0)], [release[0], new_escrow])
+            pending_during_outage = certified("/stem/intercell/inbox", receive["id"])
+            assert pending_during_outage["record"] is None
+        finally:
+            l1.start("l1-migration-restart.log")
+        assert l1.prove_committed(new_burned["hash"])["header"] == new_burned["proof"]["header"]
+        l1.mine(spec["bridge"]["confirmations"])
+        new_anchor = new_burned["proof"]["header"]
+        anchor_votes = attest("attest-anchor", "migration-anchor", ["--previous-height", str(height),
+            "--previous-hash", hash_, "--height", str(int(new_anchor["number"], 16))])
+        advanced = commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", anchor_votes)))
+        height, hash_ = int(new_anchor["number"], 16), new_anchor["hash"]
+        new_proof = observations("migration-return", [point(new_burned["hash"], 0)])
+        new_redeemed = commit(stem_signed("migration-redeem",
+            redemption_inputs, redemption_outputs, messages=redemption_action,
+            observations=new_proof, signers=[(friend, fixture.friend)]))
+        new_released = stem_point(new_redeemed, 1)
+        assert signing_cell(client, new_released)["cell"] == returned
+        assert cell_proof(stem_point(new_export, 0))["cell"] is None
+        adopted = certified("/stem/intercell/inbox", receive["id"])
+        assert adopted["record"] == receive["record"]
+        migration_report = {"old_wrapper": old["wrapper"], "new_wrapper": new["wrapper"],
+            "old_cap_adapter": hex_bytes(cap_adapter), "new_cap_adapter": hex_bytes(replacement),
+            "manifest": hex_bytes(new["manifest"]), "same_asset_ids": [hex_bytes(a["id"]) for a in new["assets"]],
+            "old_remainder": remaining[0], "migrated": migrated, "dual_escrow": dual_escrow,
+            "export": execution(new_export), "outbound": send, "mint": new_minted, "burn": new_burned,
+            "adopted_anchor": advanced, "return": execution(new_redeemed), "inbound": receive, "inbox": adopted,
+            "outage": {"start": outage_start, "held": held_during_outage, "pending": pending_during_outage},
+            "released": cell_proof(new_released), "old_ckb_cell_during_migration": old_l1}
     followup = None
-    if selective == "exhaust":
+    if selective == "exhaust" or replacement_lane is not None:
         lane = lanes[0]
         mailboxes = burn_points
         wrapped = [point(burned["hash"], 1)]
-        fee_point = point(burned["hash"], 2)
-        fee_capacity -= FEE
+        fee_point = followup_fee
+        if replacement_lane is None:
+            fee_capacity -= FEE
         final_message = packet("return-rest", lane, False, 1, owner, remaining[0])
         rejections["zero_ckb_principal"] = reject_ckb(burn_both("zero-ckb-principal", [final_message],
             [[0, 0]], 2, keep_empty=True), 48, 51)
+        if replacement_lane is not None:
+            old_table = dependency(point(published, 0))
+            without_old_table = [dep for dep in dependencies if dep != old_table]
+            rejections["old_table_required_after_migration"] = reject_ckb(burn_both("old-table-omitted",
+                [final_message], [[0, 0]], 2, selected_deps=without_old_table), 42)
+            assert l1.call("get_live_cell", wrapped[0], True) == old_l1
         rest_burned = submit_ckb(burn_both("burn-rest", [final_message], [[0, 0]], 2))
         assert l1.call("get_live_cell", wrapped[0], False)["status"] != "live"
         assert l1.call("get_live_cell", point(rest_burned["hash"], 1), True)["cell"]["output"]["type"] is None
@@ -465,7 +605,11 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
                     "consumed": rest_consumed, "escrow_spent": cell_proof(escrow_point),
                     "bond": cell_proof(stem_point(rest, 0)), "released": cell_proof(stem_point(rest, 1)),
                     "redeemed": rest, "execution": execution(rest)}
-    if composed:
+        if migration_report is not None:
+            assert followup["escrow_spent"]["cell"] is None
+            migration_report["final_positions"] = joint_cells([new_released, stem_point(rest, 1)],
+                                                              [returned, next_outputs[1]])
+    if composed and replacement_lane is None:
         lane = lanes[0]
         positive = [(asset, units) for asset, units in zip(lane["assets"], returning[0], strict=True) if units]
         pieces = [cell(release_capacity // len(positive) - (FEE if i == 0 else 0), friend,
@@ -515,7 +659,7 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         "deliveries": deliveries,
         "inboxes_before": before, "inboxes": finalized, "escrows_before": unspent,
         "escrows_spent": spent, "escrows_retained": retained_proofs, "released": released_proofs,
-        "rejections": rejections, "composition": bundle, "followup": followup,
+        "rejections": rejections, "composition": bundle, "followup": followup, "migration": migration_report,
         "execution": {"export": execution(exported), "redeem": execution(redeemed)},
         "result_ids": [[msg["id"] for _, _, msg in sorted(batch, key=lambda row: packed_script(row[0]))]
                        for batch in (sends, receives)],

@@ -1866,6 +1866,33 @@ Use `--metatype-composed-selective exhaust` to redeem all 160 units of
 the first asset and then redeem the second via the next CKB mailbox
 sequence. The runner checks rejection of an all-zero representation.
 
+### Exercise Metatype adapter migration
+
+Build the replacement cap adapter from the same source into a separate
+target directory. The fixture requires distinct executable bytes. Use the
+arguments from the cap-bound custody command and replace
+`--finish-udt-return` with `--metatype-composed-cell`,
+`--metatype-composed-selective partial` and
+`--metatype-migration-cap-adapter "$replacement"`. Use fresh ports and
+output directories. Repeat with and without `--metatype-shared-manifest`.
+
+```sh
+triple=riscv64imac-unknown-none-elf
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c -C opt-level=2' \
+cargo build --locked --release --manifest-path contracts/Cargo.toml \
+  --target "$triple" --target-dir target/stem-migration-cap --bin metatype-amount-cap
+replacement="target/stem-migration-cap/$triple/release/metatype-amount-cap"
+
+target/release/stem jolteon-trust --genesis "$run_dir/stem.json" > "$run_dir/trust.json"
+node sdk/wasm/tests/metatype_migration.mjs "$sdk_dir" \
+  "$run_dir/jolteon-bridge-report.json" "$run_dir/trust.json"
+```
+
+Keep the original adapter and table data available for remaining positions.
+Operators can republish the identical bytes under new dependency OutPoints
+and resolve them by the existing data hashes. Each mailbox retains its own
+message and replay state. CKB service recovery resumes from authenticated
+observations and the persisted Stem escrow state. [Migration relation and measured envelope](METATYPE.md#replace-an-adapter-through-settlement) · [SDK package build](sdk/wasm/README.md)
 
 ### 创世时启用 StemVM 密码学 ABI v1
 

@@ -639,6 +639,8 @@ def main():
     parser.add_argument("--metatype-shared-manifest", action="store_true")
     parser.add_argument("--metatype-multiasset", action="store_true")
     parser.add_argument("--metatype-composed-cell", action="store_true")
+    parser.add_argument("--metatype-migration-cap-adapter", type=lambda path: Path(path).resolve(),
+                        help="move a redeemed portion to a new Metatype deployment using this replacement adapter")
     composed_return = parser.add_mutually_exclusive_group()
     composed_return.add_argument("--metatype-composed-partial", action="store_true")
     composed_return.add_argument("--metatype-composed-selective", choices=("partial", "exhaust"))
@@ -772,6 +774,8 @@ def main():
         parser.error("Choose one Metatype multiasset fixture and supply the Metatype UDT route")
     if (args.metatype_composed_partial or args.metatype_composed_selective) and not args.metatype_composed_cell:
         parser.error("partial and selective returns require --metatype-composed-cell")
+    if args.metatype_migration_cap_adapter and args.metatype_composed_selective != "partial":
+        parser.error("Metatype migration exercises --metatype-composed-selective partial with an old position still live")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--intercell-mailbox uses the native CKB lane on its own")
     if args.security_domain and not args.reference_script:
