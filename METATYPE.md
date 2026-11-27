@@ -731,7 +731,7 @@ The four-replica test issues 100 units under the native UDT with only issuer and
 
 The test covers split, merge, release of 25 units and release of the remaining 45 units. The fixture obligation Type requires both the asset owner's input authorization and an input under the named release authority when constrained units decrease. Strip, dust dilution, an output without the required asset identity, and either missing Lock witness are rejected. The final asset has 100 units and its original Type only. Each accepted transition has a matching common Header, signed finality proof, transaction and receipt proof.
 
-The obligation program is a native test example. The cross-layer encoding, independent CKB adapter and redemption resource envelope require their own conformance evidence. Run the fixture and optionally retain its public proof bundle.
+The separate WASM SDK build authenticated all seven finalized Headers and verified their transaction and receipt proofs. It rejected all seven modified-receipt controls. The obligation program is a native test example. The cross-layer encoding, independent CKB adapter and redemption resource envelope require their own conformance evidence. Run the fixture and optionally retain its public proof bundle.
 
 ```sh
 STEM_TEST_EVIDENCE_ROOT=/tmp/stem-late-type-evidence \
