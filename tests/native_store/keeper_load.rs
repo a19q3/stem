@@ -401,13 +401,21 @@ pub(super) fn start_network_configured(
     count: usize,
     options: NetworkOptions,
 ) -> Result<(Vec<Process>, Vec<Client>)> {
-    let mut keys = (1..=count)
-        .map(|seed| SigningKey::from_bytes(&[seed as u8; 32]))
-        .collect::<Vec<_>>();
-    keys.sort_by_key(|key| key.verifying_key().to_bytes());
+    let keys = (1..=count).map(|seed| (SigningKey::from_bytes(&[seed as u8; 32]), 1)).collect();
+    start_network_with_committee(fixture, output, keys, options)
+}
+
+pub(super) fn start_network_with_committee(
+    fixture: &mut Fixture,
+    output: &Path,
+    mut keys: Vec<(SigningKey, i64)>,
+    options: NetworkOptions,
+) -> Result<(Vec<Process>, Vec<Client>)> {
+    let count = keys.len();
+    keys.sort_by_key(|(key, _)| key.verifying_key().to_bytes());
     fixture.spec.development_validators = keys
         .iter()
-        .map(|key| (key.verifying_key().to_bytes(), 1))
+        .map(|(key, weight)| (key.verifying_key().to_bytes(), *weight))
         .collect();
     let spec = output.join("genesis.json");
     write_spec(&spec, &fixture.spec)?;
@@ -418,7 +426,7 @@ pub(super) fn start_network_configured(
         .iter()
         .map(TcpListener::local_addr)
         .collect::<std::io::Result<Vec<_>>>()?;
-    let peers = keys.iter().zip(&addresses).map(|(key, address)|
+    let peers = keys.iter().zip(&addresses).map(|((key, _), address)|
         json!({"key": hex::encode(key.verifying_key().to_bytes()), "address": address})).collect::<Vec<_>>();
     let configuration = output.join("replicas.json");
     fs::write(
@@ -430,7 +438,7 @@ pub(super) fn start_network_configured(
     )?;
     drop(listeners);
     let mut replicas = Vec::new();
-    for (index, key) in keys.iter().enumerate() {
+    for (index, (key, _)) in keys.iter().enumerate() {
         let key_file = output.join(format!("validator-{index}.key"));
         fs::write(&key_file, key.to_bytes())?;
         fs::set_permissions(&key_file, fs::Permissions::from_mode(0o600))?;

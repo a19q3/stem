@@ -21,7 +21,28 @@ The Case A fixture can now admit two independently signed chain registrations in
 
 The source committee announces a successor through the native System Patricia tree and signs the terminal handoff proof. The registry first checks that the certified boundary directly extends the accepted Header. It then advances the verifier and accepts the next epoch's source Outbox proof. A correctly signed handoff on a different parent leaves the accepted Header and epoch intact. The regression also checks replay across Primary genesis identities, wrong signers, substituted deployments and initial rosters, wrong checkpoint IDs, duplicate registration, omitted handoff and stale finality. The destination retains its independently registered Header and epoch during the source rotation.
 
-Run `cargo test --release --locked --test primary_coordination signed_registration_pins_the_initial_checkpoint_and_ancestor_of_the_handoff`. The fixture generates native signatures and Patricia proofs over synthetic Headers. Live devnet registration transactions, durable registry and workflow recovery, and the Keeper and CKB profiles remain open. [Reference code](../../tests/primary_coordination.rs)
+Run `cargo test --release --locked --test primary_coordination signed_registration_pins_the_initial_checkpoint_and_ancestor_of_the_handoff`. This offline fixture generates native signatures and Patricia proofs over synthetic Headers. The following live test covers registry transactions and restart. [Reference code](../../tests/primary_coordination.rs)
+
+## Native registration on three live devnets
+
+Three four-validator loopback networks on one physical host use distinct network IDs, genesis Headers and weighted committees. The Primary nodes execute an experimental RISC-V registry Type using the native Cell rules. The Type verifies two signatures over the configured Primary network and genesis, foreign network, deployment, foreign genesis, manager, initial checkpoint and weighted roster. The actual native network must match the Type's network argument. The test pins the Primary genesis and Type identity using the real deployment configuration. The contract verifies the foreign committee's native two-chain certificate and requires the initial checkpoint at height one with the exact registered genesis parent.
+
+The registry Type permits one initialization from a seeded OutPoint and one appended record per transition. It preserves the existing records and the registry Lock across updates, rejects duplicate networks, and limits registry data to 32 KiB and eight entries. The run submits a signed registration from each independent network. Every Primary validator rejects the negative controls for a changed Primary genesis or network, a foreign chain proof substituted for the requested chain, a forged manager signature, duplicate registration, state replacement and removal of the registry Type.
+
+After both entries finalize, the fixture stops and restarts the Primary archive. The four validators agree on a later certified Header. The restarted archive returns the exact two-entry Cell and its authenticated Patricia proof. The test also verifies the original native transaction and receipt proof from each Cell's certified creation Header. This exercises active consensus validation and registry recovery. Live committee updates, Intercell routing, workflow and Keeper execution, and CKB remain separate gates. [Registry Type](../../contracts/examples/primary-register.rs) · [Live fixture](../../tests/native_store/primary_registration.rs)
+
+In the recorded run both entries finalized at Primary heights 5 and 7, and the archive returned the same Cell at certified height 8 after restart. The foreign certificates were 910 and 782 bytes. The two-entry Cell data was 2,594 bytes and its Patricia path was 175 bytes. The two authenticated receipts charged 18,618,213 and 14,701,828 cycles within the ordinary fixture's 100-million-cycle transaction limit. The RISC-V executable SHA-256 was `be920259b4d4d111b287a4d465e28ac4192afaf149a695b8db726ed390fec6ed`.
+
+```sh
+RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' cargo build \
+  --manifest-path contracts/Cargo.toml --locked --release \
+  --target riscv64imac-unknown-none-elf --target-dir target/stem-contracts \
+  --example primary-register
+STEM_PRIMARY_REGISTRATION_CONTRACT="$PWD/target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/primary-register" \
+  cargo test --release --locked --test native_store \
+  primary_registration::native_primary_executes_signed_registrations_from_two_live_chains \
+  -- --exact --ignored --nocapture
+```
 
 ## Fixed-route state machine
 
@@ -40,7 +61,7 @@ stateDiagram-v2
 2. The Primary reservation initially allows `Deliver`. Its local height can change that decision to `Cancel`, with funds still reserved. Destination execution proves the exact decision under an authenticated Primary Header. At a destination height before expiry it can apply delivery. At or after expiry it can record cancellation. Destination records the terminal outcome together with any effect. Retries return the same outcome and cannot create another effect.
 3. Primary proves the destination's outcome under a trusted destination Header. An execution recorded before expiry may settle after the cancellation request. Refund requires both a prior Primary cancellation request and the authenticated destination cancellation at or after the deadline. Duplicate receipts leave the same terminal state. Without destination evidence the reservation stays pending. A local timeout or an older absence proof cannot authorize a refund.
 
-The test fixture constructs these application records in memory. Authorities and local heights are pinned by the fixture. Its amount represents an accounting effect, and the receipt and effect are updated together by the model. The executable slice exercises signed evidence and state transitions. It has no live network processes, Keeper integration, consensus ingestion, stored workflow restart or asset custody. Rebuilding a fresh destination verifier from the seven accepted certificate pairs checks proof catch-up only. The fixture uses one admitted workflow per scenario. Registration transactions, authority rotation, resource quotas and the recovery of pending workflows remain network-prototype work.
+The fixed-route workflow fixture constructs its application records in memory and pins authorities and local heights. Its amount represents an accounting effect, and the receipt and effect advance together in the model. Rebuilding a fresh destination verifier from the seven accepted certificate pairs checks proof catch-up. The fixture uses one admitted workflow per scenario. Live authority rotation, resource quotas, Keeper integration and recovery of pending workflows remain network-prototype work.
 
 ## Security and availability boundaries
 
@@ -57,4 +78,4 @@ For Case B1 Primary must re-execute a candidate against the registered code, acc
 | C4 recovery or exit | A new exit policy needs availability of current owner proofs, a valid activation condition and replay and reconciliation rules across Primary resumption. |
 | C5 publication | The data actually published adds a retrieval path. Commitments continue to authenticate the bytes provided by retrieval. |
 
-Carry the signed registration and authenticated handoff into one Primary and two sovereign devnets, then check the same ordering at the actual Outbox, execution and restart boundaries. C1 and C3 are follow-up comparisons with the existing CKB devnet adapter. [Full acceptance matrix](https://github.com/a19q3/stem/issues/31) · [CKB freshness and reorganisation results](../../METATYPE.md#reorganize-a-burn-and-an-adopted-anchor)
+Extend the live registry with authenticated handoffs, then verify the workflow at the actual Outbox, execution and restart boundaries. C1 and C3 are follow-up comparisons with the existing CKB devnet adapter. [Full acceptance matrix](https://github.com/a19q3/stem/issues/31) · [CKB freshness and reorganisation results](../../METATYPE.md#reorganize-a-burn-and-an-adopted-anchor)
