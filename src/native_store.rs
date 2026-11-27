@@ -1291,9 +1291,6 @@ impl Store {
     ) -> Result<Prepared> {
         let height = context.height;
         let mut batch = Batch::default();
-        let mut cells = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
-            self.node(Namespace::Cells, id)
-        });
         let mut cell_changes = Vec::with_capacity(overlay.live.len());
         for (point, record) in &overlay.live {
             let id = record::cell_key(&self.cells, point);
@@ -1303,13 +1300,18 @@ impl Store {
             cell_changes.push((id, value));
         }
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
-        cells.set_batch(&cell_changes, |id, _, value| {
-            if value.is_none() {
-                batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
-            }
-        })?;
-        let cell_root = cells.root().pack();
-        put_nodes(&mut batch, Namespace::Cells, cells.into_writes());
+        let (cell_root, nodes) = self.cells.batch_update(
+            as_key(&self.tip.state.cell_root),
+            |id| self.node(Namespace::Cells, id),
+            &cell_changes,
+            |id, _, value| {
+                if value.is_none() {
+                    batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
+                }
+            },
+        )?;
+        let cell_root = cell_root.pack();
+        put_nodes(&mut batch, Namespace::Cells, nodes);
         let mut system = self.system.edit(as_key(&self.tip.state.system_root), |id| {
             self.node(Namespace::System, id)
         });

@@ -53,11 +53,36 @@ impl Patricia {
         Value: AsRef<[u8]>,
     {
         Edit {
-            tree: self,
             root,
-            read,
-            writes: BTreeMap::new(),
+            nodes: Nodes {
+                tree: self,
+                read,
+                writes: BTreeMap::new(),
+            },
         }
+    }
+
+    /// Update an immutable root from a single sorted change set. The traversal
+    /// reads children of the original nodes and builds replacements bottom-up.
+    /// Only subsequent edits need an index over those replacements.
+    pub fn batch_update<Read, Value>(
+        &self,
+        root: Key,
+        read: Read,
+        changes: &[(Key, Option<Key>)],
+        previous: impl FnMut(Key, Key, Option<Key>),
+    ) -> Result<(Key, BTreeMap<Key, Option<Vec<u8>>>)>
+    where
+        Read: FnMut(&Key) -> Result<Option<Value>>,
+        Value: AsRef<[u8]>,
+    {
+        let mut nodes = Nodes {
+            tree: self,
+            read,
+            writes: Vec::with_capacity(changes.len()),
+        };
+        let root = nodes.apply_batch(root, changes, previous)?;
+        Ok((root, nodes.writes.into_iter().collect()))
     }
 
     pub fn verify(&self, root: &Key, query: &Key, expected: Option<&Key>, proof: &Proof) -> bool {
@@ -101,10 +126,36 @@ impl Proof {
 }
 
 pub struct Edit<'tree, Read> {
-    tree: &'tree Patricia,
     root: Key,
+    nodes: Nodes<'tree, Read, BTreeMap<Key, Option<Vec<u8>>>>,
+}
+
+struct Nodes<'tree, Read, Writes> {
+    tree: &'tree Patricia,
     read: Read,
-    writes: BTreeMap<Key, Option<Vec<u8>>>,
+    writes: Writes,
+}
+
+trait NodeWrites {
+    fn pending(&self, _: &Key) -> Option<&Option<Vec<u8>>> {
+        None
+    }
+    fn record(&mut self, id: Key, value: Option<Vec<u8>>);
+}
+
+impl NodeWrites for BTreeMap<Key, Option<Vec<u8>>> {
+    fn pending(&self, id: &Key) -> Option<&Option<Vec<u8>>> {
+        self.get(id)
+    }
+    fn record(&mut self, id: Key, value: Option<Vec<u8>>) {
+        self.insert(id, value);
+    }
+}
+
+impl NodeWrites for Vec<(Key, Option<Vec<u8>>)> {
+    fn record(&mut self, id: Key, value: Option<Vec<u8>>) {
+        self.push((id, value));
+    }
 }
 
 impl<Read, Value> Edit<'_, Read>
@@ -118,10 +169,12 @@ where
 
     pub fn set(&mut self, key: Key, value: Option<Key>) -> Result<Option<Key>> {
         let mut previous = None;
-        let old = self.load_optional(self.root)?;
-        let root = self.update(old, &[(key, value)], 0, &mut |_, value, _| {
-            previous = Some(value)
-        })?;
+        let old = self.nodes.load_optional(self.root)?;
+        let root = self
+            .nodes
+            .update(old, &[(key, value)], 0, &mut |_, value, _| {
+                previous = Some(value)
+            })?;
         self.root = root;
         Ok(previous)
     }
@@ -130,17 +183,9 @@ where
     pub fn set_batch(
         &mut self,
         changes: &[(Key, Option<Key>)],
-        mut previous: impl FnMut(Key, Key, Option<Key>),
+        previous: impl FnMut(Key, Key, Option<Key>),
     ) -> Result<()> {
-        if changes.is_empty() {
-            return Ok(());
-        }
-        ensure!(
-            changes.windows(2).all(|pair| pair[0].0 < pair[1].0),
-            "unordered or duplicate Patricia changes"
-        );
-        let old = self.load_optional(self.root)?;
-        self.root = self.update(old, changes, 0, &mut previous)?;
+        self.root = self.nodes.apply_batch(self.root, changes, previous)?;
         Ok(())
     }
 
@@ -149,8 +194,8 @@ where
         let mut id = self.root;
         let mut depth = 0;
         let mut value = None;
-        while id != self.tree.empty_root() {
-            let node = self.load(&id, |node, bytes| {
+        while id != self.nodes.tree.empty_root() {
+            let node = self.nodes.load(&id, |node, bytes| {
                 nodes.push(bytes.to_vec());
                 node
             })?;
@@ -180,12 +225,36 @@ where
     }
 
     pub fn into_writes(self) -> BTreeMap<Key, Option<Vec<u8>>> {
-        self.writes
+        self.nodes.writes
+    }
+}
+
+impl<Read, Value, Writes> Nodes<'_, Read, Writes>
+where
+    Read: FnMut(&Key) -> Result<Option<Value>>,
+    Value: AsRef<[u8]>,
+    Writes: NodeWrites,
+{
+    fn apply_batch(
+        &mut self,
+        root: Key,
+        changes: &[(Key, Option<Key>)],
+        mut previous: impl FnMut(Key, Key, Option<Key>),
+    ) -> Result<Key> {
+        if changes.is_empty() {
+            return Ok(root);
+        }
+        ensure!(
+            changes.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "unordered or duplicate Patricia changes"
+        );
+        let old = self.load_optional(root)?;
+        self.update(old, changes, 0, &mut previous)
     }
 
     fn load<T>(&mut self, id: &Key, use_node: impl FnOnce(Node, &[u8]) -> T) -> Result<T> {
         let loaded;
-        let bytes = match self.writes.get(id) {
+        let bytes = match self.writes.pending(id) {
             Some(entry) => entry.as_deref(),
             None => {
                 loaded = (self.read)(id)?;
@@ -203,7 +272,7 @@ where
     fn insert(&mut self, node: Node) -> Key {
         let bytes = node.encode();
         let id = self.tree.node_hash(&bytes);
-        self.writes.insert(id, Some(bytes));
+        self.writes.record(id, Some(bytes));
         id
     }
 
@@ -285,7 +354,7 @@ where
                 if Some(value) == changes[0].1 {
                     return Ok(id);
                 }
-                self.writes.insert(id, None);
+                self.writes.record(id, None);
                 changes[0]
                     .1
                     .map_or(empty, |value| self.insert(Node::Leaf { key, value }))
@@ -308,7 +377,7 @@ where
                 if updated == children {
                     return Ok(id);
                 }
-                self.writes.insert(id, None);
+                self.writes.record(id, None);
                 self.branch(&prefix, bits, updated)
             }
         })
@@ -418,6 +487,65 @@ mod tests {
                 .set_batch(&[changes[0], changes[0]], |_, _, _| {})
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn immutable_batch_preserves_indexed_journal_and_previous_values() -> Result<()> {
+        for namespace in [Namespace::Cells, Namespace::System] {
+            let tree = Patricia::new(Byte32::default(), namespace);
+            let mut root = tree.empty_root();
+            let mut stored: BTreeMap<Key, Vec<u8>> = BTreeMap::new();
+            let read_missing = |_: &Key| Ok(None::<Vec<u8>>);
+            for generation in 0..9 {
+                // Combine long shared prefixes, dispersed keys, and inserts, deletes and no-ops.
+                let mut changes = BTreeMap::new();
+                for i in 0..192u8 {
+                    let mut key = [0x7f; 32];
+                    key[31] = i;
+                    let value = match (i as usize + generation) % 4 {
+                        0 => None,
+                        1 => Some([i; 32]),
+                        _ => Some([generation as u8; 32]),
+                    };
+                    changes.insert(key, value);
+                    changes.insert(tree.record_key(&[i]), value);
+                }
+                let changes = changes.into_iter().collect::<Vec<_>>();
+                let read = |id: &Key| Ok(stored.get(id).cloned());
+                let mut indexed = tree.edit(root, read);
+                let mut seen = Vec::new();
+                indexed.set_batch(&changes, |k, before, after| seen.push((k, before, after)))?;
+                let mut actual = Vec::new();
+                let (next, writes) =
+                    tree.batch_update(root, read, &changes, |k, before, after| {
+                        actual.push((k, before, after));
+                    })?;
+                assert_eq!(next, indexed.root());
+                assert_eq!(writes, indexed.into_writes());
+                assert_eq!(actual, seen);
+                assert_eq!(
+                    tree.batch_update(next, read_missing, &[], |_, _, _| {})?,
+                    (next, BTreeMap::new())
+                );
+                assert!(
+                    tree.batch_update(next, read_missing, &changes, |_, _, _| {})
+                        .is_err()
+                );
+                assert!(
+                    tree.batch_update(root, read, &[changes[0], changes[0]], |_, _, _| {})
+                        .is_err()
+                );
+                root = next;
+                for (id, value) in writes {
+                    if let Some(bytes) = value {
+                        stored.insert(id, bytes);
+                    } else {
+                        stored.remove(&id);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
