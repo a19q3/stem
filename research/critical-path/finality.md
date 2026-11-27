@@ -53,6 +53,45 @@ Average validator CPU rose 4.3%. WAL sync count increased 71.2% and aggregate WA
 
 Reproduce by following the same [driver setup](README.md#measurement-and-reproduction), preparing the mixed topology again with `proposal_interval_ms` set to `50`, and measuring and replaying all four arms from fresh directories. The maximum block resources and the consensus, storage and checkpoint formats are shared. The RocksDB sync figures are before/after increments summed over all replicas. The CPU and TPS figures use the offer window.
 
+## Sustained payment timeline and rejected work
+
+The stock 32 MiB RocksDB block cache arm in the [storage comparison](storage-cache.md) recorded the same authenticated event keys and added per-process admission outcomes. The 180-second measurement followed the usual 60-second warmup. It matched 336 non-empty parent and certified-child pairs to all four local durable commits. All 819 observed blocks and 720,000 signed payments independently replayed. The diagnostic run measured 855.57 aggregate validator CPU seconds and 4.556 s submission p99. The uninstrumented matched control in the [decoder study](decoder-cache.md#round-3--share-whole-verified-decode-traces) measured 849.78 CPU seconds and 4.687 s p99.
+
+| Event interval | Count | Median | p95 |
+| --- | ---: | ---: | ---: |
+| Parent proposal enqueue to Follower ingress | 1,008 | 0.299 ms | 0.544 ms |
+| Follower inbound proposal queue | 1,008 | 0.037 ms | 0.254 ms |
+| Follower proposal handler to preparation | 1,008 | 4.904 ms | 9.824 ms |
+| Follower verification and materialization | 1,008 | 259.786 ms | 375.336 ms |
+| Follower vote journal and dispatch | 1,008 | 5.243 ms | 23.846 ms |
+| Parent proposal enqueue to assembled QC | 336 | 269.339 ms | 379.004 ms |
+| Parent QC assembly to child Leader view entry | 336 | 3.865 ms | 9.941 ms |
+| Child Leader view entry to build start | 336 | 104.942 ms | 109.574 ms |
+| Child Leader builds candidate | 336 | 131.989 ms | 201.598 ms |
+| Child durable publication and encoding | 336 | 9.182 ms | 24.664 ms |
+| Child proposal enqueue to assembled QC | 336 | 269.339 ms | 379.004 ms |
+| Child QC assembly to each replica learning it | 1,344 | 0.247 ms | 60.773 ms |
+| Learned quorum journal write | 1,344 | 3.187 ms | 7.654 ms |
+| Journal completion to finalization tick | 1,344 | 2.110 ms | 7.391 ms |
+| Build finality records | 1,344 | 0.085 ms | 0.299 ms |
+| Finality database batch and sync | 1,344 | 32.907 ms | 56.337 ms |
+| Post-commit mempool cleanup | 1,344 | 1.164 ms | 1.661 ms |
+| Child QC assembly to last replica durable visibility | 336 | 76.187 ms | 127.439 ms |
+| Parent proposal enqueue to last replica durable visibility | 336 | 880.943 ms | 1,155.086 ms |
+| Last replica durable visibility to common observer | 336 | 437.624 ms | 721.668 ms |
+| Parent proposal enqueue to common observer | 336 | 1,253.177 ms | 1,804.524 ms |
+
+All 336 Leader and 1,008 Follower preparations completed in the window matched a committed Header digest. No successful preparation was superseded by a different candidate or repeated on the same replica. This count covers completed preparation only. It leaves requests that failed before that boundary in their own groups. The tracing job recorded no local view timeout. Although the pacing floor remains present, sustained Follower preparation is about 2.5 times as long as that floor. CPU and state access remain the higher-leverage targets here.
+
+| Admission inventory in the 180-second window | Calls | Wall time across replicas | Calling-thread CPU |
+| --- | ---: | ---: | ---: |
+| Initial client insertion | 540,060 | 111.48 s | 108.23 s |
+| Relay inserted into the local mempool | 866,083 | 154.82 s | 150.84 s |
+| Relay returned an existing local mempool key | 51,970 | 0.082 s | 0.069 s |
+| Relay rejected because a required Cell was missing at validation | 89,773 | 0.731 s | 0.646 s |
+
+The prefunded corpus ultimately finalized in full. A missing Cell while checking a relay is consistent with a late or queued repeat after the spend. These counters establish the time and cause at validation. They do not establish the message's exact network-arrival order relative to the commit. The near-boundary difference from 89,846 generic peer-handler errors is consistent with the different sampling windows and possible other peer message classes. Admission totals flush at each durable commit, so the measured window has commit-sized boundary uncertainty. The useful replicated VM work far exceeds the combined CPU spent on the measured duplicate and missing-Cell outcomes.
+
 <details>
 <summary>Digest-labelled timing patch</summary>
 

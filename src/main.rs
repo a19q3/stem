@@ -22,6 +22,7 @@ mod stake_cli;
 #[cfg(unix)]
 use std::{
     fs::{self, DirBuilder},
+    num::NonZeroUsize,
     os::unix::fs::{DirBuilderExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -105,6 +106,9 @@ enum Command {
         /// Collect local WriteBatch and RocksDB counters for the storage metrics query.
         #[arg(long)]
         storage_metrics: bool,
+        /// Override the local RocksDB block cache capacity in MiB.
+        #[arg(long, value_name = "MIB")]
+        rocksdb_block_cache_mib: Option<NonZeroUsize>,
     },
     /// Export the trusted genesis and initial Jolteon committee for light clients.
     JolteonTrust {
@@ -314,6 +318,7 @@ fn main() -> Result<()> {
             archive,
             history_window,
             storage_metrics,
+            rocksdb_block_cache_mib,
         } => {
             let spec = native_spec::load(&genesis)?;
             let config = bridge_cli::read_json_limited(&configuration, 64 * 1024)?;
@@ -326,11 +331,12 @@ fn main() -> Result<()> {
                 metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
                 "application home must be a private directory with mode 0700"
             );
-            let store = stem::native_store::Store::open_with_storage_metrics(
+            let store = stem::native_store::Store::open_with_block_cache(
                 &home.join("db"),
                 &spec,
                 node_retention(archive, history_window),
                 storage_metrics,
+                rocksdb_block_cache_mib,
             )?;
             stem::jolteon::run(store, key, config, initialize)
         }

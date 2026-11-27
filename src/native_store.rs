@@ -4,6 +4,7 @@
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, BTreeSet, HashMap},
+    num::NonZeroUsize,
     ops::Range,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
@@ -11,7 +12,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
-use ckb_db::internal::{DB, DBVector, Options, ReadOptions, WriteBatch, WriteOptions, prelude::*};
+use ckb_db::internal::{
+    BlockBasedOptions, Cache, DB, DBVector, Options, ReadOptions, WriteBatch, WriteOptions, prelude::*,
+};
 use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
@@ -633,6 +636,16 @@ impl Store {
         retention: Retention,
         measured: bool,
     ) -> Result<Self> {
+        Self::open_with_block_cache(path, spec, retention, measured, None)
+    }
+
+    pub fn open_with_block_cache(
+        path: &Path,
+        spec: &Spec,
+        retention: Retention,
+        measured: bool,
+        cache_mib: Option<NonZeroUsize>,
+    ) -> Result<Self> {
         spec.validate_l1_policies()?;
         ensure!(
             spec.network != Byte32::default(),
@@ -698,6 +711,16 @@ impl Store {
         );
         let mut options = Options::default();
         options.create_if_missing(true);
+        if let Some(capacity) = cache_mib {
+            let capacity = capacity
+                .get()
+                .checked_mul(1 << 20)
+                .context("block cache capacity overflow")?;
+            let cache = Cache::new_lru_cache(capacity);
+            let mut table = BlockBasedOptions::default();
+            table.set_block_cache(&cache);
+            options.set_block_based_table_factory(&table);
+        }
         if measured {
             options.enable_statistics();
         }

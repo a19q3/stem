@@ -573,7 +573,13 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     assert_eq!(recent.fee_surplus()?, 2 * FEE);
     let committed = recent.tip().clone();
     drop(recent);
-    let mut recent = Store::open(path.path(), &fixture.spec, Retention::Recent(2))?;
+    let mut recent = Store::open_with_block_cache(
+        path.path(),
+        &fixture.spec,
+        Retention::Recent(2),
+        false,
+        std::num::NonZeroUsize::new(256),
+    )?;
     assert_eq!(*recent.tip(), committed);
     let points = [
         intermediate.clone(),
