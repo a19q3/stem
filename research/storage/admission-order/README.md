@@ -114,6 +114,27 @@ In the new Cell-phase histograms Patricia traversal, reads, node hashing and jou
 
 SHA-256 values were `f3070213b430826a1dbf89daa0d4c1eade7e2bf553682842595537a1c79331d4` for fixed, `bbb8f3cbd95e0672457894dcfd0bf076579a01f103e156070eb4d44c36bdccc0` for aged, `5da8acad0f553e78143b3d30f86c81749bbcf57d78fa92a1db59d19f04a9903c` for the driver and independent replay harness, and `2fb0207c35b3416b36fde01361966c2bc09dbbdfb3806061fd1e7004558d4cbe` for genesis. The signed workload BLAKE2b digest was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`.
 
+#### Reverse-order sustained comparison
+
+Run fixed order first and age priority second using the same binaries, genesis and signed corpus. The repeat changed the four loopback ports and reused the same CPU placement and retention. Both runs wrote 720,000 payments. The fixed-order run acknowledged and confirmed 712,174. The aged run acknowledged and confirmed all 720,000. Independent replay authenticated another 1,239 observed blocks and both terminal proofs, bringing the total across the two pairs to 2,465 blocks.
+
+| Post-warmup metric | Fixed hash order | Bounded age priority |
+| --- | ---: | ---: |
+| Common TPS | 2,510.89 | 2,998.74 |
+| Common confirmations by minute | 152,952 / 155,648 / 143,360 | 174,051 / 189,644 / 176,079 |
+| Measurement writes without ACK | 7,826 | 0 |
+| Peak acknowledged backlog | 87,145 | 25,653 |
+| Backlog growth | 80,171 | 4,322 |
+| Pending at drain | 0 | 0 |
+| Write-to-common p99 | 166.778 s | 20.033 s |
+| Lowest signed-hash band p99 | 7.175 s | 6.367 s |
+| Highest signed-hash band p99 | 186.145 s | 22.722 s |
+| Total validator CPU | 1,442.71 s | 1,257.37 s |
+
+Aging raised common throughput by 19.4% in the reverse pair, following a 7.0% increase in the first pair. For the same 532,174 measurement writes acknowledged and confirmed in both reverse runs, p99 fell from 166.778 to 20.058 seconds. The aged run commonly observed 539,774 payments in 180 seconds, 226 below the target. It passed the write, acknowledgment and drain checks. The throughput, peak backlog, backlog growth and latency gates remained open. Keep the lane opt-in while testing additional capacity and tails.
+
+The fixed build's 385 multi-payment blocks all followed complete signed-hash order. In the aged build 158 of 442 multi-payment blocks deviated from that order, and all suffixes after position 256 preserved it. The Patricia tree phase remained the largest Cell commitment cost. Mean Leader and Follower tree time was 96.68 and 106.53 ms in fixed order and 45.48 and 52.88 ms with the age lane. Block counts and sizes varied between runs.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)

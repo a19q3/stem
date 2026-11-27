@@ -111,6 +111,21 @@ For the 430,782 measurement payments acknowledged and confirmed in both large-ca
 
 The node, harness and genesis SHA-256 values and signed corpus BLAKE2b digest match the [earlier subtree comparisons](#single-host-sustained-payment-comparison). Replay each report with the standard `drive.py verify` command against the prepared trial. The same qualifier bounds apply to each run. [Driver and replay](../storage/external/README.md#measure-and-replay) · [Acceptance bounds](../storage/external/qualification.md#sustainable-load-and-overload)
 
+## Bounded RocksDB prefetch before editing
+
+The probe at `5c697c2` compared direct `get_opt` calls with two RocksDB prefetch frontiers. The frontier walked compressed prefixes on a pinned snapshot, issuing at most 256 reads at once with `multi_get_opt` or `batched_multi_get_cf_opt`. It passed the fetched canonical bytes to the existing authenticated editor. The comparison charges planning, buffering, canonical revalidation, edit and prefetch-buffer release. The probe uses compact nodes on one pinned core, a 128 MiB write buffer and no speculative ancestry. Twelve warm samples per configuration follow three warmup rounds in rotating method order.
+
+| Live leaves | Removed and inserted, each | Storage | Logical reads | Prefetch calls | Point edit | MultiGet edit | Pinned batch edit |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8,192 | 512 | Memtable | 4,120 | 30 | 3.746 ms | 4.427 ms | 4.627 ms |
+| 8,192 | 512 | Warm SST | 4,120 | 30 | 5.074 ms | 5.518 ms | 5.155 ms |
+| 262,144 | 2,048 | Memtable | 28,474 | 127 | 44.033 ms | 53.045 ms | 55.043 ms |
+| 262,144 | 2,048 | Warm SST | 28,474 | 127 | 63.073 ms | 71.987 ms | 68.528 ms |
+
+Each of the 144 measured edits matched the canonical root and exact node writes and deletes. Both prefetch methods read the same key set as the direct editor. Fewer RocksDB calls still led to longer total edits in every fixture. Retain point reads. The result covers the two-pass prefetch and edit design. An editor that consumes fetched nodes directly would need a separate comparison.
+
+The experiment retained its patch and raw samples outside the repository. The executable SHA-256 is `637ce66750643cbf7987ef4c27f65f3ad4a4886295c3df532fde3ff2d4d7ac80` and the sample JSON SHA-256 is `07a8ba85f481b5f3d62158c1136608d5a189dfc10ead495d2cfef02cad746860`.
+
 ## Original in-memory experiment
 
 ```sh
