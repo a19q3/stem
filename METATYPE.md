@@ -742,6 +742,14 @@ STEM_TEST_EVIDENCE_ROOT=/tmp/stem-late-type-evidence \
 
 [Native test](tests/native_store/polytype_attachment.rs) · [Example obligation](contracts/examples/polytype-obligation.rs)
 
+### Independent creditor accounting
+
+The native composition fixture issues 100 units and partitions collateral into 60 units for creditor A and 40 for creditor B. Two distinct Type groups share the example policy executable and bind separate release authorities. Each group protects its own minimum from an unauthorized decrease. Both groups accept a candidate that attaches both rights to the same 100-unit output. An independent application check rejects the overlap because each output must be exclusively allocated for these claims. A valid split preserves the 60/40 allocation on three distinct outputs.
+
+The fixture places an unrelated valid payment before each rejected collateral transition. Removing creditor B or leaving a one-unit successor fails in serial and parallel preparation. The committed Header and the exact Live Cell inclusion and absence proofs remain identical. Both execution modes produce the same Header for the successful control, and the payment and collateral outputs become live together.
+
+An application promising exclusive rights must authenticate the allocation in its own Type or a shared covenant. A valid local conservation predicate can count the same asset under multiple claims. Agreements that allow overlapping claims need explicit priority and release rules. [Native fixture](tests/native_store/polytype_attachment.rs) · [Composition acceptance cases](https://github.com/a19q3/stem/issues/16)
+
 ## Threat model
 
 The protected assets are supply, object identity, custody, script

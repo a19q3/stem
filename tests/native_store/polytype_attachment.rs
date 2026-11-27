@@ -31,6 +31,172 @@ fn build_contract(kind: &str, name: &str) -> Result<Bytes> {
 }
 
 #[test]
+fn independent_creditors_require_exclusive_collateral_accounting() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let directory = tempfile::tempdir()?;
+    let asset_program = build_contract("--bin", "stem-native-udt")?;
+    let policy_program = build_contract("--example", "polytype-obligation")?;
+    let data_script = |program: &[u8], args: Vec<u8>| {
+        Script::new_builder()
+            .hash_type(ScriptHashType::Data)
+            .code_hash(blake2b_256(program))
+            .args(Bytes::from(args))
+            .build()
+    };
+    let issuer = fixture.lock.calc_script_hash();
+    let asset = data_script(&asset_program, [issuer.as_slice(), &[17; 32]].concat());
+    let asset_id = asset.calc_script_hash();
+    let creditor_a = data_script(&policy_program, [asset_id.as_slice(), &[33; 32]].concat());
+    let creditor_b = data_script(&policy_program, [asset_id.as_slice(), &[44; 32]].concat());
+    for (index, code) in [asset_program, policy_program].into_iter().enumerate() {
+        let point = OutPoint::new([84; 32].pack(), index as u32);
+        let capacity = Cell::minimum_capacity(&fixture.lock, &[], code.len())?;
+        let cell = Cell::new(capacity, fixture.lock.clone(), vec![], code)?;
+        fixture
+            .deps
+            .push(CellDep::new_builder().out_point(point.clone()).build());
+        fixture.spec.development_cells.push((point, cell));
+    }
+    let spend = OutPoint::new([86; 32].pack(), 0);
+    let payment_fund = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
+    fixture
+        .spec
+        .development_cells
+        .push((spend.clone(), payment_fund));
+    let mut store = Store::open(directory.path(), &fixture.spec, Retention::Archive)?;
+    let make = |inputs: &[OutPoint], rows: &[(u128, &[&Script])], budget| -> Result<Transaction> {
+        let capacity = (budget - FEE) / rows.len() as u64;
+        let cells = rows
+            .iter()
+            .map(|(units, creditors)| {
+                let types = std::iter::once(&asset)
+                    .chain(creditors.iter().copied())
+                    .cloned()
+                    .collect();
+                Cell::new(
+                    capacity,
+                    fixture.lock.clone(),
+                    types,
+                    Bytes::copy_from_slice(&units.to_le_bytes()),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        fixture.seal(Transaction::new(
+            fixture.deps.clone(),
+            vec![],
+            inputs
+                .iter()
+                .cloned()
+                .map(|point| CellInput::new(point, None))
+                .collect(),
+            cells,
+            vec![],
+        )?)
+    };
+    let check_collateral = |tx: &Transaction| -> Result<[u128; 2]> {
+        let mut holdings = [0; 2];
+        let mut supply = 0;
+        for cell in tx
+            .outputs()
+            .filter(|cell| cell.type_scripts().any(|script| script == asset))
+        {
+            let units = u128::from_le_bytes(cell.data().as_ref().try_into()?);
+            let a = cell.type_scripts().any(|script| script == creditor_a);
+            let b = cell.type_scripts().any(|script| script == creditor_b);
+            ensure!(!(a && b), "same output pledged to both creditors");
+            supply += units;
+            holdings[0] += if a { units } else { 0 };
+            holdings[1] += if b { units } else { 0 };
+        }
+        ensure!(supply == 100, "asset supply differs from issuance");
+        Ok(holdings)
+    };
+    let point = |tx: &Transaction, index| OutPoint::new(tx.id(&fixture.spec.network), index);
+    let issue = make(
+        std::slice::from_ref(&fixture.spend),
+        &[(60, &[&creditor_a]), (40, &[&creditor_b])],
+        FUND,
+    )?;
+    assert_eq!(check_collateral(&issue)?, [60, 40]);
+    store.commit(store.prepare(std::slice::from_ref(&issue), TIME + 1, false)?)?;
+    let inputs = [point(&issue, 0), point(&issue, 1)];
+    let budget = issue.outputs().map(|cell| cell.capacity()).sum();
+    let overlap = make(&inputs, &[(100, &[&creditor_a, &creditor_b])], budget)?;
+    store.check(&overlap)?;
+    assert!(
+        check_collateral(&overlap)
+            .unwrap_err()
+            .to_string()
+            .contains("both creditors")
+    );
+
+    let payment = fixture.signed(spend.clone(), None, FUND - FEE, None)?;
+    let payment_output = point(&payment, 0);
+    let tip = store.tip().clone();
+    let proofs = |store: &Store| -> Result<Vec<_>> {
+        inputs
+            .iter()
+            .chain([&spend, &payment_output])
+            .map(|point| {
+                let (record, proof) = store.prove_cell(point)?;
+                Ok((record.map(|live| record::encode_cell(point, &live)), proof.encode()?))
+            })
+            .collect()
+    };
+    let before = proofs(&store)?;
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    for attempted in [
+        vec![(60, &[&creditor_a][..]), (40, &[][..])],
+        vec![
+            (60, &[&creditor_a][..]),
+            (1, &[&creditor_b][..]),
+            (39, &[][..]),
+        ],
+    ] {
+        let invalid = make(&inputs, &attempted, budget)?;
+        assert!(check_collateral(&invalid)?[1] < 40);
+        let batch = [payment.clone(), invalid];
+        for parallel in [false, true] {
+            let error = workers
+                .install(|| store.prepare(&batch, TIME + 2, parallel))
+                .err()
+                .context("unauthorized collateral release accepted")?;
+            assert!(format!("{error:#}").contains("exited with 64"));
+            assert_eq!(store.tip(), &tip);
+            assert_eq!(proofs(&store)?, before);
+        }
+    }
+    let separated = make(
+        &inputs,
+        &[
+            (10, &[&creditor_a]),
+            (50, &[&creditor_a]),
+            (40, &[&creditor_b]),
+        ],
+        budget,
+    )?;
+    assert_eq!(check_collateral(&separated)?, [60, 40]);
+    let settlements = [
+        point(&separated, 0),
+        point(&separated, 1),
+        point(&separated, 2),
+    ];
+    let batch = [payment, separated];
+    let serial = store.prepare(&batch, TIME + 2, false)?;
+    let parallel = workers.install(|| store.prepare(&batch, TIME + 2, true))?;
+    assert_eq!(serial.header(), parallel.header());
+    store.commit(parallel)?;
+    assert!(store.prove_cell(&payment_output)?.0.is_some());
+    for output in settlements {
+        assert!(store.prove_cell(&output)?.0.is_some());
+    }
+    for input in inputs.iter().chain([&spend]) {
+        assert!(store.prove_cell(input)?.0.is_none());
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "four-replica RISC-V late attachment and discharge with finalized evidence"]
 fn independent_type_attaches_after_issuance_and_discharges_by_authority() -> Result<()> {
     let mut fixture = Fixture::new()?;
