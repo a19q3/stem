@@ -101,6 +101,31 @@ fn concurrent_admission_checks_each_signed_wire_identity() -> Result<()> {
     for client in &clients {
         assert_eq!(client.header(height)?, expected);
     }
+    let mut proposal_samples = 0;
+    let mut candidate_samples = 0;
+    for status in &values {
+        let execution = status.execution;
+        for (commitments, combined_samples) in [
+            (execution.proposal_commitments, &mut proposal_samples),
+            (execution.candidate_commitments, &mut candidate_samples),
+        ] {
+            let samples = commitments.cells.buckets.iter().sum::<u64>();
+            *combined_samples += samples;
+            let phases = [
+                commitments.cell_keys,
+                commitments.cell_tree,
+                commitments.cell_batch,
+            ];
+            for phase in phases {
+                assert_eq!(phase.buckets.iter().sum::<u64>(), samples);
+            }
+            assert!(
+                phases.iter().map(|phase| phase.elapsed_us).sum::<u64>()
+                    <= commitments.cells.elapsed_us
+            );
+        }
+    }
+    assert!(proposal_samples > 0 && candidate_samples > 0);
     let admission = values[0].admission.context("admission metrics")?;
     assert_eq!(admission.client_requests, 12);
     assert_eq!(admission.client_queue.buckets.iter().sum::<u64>(), 12);

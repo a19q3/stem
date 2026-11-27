@@ -103,6 +103,12 @@ pub struct ExecutionMetrics {
 pub struct CommitmentMetrics {
     pub total: LatencyHistogram,
     pub cells: LatencyHistogram,
+    #[serde(default)]
+    pub cell_keys: LatencyHistogram,
+    #[serde(default)]
+    pub cell_tree: LatencyHistogram,
+    #[serde(default)]
+    pub cell_batch: LatencyHistogram,
     pub system: LatencyHistogram,
     pub execution: LatencyHistogram,
 }
@@ -111,6 +117,9 @@ impl CommitmentMetrics {
     pub(super) fn record(&mut self, timing: &CommitmentTiming) {
         self.total.observe(timing.total);
         self.cells.observe(timing.cells);
+        self.cell_keys.observe(timing.cell_phases.keys);
+        self.cell_tree.observe(timing.cell_phases.tree);
+        self.cell_batch.observe(timing.cell_phases.batch);
         self.system.observe(timing.system);
         self.execution.observe(timing.execution);
     }

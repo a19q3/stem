@@ -499,8 +499,15 @@ pub struct Prepared {
 pub(crate) struct CommitmentTiming {
     pub(crate) total: Duration,
     pub(crate) cells: Duration,
+    pub(crate) cell_phases: CellCommitmentTiming,
     pub(crate) system: Duration,
     pub(crate) execution: Duration,
+}
+
+pub(crate) struct CellCommitmentTiming {
+    pub(crate) keys: Duration,
+    pub(crate) tree: Duration,
+    pub(crate) batch: Duration,
 }
 
 struct Overlay {
@@ -1617,7 +1624,7 @@ impl Store {
                     build_execution()?,
                 )
             };
-        let (cell_root, cells_time) = cells;
+        let ((cell_root, cell_phases), cells_time) = cells;
         let (system, system_time) = system;
         let ((execution_bytes, receipt_root), execution_time) = execution;
         let mut history = self.history.clone();
@@ -1655,6 +1662,7 @@ impl Store {
             commitments: CommitmentTiming {
                 total: started.elapsed(),
                 cells: cells_time,
+                cell_phases,
                 system: system_time,
                 execution: execution_time,
             },
@@ -1662,7 +1670,13 @@ impl Store {
         })
     }
 
-    fn finish_cells(&self, batch: &mut Batch, live: &LiveChanges, parallel: bool) -> Result<Byte32> {
+    fn finish_cells(
+        &self,
+        batch: &mut Batch,
+        live: &LiveChanges,
+        parallel: bool,
+    ) -> Result<(Byte32, CellCommitmentTiming)> {
+        let started = Instant::now();
         let mut cell_changes = Vec::with_capacity(live.len());
         for (point, record) in live {
             let id = record::cell_key(&self.cells, point);
@@ -1672,6 +1686,7 @@ impl Store {
             cell_changes.push((id, value));
         }
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
+        let keyed = Instant::now();
         let root = as_key(&self.tip.state.cell_root);
         let reader = |id: &Key| self.node(Namespace::Cells, id);
         let previous = |id: Key, _, replacement: Option<Key>| {
@@ -1691,8 +1706,16 @@ impl Store {
             self.cells.batch_update(root, reader, &cell_changes, previous)
         };
         let (cell_root, nodes) = updated?;
+        let tree_done = Instant::now();
         put_nodes(batch, Namespace::Cells, nodes);
-        Ok(cell_root.pack())
+        Ok((
+            cell_root.pack(),
+            CellCommitmentTiming {
+                keys: keyed.duration_since(started),
+                tree: tree_done.duration_since(keyed),
+                batch: tree_done.elapsed(),
+            },
+        ))
     }
 
     fn finish_system(
