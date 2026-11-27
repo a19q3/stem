@@ -12,7 +12,7 @@ Stem V1 votes authenticate the executed Header and use unified state finality. T
 | Leader | Keep the worker opt-in. Both short pairs favored synchronous construction for window TPS and p99. Capture time spent scanning inputs already spent on the speculative branch. |
 | Work Stealing and commitments | Keep both opt-in. Mixed Work Stealing pairs reversed direction. Concurrent commitments reduced mean Follower prep and control wait in both pairs, with less than 0.4% difference in window TPS. |
 | Certified Commit | Prioritise a longer writer-only comparison. Both local pairs improved p99 and throughput, with no descendant reuse in those load runs. The paused-writer and crash probes cover the reuse and publication boundary separately. |
-| Block resources | Use 4B cycles and 2,048 transactions for the first payment reference. Mixed Type Groups give a distinct cycle-limited case. One 4B trial confirmed 19,297 of 52,000 transfers by drain, while its reverse control confirmed all 52,000. The larger limits drained in all four mixed trials and three reached the count cap. |
+| Block resources | Use 4B cycles and 2,048 transactions for the first payment reference. In the 3,900/s mixed-script replay, cycle-limited VM visits accounted for 75.5% and 77.0% of proposal wall time in stalled controls. The opt-in scan limit cleared every acknowledged transfer in both paired runs. The 2,600/s trials and overload tails keep the candidate in qualification. |
 
 [Native evidence and reproduction](research/execution-pipeline/README.md) · [Mixed scheduler evidence](research/scheduling/README.md)
 
