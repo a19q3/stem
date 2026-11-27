@@ -53,3 +53,25 @@ OPENBLAS_NUM_THREADS=1 taskset -c 2 python3 research/dissemination/loopback.py >
 ```
 
 The archive loopback.json.xz includes all 144 trials, per-message p99 and last receipt, queue maxima, unique coverage, duplicates, payload bytes and process resource usage. Timing excludes connection setup.
+
+## Matched egress and bounded direct repair
+
+At 128 logical endpoints, seeds 409 and 877 used the same lifted graph, root, four-payload burst and region labels in each route comparison. The fixture ran direct, flood and the latency-aware tree pair twice in opposite orders with three endpoint sets. Random loss omits 12 endpoints, and correlated loss omits all 32 members of a non-origin region. The three routes use the same live endpoint population in each row.
+
+Each 64 KiB payload traverses established local TCP sockets. Release times model the archived one-way link delays and 5, 12.5 or 25 MB/s sender rates. The two controls share that rate across a sender's destinations or apply it separately to each direction. Direct repair uses preconnected origin sockets. At 500 ms plus a deterministic stagger of up to 39 ms, a recipient missing a payload emits one modeled 96-byte request, with one-way delivery delay. The origin can send at most 16 repairs per payload under the same egress cap. A repaired recipient can forward through its existing overlay edges. Every data frame is checked against its expected SHA-256 digest. The request timing and bytes are modeled, and neither validator authentication nor deployment socket savings are measured.
+
+| Healthy egress | Direct p99 | Flood p99 | Tree-pair p99 |
+| --- | ---: | ---: | ---: |
+| Shared per sender | 1,344–2,661 ms | 257–261 ms | 242–259 ms |
+| Independent per destination | 57–66 ms | 189–204 ms | 112–137 ms |
+
+Each range pools two measured repeats for each seed. Recipient p99 pools delivered payloads from the four-message burst and excludes the origin. In healthy shared-egress trials, the origin sent 31.75 MiB direct and 2 MiB with either overlay. Total payload bytes were 31.75 MiB direct, 224.25 MiB flooded and 89.8–90.2 MiB for the tree pair, with 24.0, 172.7–173.6 and 44.8–48.5 MiB crossing modeled regions. Direct delivery missed the 1.5 s deadline on the lower-rate seed in every shared-egress profile, while both overlays met it. All direct sends eventually drained.
+
+For seed 877 the tree pair needed one repair per payload with random omission and five per payload when a region was absent. It needed zero for seed 409. All repaired payloads arrived by 1.5 s, and the largest correlated-loss tree-pair p99 was 626 ms. Flooding required zero repairs and used 118.8–123.2 MiB under region omission. The tree pair used 43.8–60.2 MiB there including repairs. Independent replay reconstructed the initial overlay connected component for every trial, checked the early receipt counts against that component, and verified capped repairs, origin copies, delivered counts and request accounting across all 72 results.
+
+**Decision.** Retain direct Stem routing. The tree pair is a useful auxiliary control when origin egress is a demonstrated bottleneck and it saves aggregate traffic compared with flooding. It spends materially more bytes than direct, needs repair under correlated loss and loses to direct in both independent-link seeds. The comparison runs one loopback selector and assumes a live origin. A production relay would need measured deployment egress, authenticated requests and independent links before reconsideration.
+
+```sh
+OPENBLAS_NUM_THREADS=1 taskset -c 8 python3 research/dissemination/egress_repair.py \
+  --nodes 128 --seeds 409 877 --repeat 2 > /tmp/stem-auxiliary-egress.jsonl
+```
