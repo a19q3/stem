@@ -35,10 +35,23 @@ pub(super) struct Inbox {
     control: mpsc::Receiver<Incoming>,
     application: mpsc::Receiver<Incoming>,
     burst: usize,
+    #[cfg(feature = "jolteon-commit-pipeline")]
+    deferred: std::collections::VecDeque<Incoming>,
+    #[cfg(feature = "jolteon-commit-pipeline")]
+    deferred_bytes: usize,
 }
 
 impl Inbox {
     pub(super) async fn recv(&mut self) -> Option<Incoming> {
+        #[cfg(feature = "jolteon-commit-pipeline")]
+        if let Some(event) = self.deferred.pop_front() {
+            self.deferred_bytes -= event.frame.body.len();
+            return Some(event);
+        }
+        self.recv_live().await
+    }
+
+    pub(super) async fn recv_live(&mut self) -> Option<Incoming> {
         if self.burst == CONTROL_BURST
             && let Ok(event) = self.application.try_recv()
         {
@@ -57,6 +70,18 @@ impl Inbox {
             }
             else => None,
         }
+    }
+
+    #[cfg(feature = "jolteon-commit-pipeline")]
+    pub(super) fn can_defer(&self) -> bool {
+        self.deferred.len() < CONTROL_BURST && self.deferred_bytes < wire::MAX_FRAME
+    }
+
+    #[cfg(feature = "jolteon-commit-pipeline")]
+    pub(super) fn defer(&mut self, event: Incoming) {
+        debug_assert!(self.can_defer());
+        self.deferred_bytes += event.frame.body.len();
+        self.deferred.push_back(event);
     }
 }
 
@@ -140,6 +165,10 @@ impl Network {
                 control,
                 application,
                 burst: 0,
+                #[cfg(feature = "jolteon-commit-pipeline")]
+                deferred: Default::default(),
+                #[cfg(feature = "jolteon-commit-pipeline")]
+                deferred_bytes: 0,
             },
         ))
     }
@@ -353,6 +382,10 @@ mod tests {
             control,
             application,
             burst: 0,
+            #[cfg(feature = "jolteon-commit-pipeline")]
+            deferred: Default::default(),
+            #[cfg(feature = "jolteon-commit-pipeline")]
+            deferred_bytes: 0,
         };
         let event = |kind| Incoming {
             frame: Frame {

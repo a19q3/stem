@@ -2248,11 +2248,7 @@ impl Store {
         records: &[(Vec<u8>, Vec<u8>)],
         retired: &[Range<Vec<u8>>],
     ) -> Result<()> {
-        ensure!(self.branch.is_empty(), "cannot commit a speculative view");
-        ensure!(
-            prepared.parent == self.tip.id(&self.network),
-            "stale prepared block"
-        );
+        self.check_commit_parent(prepared)?;
         sync_with_consensus(
             &self.db,
             &prepared.batch,
@@ -2261,6 +2257,43 @@ impl Store {
             retired,
             self.metrics.as_deref().map(|m| (m, Purpose::Finality)),
         )?;
+        self.install_durable_tip(prepared);
+        Ok(())
+    }
+
+    fn check_commit_parent(&self, prepared: &Prepared) -> Result<()> {
+        ensure!(self.branch.is_empty(), "cannot commit a speculative view");
+        ensure!(
+            prepared.parent == self.tip.id(&self.network),
+            "stale prepared block"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-commit-pipeline")]
+    pub(crate) fn certified_write(
+        &self,
+        prepared: Arc<Prepared>,
+        records: Vec<(Vec<u8>, Vec<u8>)>,
+        retired: Vec<Range<Vec<u8>>>,
+    ) -> Result<impl FnOnce() -> Result<()> + Send + 'static> {
+        self.check_commit_parent(&prepared)?;
+        let db = Arc::clone(&self.db);
+        let cells = self.cells.clone();
+        let metrics = self.metrics.clone();
+        Ok(move || {
+            sync_with_consensus(
+                &db,
+                &prepared.batch,
+                Some((&cells, &prepared.live)),
+                &records,
+                &retired,
+                metrics.as_deref().map(|m| (m, Purpose::Finality)),
+            )
+        })
+    }
+
+    pub(crate) fn install_durable_tip(&mut self, prepared: &Prepared) {
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
         self.stake_inputs = Arc::clone(&prepared.stake_inputs);
@@ -2270,7 +2303,6 @@ impl Store {
                 .expect("Live Cell cache")
                 .invalidate(prepared.live.keys());
         }
-        Ok(())
     }
 }
 
@@ -2628,6 +2660,38 @@ mod pipeline_store_tests {
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-commit-pipeline")]
+    #[test]
+    fn certified_write_moves_the_durable_header_and_journal_together() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let spec = spec();
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        let pinned = store.pinned_view();
+        let prepared = Arc::new(store.prepare(&[], 1001, false)?);
+        let records = vec![(b"state".to_vec(), b"next journal".to_vec())];
+        let write = store.certified_write(Arc::clone(&prepared), records.clone(), vec![])?;
+        assert!(store.header(1)?.is_none());
+        assert!(store.consensus_record(b"state")?.is_none());
+        let snapshot = pinned.with_snapshot(|view| {
+            std::thread::spawn(write)
+                .join()
+                .map_err(|_| anyhow::anyhow!("certified write panicked"))??;
+            assert!(view.header(1)?.is_none());
+            assert!(view.consensus_record(b"state")?.is_none());
+            Ok(view.tip().clone())
+        })?;
+        assert_eq!(snapshot.as_ref(), Some(store.tip()));
+        store.install_durable_tip(&prepared);
+        assert_eq!(store.tip(), prepared.header());
+        assert!(store.certified_write(prepared, Vec::new(), Vec::new()).is_err());
+        drop(store);
+        drop(pinned);
+        let reopened = Store::open(home.path(), &spec, Retention::Archive)?;
+        assert_eq!(reopened.tip().context.height, 1);
+        assert_eq!(reopened.consensus_record(b"state")?.unwrap(), records[0].1);
         Ok(())
     }
 

@@ -57,6 +57,34 @@ An all-enabled four-replica smoke run offered 26,400 payments at 2,200/s for 12 
 
 The Cell tree recursion is still serial inside its namespace. Stage timing in the planned ablation can show whether Patricia subtree parallelism helps once receipt and System work overlap.
 
+## Certified Commit Pipeline
+
+`jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.
+
+For an ordinary single-block commit, the Replica can authenticate and prepare the current view's direct descendant against a pinned snapshot. If durability advances during preparation, the result can be reused only when the new finalized point and Header match the exact prefix of the pinned branch. The surviving parent path and signed transaction bytes must still match. Journal writes, votes and publications remain serialized through the Replica. [Writer and overlap guards](../../src/jolteon/commit_pipeline.rs)
+
+| Fault control | Height visible during pause | Durable height on offline reopen | Result |
+| --- | ---: | ---: | --- |
+| Release a paused WAL sync | 3 | — | The Follower scheduled one overlapping preparation and reused it after acknowledgement. In-flight Header and finality reads returned after release. |
+| Kill before writing the batch | 3 | 3 | The restart could replay the already certified candidate without peers. |
+| Kill after WAL append and before its sync | 3 | 4 | The process restart recovered the whole batch from the OS page cache. This is a process-crash control. |
+| Kill after WAL sync and before acknowledgement | 3 | 4 | The offline snapshot authenticated the new execution Header and proof. The restarted node accepted the matching journal. |
+
+Each fault run ended with all 24 signed payments confirmed on four replicas. A separate mixed-version run confirmed 36 payments and converged at height 85 after restart. The archive retained a historical Header and proof that ordinary replicas pruned. The CKB devnet accepted both handoff checkpoints at heights 10 and 20 and the execution checkpoint at height 25. The combined release suite passed 520 tests.
+
+Run the fault fixture on Linux with a feature build, a reference build and the native lock ELF. The fixture uses new databases. The reference build should keep the same pipeline features except for the Commit flag.
+
+```sh
+cc -O2 -shared -fPIC research/execution-pipeline/commit-fault.c \
+  -o "$scratch/commit-fault.so" -ldl -pthread
+PYTHONPATH=tools python3 research/execution-pipeline/probe_commit.py \
+  --binary "$candidate" --reference "$reference" --lock "$native_lock" \
+  --shim "$scratch/commit-fault.so" --output "$scratch/commit-overlap" \
+  --port 24640 --mode overlap
+```
+
+Repeat with `before`, `before-sync` and `after-sync`, using fresh outputs. The fault probes establish publication and recovery boundaries. They supply no throughput estimate. The integrated comparison should compare the end-to-end commit histogram with the writer's service histogram and count how often a descendant preparation survives the commit.
+
 ## Four-validator comparison
 
 Four consecutive runs used the same 90,000 signed payments over 30 seconds at 3,000 scheduled writes per second, with 20 seconds of drain. The order was synchronous, background, background, synchronous. All runs wrote every payment inside the offer and commonly confirmed every payment by the drain deadline. The largest paired difference in cumulative writes at any one-second boundary was 31 and 66 payments. Four RocksDB validators shared twelve physical cores and their SMT siblings on one Ryzen 9 7950X3D. The load generator used two other cores. Both implementations used two VM workers per node and the same CPU affinity. [Raw results](results.json) · [Independent certificate replay](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/execution-pipeline/replays.json.xz)

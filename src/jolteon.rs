@@ -33,6 +33,8 @@ mod candidate_pipeline;
 #[cfg(feature = "jolteon-certificate-experiment")]
 mod certificate_experiment;
 mod client;
+#[cfg(feature = "jolteon-commit-pipeline")]
+mod commit_pipeline;
 mod mempool;
 #[cfg(feature = "jolteon-proposal-pipeline")]
 mod proposal_pipeline;
@@ -159,6 +161,8 @@ struct Replica {
     workers: Arc<rayon::ThreadPool>,
     #[cfg(feature = "jolteon-candidate-pipeline")]
     candidate_pipeline: candidate_pipeline::Pipeline,
+    #[cfg(feature = "jolteon-commit-pipeline")]
+    commit_writer: commit_pipeline::Writer,
     #[cfg(feature = "jolteon-proposal-pipeline")]
     proposal_pipeline: proposal_pipeline::Pipeline,
     journal: wire::Journal,
@@ -362,6 +366,8 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 candidate_pipeline::Pipeline::start(workers.clone())?;
             #[cfg(not(feature = "jolteon-candidate-pipeline"))]
             let mut candidate_done = std::future::pending::<Option<()>>();
+            #[cfg(feature = "jolteon-commit-pipeline")]
+            let commit_writer = commit_pipeline::Writer::start()?;
             #[cfg(feature = "jolteon-proposal-pipeline")]
             let (proposal_pipeline, mut proposal_done) =
                 proposal_pipeline::Pipeline::start(workers.clone())?;
@@ -395,6 +401,8 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 workers,
                 #[cfg(feature = "jolteon-candidate-pipeline")]
                 candidate_pipeline,
+                #[cfg(feature = "jolteon-commit-pipeline")]
+                commit_writer,
                 #[cfg(feature = "jolteon-proposal-pipeline")]
                 proposal_pipeline,
                 candidates: BTreeMap::new(),
@@ -457,7 +465,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                         #[cfg(not(feature = "jolteon-proposal-pipeline"))]
                         let _ = result;
                     }
-                    _ = ticker.tick() => replica.tick()?,
+                    _ = ticker.tick() => replica.tick(&mut incoming).await?,
                     event = incoming.recv() => {
                         let event = event.context("replica transport stopped")?;
                         if let Err(error) = replica.handle(event) {
@@ -620,6 +628,10 @@ impl Replica {
         if let Some(tc) = tc {
             self.learn_tc(tc)?;
         }
+        self.cache_proposal(point, checked, peer)
+    }
+
+    fn cache_proposal(&mut self, point: Point, checked: Checked, peer: u16) -> Result<()> {
         if self.recovery.active
             && checked
                 .header
@@ -817,7 +829,9 @@ impl Replica {
         Ok(Some(BranchExecution { batches, pending }))
     }
 
-    fn finalize(&mut self) -> Result<()> {
+    async fn finalize(&mut self, inbox: &mut transport::Inbox) -> Result<()> {
+        #[cfg(not(feature = "jolteon-commit-pipeline"))]
+        let _ = inbox;
         let Some(high) = self.finalization_head() else {
             return Ok(());
         };
@@ -850,6 +864,15 @@ impl Replica {
         let mut successor = None;
         let mut durable = Vec::new();
         let commit_count = batches.len() - usize::from(!child.wire.seal);
+        #[cfg(feature = "jolteon-commit-pipeline")]
+        let overlap = commit_count == 1
+            && !child.wire.seal
+            && !self.recovery.active
+            && self.handoff_tip.is_none()
+            && self.high.point == high.point
+            && pending.as_ref().is_none_or(|change| {
+                child.header.context.height.saturating_add(1) < change.activation_height
+            });
         let proof = if child.wire.seal {
             let change = pending.context("terminal execution has no successor")?;
             let (announcement, path) = self
@@ -898,15 +921,17 @@ impl Replica {
             .encode_to_vec()
         };
         // Execution batches contain only real blocks. The outgoing seal produces no ledger changes.
-        for (index, (point, prepared)) in branch.iter().zip(batches).take(commit_count).enumerate()
+        for (index, (point, prepared)) in branch.iter().zip(&batches).take(commit_count).enumerate()
         {
             let height = prepared.header().context.height;
-            let mut retired = self.expire_history(height).context(StorageFault)?;
             let proposal = &self.candidates[point].proposal.wire;
-            self.journal.finalized = point.encode().to_vec();
-            self.journal.lock = point.view;
-            self.journal.committed_transactions = self
-                .journal
+            let mut journal = self.journal.clone();
+            let mut retired = self
+                .expire_history(height, &mut journal.proposal_floor)
+                .context(StorageFault)?;
+            journal.finalized = point.encode().to_vec();
+            journal.lock = point.view;
+            journal.committed_transactions = journal
                 .committed_transactions
                 .checked_add(proposal.transactions.len() as u64)
                 .context("transaction counter overflow")?;
@@ -926,16 +951,16 @@ impl Replica {
             records.append(&mut durable);
             if let Some((change, next)) = successor.as_ref().filter(|_| index + 1 == commit_count) {
                 let anchor = next.genesis_quorum();
-                self.journal = wire::Journal {
-                    identity: self.journal.identity.clone(),
+                journal = wire::Journal {
+                    identity: journal.identity,
                     high: anchor.encode(),
                     finalized: anchor.point.encode().to_vec(),
-                    committed_transactions: self.journal.committed_transactions,
+                    committed_transactions: journal.committed_transactions,
                     committee: change.encode(),
                     anchor: prepared.header().encode().to_vec(),
-                    observer_only: self.journal.observer_only,
-                    history_window: self.journal.history_window,
-                    proposal_floor: std::mem::take(&mut self.journal.proposal_floor),
+                    observer_only: journal.observer_only,
+                    history_window: journal.history_window,
+                    proposal_floor: journal.proposal_floor,
                     ..Default::default()
                 };
                 records.push((handoff_key(old_epoch), proof.clone()));
@@ -944,17 +969,29 @@ impl Replica {
                 end.push(0);
                 retired.push(announced..end);
             }
-            records.push((STATE.to_vec(), self.journal.encode_to_vec()));
+            records.push((STATE.to_vec(), journal.encode_to_vec()));
             let started = Instant::now();
+            #[cfg(feature = "jolteon-commit-pipeline")]
+            self.write_certified(
+                inbox,
+                Arc::clone(prepared),
+                records,
+                retired,
+                overlap.then_some((branch.as_slice(), batches.as_slice())),
+            )
+            .await
+            .context(StorageFault)?;
+            #[cfg(not(feature = "jolteon-commit-pipeline"))]
             self.store
-                .commit_certified(&prepared, &records, &retired)
+                .commit_certified(prepared, &records, &retired)
                 .context(StorageFault)?;
             self.execution.commit.observe(started.elapsed());
+            self.journal = journal;
             self.finalized = *point;
             if let Some(change) = prepared.committee_change() {
                 self.pending = Some(change.clone());
             }
-            for tx in &proposal.transactions {
+            for tx in &self.candidates[point].proposal.wire.transactions {
                 self.mempool.remove(&ckb_hash::blake2b_256(tx));
             }
             let context = &prepared.header().context;
@@ -1002,7 +1039,11 @@ impl Replica {
         Ok(())
     }
 
-    fn expire_history(&mut self, height: u64) -> Result<Vec<Range<Vec<u8>>>> {
+    fn expire_history(
+        &self,
+        height: u64,
+        proposal_floor: &mut Vec<u8>,
+    ) -> Result<Vec<Range<Vec<u8>>>> {
         let Some(expired) = self
             .store
             .history_window()
@@ -1024,7 +1065,7 @@ impl Replica {
             Some(view) => proposal_prefix(record.epoch, view),
             None => proposal_prefix(record.epoch.checked_add(1).context("epoch exhausted")?, 0),
         };
-        let mut lower = std::mem::replace(&mut self.journal.proposal_floor, boundary.clone());
+        let mut lower = std::mem::replace(proposal_floor, boundary.clone());
         if lower.is_empty() {
             lower = BODY.to_vec();
         }
@@ -1376,8 +1417,8 @@ impl Replica {
         self.dispatch_vote(point)
     }
 
-    fn tick(&mut self) -> Result<()> {
-        self.finalize()?;
+    async fn tick(&mut self, inbox: &mut transport::Inbox) -> Result<()> {
+        self.finalize(inbox).await?;
         if self.handoff_tip.is_some() || self.recovery.active {
             return Ok(());
         }

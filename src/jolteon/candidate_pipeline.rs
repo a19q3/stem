@@ -28,11 +28,32 @@ impl Binding {
         base_header: Hash32,
         mut candidate: impl FnMut(Point) -> Option<(Point, Hash32, bool)>,
     ) -> bool {
-        if self.epoch != epoch || self.base != base || self.base_header != base_header {
+        if self.epoch != epoch {
+            return false;
+        }
+        let suffix = if self.base == base {
+            if self.base_header != base_header {
+                return false;
+            }
+            self.branch.as_slice()
+        } else if cfg!(feature = "jolteon-commit-pipeline")
+            && base.view > self.base.view
+            && base.header == base_header
+        {
+            // The committed Point must be the exact certified prefix of the
+            // pinned execution. The unfinished suffix is still speculative.
+            let Some(index) = self.branch.iter().position(|point| *point == base) else {
+                return false;
+            };
+            &self.branch[index + 1..]
+        } else {
+            return false;
+        };
+        if suffix.is_empty() {
             return false;
         }
         let mut parent = base;
-        for point in &self.branch {
+        for point in suffix {
             let Some((point_parent, header_parent, same_transactions)) = candidate(*point) else {
                 return false;
             };
@@ -175,6 +196,10 @@ impl Replica {
                 candidate.execution = Some(Arc::new(prepared));
                 self.execution.candidate_jobs.applied =
                     self.execution.candidate_jobs.applied.saturating_add(1);
+                if binding.base != self.finalized {
+                    let jobs = &mut self.execution.candidate_jobs;
+                    jobs.rebased = jobs.rebased.saturating_add(1);
+                }
             }
             Err(error) => {
                 // Keep a deterministic invalid candidate from consuming the one job every tick.
@@ -270,7 +295,13 @@ mod tests {
         assert!(matches(7, base, base.header, parent, true));
         assert!(!matches(8, base, base.header, parent, true));
         assert!(!matches(7, base, fork.header, parent, true));
-        assert!(!matches(7, parent, parent.header, parent, true));
+        assert_eq!(
+            matches(7, parent, parent.header, parent, true),
+            cfg!(feature = "jolteon-commit-pipeline")
+        );
+        assert!(!matches(7, fork, fork.header, parent, true));
+        assert!(!matches(7, parent, fork.header, parent, true));
+        assert!(!matches(7, target, target.header, parent, true));
         assert!(!matches(7, base, base.header, fork, true));
         assert!(!matches(7, base, base.header, parent, false));
     }

@@ -86,6 +86,18 @@ pub struct ExecutionMetrics {
     #[serde(default)]
     pub candidate_jobs: CandidateMetrics,
     pub commit: LatencyHistogram,
+    #[serde(default)]
+    pub commit_jobs: CommitMetrics,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct CommitMetrics {
+    pub acknowledged: u64,
+    pub descendants: u64,
+    pub status_replies: u64,
+    pub deferred_events: u64,
+    #[serde(default)]
+    pub persistence: LatencyHistogram,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
@@ -102,6 +114,8 @@ pub struct CandidateMetrics {
     pub stale: u64,
     pub invalid: u64,
     pub already_running: u64,
+    #[serde(default)]
+    pub rebased: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
