@@ -109,7 +109,7 @@ Stem V1 沿用执行绑定的加权 Jolteon。投票签名继续认证完整执�
 | P0 | Follower Candidate Pipeline | 先跑独立主机的 1,800 TPS 基线和 3,000 TPS 可持续档。用至少 3,300 TPS 的实际写入验证过载，并在同负载加入分支切换、超时、重启及委员会交接。 |
 | P0 | Leader Proposal Pipeline | 可选原型已移出选块和构块。主循环重新核对 epoch、view、父链和投票日志。混合版本重启、超时后丢弃迟到结果和 CKB 两次交接已验证。整网收益留待组合消融。[Leader 验收](research/execution-pipeline/README.md#leader-proposal-construction) |
 | P0 | State Commitment Pipeline | 可选原型已并行计算 Cell、System 和收据承诺。串行对照核对根、收据和有序写入批次，四副本压测已覆盖触发阈值。保留 Patricia 子树剖析与整网消融。[状态承诺验收](research/execution-pipeline/README.md#concurrent-state-commitments) |
-| P0 | 区块资源扩容 | 同机短窗已对照 40 亿、80 亿、160 亿 cycles，并在固定 80 亿时比较 2,048 和 4,096 笔上限。普通支付先触及笔数上限，扩容未建立稳定收益。混合 Type Group 已在两种调度下触及 40 亿 cycles，待用同负载比较预算并做独立主机对照。[区块资源实测](research/execution-pipeline/README.md#block-resource-limits-under-a-payment-burst) · [混合脚本](research/scheduling/README.md#mixed-type-groups-with-the-native-pipeline) |
+| P0 | 区块资源扩容 | 普通支付对照了 40 亿、80 亿、160 亿 cycles，以及 2,048 和 4,096 笔上限。混合 Type Group 已用同负载复测三档预算。40 亿一轮积压未排空，反向对照接近投递速率。较大预算全数排空，三个试次触及笔数上限。继续定位提案扫描与超时，再做独立主机对照。[区块资源实测](research/execution-pipeline/README.md#block-resource-limits-under-a-payment-burst) · [混合脚本](research/scheduling/README.md#mixed-type-groups-with-the-native-pipeline) |
 | P1 | Commit Pipeline | 可选写入线程与后继候选准备已重叠。验证写入前、WAL 同步前及同步后的进程故障、混合版本历史裁剪与 CKB 交接。保留整网消融。[持久化验收](research/execution-pipeline/README.md#certified-commit-pipeline) |
 | P1 | Admission 与 Candidate 联合测试 | 八轮同机对照已覆盖均关闭、单开和双开。双开窗口吞吐提高，重验次数减少，控制等待和 p99 升高。长窗口与独立主机验收待做。[联合实验](research/execution-pipeline/README.md#admission-and-follower-interaction) |
 

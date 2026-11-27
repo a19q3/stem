@@ -155,6 +155,23 @@ Use 4B cycles and 2,048 transactions for the reference payment profile. A varied
 
 Reproduce with `storage_load::sustained_payment_storage` and pin `STEM_TEST_REPLICA_BIN` to the same release build throughout. Set `STEM_STORAGE_REPLICAS=4`, `RATE=3300`, `SECONDS=20`, `DRAIN=20`, `SENDERS=128`, `CADENCE=100`, `VM_WORKERS=4` and `RETENTION=256` under the `STEM_STORAGE_` prefix. Set `PREFUND_PAYMENTS`, `COMPLETE_VOLUME`, `READY_SENDERS` and `REUSE_SUBMISSIONS` to `1`. Set `BLOCK_CYCLES` and `BLOCK_TRANSACTIONS` from each row. Sum the archived execution receipts by height and compare both roots with the signed Header chain. Report actual offered writes, including any that miss the window, separately from common confirmations and recorded acknowledgments.
 
+### Cycle limit with mixed Type Groups
+
+The [mixed Type Group corpus](../scheduling/README.md#mixed-type-groups-with-the-native-pipeline) gives the 4B limit an opportunity to bind before the 2,048 count cap. Use its 52,000 signed transfers, feature and affinity settings, rate of 2,600/s, 20-second offer, and 30-second drain. Fixed waves ran in every trial using the same `17d4116` reference binary as the scheduler experiment. The cycle profiles ran in the order 4B, 8B, 16B, 16B, 8B, 4B. Every trial used a fresh genesis and database.
+
+| Run | Cycle limit | Writes in offer | Common TPS during offer | Common by drain | Write-to-common p99 | Peak acknowledged backlog | Highest charged cycles | Local timeout votes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | 4B | 52,000 | 964.85 | 19,297 | 4.810 s | 32,193 | 3.999973B | 27 |
+| B1 | 8B | 52,000 | 2,171.90 | 52,000 | 11.193 s | 10,524 | 4.131602B | 0 |
+| C1 | 16B | 51,164 | 1,919.55 | 52,000 | 18.208 s | 13,822 | 4.131939B | 0 |
+| C2 | 16B | 52,000 | 2,456.45 | 52,000 | 1.229 s | 3,477 | 2.369660B | 0 |
+| B2 | 8B | 52,000 | 2,270.45 | 52,000 | 5.511 s | 7,746 | 4.131374B | 0 |
+| A2 | 4B | 52,000 | 2,441.70 | 52,000 | 1.338 s | 3,627 | 2.641808B | 0 |
+
+A1 failed the drain gate. Its driver recorded 51,490 successful acknowledgments and no additional common confirmations after the offer. Its p99 covers only the 19,297 confirmed transfers. Mean proposal time reached 1.333 seconds, compared with 11.3–37.7 ms in the other five runs. C1 moved 836 writes into drain. The 8B and 16B runs all drained. Three of those four runs reached the 2,048 count cap, and no observed block in either profile charged over 4.132B cycles. One reference result stalled and the other ran near its offered rate. These data measure the capacity difference between envelopes and the recovery of this corpus under these runs. They leave the performance benefit of a higher limit unresolved.
+
+Every observed chain returned a verifiable common finality proof. The read-only audit rebuilt both roots for 1,244 blocks and matched each common terminal Header. The signed workload hash matches the earlier mixed scheduler run. Genesis SHA-256 was `8f43fa48be3b92af25a6c8460ace8706da03453591f65a38f53521c0c2b65116` (4B), `93e3ea1af68b8cc40302c871b3e27c1a375b59f9381d2a0764bd8267a47aa06b` (8B), and `476b8a76a6bfb145ea3f0b3190b28c82130fe746344a5f2113a31329aeb3d5e2` (16B). Follow up on the selected proposal's remaining VM budget and on stale or conflicting input scans before adjusting the network profile.
+
 ## Four-validator comparison
 
 Four consecutive runs used the same 90,000 signed payments over 30 seconds at 3,000 scheduled writes per second, with 20 seconds of drain. The order was synchronous, background, background, synchronous. All runs wrote every payment inside the offer and commonly confirmed every payment by the drain deadline. The largest paired difference in cumulative writes at any one-second boundary was 31 and 66 payments. Four RocksDB validators shared twelve physical cores and their SMT siblings on one Ryzen 9 7950X3D. The load generator used two other cores. Both implementations used two VM workers per node and the same CPU affinity. [Raw results](results.json) · [Independent certificate replay](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/execution-pipeline/replays.json.xz)
