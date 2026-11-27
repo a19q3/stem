@@ -90,6 +90,27 @@ The repeat ran parallel subtrees then serial, with identical executable, genesis
 
 The parallel candidate confirmed 19.4% more payments in the reverse run and drained all 617,678 acknowledgments. The p99 populations were 437,733 and 355,135. Peak RSS ranged from 328.9 to 332.0 MiB per validator for the candidate and 320.8 to 329.6 MiB for the reference. Both runs recorded zero local timeout votes. All four runs across both pairs failed the sustained profile. The repeated gain supports evaluating the optional candidate with the larger verification cache. Worker contention and the backlog and tail-latency gates remain separate adoption criteria.
 
+### Cell subtree and verification cache matrix
+
+Reuse the preceding node builds and `prepare-v1 --profile sustainable` funding and measurement settings. For each run, set `verification_cache_entries` in every validator's node configuration to the tested capacity. Keep the prepared topology and signed workload fixed. All runs use 720,000 independent payments, two VM workers per validator, 4B cycles and 2,048 transactions per block. Four loopback validators shared the same Ryzen 9 7950X3D as the pinned driver. Fresh databases and the same retention settings were used for each run. The run order was serial with 65,536 entries, parallel with 65,536, parallel with 4,096, then serial with 4,096. The first small-cache parallel attempt encountered an I/O error before the offer. The retry used the same prepared inputs and new stores.
+
+Compare common observations in the 180 seconds after warmup. The p99 population consists of payments written in those 180 seconds with a successful acknowledgment and common visibility by drain. Hash-band comparisons use the first byte of the signed-transaction BLAKE2b digest, which is the leading byte of the proposer's ordering key. Total validator process CPU includes funding, measurement, drain and archive capture.
+
+| Run order | Cache entries | Common measurement TPS | Measurement writes without ACK | Peak acknowledged backlog | Backlog growth | Pending at drain | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Serial | 65,536 | 2,173.16 | 109,218 | 85,662 | 40,311 | 0 | 194.075 s |
+| Parallel subtrees | 65,536 | 2,911.69 | 0 | 30,588 | 15,850 | 0 | 75.338 s |
+| Parallel subtrees | 4,096 | 1,979.73 | 144,277 | 92,361 | 43,429 | 0 | 195.822 s |
+| Serial | 4,096 | 1,843.20 | 185,220 | 98,330 | 28,185 | 9,059 | 198.460 s |
+
+All four runs wrote 720,000 payments. Independent replay authenticated 1,564 observed blocks and the terminal finality proofs. Acknowledgments totaled 610,782, 720,000, 575,723 and 534,780 in run order. The corresponding p99 populations were 430,782, 539,980, 395,723 and 348,534. Each configuration missed the sustained throughput, peak backlog, backlog growth and latency gates. The joint configuration also passed the write and acknowledgment gates and drained all 720,000 payments. Its minute counts were 173,896, 172,032 and 178,176 common confirmations.
+
+Parallel subtrees improved throughput by 34.0% at 65,536 entries and 7.4% at 4,096 entries. The joint configuration was 58.0% faster than the serial small-cache control. Cache hits accounted for 29.36%, 38.55%, 13.91% and 12.71% of verification lookups in run order. Every cache reached capacity, with zero wrong-parent misses. At 65,536 entries the observed mean Leader Cell commitment moved from 188.82 to 64.36 ms and the Follower mean from 202.81 to 72.52 ms. Total CPU rose from 1,214.30 to 1,357.52 process seconds. These means cover blocks produced by each live run, with block sizes and counts varying. One run per configuration leaves the interaction magnitude and run-order effects open.
+
+For the 430,782 measurement payments acknowledged and confirmed in both large-cache runs, p99 fell from 194.075 to 73.855 seconds. In the joint configuration the lowest signed-hash band had a median of 3.009 seconds and p99 of 5.707 seconds. The highest band had a median of 12.887 seconds and p99 of 154.943 seconds. Compare that gap under the existing bounded age-priority lane. Keep both optimizations selectable pending replication and an acceptable sustained tail. [Age-priority control](../storage/admission-order/README.md#bounded-priority-for-aged-payments)
+
+The node, harness and genesis SHA-256 values and signed corpus BLAKE2b digest match the [earlier subtree comparisons](#single-host-sustained-payment-comparison). Replay each report with the standard `drive.py verify` command against the prepared trial. The same qualifier bounds apply to each run. [Driver and replay](../storage/external/README.md#measure-and-replay) · [Acceptance bounds](../storage/external/qualification.md#sustainable-load-and-overload)
+
 ## Original in-memory experiment
 
 ```sh
