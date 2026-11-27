@@ -172,6 +172,25 @@ One pair ran the 131,072-entry cache first and the 65,536-entry cache second. Bo
 
 The larger cache raised common throughput by 8.1% in this pair. Among the 539,990 measurement payments acknowledged and confirmed in both runs, p99 fell from 99.215 to 7.274 seconds. The larger cache passed the 15,000 peak limit and missed the 3,000 TPS, 5 s p99 and 3,000 backlog growth gates. The earlier larger-cache probe reached 2,973.43 TPS with 6.554 s p99. Earlier 65,536-entry runs performed better than this control. The single matched run order and variation across controls limit attribution, so the cache default stays in place.
 
+#### Five-second and two-second age thresholds
+
+One pair changed only `PROPOSAL_PRIORITY_AGE` from five to two seconds at `4c50f7a`. Both used a 131,072-entry verification cache, parallel Cell commitments, two VM workers per node and at most 256 priority visits per proposal. The five-second control ran first on the same four loopback validators with the same prepared genesis and signed workload as the capacity comparison. The 3,000/s offer had 60 seconds of warmup, 180 seconds of measurement and 45 seconds of drain. Both runs wrote, acknowledged and commonly confirmed all 720,000 payments by drain. Independent replay authenticated 693 and 618 observed blocks and the two terminal proofs.
+
+| Post-warmup metric | 5 s threshold | 2 s threshold |
+| --- | ---: | ---: |
+| Common TPS | 3,003.36 | 2,844.92 |
+| Common confirmations by minute | 178,108 / 174,080 / 188,416 | 157,781 / 172,032 / 182,272 |
+| Write-to-common p99 | 41.427 s | 75.540 s |
+| Peak acknowledged backlog | 27,553 | 40,255 |
+| Backlog growth | 7,727 | 30,049 |
+| Pending at drain | 0 | 0 |
+| Total validator CPU | 1,300.68 s | 1,323.31 s |
+| Per-validator peak RSS | 327.7–329.9 MiB | 338.4–341.8 MiB |
+
+The five-second run exceeded 540,000 common confirmations over 180 seconds. Its second minute missed the 177,000 minimum, so it also failed the sustained throughput gate. Both runs exceeded the tail and backlog limits. For the same 539,904 measured payments acknowledged and confirmed in both runs, p99 rose from 41.428 to 75.540 seconds with the shorter threshold. In the two runs, 303 of 378 and 316 of 381 multi-payment blocks departed from full hash order, and the suffix after position 256 remained hash-ordered. Block contents and sizes varied, and this block observation does not measure how many priority visits were used.
+
+The earlier five-second run with the same cache had 7.274 s p99. The variation across five-second runs and the single run order limit attribution. Retain the five-second threshold in the opt-in feature. Measure headroom at a lower offer and record priority visits and accepted transactions before tuning the visit budget. The signed workload identifier was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)
