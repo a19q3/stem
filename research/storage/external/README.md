@@ -127,3 +127,22 @@ Both builds failed the same six performance gates. Unacknowledged writes all rec
 Mean peer control wait fell from 41.17 to 5.09 ms. Mean proposal time rose from 397.69 to 484.99 ms and mean Follower preparation from 437.54 to 453.94 ms. The writer acknowledged 1,028 commits, and its overlap mechanism reused zero descendants. The integrated configuration improved control responsiveness and confirmed 9.3% fewer payments during measurement in this pair. The two runs do not isolate an individual stage or a repeatable gain. Keep the default as the payment reference for long-window work.
 
 The genesis and signed workload digests match the Follower-only pair. SHA-256 fingerprints for the default and integrated binaries were `082dc44fff7baa23ca94ec9c6feb564f75637395c4ab86af3f35a3111d7f53b5` and `1e5fa01ac0b9130a80ab8c21a474230cf47b7db40a5dc027680e8027071700c6`. The driver and verifier shared SHA-256 `041211030f7bd4a1ea643bb01b4dcccd72e24a9a02160dea4a389c2c028a30df`.
+
+### Verification cache capacity under sustained offer
+
+Use one default-feature release binary for both cases. Prepare `--profile sustainable` once and reuse its signed corpus on fresh stores. Keep the first run's node configuration as prepared. For the second, add `"verification_cache_entries": 65536` to each validator's local configuration. Use the same public topology and driver inputs. Both cases on the 7950X3D used the preceding static four-replica placement, two VM workers, 4B cycles and 2,048 transactions per block. The driver offered 3,000 payments/s for 60 seconds of warmup and 180 seconds of measurement, with a 45-second drain.
+
+Aggregate the `after` minus `before` values from `verification_cache` for all validators. The interval includes warmup, measurement and drain. Report hit fraction as hits divided by all lookups, plus the subset of misses with a different parent. Retain the measured outcomes and offline replay for each run. Process CPU and `VmHWM` come from `/proc` and cover startup, load, drain and the driver's archive retrieval.
+
+The paired executable SHA-256 was `611a9db892f3481bd35e158797534d4e87153b9e8247fc43b8ef1ada1e78cf41`, the driver and replay harness SHA-256 was `e3c56441896dd8b8e40ae4a51dcce1191205b5b8cc4cad9745e9ba9f6fffa887` and the genesis SHA-256 was `2fb0207c35b3416b36fde01361966c2bc09dbbdfb3806061fd1e7004558d4cbe`. The signed corpus BLAKE2b digest was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`.
+
+| Success cache entries per validator | Common TPS | Measurement writes without ACK | Peak acknowledged backlog | Backlog growth | Pending at drain | Conditional p99 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4,096 | 1,934.22 | 177,856 | 95,302 | 19,674 | 10,230 | 197.936 s |
+| 65,536 | 2,104.89 | 123,134 | 88,741 | 39,774 | 0 | 195.067 s |
+
+Both runs wrote all 720,000 scheduled transactions and failed the sustained rate, acknowledgment, backlog and latency gates. The expanded cache drained every one of its 596,866 acknowledged payments. The measurement p99 populations were 355,184 and 416,772. The three minute-bucket common counts were 116,736, 114,688 and 116,736 at 4,096 entries, and 139,264, 122,880 and 116,736 at 65,536 entries. Both archives passed independent finality and workload replay across 582 archived blocks.
+
+VM cache hits rose from 450,119 of 3,481,887 lookups (12.93%) to 1,124,751 of 3,883,837 (28.96%). The absolute miss count fell from 3,031,768 to 2,759,086. Every cache reached capacity. Neither run recorded a wrong-parent miss. Mean Leader proposal time fell from 438.15 to 314.81 ms, Follower preparation from 470.41 to 433.62 ms and control wait from 48.12 to 44.68 ms. Spent-in-parent inputs accounted for 35.0% and 36.6% of scan visits, and 1.0% and 1.2% of measured Leader construction wall time. Neither profile incurred block-cycle rejections or local timeout votes.
+
+Total validator CPU rose from 1,164.10 to 1,190.63 process seconds. Peak RSS ranged from 326.8 to 333.6 MiB per validator at 4,096 entries and 342.0 to 353.4 MiB at 65,536. The expanded cache confirmed 8.82% more payments during measurement, with the same common confirmation count in the final minute. The trial order was 4,096 then 65,536. Keep 4,096 as the default and repeat in reverse order before attributing a sustained throughput improvement to capacity.

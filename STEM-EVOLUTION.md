@@ -112,6 +112,7 @@ Stem V1 沿用执行绑定的加权 Jolteon。投票签名继续认证完整执�
 | P0 | 区块资源扩容 | 普通支付对照了 40 亿、80 亿、160 亿 cycles，以及 2,048 和 4,096 笔上限。混合 Type Group 已用同负载复测三档预算。40 亿一轮积压未排空，反向对照接近投递速率。较大预算全数排空，三个试次触及笔数上限。继续定位提案扫描与超时，再做独立主机对照。[区块资源实测](research/execution-pipeline/README.md#block-resource-limits-under-a-payment-burst) · [混合脚本](research/scheduling/README.md#mixed-type-groups-with-the-native-pipeline) |
 | P1 | Commit Pipeline | 可选写入线程与后继候选准备已重叠。验证写入前、WAL 同步前及同步后的进程故障、混合版本历史裁剪与 CKB 交接。保留整网消融。[持久化验收](research/execution-pipeline/README.md#certified-commit-pipeline) |
 | P1 | Admission 与 Candidate 联合测试 | 八轮同机对照已覆盖均关闭、单开和双开。双开窗口吞吐提高，重验次数减少，控制等待和 p99 升高。长窗口与独立主机验收待做。[联合实验](research/execution-pipeline/README.md#admission-and-follower-interaction) |
+| P0 | 原生流水线联合验收 | 单机四副本长窗口六项优化全开，控制消息平均等待由 41.17 ms 降至 5.09 ms，共同确认吞吐由 2,071 降至 1,877 TPS。两轮均低于每秒投递 3,000 笔的持续档门槛。继续单机消融和故障验收，跨主机验收暂缓。[长窗口联合对照](research/storage/external/README.md#integrated-pipeline-sustainable-profile-pair) |
 
 3,000、5,000 和 10,000 TPS 是性能目标。跨主机可持续结果低于 3,000 TPS 时继续剖析原生流水线。达到相应目标还需同时通过尾延迟、积压和排空验收。跨地域实验另行测量执行在共识关键路径上的占用。[可持续与过载各自的验收门槛](research/storage/external/qualification.md)
 

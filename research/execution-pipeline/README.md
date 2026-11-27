@@ -125,6 +125,19 @@ PYTHONPATH=tools python3 research/execution-pipeline/probe_commit.py \
 
 Repeat with `before`, `before-sync` and `after-sync`, using fresh outputs. The fault probes establish publication and recovery boundaries. They supply no throughput estimate. The integrated comparison should compare the end-to-end commit histogram with the writer's service histogram and count how often a descendant preparation survives the commit.
 
+### Integrated commit faults with live payments
+
+All four replicas used the [six-feature sustainable-pair build](../storage/external/README.md#integrated-pipeline-sustainable-profile-pair). Pass that build to both `--binary` and `--reference`, pass the default build to `--verifier`, and add `--with-payments` to the four commands above. Each run submitted 12 signed payments while the targeted writer was stopped and waited for all three remaining replicas to confirm them. The target showed height 3 before the wait. Its requests for height 4's Header and certificate did not return before acknowledgment. A client timeout during the pause is permitted by the bounded queue. After release, a fresh query must succeed if the original caller timed out.
+
+| Fault point | Durable height on offline reopen | Common height after recovery | Payments confirmed by all four |
+| --- | ---: | ---: | ---: |
+| Release paused WAL sync | — | 9 | 24 |
+| Kill before writing the batch | 3 | 11 | 24 |
+| Kill before WAL sync | 4 | 10 | 24 |
+| Kill after WAL sync | 4 | 10 | 24 |
+
+In the release trial the target reused one prepared descendant. The default build authenticated the final execution Header for each trial, and all four replicas served that exact Header. The longer pause first exposed a limitation of the original probe: after the queue fills, even a later status read can time out. The revised fixture asserts the Header and finality publication boundary directly. The pre-sync result measures a process restart with the kernel running. Sustained offered load and device power-loss behavior remain separate experiments.
+
 ### Commit-only ablation
 
 The four same-host trials used one build of `7e06beb` with Admission, Follower, Leader, concurrent commitments and Work Stealing enabled, and a matched build additionally enabling Commit. The order was synchronous, writer, writer, synchronous. Four replicas used four VM workers each and a 100 ms cadence. The 4 billion cycle and 2,048 item limits held for every run. The driver wrote the same 45,000 signed payments at 3,000/s for 15 seconds and allowed 12 seconds to drain. Each trial confirmed every payment and passed the common finality and history-index checks.

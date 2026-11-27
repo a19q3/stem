@@ -9,13 +9,14 @@ import subprocess
 import time
 
 from jolteon_localnet import (
-    FINALITY, HEADER, STATUS, SUBMIT, binary, evidence_keys, genesis_and_payments,
+    FINALITY, HEADER, STATUS, SUBMIT, binary, covered_header, evidence_keys, genesis_and_payments,
     rpc, run, wait_for, write_configuration, write_json,
 )
 
 
 def scenario(args):
     args.output.mkdir()
+    verifier = args.verifier or args.reference
     keys = evidence_keys(args)
     ports = [args.port + index for index in range(args.validators)]
     spec, signed = genesis_and_payments(args, keys, [1, 2, 1, 2])
@@ -64,8 +65,14 @@ def scenario(args):
         return samples if all(s["height"] >= height and s["committed_transactions"] >= payments
                               for s in samples) else None
 
+    def submit(batch):
+        for tx in batch:
+            outcome = rpc(ports[peers[0]], SUBMIT, binary(tx))
+            assert "admitted" in outcome, outcome
+
     all_nodes = list(range(args.validators))
     peers = [index for index in all_nodes if index != target]
+    paused_payments = len(signed) // 2 if args.with_payments else 0
     try:
         for index in all_nodes:
             spawn(index, True, index == target)
@@ -82,18 +89,31 @@ def scenario(args):
         assert ack == height, paused
         pending_height = struct.pack("<Q", height + 1)
         with ThreadPoolExecutor(max_workers=2) as workers:
-            proof_request = workers.submit(rpc, ports[target], FINALITY, pending_height)
-            header_request = workers.submit(rpc, ports[target], HEADER, pending_height)
-            wait_for(lambda: ready(peers, height + 2), "other replicas overlap blocked writer")
-            assert not proof_request.done() and not header_request.done(), "read exposed pending commit"
+            reads = [(method, field, workers.submit(rpc, ports[target], method, pending_height))
+                     for method, field in [(FINALITY, "proof"), (HEADER, "header")]]
+            submit(signed[:paused_payments])
+            peer_samples = wait_for(lambda: ready(peers, height + 2, count + paused_payments),
+                                    "other replicas finalise with a blocked writer")
+            for _, _, request in reads:
+                if request.done():
+                    try:
+                        premature = request.result()
+                    except TimeoutError:
+                        pass
+                    else:
+                        raise AssertionError(f"read returned before acknowledgement: {premature}")
             if args.mode == "overlap":
                 files["RELEASE"].touch()
-                assert "header" in header_request.result(timeout=4)
-                assert "proof" in proof_request.result(timeout=4)
+                for method, field, request in reads:
+                    try:
+                        response = request.result(timeout=4)
+                    except TimeoutError:
+                        response = rpc(ports[target], method, pending_height)
+                    assert field in response, response
             else:
                 stop([target], crash=True)
                 stop(peers)
-                for request in (proof_request, header_request):
+                for _, _, request in reads:
                     try:
                         request.result(timeout=4)
                     except (OSError, ValueError, struct.error):
@@ -123,26 +143,34 @@ def scenario(args):
             assert "proof" in finalized, finalized
             proof = args.output / "recovered-proof.json"
             write_json(proof, finalized["proof"])
-            assert json.loads(run(args.reference, "jolteon-proof", "--genesis", spec, "--proof", proof)) == (
+            assert json.loads(run(verifier, "jolteon-proof", "--genesis", spec, "--proof", proof)) == (
                 rpc(ports[target], HEADER, struct.pack("<Q", actual)))
             for index in peers:
                 spawn(index, False)
 
         wait_for(lambda: ready(all_nodes, height + 3), "all replicas recovered")
-        for tx in signed:
-            outcome = rpc(ports[peers[0]], SUBMIT, binary(tx))
-            assert "admitted" in outcome, outcome
+        submit(signed[paused_payments:])
         served = wait_for(lambda: ready(all_nodes, height + 4, count + len(signed)), "all payments finalized")
-        if args.mode == "overlap":
+        if args.mode == "overlap" and not args.with_payments:
             assert served[target]["execution"]["commit_jobs"]["descendants"] >= 1, served[target]
             assert served[target]["execution"]["candidate_jobs"]["rebased"] >= 1, served[target]
         common = min(sample["height"] for sample in served)
         headers = [rpc(p, HEADER, struct.pack("<Q", common)) for p in ports]
         assert "header" in headers[0] and all(h == headers[0] for h in headers), headers
+        proof_path = args.output / "final-proof.json"
+        write_json(proof_path, rpc(ports[target], FINALITY, struct.pack("<Q", common))["proof"])
+        anchor = json.loads(run(verifier, "jolteon-proof", "--genesis", spec, "--proof", proof_path))
+        network = bytes.fromhex(json.loads(spec.read_text())["network_id"].removeprefix("0x"))
+        certified, ancestry = covered_header(network, anchor, common,
+                                             lambda h: rpc(ports[target], HEADER, struct.pack("<Q", h)))
+        assert certified == headers[0], (certified, headers[0])
         summary = {
             "mode": args.mode, "paused_height": height, "recovered_height": recovered["height"],
             "durable_after_crash": None if args.mode == "overlap" else durable,
             "common_height": common, "confirmed": len(signed),
+            "submitted_while_paused": paused_payments,
+            "minimum_peer_confirmed_while_paused": min(s["committed_transactions"] for s in peer_samples) - count,
+            "certified_common_header": certified, "certificate_ancestry": ancestry,
             "while_paused": paused["execution"]["commit_jobs"],
             "done": served[target]["execution"]["commit_jobs"],
             "candidate": served[target]["execution"]["candidate_jobs"],
@@ -158,9 +186,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for field in ("binary", "reference", "lock", "shim", "output"):
         parser.add_argument(f"--{field}", type=lambda p: Path(p).resolve(), required=True)
+    parser.add_argument("--verifier", type=lambda p: Path(p).resolve(),
+                        help="Release binary for offline proof verification, defaults to --reference")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--target", type=int, choices=(0, 2), default=0)
     parser.add_argument("--mode", choices=("before", "before-sync", "after-sync", "overlap"), required=True)
+    parser.add_argument("--with-payments", action="store_true",
+                        help="Confirm half the signed workload at the remaining replicas before releasing the writer")
     args = parser.parse_args()
     args.validators = 4
     args.transactions = 24
