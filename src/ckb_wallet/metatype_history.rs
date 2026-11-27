@@ -414,7 +414,11 @@ impl History {
         &mut self,
         tx: &TransactionView,
     ) -> Result<Vec<(CellOutput, Bytes)>> {
-        resolve_dependencies(tx, |point| self.referenced(point))
+        resolve_dependencies(
+            tx,
+            |point| self.referenced(point),
+            |_, cell, data| (cell, data),
+        )
     }
 
     fn definition(&mut self, tx: &TransactionView, hash: &Identity) -> Result<ManifestDefinition> {
@@ -429,30 +433,33 @@ impl History {
     }
 }
 
-pub(super) fn resolve_dependencies(
+pub(super) fn resolve_dependencies<T>(
     tx: &TransactionView,
     mut resolve: impl FnMut(&OutPoint) -> Result<(CellOutput, Bytes)>,
-) -> Result<Vec<(CellOutput, Bytes)>> {
+    mut resolved: impl FnMut(OutPoint, CellOutput, Bytes) -> T,
+) -> Result<Vec<T>> {
     ensure!(tx.cell_deps().len() <= MAX_DEPS, "too many CKB Cell Deps");
     let mut dependencies = Vec::new();
     for dep in tx.cell_deps() {
-        let cell = resolve(&dep.out_point())?;
+        let point = dep.out_point();
+        let (cell, data) = resolve(&point)?;
         match DepType::try_from(dep.dep_type())? {
             DepType::Code => {
                 ensure!(
                     dependencies.len() < MAX_DEPS,
                     "too many resolved CKB Cell Deps"
                 );
-                dependencies.push(cell);
+                dependencies.push(resolved(point, cell, data));
             }
             DepType::DepGroup => {
-                let members = OutPointVec::from_slice(&cell.1)?;
+                let members = OutPointVec::from_slice(&data)?;
                 ensure!(
                     members.len() <= MAX_DEPS - dependencies.len(),
                     "too many resolved CKB Cell Deps"
                 );
                 for point in members {
-                    dependencies.push(resolve(&point)?);
+                    let (cell, data) = resolve(&point)?;
+                    dependencies.push(resolved(point, cell, data));
                 }
             }
         }

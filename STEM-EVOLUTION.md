@@ -144,3 +144,5 @@ Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验
 第 20 项已在四条开发链上验证 SDK 永生与换锁程序组合。两项注册分别属于两个钱包时，两个首发方向均精确支付每个钱包 1,000 shannons。钱包验证了 26 个 CKB 成员状态及其集合历史，WASM 复验了 22 份原生执行。另两组使用输出位置策略的成员成功发行。托管后继位于输出 1 和输出 0 的两笔交易在 CKB 预执行时均收到代码 89。[程序来源、独立付款和托管边界](research/spore-permit/upstream/beta2/sdk-policies/README.md)
 
 第 10 项补做了两种负载、每种四轮的同机交叉复测。高压四轮各在 120 秒内实际写入 360,000 笔。并行收据编码相对串行的两组窗口吞吐差分别为 +61.61 和 +4.15 TPS，p99 一组下降 0.77 秒、另一组上升 2.61 秒。较低负载四轮各确认全部 108,000 笔。默认继续使用串行编码。[八轮签名支付、四副本证书、进程 CPU 和同笔延迟](research/storage/receipt-crossover/README.md)
+
+第 20 项在两个首发方向的 13 次成员转换中逐笔认证了实际引用的集合 OutPoint 和持有人 Lock。公开测试网高度 12,607,097 的铸造也认证了四个区块前换手的注册 Cell。[两条结算链及公开证明](research/spore-permit/upstream/beta2/dependency-uses/README.md)

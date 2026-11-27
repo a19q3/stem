@@ -931,6 +931,22 @@ The second command works offline. The verifier returns the ordered transaction h
 
 An optional `required_dependencies` array on the Type history request pins a `data_hash` and, when specified, a `type_hash` on the same resolved CellDep at every transition, including destruction. DepGroup members count individually. Use this to require the registered Lua source under its full Type hash and the expected interpreter, library and Spore program data hashes. [Replayable Mutant histories](research/spore-permit/upstream/beta2/README.md)
 
+To check which version of a collection or registry a particular transaction used, supply `required_dependency_uses`. Each entry names the path transaction, the resolved CKB OutPoint and the Cell's data hash. Optional `type_hash` and `lock_hash` refer to that same Cell. The wallet returns successful matches in request order. The example pins the registration used by a public testnet mint at height 12,607,097. [Mint and registration proofs](research/spore-permit/upstream/beta2/dependency-uses/README.md)
+
+```json
+{
+  "required_dependency_uses": [{
+    "transaction": "0xf4859369950ec9c0ddc6cea1a6819042dd360892cf7616f9a6c8575b202e2797",
+    "out_point": {"tx_hash": "0xe749db52c447cd86a009522e08b45a596b6d274c6d925b28582127ccbff0cd3c", "index": "0x0"},
+    "data_hash": "0xd8c6264e1c6a727a058635583803d4edc422253326ad070bb5f0fbb6a493bda8",
+    "type_hash": "0x2942fd8bf9a14de36dc2402a254b1b5e34a79a00e2b8f3494bca8db9e30efdc9",
+    "lock_hash": "0x6c380aa375f91461e59c88f5827412a851df3f30e0b95acb0dc5968ea9f294d2"
+  }]
+}
+```
+
+A transaction may name the Cell directly or include it through a DepGroup. Supply each transaction/OutPoint pair once, up to 128 pairs per transaction. The existing Type history proof carries the required bytes. The claim describes historical dependency use at that transaction. Current liveness and the behavior of a referenced program require their own verification.
+
 #### Published beta.2 Lua Mutant
 
 Use the beta.2 testnet Spore, Lua interpreter and library with the four-validator settlement command above. Add `--spore-mutant-lua "$interpreter" --ckb-lua-library "$library" --spore-type-history`. The CKB-origin fixture uses `--stem-spore`. The Stem-origin fixture uses `--native-spore-origin` and can add `--native-spore-sync-melt` for a program that permits destruction. The ordinary CKB wallet includes the live registration, interpreter and library as CellDeps. Repeat `--spore-mutant-program` for each Lua source to register, in the desired MIME order. The archived two-registration profile verifies both Type and program hashes at each CKB transition. Cluster extension programs require a separate profile. [Expected hashes, lifecycle and verification commands](research/spore-permit/upstream/beta2/README.md)

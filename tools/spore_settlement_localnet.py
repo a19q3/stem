@@ -88,9 +88,9 @@ def verify_spore_history(binary_path, directory, l1_port, report):
             events.insert(-1, report["ckb_wallet_transfer"])
         request["required_dependencies"] = report["mutant_registration"]["required_dependencies"]
         if report.get("cluster"):
-            collection = report["cluster"]
+            cluster = report["cluster"]
             request["required_dependencies"] = [*request["required_dependencies"], {"data_hash": hex_bytes(CLUSTER_BETA2)},
-                {"type_hash": hex_bytes(script_hash(collection["type"])), "data_hash": collection["data_hash"]}]
+                {"type_hash": hex_bytes(script_hash(cluster["type"])), "data_hash": cluster["data_hash"]}]
     deposit_name = "ckb-return" if native else "spore-deposit"
     deposit = json.loads((directory / f"{deposit_name}.json").read_text())
     index, = [i for i, cell in enumerate(deposit["outputs"]) if cell["type"] == object_type]
@@ -101,12 +101,7 @@ def verify_spore_history(binary_path, directory, l1_port, report):
     for grant in custody_changes:
         request["required_states"].append({"lock_hash": hex_bytes(script_hash(grant["next_custody"])),
                                            "data_hash": request["required_states"][0]["data_hash"]})
-    history = wallet_history(binary_path, directory, l1_port, "spore", request)
-    result = history["verified"]
-    assert [r["transaction"] for r in result["transitions"]] == [e["hash"] for e in events]
-    assert result["matched_states"] == [point(report["deposited" if native else "held"]["hash"], index),
-                                       *[point(step["ckb"]["hash"], 1) for step in custody_changes]]
-    assert result["ended_in_burn"] == bool(report.get("standard_melt"))
+    collection = None
     if "mutant_registration" in report and report.get("cluster"):
         cluster = report["cluster"]
         custody = [cluster["minted"]]
@@ -119,6 +114,23 @@ def verify_spore_history(binary_path, directory, l1_port, report):
         states = collection["verified"]["transitions"]
         assert [s["transaction"] for s in states] == [t["hash"] for t in custody]
         assert all(s["output"]["data_hash"] == cluster["data_hash"] for s in states)
+        request["required_dependency_uses"] = []
+        for event in events:
+            height = int(event["inclusion"]["header"]["number"], 16)
+            state = max((step for step in states if step["height"] <= height), key=lambda step: step["height"])
+            cell = state["output"]
+            request["required_dependency_uses"].append({
+                "transaction": event["hash"], "out_point": cell["out_point"], "type_hash": collection_request["type_hash"],
+                "lock_hash": cell["lock_hash"], "data_hash": cell["data_hash"],
+            })
+    history = wallet_history(binary_path, directory, l1_port, "spore", request)
+    result = history["verified"]
+    assert [r["transaction"] for r in result["transitions"]] == [e["hash"] for e in events]
+    assert result["matched_states"] == [point(report["deposited" if native else "held"]["hash"], index),
+                                       *[point(step["ckb"]["hash"], 1) for step in custody_changes]]
+    assert result["ended_in_burn"] == bool(report.get("standard_melt"))
+    if collection is not None:
+        assert result["matched_dependency_uses"] == request["required_dependency_uses"]
         history["collection"] = collection
     return history
 

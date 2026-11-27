@@ -36,6 +36,8 @@ struct Request {
     required_states: Vec<RequiredState>,
     #[serde(default)]
     required_dependencies: Vec<RequiredDependency>,
+    #[serde(default)]
+    required_dependency_uses: Vec<DependencyUse>,
 }
 
 #[derive(Deserialize)]
@@ -52,6 +54,21 @@ struct RequiredDependency {
     type_hash: Option<H256>,
     data_hash: H256,
 }
+
+/// An exact resolved dependency expected in one transaction of the authenticated path.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct DependencyUse {
+    transaction: H256,
+    out_point: JsonPoint,
+    data_hash: H256,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    type_hash: Option<H256>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lock_hash: Option<H256>,
+}
+
+type Uses<'a> = HashMap<OutPoint, &'a DependencyUse>;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,7 +100,7 @@ pub(super) fn prove(path: &Path, url: &str) -> Result<()> {
             "repeated Type history transaction"
         );
         let (tx, height, proof) = history.witnessed(&next)?;
-        let (parent, _) = transition(&tx, &request.type_hash, &[], |point| {
+        let (parent, _) = transition(&tx, &request.type_hash, &[], Uses::new(), |point| {
             history.referenced(point)
         })?;
         steps.push(Step {
@@ -130,6 +147,7 @@ fn transition(
     tx: &TransactionView,
     expected: &H256,
     required: &[RequiredDependency],
+    mut uses: Uses<'_>,
     mut resolve: impl FnMut(&OutPoint) -> Result<(CellOutput, Bytes)>,
 ) -> Result<(Option<OutPoint>, Option<OutPoint>)> {
     let matches = |cell: CellOutput| {
@@ -165,25 +183,47 @@ fn transition(
         }
     }
     // Authenticate every dependency and DepGroup member by the exact OutPoint in the transaction.
-    let deps = resolve_dependencies(tx, resolve)?;
-    if !required.is_empty() {
+    let deps = resolve_dependencies(tx, resolve, |point, cell, data| (point, cell, data))?;
+    if !required.is_empty() || !uses.is_empty() {
         let mut missing: HashSet<_> = required.iter().cloned().collect();
-        for (cell, data) in deps {
+        for (point, cell, data) in deps {
+            let exact = uses.remove(&point);
+            if exact.is_none() && missing.is_empty() {
+                continue;
+            }
             let data_hash = H256::from(ckb_hash::blake2b_256(&data));
+            let type_hash = cell.type_().to_opt().map(|s| s.calc_script_hash().unpack());
+            if let Some(usage) = exact {
+                ensure!(
+                    usage.data_hash == data_hash
+                        && usage
+                            .type_hash
+                            .as_ref()
+                            .is_none_or(|h| Some(h) == type_hash.as_ref())
+                        && usage.lock_hash.as_ref().is_none_or(
+                            |h| h.as_bytes() == cell.lock().calc_script_hash().as_slice()
+                        ),
+                    "resolved CKB dependency differs from the required Cell"
+                );
+            }
             missing.remove(&RequiredDependency {
                 type_hash: None,
                 data_hash: data_hash.clone(),
             });
-            if let Some(script) = cell.type_().to_opt() {
+            if type_hash.is_some() {
                 missing.remove(&RequiredDependency {
-                    type_hash: Some(script.calc_script_hash().unpack()),
+                    type_hash,
                     data_hash,
                 });
             }
-            if missing.is_empty() {
+            if missing.is_empty() && uses.is_empty() {
                 break;
             }
         }
+        ensure!(
+            uses.is_empty(),
+            "required OutPoint absent from the transaction's resolved dependencies"
+        );
         ensure!(
             missing.is_empty(),
             "required CKB dependency absent from Type transition"
@@ -262,6 +302,15 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
                 == request.required_dependencies.len(),
         "invalid Type history dependency requirements"
     );
+    let mut uses_by_tx = HashMap::<H256, Uses<'_>>::new();
+    for usage in &request.required_dependency_uses {
+        let uses = uses_by_tx.entry(usage.transaction.clone()).or_default();
+        ensure!(
+            uses.len() < super::metatype_history::MAX_DEPS
+                && uses.insert(usage.out_point.clone().into(), usage).is_none(),
+            "duplicate or excessive required dependency uses"
+        );
+    }
     let mut visits = Vec::new();
     let mut head = None;
     let mut trace = Vec::new();
@@ -282,10 +331,12 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         let packed = packed::Transaction::from_slice(step.transaction.as_bytes())?;
         let tx =
             stem::l1_proof::verify_packed_transaction(&header.hash(), header, packed, &step.proof)?;
+        let tx_hash: H256 = tx.hash().unpack();
         let (previous, next) = transition(
             &tx,
             &request.type_hash,
             &request.required_dependencies,
+            uses_by_tx.remove(&tx_hash).unwrap_or_default(),
             |point| {
                 let hash = point.tx_hash();
                 let raw = sources
@@ -315,7 +366,7 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         }
         if index + 1 == bundle.steps.len() {
             ensure!(
-                tx.hash().as_slice() == request.end_transaction.as_bytes(),
+                tx_hash == request.end_transaction,
                 "wrong final transaction"
             );
         }
@@ -342,10 +393,8 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         } else {
             None
         };
-        trace.push(
-            json!({"height": step.height, "transaction": H256::from_slice(tx.hash().as_slice())?,
-            "output": state}),
-        );
+        trace.push(json!({"height": step.height, "transaction": tx_hash,
+            "output": state}));
         head = next;
         ensure!(
             sources.insert(tx.hash(), tx.data().raw()).is_none(),
@@ -356,11 +405,18 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         visits.len() == request.required_states.len(),
         "required intermediate state absent or out of order"
     );
+    ensure!(
+        uses_by_tx.is_empty(),
+        "required dependency transaction absent from Type history"
+    );
     ensure!(unused.is_empty(), "unused CKB Type history references");
     let mut result = json!({"anchor":request.anchor, "type_hash":request.type_hash, "origin":request.origin,
         "end_transaction":request.end_transaction, "ended_in_burn":head.is_none(), "matched_states":visits, "transitions":trace});
     if !request.required_dependencies.is_empty() {
         result["required_dependencies_per_transition"] = json!(request.required_dependencies);
+    }
+    if !request.required_dependency_uses.is_empty() {
+        result["matched_dependency_uses"] = json!(request.required_dependency_uses);
     }
     Ok(result)
 }

@@ -20,6 +20,8 @@ Four further mints paid a registration owner whose Lock was separate from the Sp
 
 Two different SDK Lua programs settled together on ordinary Cluster members in four devnets. Splitting their two mint charges between separate wallets credited exactly 1,000 shannons to each. An additional output-position policy minted on two devnets. Both deposit estimates returned code 89, including the transaction with the Spore at output zero. [SDK policy combinations and measured CKB costs](research/spore-permit/upstream/beta2/sdk-policies/README.md)
 
+The wallet checked the exact collection OutPoint and owner Lock in 13 CKB member transitions across two funded four-validator settlements. A public testnet mint independently pinned a registration's new owner four blocks after transfer. [Witnessed transactions, expanded DepGroups and replay](research/spore-permit/upstream/beta2/dependency-uses/README.md)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two
