@@ -309,12 +309,15 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             (load.seconds + load.drain + 10) * 1000 / load.cadence_ms < 1000,
             "offer horizon exceeds the fixture's signed expiration"
         );
-        let counters = match std::env::var("STEM_LINEAGE_HEADS") {
-            Ok(value) => Some(value.parse().context("invalid STEM_LINEAGE_HEADS")?),
-            Err(std::env::VarError::NotPresent) => None,
-            Err(error) => return Err(error.into()),
+        let read_count = |name| match std::env::var(name) {
+            Ok(value) => Ok(Some(value.parse().with_context(|| format!("invalid {name}"))?)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(error) => Err(anyhow::Error::from(error)),
         };
-        let (workload, commands) = lineage_load::Workload::fund(&mut fixture, mode, work, counters)?;
+        let (workload, commands) = lineage_load::Workload::fund(
+            &mut fixture, mode, work, read_count("STEM_LINEAGE_HEADS")?,
+            read_count("STEM_LINEAGE_AMM_POOLS")?,
+        )?;
         (Some(workload), commands)
     } else if polytype {
         (

@@ -10,7 +10,10 @@ use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::{Value, json};
 use stem::jolteon::Client;
-use stem_ledger::{lineage::Outcome, record};
+use stem_ledger::{
+    lineage::{Command, Outcome},
+    record,
+};
 
 use super::{
     Context, Fixture, Result, Retention, Store, TIME, Transaction,
@@ -22,6 +25,7 @@ use super::{
 const DEFAULT_COUNTERS: usize = 64;
 const TRADERS: usize = 32;
 const TRADER_INVENTORY: u128 = 40_000;
+const POOL_INVENTORY: u128 = 1_000_000;
 
 #[derive(Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,6 +58,82 @@ pub(super) struct Workload {
     mode: Mode,
     dynamic: DynamicLineage,
     registrations: Vec<Transaction>,
+    pools: usize,
+    traders: usize,
+}
+
+struct AmmOracle {
+    reserves: BTreeMap<Byte32, (bool, [u128; 2])>,
+}
+
+impl AmmOracle {
+    fn new(ids: &[Byte32], traders: usize) -> Self {
+        let reserves = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                let pool = index == 0 || index > traders + 1;
+                let amounts = if pool { [POOL_INVENTORY; 2] } else { [TRADER_INVENTORY, 0] };
+                (id.clone(), (pool, amounts))
+            })
+            .collect();
+        Self { reserves }
+    }
+
+    fn apply(&mut self, command: &Command) -> Result<()> {
+        let [left, right] = command.targets.as_slice() else {
+            anyhow::bail!("expected exactly one AMM pool and trader");
+        };
+        let left = left.reference.id();
+        let right = right.reference.id();
+        let (left_pool, left_amounts) = *self.reserves.get(left).context("unknown AMM target")?;
+        let (right_pool, right_amounts) = *self.reserves.get(right).context("unknown AMM target")?;
+        ensure!(left_pool != right_pool, "AMM targets must have distinct roles");
+        let (pool_id, mut pool, trader_id, mut trader) = if left_pool {
+            (left, left_amounts, right, right_amounts)
+        } else {
+            (right, right_amounts, left, left_amounts)
+        };
+        let payload = &command.payload;
+        ensure!(
+            payload.len() == 33 && payload[32] <= 1,
+            "invalid AMM swap payload"
+        );
+        let sell = usize::from(payload[32]);
+        let buy = 1 - sell;
+        let amount = u128::from_le_bytes(payload[..16].try_into()?);
+        let minimum = u128::from_le_bytes(payload[16..32].try_into()?);
+        ensure!(
+            amount > 0 && !pool.contains(&0) && trader[sell] >= amount,
+            "invalid sell balance"
+        );
+        // The remaining buy reserve is the least integer that preserves the product.
+        let product = pool[sell].checked_mul(pool[buy]).context("AMM product overflow")?;
+        pool[sell] = pool[sell].checked_add(amount).context("AMM sell overflow")?;
+        let remainder = product.div_ceil(pool[sell]);
+        let received = pool[buy] - remainder;
+        ensure!(received > 0 && received >= minimum, "applied AMM swap violates slippage");
+        pool[buy] = remainder;
+        trader[sell] -= amount;
+        trader[buy] = trader[buy].checked_add(received).context("AMM trader balance overflow")?;
+        self.reserves.insert(pool_id.clone(), (true, pool));
+        self.reserves.insert(trader_id.clone(), (false, trader));
+        Ok(())
+    }
+
+    fn verify(&self, id: &Byte32, data: &[u8]) -> Result<(bool, [u128; 2])> {
+        let (pool, expected) = *self.reserves.get(id).context("missing market reserve")?;
+        ensure!(data.len() == 65, "invalid reserve length");
+        let actual = [
+            u128::from_le_bytes(data[..16].try_into()?),
+            u128::from_le_bytes(data[16..32].try_into()?),
+        ];
+        ensure!(
+            actual == expected && data[32] == u8::from(!pool),
+            "AMM reserve differs from oracle"
+        );
+        Ok((pool, actual))
+    }
 }
 
 #[test]
@@ -66,7 +146,7 @@ fn measure_lineage_admission_groups() -> Result<()> {
     fixture.spec.limits.cell_reads = 8192;
     fixture.spec.limits.cell_read_bytes = 128 * 1024 * 1024;
     fixture.spec.limits.cell_write_bytes = 4 * 1024 * 1024;
-    let (workload, commands) = Workload::fund(&mut fixture, Mode::HotspotAmm, COUNT, None)?;
+    let (workload, commands) = Workload::fund(&mut fixture, Mode::HotspotAmm, COUNT, None, None)?;
     let temp = tempfile::tempdir()?;
     let store = |name| -> Result<Store> {
         let mut store = Store::open(&temp.path().join(name), &fixture.spec, Retention::Archive)?;
@@ -160,6 +240,7 @@ impl Workload {
         mode: Mode,
         count: usize,
         counters: Option<usize>,
+        pools: Option<usize>,
     ) -> Result<(Self, Vec<Transaction>)> {
         ensure!(
             !mode.amm() || counters.is_none(),
@@ -172,9 +253,16 @@ impl Workload {
                 && (mode != Mode::Atomic || counters.is_multiple_of(8)),
             "STEM_LINEAGE_HEADS must be 1–1024, with at least two for mixed workloads and a multiple of eight for atomic workloads"
         );
+        ensure!(
+            mode.amm() || pools.is_none(),
+            "STEM_LINEAGE_AMM_POOLS applies only to AMM workloads"
+        );
+        let pools = pools.unwrap_or(TRADERS);
+        ensure!((1..=1024).contains(&pools), "invalid STEM_LINEAGE_AMM_POOLS");
+        let traders = TRADERS.max(pools);
         let dynamic = if mode.amm() {
-            ensure!(count.div_ceil(TRADERS) as u128 * 10 <= TRADER_INVENTORY);
-            fund_amm_market(fixture, count, TRADERS, TRADERS, TRADER_INVENTORY)?
+            ensure!(count.div_ceil(traders) as u128 * 10 <= TRADER_INVENTORY);
+            fund_amm_market(fixture, count, pools, traders, TRADER_INVENTORY)?
         } else {
             let registry = FixtureLineage::fund(fixture)?;
             DynamicLineage::fund_using(fixture, &registry, count, counters, None)?
@@ -189,11 +277,12 @@ impl Workload {
                     dynamic.signed(fixture, index, &[index % counters], versions, 1)
                 }
                 Mode::HotspotAmm | Mode::DistributedAmm => {
-                    let trader = index % TRADERS;
-                    let pool = if mode == Mode::HotspotAmm || trader == 0 {
+                    let trader = index % traders;
+                    let market = index % pools;
+                    let pool = if mode == Mode::HotspotAmm || market == 0 {
                         0
                     } else {
-                        TRADERS + 1 + trader
+                        traders + 1 + market
                     };
                     dynamic.signed_payload(
                         fixture,
@@ -221,6 +310,8 @@ impl Workload {
                 mode,
                 dynamic,
                 registrations,
+                pools,
+                traders,
             },
             commands,
         ))
@@ -277,6 +368,7 @@ impl Workload {
             Retention::Archive,
         )?;
         let mut counts = BTreeMap::<Byte32, u64>::new();
+        let mut market = self.mode.amm().then(|| AmmOracle::new(&self.dynamic.ids, self.traders));
         let mut applied = 0usize;
         let mut cycle_sum = 0u64;
         let mut total_fee = 0u64;
@@ -290,6 +382,7 @@ impl Workload {
                 replay.header() == &header && replay.receipts() == receipts,
                 "serial replay diverged at height {index}"
             );
+            let mut changed_reserves = HashSet::new();
             for (tx, receipt) in txs.iter().zip(receipts) {
                 if let Some(command) = tx.lineage_command() {
                     ensure!(
@@ -299,12 +392,22 @@ impl Workload {
                     applied += 1;
                     cycle_sum += receipt.cycles;
                     total_fee += receipt.fee;
+                    if let Some(market) = &mut market {
+                        market.apply(command)?;
+                        changed_reserves.extend(command.targets.iter().map(|target| target.reference.id()));
+                    }
                     for target in &command.targets {
                         *counts.entry(target.reference.id().clone()).or_default() += 1;
                     }
                 }
             }
             serial.commit(replay)?;
+            if let Some(market) = &market {
+                for id in changed_reserves {
+                    let (_, cell, _) = serial.prove_current_lineage(id)?.head.context("missing AMM reserve")?;
+                    market.verify(id, &cell.cell.data())?;
+                }
+            }
         }
         ensure!(
             applied == expected_count,
@@ -312,6 +415,7 @@ impl Workload {
         );
         let mut reserves = [0u128; 2];
         let mut proofs = Vec::new();
+        let mut market_fills = Vec::new();
         for id in &self.dynamic.ids {
             let proof = serial.prove_current_lineage(id)?;
             ensure!(proof.verify(
@@ -324,14 +428,17 @@ impl Workload {
             let count = counts.get(id).copied().unwrap_or_default();
             ensure!(head.version == count, "unexpected final Lineage version");
             let data = cell.cell.data();
-            let first = u128::from_le_bytes(data[..16].try_into()?);
-            if self.mode.amm() {
+            if let Some(market) = &market {
+                let (pool, [first, second]) = market.verify(id, &data)?;
+                if pool && count > 0 {
+                    market_fills.push(count);
+                }
                 reserves[0] += first;
-                reserves[1] += u128::from_le_bytes(data[16..32].try_into()?);
+                reserves[1] += second;
                 ensure!(cell.cell.type_scripts().len() == 3);
             } else {
                 ensure!(
-                    first == 240 + u128::from(count),
+                    u128::from_le_bytes(data[..16].try_into()?) == 240 + u128::from(count),
                     "counter replay lost an increment"
                 );
             }
@@ -344,11 +451,12 @@ impl Workload {
             }));
         }
         if self.mode.amm() {
-            let pool_supply = TRADERS as u128 * 1_000_000;
+            let pool_supply = self.pools as u128 * POOL_INVENTORY;
+            ensure!(market_fills.iter().sum::<u64>() == applied as u64, "market fill count differs from applied swaps");
             ensure!(
                 reserves
                     == [
-                        pool_supply + (TRADERS as u128 + 1) * TRADER_INVENTORY,
+                        pool_supply + (self.traders as u128 + 1) * TRADER_INVENTORY,
                         pool_supply
                     ],
                 "AMM asset supply changed"
@@ -357,6 +465,8 @@ impl Workload {
         Ok(json!({
             "height": height, "applied": applied, "cycles": cycle_sum, "fee": total_fee,
             "registered_heads": self.dynamic.ids.len(),
+            "market_active": market_fills.len(), "market_minimum_fills": market_fills.iter().min(),
+            "market_maximum_fills": market_fills.iter().max(),
             "head_updates": counts.values().sum::<u64>(), "heads": proofs,
             "serial_replay_us": started.elapsed().as_micros(),
         }))

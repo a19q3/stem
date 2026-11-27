@@ -3084,6 +3084,29 @@ passed 460 tests with 16 ignored. The Go proof suite passed.
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Signed workloads, per-transaction timing, replay proofs and failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-lineage-load.json.xz).
 
+### Native AMM qualification with a reserve oracle
+
+Build the native node at `9dbd371` with the default features. Use `storage_load::sustained_lineage_load` with `STEM_LINEAGE_WORKLOAD=hotspot_amm` or `distributed_amm`. `STEM_LINEAGE_AMM_POOLS` sets the funded pool count. Thirty-two traders are funded even for a single active pool, and the larger profiles fund one trader per pool. The four-profile hot/distributed/distributed/hot comparison funds the same 32 pools and 32 traders in each genesis, and switches between one and 32 active pools. The target selection and signed corpus differ between those workload shapes. Within each repeated shape, the genesis and signed corpus match.
+
+The audit replays the archive serially and independently checks market arithmetic from the signed swap payload and the seeded reserve balances. If selling `a` from a pool with current reserves `x` on the sell side and `y` on the buy side, the oracle computes the remaining buy reserve as `ceil(x × y / (x + a))`. It checks the payout against the signed minimum and debits and credits the trader in both assets. After each committed block it checks every touched reserve against the oracle. It compares complete Headers and receipts, then verifies both authenticated paths for every final Head and the conserved two-asset supply. Report applied swaps separately from wire submissions, confirmations during the offer, and common confirmations after drain.
+
+On this one host, pin the driver to CPUs `0-1,16-17` and all replica processes to `2-7,10-15,18-23,26-31`. Use four VM workers for four replicas and two for sixteen. Use 600 offers/s with four replicas and 240/s with sixteen, with an 18-second offer window, 23-second maximum drain, 100 ms cadence, 4B-cycle and 2,048-transaction block budgets, and 64 persistent senders. `STEM_STORAGE_COMPLETE_VOLUME`, `STEM_STORAGE_READY_SENDERS` and `STEM_STORAGE_REUSE_SUBMISSIONS` are all `1`.
+
+| Replicas | Active pools | Common swaps/s in offer | Confirmation p99 | Confirmed by drain per run | Swaps per active pool | Replica CPU | Aggregate WAL |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 1 | 550.39 / 565.22 | 1.494 / 1.674 s | 10,800 | 10,800 | 45.72 / 47.10 s | 138.2 / 136.7 MB |
+| 4 | 32 | 543.33 / 556.56 | 1.768 / 1.692 s | 10,800 | 337–338 | 51.52 / 51.84 s | 144.6 / 146.4 MB |
+| 4 | 256 | 559.28 | 1.935 s | 10,800 | 42–43 | 55.11 s | 259.7 MB |
+| 4 | 1,024 | 582.83 | 0.643 s | 10,800 | 10–11 | 51.05 s | 336.4 MB |
+| 16 | 32 | 234.06 | 0.649 s | 4,320 | 135 | 103.30 s | 402.3 MB |
+| 16 | 1 | 234.33 | 0.604 s | 4,320 | 4,320 | 84.24 s | 337.1 MB |
+
+No scheduled write, acknowledgement or applied swap was lost in the eight runs. Every run authenticated its terminal Header and independently replayed its archive. The serial oracle reproduced 73,440 swaps, 146,880 Head updates and 2,008 blocks in total. Slippage, payer authorization and both asset groups passed their regression. The locked release workspace passed 528 tests. State cardinality changed along with the trader count in the 256- and 1,024-pool cases. Each large-cardinality point is one trial, so the 1,024-pool latency observation does not establish a scaling trend. The fixture funds separate trader reserve and fee Cells with one signing key and uses uniform one-direction swap orders. These 18-second windows provide a single-host application baseline, with positive backlog at the end of each offer window and full confirmation during drain.
+
+The node SHA-256 was `c0f18145f7693ca3a447e6515d16119573f18c99280a7c1f72ccac1bfdbc1fb8`, the harness was `3debf8d89fdc51dbbc9fab800df7af08bba9841a34c27927f57411ead1d918b5`, and the swap and reserve Type binaries were `27db7850c72dd13b779d3132429c63519513ce630f195cbfd62e06a5775ff946` and `e029067c7f0686e1c75df88c9923d5e8fd1ec736803f8791206d895f381ca2af`. The four-replica hot and distributed signed corpus digests were `b7944d9ccd2508b856e89b0b86a6c1ccc708d3e872199ed1557648c17282019e` and `0d770470e6f023e77ef933addfa13d5251adb55daa12ff88df723477b213447f`, in order.
+
+The [bilateral settlement Executor](contracts/src/bin/stem-lineage-match.rs) settles two actor-authorized reserve transfers. The native tree has no executable order-placement, cancellation or price-time matching path. CLOB qualification in [#30](https://github.com/a19q3/stem/issues/30) remains open until an executable native CLOB workload exists.
+
 ## Proposal selection after the Lineage read limit
 
 Revision `4ffb817` skips candidates whose encoded bytes or minimum
