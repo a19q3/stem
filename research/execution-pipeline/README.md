@@ -100,6 +100,21 @@ The writer's mean service times were 12.254 ms in B1 and 11.213 ms in B2. Those 
 
 The workload file SHA-256 was `f0233229ebdf9d1c8a3ac1f54611a332eb9726898ff5498a27cd5b9d82a0ba6a`. The synchronous and writer binary SHA-256 values were `5abbc86b8e6fab184563c6767f112c2a71a93a19f91b16d569ae63fbbb17be5d` and `c58a4948046822b091f23f129d99571edd9b2da4c1bc0dbd41c89705160510d1`.
 
+## Admission and Follower interaction
+
+Four builds of `d227375` ran with both features disabled, Admission only, Follower only and both enabled. The run order was baseline, Admission, both, Follower, Follower, both, Admission, baseline. No other research feature was enabled. The four replicas and driver shared 24 logical CPUs on one host, with four VM workers per replica, a 100 ms cadence and limits of 4 billion cycles and 2,048 transactions per block. The driver used 128 senders, persistent connections and the same genesis and 45,000 signed payments in each run. It wrote 3,000/s for 15 seconds and allowed 12 seconds to drain. All eight runs confirmed every payment, verified the common finality and passed the history index check. No run recorded a local view timeout.
+
+| Build | Window TPS, forward / reverse | Write-to-common p99, forward / reverse | Mean control wait, forward / reverse | Peak acknowledged backlog, forward / reverse |
+| --- | ---: | ---: | ---: | ---: |
+| Both disabled | 2,734.5 / 2,249.7 | 2.128 / 3.781 s | 6.010 / 12.061 ms | 3,982 / 11,255 |
+| Admission | 2,726.7 / 2,884.4 | 1.609 / 1.470 s | 7.564 / 9.309 ms | 4,746 / 4,380 |
+| Follower | 2,668.6 / 2,678.0 | 4.755 / 1.689 s | 12.293 / 4.774 ms | 8,373 / 4,830 |
+| Both enabled | 2,878.4 / 2,766.9 | 4.506 / 5.325 s | 33.999 / 25.612 ms | 7,946 / 9,471 |
+
+With both features enabled, window throughput rose in both paired comparisons. So did p99 and control-message wait. The combined runs repeated 226 and 228 Admission checks, compared with 2,053 and 2,404 with Admission alone. Fewer rechecks did not buy a better tail in this profile. Mean Follower preparation also rose relative to the Follower-only runs, from 35.139 and 33.545 ms to 43.362 and 38.292 ms. Six runs reached the transaction cap. Block composition and the 485 TPS gap between the baseline runs limit inference about the cause. Keep the features independently selectable until longer matched runs separate batch size, worker contention and queue waits.
+
+The workload SHA-256 was `f0233229ebdf9d1c8a3ac1f54611a332eb9726898ff5498a27cd5b9d82a0ba6a` and genesis SHA-256 was `6a6cc373c2d8098d346b2492f71077d396aa310a0959375bc07720f07af5fcec`. To reproduce, build the four variants with Cargo features `jolteon-admission-pipeline` and `jolteon-candidate-pipeline` toggled as above. Use the `storage_load::sustained_payment_storage` fixture with `STEM_TEST_REPLICA_BIN` pointing to the selected binary. Set the rate, offer, drain, sender, cadence and budget values in `STEM_STORAGE_*`, enable `PREFUND_PAYMENTS`, `COMPLETE_VOLUME`, `READY_SENDERS` and `REUSE_SUBMISSIONS`, and set retention to 256.
+
 ## Four-validator comparison
 
 Four consecutive runs used the same 90,000 signed payments over 30 seconds at 3,000 scheduled writes per second, with 20 seconds of drain. The order was synchronous, background, background, synchronous. All runs wrote every payment inside the offer and commonly confirmed every payment by the drain deadline. The largest paired difference in cumulative writes at any one-second boundary was 31 and 66 payments. Four RocksDB validators shared twelve physical cores and their SMT siblings on one Ryzen 9 7950X3D. The load generator used two other cores. Both implementations used two VM workers per node and the same CPU affinity. [Raw results](results.json) · [Independent certificate replay](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/execution-pipeline/replays.json.xz)

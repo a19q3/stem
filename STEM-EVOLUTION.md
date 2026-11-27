@@ -111,7 +111,7 @@ Stem V1 沿用执行绑定的加权 Jolteon。投票签名继续认证完整执�
 | P0 | State Commitment Pipeline | 可选原型已并行计算 Cell、System 和收据承诺。串行对照核对根、收据和有序写入批次，四副本压测已覆盖触发阈值。保留 Patricia 子树剖析与整网消融。[状态承诺验收](research/execution-pipeline/README.md#concurrent-state-commitments) |
 | P0 | 区块资源扩容 | 用相同签名负载交叉比较 40 亿、80 亿和 160 亿 cycles 的独立创世。首轮固定 2,048 笔上限，同时记录真实写入、块满原因、排队和持久化 CPU。若先触及交易数上限，再单独提高交易数上限复测。 |
 | P1 | Commit Pipeline | 可选写入线程与后继候选准备已重叠。验证写入前、WAL 同步前及同步后的进程故障、混合版本历史裁剪与 CKB 交接。保留整网消融。[持久化验收](research/execution-pipeline/README.md#certified-commit-pipeline) |
-| P1 | Admission 与 Candidate 联合测试 | 在同一核心预算下比较均关闭、单开两种和双开四组，复核资源争用、重验率和四副本共同确认。 |
+| P1 | Admission 与 Candidate 联合测试 | 八轮同机对照已覆盖均关闭、单开和双开。双开窗口吞吐提高，重验次数减少，控制等待和 p99 升高。长窗口与独立主机验收待做。[联合实验](research/execution-pipeline/README.md#admission-and-follower-interaction) |
 
 3,000、5,000 和 10,000 TPS 是性能目标。跨主机可持续结果低于 3,000 TPS 时继续剖析原生流水线。达到相应目标还需同时通过尾延迟、积压和排空验收。跨地域实验另行测量执行在共识关键路径上的占用。[可持续与过载各自的验收门槛](research/storage/external/qualification.md)
 
