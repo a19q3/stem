@@ -115,6 +115,46 @@ With both features enabled, window throughput rose in both paired comparisons. S
 
 The workload SHA-256 was `f0233229ebdf9d1c8a3ac1f54611a332eb9726898ff5498a27cd5b9d82a0ba6a` and genesis SHA-256 was `6a6cc373c2d8098d346b2492f71077d396aa310a0959375bc07720f07af5fcec`. To reproduce, build the four variants with Cargo features `jolteon-admission-pipeline` and `jolteon-candidate-pipeline` toggled as above. Use the `storage_load::sustained_payment_storage` fixture with `STEM_TEST_REPLICA_BIN` pointing to the selected binary. Set the rate, offer, drain, sender, cadence and budget values in `STEM_STORAGE_*`, enable `PREFUND_PAYMENTS`, `COMPLETE_VOLUME`, `READY_SENDERS` and `REUSE_SUBMISSIONS`, and set retention to 256.
 
+## Block resource limits under a payment burst
+
+The four validators and driver shared logical CPUs `2-7,10-15,18-23,26-31`. Each validator had four VM workers, with a 100 ms cadence. The driver used 128 persistent senders and scheduled the same 66,000 signed, prefunded payments at 3,300/s for 20 seconds, with 20 seconds to drain. Each profile had a fresh genesis and fresh RocksDB stores. Caps on transaction bytes, Cell reads and Cell write bytes stayed fixed. Every run wrote and confirmed all 66,000 payments by the end of drain and passed the common finality and history-index checks. These are short, same-host overload observations.
+
+The node binary came from `7e06beb36829d9e53770d31da745f81216bb2a8b` with Admission, Leader, Commit (including Follower), concurrent commitments and Work Stealing. Its SHA-256 was `c58a4948046822b091f23f129d99571edd9b2da4c1bc0dbd41c89705160510d1`. The signed workload SHA-256 was `df74079d126d91c6ffaa00e9ed8b327139f00338bf0eed476e48074d95bb95b9`.
+
+### Cycle limit at 2,048 transactions per block
+
+| Run | Block cycles | Common TPS during offer | Write-to-common p99 | Peak acknowledged backlog | Largest block | Blocks at count cap | Highest charged cycles | Validator CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | 4B | 3,187.25 | 0.859 s | 2,970 | 1,064 | 0 | 2.043B | 82.22 s |
+| B1 | 8B | 3,167.35 | 11.362 s | 11,569 | 2,048 | 25 | 3.933B | 86.52 s |
+| C1 | 16B | 3,088.75 | 6.410 s | 9,098 | 2,048 | 15 | 3.933B | 84.78 s |
+| C2 | 16B | 3,167.00 | 0.865 s | 3,001 | 1,088 | 0 | 2.089B | 82.58 s |
+| B2 | 8B | 3,127.95 | 1.494 s | 5,315 | 2,048 | 1 | 3.933B | 82.18 s |
+| A2 | 4B | 2,961.35 | 5.412 s | 8,368 | 2,048 | 12 | 3.933B | 84.40 s |
+
+All six runs wrote every payment within the 20-second offer. Offline read-only replay rebuilt each observed block's transaction and receipt roots from the archive RocksDB database, checked Header links, and matched the common terminal Header. Every measured payment receipt charged 1,920,477 cycles. A block of 2,048 such payments charges 3,933,136,896 cycles. The transaction limit therefore caps these complete payment blocks below four billion cycles. The first 8B run confirmed 128 payments whose submission responses timed out and recorded one transient observation read error. The second 16B run recorded four local timeout votes. The other runs recorded none. Changing the cycle limit moved throughput and tail latency in opposite directions across the two pairs. The 4B references differed by 226 TPS.
+
+Mean proposal, follower preparation and commit time ranged from 17.06–31.03 ms, 27.80–33.76 ms and 9.59–21.24 ms, respectively, over these runs. Aggregate WAL bytes ranged from 548 to 622 MB. CPU covers all validator work from the starting snapshot through drain. The recording does not assign CPU to persistence alone.
+
+Genesis SHA-256 by cycle profile was `7c06b6683b00c746b9cbcf46284d4414383afa143677e6e432b0917f39bcde4f` (4B), `3a6152c2c2bf9a9ed83f994ff455a495d20568922c3888ce5de8710eb0b94c0e` (8B), and `a7b6765cdd9862919251eb5276ebb6a7a9d269092102a297bda958ea0a1e68e8` (16B).
+
+### Transaction count at eight billion cycles
+
+The follow-up held the 8B profile and all other settings fixed. It used new databases in the order 2,048, 4,096, 4,096, 2,048. A block at the higher count reached 7,866,273,792 charged cycles. All four runs passed the same offline root and Header checks, bringing the total to 1,873 checked blocks across both series.
+
+| Run | Count cap | Writes during offer | Common TPS during offer | Write-to-common p99 | Peak acknowledged backlog | Largest block | Blocks at count cap | Validator CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | 2,048 | 66,000 | 3,027.30 | 9.155 s | 11,078 | 2,048 | 29 | 90.01 s |
+| B1 | 4,096 | 64,305 | 2,368.10 | 14.227 s | 18,181 | 4,096 | 7 | 96.33 s |
+| B2 | 4,096 | 66,000 | 3,170.20 | 3.505 s | 9,942 | 3,612 | 0 | 86.03 s |
+| A2 | 2,048 | 66,000 | 3,171.75 | 5.755 s | 8,779 | 2,048 | 13 | 85.57 s |
+
+B1 wrote 1,695 payments during drain. It also recorded four local timeout votes, 128 payments confirmed without a successful submission response, and one transient observation read error. Each other run wrote all payments inside the offer and recorded zero local timeouts or observation errors. Mean proposal time rose from 41.78 to 56.95 ms and from 25.45 to 31.35 ms in the two pairs. Mean Follower preparation rose from 38.05 to 44.44 ms and from 33.04 to 33.31 ms. Mean commit time rose from 27.47 to 28.73 ms and from 12.41 to 13.71 ms. The first pair had backpressure and worse tail latency. The reverse pair had almost identical window TPS and a better tail. The 4,096 genesis SHA-256 was `b7c7d06194074e8232c50a24aec39ea00dea7f271f690d7dbd86589e15d8d8e2`.
+
+Use 4B cycles and 2,048 transactions for the reference payment profile. A varied-script workload is required to test the cost of raising a cycle limit that actually binds. Raising the count lets ordinary payments occupy more of the VM budget, with longer mean proposal service in both pairs. For independent-host qualification, preserve actual write rate, common confirmation rate, tail latency, backlog and drain as separate gates. [Qualification profiles](../storage/external/qualification.md)
+
+Reproduce with `storage_load::sustained_payment_storage` and pin `STEM_TEST_REPLICA_BIN` to the same release build throughout. Set `STEM_STORAGE_REPLICAS=4`, `RATE=3300`, `SECONDS=20`, `DRAIN=20`, `SENDERS=128`, `CADENCE=100`, `VM_WORKERS=4` and `RETENTION=256` under the `STEM_STORAGE_` prefix. Set `PREFUND_PAYMENTS`, `COMPLETE_VOLUME`, `READY_SENDERS` and `REUSE_SUBMISSIONS` to `1`. Set `BLOCK_CYCLES` and `BLOCK_TRANSACTIONS` from each row. Sum the archived execution receipts by height and compare both roots with the signed Header chain. Report actual offered writes, including any that miss the window, separately from common confirmations and recorded acknowledgments.
+
 ## Four-validator comparison
 
 Four consecutive runs used the same 90,000 signed payments over 30 seconds at 3,000 scheduled writes per second, with 20 seconds of drain. The order was synchronous, background, background, synchronous. All runs wrote every payment inside the offer and commonly confirmed every payment by the drain deadline. The largest paired difference in cumulative writes at any one-second boundary was 31 and 66 payments. Four RocksDB validators shared twelve physical cores and their SMT siblings on one Ryzen 9 7950X3D. The load generator used two other cores. Both implementations used two VM workers per node and the same CPU affinity. [Raw results](results.json) · [Independent certificate replay](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/execution-pipeline/replays.json.xz)
