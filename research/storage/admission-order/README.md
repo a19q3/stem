@@ -245,6 +245,25 @@ The candidate reached its 512-entry lookahead limit in five proposals. Its prior
 
 Retain the existing priority policy. This run order supports rejecting the tested lookahead candidate for integration. The size of its latency regression remains specific to this pair. The branch outcome counts help identify stale work, while the higher priority inclusion count alone gives no adoption case. The control, candidate and measuring harness SHA-256 values were `3677f6224539678eee1600a6805b4cf7ceaa88c8aa577ce070b12e1a5a7c8e5f`, `100c9768080ebd2ec85f281b38ebc23e376e62383d0dc7d6b724cb61d4cfdffc` and `e05cd92b6c5b7d57244cebdb9d3e29b4377957c00c4209bcc334977158da75ea`.
 
+#### Transaction-count limit under a fixed cycle budget
+
+The 2,048-item reference reached its count ceiling in 131 blocks of the preceding measurement window, with zero cycle rejections. The follow-up ran 2,048 then 3,072 items on the same four loopback validators using the instrumented binary, 131,072 cache entries, parallel Cell commitments and age priority. Both used a 100 ms cadence and 4 billion cycles. The prepared genesis documents differ only in `limits.transaction_count`. Both reproduced the same signed workload digest for 720,000 payments. A runner error stopped the initial 3,072-item launch before any validator started. The second arm resumed with fresh stores and the same prepared inputs.
+
+| Post-warmup metric | 2,048 items | 3,072 items |
+| --- | ---: | ---: |
+| Common TPS | 2,979.51 | 2,109.75 |
+| Maximum observed payments per block | 2,048 | 2,082 |
+| Blocks at the item ceiling | 84 of 319 | 0 of 200 |
+| Writes without acknowledgment | 0 | 61,436 |
+| Peak acknowledged backlog | 16,788 | 107,809 |
+| Backlog growth | 3,616 | 99,032 |
+| Acknowledged payments pending at drain | 0 | 69,166 |
+| Conditional p99 | 9.002 s | 102.616 s |
+
+The larger limit moved the saturation boundary to the cycle budget. It recorded 3,408,391 cycle-rejected candidate visits, which consumed 88.15 of 142.58 cumulative seconds of measured Leader proposal wall time. The reference recorded zero cycle rejections. On the 409,345 acknowledged measurement payments confirmed by drain in both runs, p99 rose from 5.161 to 102.616 seconds. Independent replay checked 784 and 333 observed blocks and both finality proofs. The final archive contained 720,000 and 591,480 confirmed payments, including records observed while capturing evidence after the drain cutoff.
+
+Retain 2,048 for this reference profile. The result identifies cycle-rejected selection work under this load. It supports evaluating resource-aware scanning when cycles are the observed limit. The measured magnitude comes from one run order with a gap before the second arm. The network keeps configurable item and cycle budgets.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)

@@ -30,4 +30,4 @@ The experiments use Stem at `fefb8cc01771d59e228c72755ddd1242291f7f22` as the st
 - Experiments **8 and 14** supply qualification checks. Keep signed weighted-finality replay and negative controls in the benchmark path. Use held-out evaluation to select reversible experiments and require separate replicated evidence for production changes.
 - Experiments **6, 11, 12 and 13** retain their existing native implementations. The replacement immediate extractors and small sorts were slower, the local availability codes failed structured-loss checks, and the advanced broadcast selector found no applicable case at the tested sizes.
 
-The [native consolidation sequence](../STEM-V1-PLAN.md#native-consolidation-sequence) places sustained single-host payment qualification before integrated ablations and the later storage, application and network work.
+The [native consolidation sequence](../STEM-V1-PLAN.md#native-consolidation-sequence) prioritizes integrated ablations and storage, application and network improvements. The existing sustainable payment profile remains a reference for later qualification.
