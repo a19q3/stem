@@ -21,6 +21,8 @@ sequenceDiagram
     R->>R: Regenerate signed payments and replay the recorded common heights
 ```
 
+For the measured 3,000 TPS milestone, use the [physical-host qualification profile and acceptance command](qualification.md).
+
 ## Prepare the trial
 
 Build the release node and integration harness. Build `stem-lock` with the contract flags used by the repository. Record the release revisions and binary hashes, per-host core and disk allocation, and which host runs the load generator. Each node operator supplies the public key and reachable Jolteon socket address for its own validator. The standard Jolteon `replicas.json` places peers in ascending key order and contains `vm_workers`, `proposal_interval_ms` and `view_timeout_ms`. The last endpoint serves archive history. [Node operations](../../../OPERATIONS.md) · [Existing single-host protocol](../sustained/README.md)
