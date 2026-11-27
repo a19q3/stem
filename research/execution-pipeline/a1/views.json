@@ -1,0 +1,62 @@
+{
+  "before": [
+    {
+      "member": 0,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 59,
+      "epoch": 0
+    },
+    {
+      "member": 1,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 59,
+      "epoch": 0
+    },
+    {
+      "member": 2,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 59,
+      "epoch": 0
+    },
+    {
+      "member": 3,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 59,
+      "epoch": 0
+    }
+  ],
+  "after": [
+    {
+      "member": 0,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 272,
+      "epoch": 0
+    },
+    {
+      "member": 1,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 272,
+      "epoch": 0
+    },
+    {
+      "member": 2,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 272,
+      "epoch": 0
+    },
+    {
+      "member": 3,
+      "timeout_views": [],
+      "last_untimely_view": 0,
+      "height": 272,
+      "epoch": 0
+    }
+  ]
+}
