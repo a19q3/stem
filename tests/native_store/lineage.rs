@@ -1075,6 +1075,62 @@ fn lineage_prefix_keeps_live_dependencies_versions_and_fee_only_rollback() -> Re
     Ok(())
 }
 
+#[cfg(feature = "native-lineage-ready-prefix")]
+#[test]
+fn lineage_prefix_resolves_exact_heads_on_the_selected_parent() -> Result<()> {
+    use std::sync::Arc;
+
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 16;
+    fixture.spec.limits.transaction_cycles = 20_000_000;
+    fixture.spec.limits.block_cycles = 400_000_000;
+    fixture.spec.limits.cell_reads = 512;
+    let registry = FixtureLineage::fund(&mut fixture)?;
+    let dynamic = DynamicLineage::fund_using(&mut fixture, &registry, 5, 4, None)?;
+    let registrations = (0..dynamic.ids.len())
+        .map(|i| dynamic.register(&fixture, i))
+        .collect::<Result<Vec<_>>>()?;
+    let home = tempfile::tempdir()?;
+    let mut store = Store::open(home.path(), &fixture.spec, Retention::Archive)?;
+    store.commit(store.prepare(&registrations, TIME, false)?)?;
+    let left = dynamic.signed(&fixture, 0, &[0], (0, 0), 1)?;
+    let right = dynamic.signed(&fixture, 1, &[1], (0, 0), 1)?;
+    let left = Arc::new(store.prepare(&[left], TIME + 1, false)?);
+    let right = Arc::new(store.prepare(&[right], TIME + 1, false)?);
+    let ordered = [
+        dynamic.signed(&fixture, 2, &[0], (1, 1), 1)?,
+        dynamic.signed(&fixture, 3, &[2], (0, 0), 1)?,
+        dynamic.signed(&fixture, 4, &[3], (0, 0), 1)?,
+    ];
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let expected = store.on_branch(std::slice::from_ref(&left), |view| {
+        view.prepare(&ordered, TIME + 2, false)
+    })?;
+    let prepare = |parent| {
+        store.on_branch(std::slice::from_ref(parent), |view| {
+            pool.install(|| view.prepare(&ordered, TIME + 2, true))
+        })
+    };
+    assert_eq!(prepare(&left)?.header(), expected.header());
+    assert!(prepare(&right).is_err());
+    assert!(pool.install(|| store.prepare(&ordered, TIME + 2, true)).is_err());
+    let actual = prepare(&left)?;
+    assert_eq!(actual.header(), expected.header());
+    assert_eq!(actual.receipts(), expected.receipts());
+    store.commit(Arc::try_unwrap(left).ok().context("parent still shared")?)?;
+    store.commit(actual)?;
+    drop(store);
+
+    let reopened = Store::open(home.path(), &fixture.spec, Retention::Archive)?;
+    assert_eq!(reopened.tip(), expected.header());
+    for (id, version) in dynamic.ids.iter().zip([2, 0, 1, 1]) {
+        let reference = lineage::LineageRef::new(id.clone(), Some(version))?;
+        let proof = reopened.prove_current_lineage(id)?;
+        assert!(proof.verify(reopened.network(), reopened.tip(), &reference, &dynamic.marker));
+    }
+    Ok(())
+}
+
 fn measure_dynamic_batches(
     name: &str,
     fixture: &Fixture,

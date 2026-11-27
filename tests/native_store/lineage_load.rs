@@ -19,7 +19,7 @@ use super::{
     lineage::{DynamicLineage, FixtureLineage, fund_amm_market, swap_payload},
 };
 
-const COUNTERS: usize = 64;
+const DEFAULT_COUNTERS: usize = 64;
 const TRADERS: usize = 32;
 const TRADER_INVENTORY: u128 = 40_000;
 
@@ -66,7 +66,7 @@ fn measure_lineage_admission_groups() -> Result<()> {
     fixture.spec.limits.cell_reads = 8192;
     fixture.spec.limits.cell_read_bytes = 128 * 1024 * 1024;
     fixture.spec.limits.cell_write_bytes = 4 * 1024 * 1024;
-    let (workload, commands) = Workload::fund(&mut fixture, Mode::HotspotAmm, COUNT)?;
+    let (workload, commands) = Workload::fund(&mut fixture, Mode::HotspotAmm, COUNT, None)?;
     let temp = tempfile::tempdir()?;
     let store = |name| -> Result<Store> {
         let mut store = Store::open(&temp.path().join(name), &fixture.spec, Retention::Archive)?;
@@ -159,13 +159,25 @@ impl Workload {
         fixture: &mut Fixture,
         mode: Mode,
         count: usize,
+        counters: Option<usize>,
     ) -> Result<(Self, Vec<Transaction>)> {
+        ensure!(
+            !mode.amm() || counters.is_none(),
+            "STEM_LINEAGE_HEADS applies only to counter workloads"
+        );
+        let counters = counters.unwrap_or(DEFAULT_COUNTERS);
+        ensure!(
+            (1..=1024).contains(&counters)
+                && (mode != Mode::Mixed || counters > 1)
+                && (mode != Mode::Atomic || counters.is_multiple_of(8)),
+            "STEM_LINEAGE_HEADS must be 1–1024, with at least two for mixed workloads and a multiple of eight for atomic workloads"
+        );
         let dynamic = if mode.amm() {
             ensure!(count.div_ceil(TRADERS) as u128 * 10 <= TRADER_INVENTORY);
             fund_amm_market(fixture, count, TRADERS, TRADERS, TRADER_INVENTORY)?
         } else {
             let registry = FixtureLineage::fund(fixture)?;
-            DynamicLineage::fund_using(fixture, &registry, count, COUNTERS, None)?
+            DynamicLineage::fund_using(fixture, &registry, count, counters, None)?
         };
         let registrations = (0..dynamic.ids.len())
             .map(|index| dynamic.register(fixture, index))
@@ -174,7 +186,7 @@ impl Workload {
         let commands = (0..count)
             .map(|index| match mode {
                 Mode::Independent => {
-                    dynamic.signed(fixture, index, &[index % COUNTERS], versions, 1)
+                    dynamic.signed(fixture, index, &[index % counters], versions, 1)
                 }
                 Mode::HotspotAmm | Mode::DistributedAmm => {
                     let trader = index % TRADERS;
@@ -192,12 +204,12 @@ impl Workload {
                     )
                 }
                 Mode::Atomic => {
-                    let first = (index % (COUNTERS / 8)) * 8;
+                    let first = (index % (counters / 8)) * 8;
                     let targets: Vec<_> = (first..first + 8).collect();
                     dynamic.signed(fixture, index, &targets, versions, 1)
                 }
                 Mode::Mixed => {
-                    let independent = 1 + index % (COUNTERS - 1);
+                    let independent = 1 + index % (counters - 1);
                     let targets = [0, independent];
                     let offset = usize::from(index % 3 != 0);
                     dynamic.signed(fixture, index, &targets[offset..], versions, 1)
@@ -344,6 +356,7 @@ impl Workload {
         }
         Ok(json!({
             "height": height, "applied": applied, "cycles": cycle_sum, "fee": total_fee,
+            "registered_heads": self.dynamic.ids.len(),
             "head_updates": counts.values().sum::<u64>(), "heads": proofs,
             "serial_replay_us": started.elapsed().as_micros(),
         }))

@@ -169,6 +169,36 @@ Use `storage_load::sustained_lineage_load` with `STEM_LINEAGE_WORKLOAD=mixed` or
 
 The fixed and prefix node SHA-256 values were `e6d63fa384de8befc0b0cd537510895815cc8ae276b8f5fa32a4774a6b8648a8` and `360c8f614d3968895a66815308079613be66ac22b1e9d8146fcd87f1f00cb244`. Both used the harness with SHA-256 `8f557998a86df1bb74f1e1916b59793ee39603c5b57181d06a1965433c57ba95`. The mixed and hotspot corpus BLAKE2b digests were `ab3d7ce88ffe6e5243db02a5b7e9e397c3bbe182899969edcdeb039b1f2cb9c9` and `8e8a6e264c6b092804d5a6265a48d80acf0cb6135c4f03257b759395de186576`.
 
+#### Head cardinality and shared-state pressure
+
+The `STEM_LINEAGE_HEADS` setting sizes the counter registry before signing the job corpus. The harness records that cardinality and verifies one final proof per registered Head, including untouched Heads. The independent workload uses one counter per command. The mixed workload targets the common Head with an independent one in every third command. The atomic workload uses eight Heads in one signed command. The existing AMM modes still use their fixed funded markets and trader sets.
+
+Use the two builds of `5bee55b` with default parallel Cell commitments in each and `native-lineage-ready-prefix` set only on the candidate. Run a fresh local archive for each trial with `storage_load::sustained_lineage_load`. Set `STEM_LINEAGE_WORKLOAD` and `STEM_LINEAGE_HEADS` for each profile. Pin all replica processes to CPUs `2-7,10-15,18-23,26-31` and the client to `0-1,16-17`, with 64 ready persistent senders. Retain a 100 ms cadence and 4B cycle and 2,048-transaction block budgets. The four-replica profiles use four VM workers per replica. Sixteen co-located replicas use two each to limit CPU oversubscription. Compare only within a profile. Require matching genesis and signed corpus digests, authenticate the common Header, and replay its entire history in a fresh serial store after shutdown. Compare complete Head updates, receipts, cycles and fees.
+
+| Workload | Replicas | Heads | Offer per second | Offer / drain (s) | Scheduler order |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `independent` | 4 | 256 | 600 | 18 / 22 | Fixed, prefix |
+| `mixed` | 4 | 1,024 | 620 | 20 / 25 | Fixed, prefix, prefix, fixed |
+| `atomic` | 4 | 256 | 120 | 18 / 25 | Prefix, fixed |
+| `mixed` | 16 | 256 | 160 | 20 / 25 | Prefix, fixed, fixed, prefix |
+
+Use the existing external binary selector `STEM_TEST_REPLICA_BIN` and the corresponding `STEM_STORAGE_` settings from the four-replica comparison. Preserve complete volume, ready senders and reused submission connections. Use `lineage-audit.json` for all Head proof and charge checks and `report.json` for the common-confirmation latency, status deltas, process resources, WAL and terminal proof. Treat the measurements as same-host results.
+
+| Matched pair | Common TPS fixed → prefix | Confirmation p99, ms | Parallel Follower commands | Mean Follower prepare, ms | Replica CPU, s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Disjoint | 581.56 → 583.61 | 940 → 899 | 99.8% → 99.7% | 15.52 → 13.56 | 35.94 → 34.78 |
+| Mixed 1,024, forward | 605.95 → 603.95 | 577 → 554 | 59.1% → 91.3% | 15.17 → 14.33 | 42.07 → 41.75 |
+| Mixed 1,024, reverse | 607.85 → 604.70 | 566 → 970 | 59.8% → 91.6% | 15.54 → 15.43 | 42.93 → 42.08 |
+| Eight-Head atomic | 117.28 → 117.28 | 523 → 535 | 98.8% → 98.1% | 7.38 → 7.31 | 18.86 → 19.24 |
+| Sixteen replicas, first pair | 156.80 → 157.50 | 430 → 498 | 88.4% → 91.8% | 7.02 → 7.02 | 66.15 → 64.82 |
+| Sixteen replicas, reverse pair | 157.70 → 157.70 | 431 → 432 | 87.7% → 91.1% | 7.01 → 6.98 | 65.57 → 65.86 |
+
+All 88,320 offers were acknowledged and commonly confirmed. The independent verifier checked the finality proof of each run, and serial replay reproduced all 3,637 ordered blocks and checked current proofs for all registered Heads. The disjoint, mixed 1,024, atomic and sixteen-replica populations produced respectively 10,800, 16,534, 17,280 and 4,267 Head updates per run. Every profile matched total charged cycles and fees across schedulers. Fourteen native Lineage regressions passed. The branch regression alternates between siblings for the same signed Exact selector, compares receipts and the complete child Header with serial execution on the matching parent, and verifies all exact Head proofs after reopening the committed branch. The dependency regression also covers Cell Dep ordering, Dep Groups, fee-only rollback and exhausted reads.
+
+**Decision.** Keep independent prefixes opt-in and retain fixed waves in production. Common throughput stayed within 0.6% in every pair. At 1,024 Heads the candidate ran substantially more materializations concurrently. Its full Follower preparation was 5.5% faster in one order and 0.7% faster in the other, and confirmation p99 moved in opposite directions. The disjoint and eight-Head atomic fixtures were already nearly fully concurrent. A wider dependency scheduler would need a measured critical-path benefit under genuine conflict pressure. These matched trials include one local archive reopen and serial replay per run, plus a deterministic speculative-parent switch in the regression.
+
+The fixed and prefix node SHA-256 fingerprints were `4dcaace5a54e1e31fc65e54fc16ff99f5f75d8e86838b54913c616af9b0ff44b` and `b72d2492b6eee4b0daff9db05c122fa01d074e9727a0d24c938ba29c7ba9ba9a`. The shared harness was `763e5cca220c1b00ecf35e043abf6b6e5cc4777f50adfe3b4762b4159197fd3d`. The corpus BLAKE2b digests in profile order were `05ae79e53ccd0a36d533e8fb8be1a4482a4c6e9ff900440153347db10e727018`, `5c123328a612417505bcedfdec7fd415bd34cb724944997adf53b5ddc1154a92`, `9eea13c024e0cd20b895406b0304b9c8d5d5e9c6adbde93b2366538bd866963a` and `eb8f0a0506166ee10811269c3bf5477d33139654889a0143e9e367fc2a090cfa`.
+
 ## Certified Commit Pipeline
 
 `jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.
