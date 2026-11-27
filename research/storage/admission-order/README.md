@@ -135,6 +135,25 @@ Aging raised common throughput by 19.4% in the reverse pair, following a 7.0% in
 
 The fixed build's 385 multi-payment blocks all followed complete signed-hash order. In the aged build 158 of 442 multi-payment blocks deviated from that order, and all suffixes after position 256 preserved it. The Patricia tree phase remained the largest Cell commitment cost. Mean Leader and Follower tree time was 96.68 and 106.53 ms in fixed order and 45.48 and 52.88 ms with the age lane. Block counts and sizes varied between runs.
 
+#### 131,072-entry cache probe
+
+One further run retained the aged binary, identical genesis, 720,000-payment corpus and two VM workers per node. Only the verification cache capacity increased to 131,072 entries and fresh loopback ports were allocated. All writes received successful acknowledgments and commonly confirmed by drain. Independent replay authenticated 804 observed blocks and the terminal proof.
+
+| Post-warmup metric | 131,072 entries with age priority |
+| --- | ---: |
+| Common TPS | 2,973.43 |
+| Common confirmations by minute | 176,125 / 184,524 / 174,568 |
+| Measurement writes without ACK | 0 |
+| Peak acknowledged backlog | 17,985 |
+| Backlog growth | 5,392 |
+| Pending at drain | 0 |
+| Write-to-common p99 | 6.554 s |
+| Lowest signed-hash band p99 | 4.852 s |
+| Highest signed-hash band p99 | 9.075 s |
+| Total validator CPU | 1,258.81 s |
+
+The p99 population included 539,894 measurement payments. All four caches reached capacity. The observed cache hit fraction was 39.44%, with zero wrong-parent misses in this payment corpus. Compared with the prior two aged runs at 65,536 entries, this run had the lowest tail and peak backlog, and throughput fell between them. It missed the sustained throughput, backlog peak, backlog growth and 5 s p99 gates. One run warrants a matched repeat while preserving the existing cache default.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)
