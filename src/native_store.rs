@@ -1229,7 +1229,7 @@ impl Store {
     }
 
     /// Resolve conflicts and protocol state in proposal order. Schedule immutable
-    /// VM contexts in bounded waves and charge each result in proposal order.
+    /// VM contexts in bounded windows and charge each result in proposal order.
     /// A failure discards the entire block overlay.
     pub fn prepare(
         &self,
@@ -1288,14 +1288,42 @@ impl Store {
         } else {
             1
         };
+
+        let work_stealing = cfg!(feature = "native-work-stealing") && width > 1;
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
-        for segment in transactions
+        for mut segment in transactions
             .chunk_by(|left, right| left.has_lineage_command() == right.has_lineage_command())
         {
-            for wave in segment.chunks(width) {
+            let lineage = segment[0].has_lineage_command();
+            while !segment.is_empty() {
+                let mut count = width.min(segment.len());
+                if work_stealing && !lineage && segment.len() > width {
+                    // Admit at most four waves, with the full cycle limit for
+                    // each job. Keep the original wave boundaries around
+                    // protocol operations and inline cycle charges.
+                    let funded_waves =
+                        budget.cycles / self.limits.transaction_cycles.max(1) / width as u64;
+                    if funded_waves >= 2 {
+                        let end = width.saturating_mul(funded_waves.min(4) as usize);
+                        let ready = segment[..end.min(segment.len())]
+                            .chunks(width)
+                            .take_while(|wave| {
+                                wave.iter().all(|tx| {
+                                    tx.operation().is_none()
+                                        && tx.keeper_action().is_none()
+                                        && tx.l1_reference_certificate().is_none()
+                                })
+                            })
+                            .map(<[Transaction]>::len)
+                            .sum();
+                        count = count.max(ready);
+                    }
+                }
+                let (wave, rest) = segment.split_at(count);
+                segment = rest;
                 let parallel_commands = wave.len() > 1
-                    && wave[0].has_lineage_command()
+                    && lineage
                     && budget.cycles / wave.len() as u64 >= self.limits.transaction_cycles
                     && lineage::independent(self, wave, &overlay.lineages)?;
                 let mut commands = if parallel_commands {

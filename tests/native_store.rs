@@ -331,28 +331,33 @@ fn measure_commit_with_fixed_changes_and_varying_state_and_history() -> Result<(
 }
 
 #[test]
-fn parallel_waves_preserve_receipts_conflicts_and_block_cycles() -> Result<()> {
+fn verification_schedules_preserve_receipts_conflicts_and_block_cycles() -> Result<()> {
     let mut fixture = Fixture::new()?;
-    let points = [10u8, 11, 12].map(|id| OutPoint::new([id; 32].pack(), 0));
+    fixture.spec.limits.block_cycles = 8 * fixture.spec.limits.transaction_cycles;
+    let points = [10u8, 11, 12, 13, 14, 15, 16].map(|id| OutPoint::new([id; 32].pack(), 0));
     for point in &points {
         fixture.spec.development_cells.push((
             point.clone(),
             Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?,
         ));
     }
-    let txs = points
+    let mut txs = points
         .iter()
         .map(|point| fixture.signed(point.clone(), None, FUND - FEE, None))
         .collect::<Result<Vec<_>>>()?;
+    let intermediate = OutPoint::new(txs[0].id(&fixture.spec.network), 0);
+    let successor = fixture.signed(intermediate.clone(), None, FUND - 3 * FEE, None)?;
+    let output = OutPoint::new(successor.id(&fixture.spec.network), 0);
+    txs.push(successor);
     let directory = tempfile::tempdir()?;
-    let serial = Store::open(
+    let mut serial = Store::open(
         &directory.path().join("serial"),
         &fixture.spec,
         Retention::Archive,
     )?;
     let expected = serial.prepare(&txs, TIME, false)?;
     let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
-    let parallel = Store::open(
+    let mut parallel = Store::open(
         &directory.path().join("parallel"),
         &fixture.spec,
         Retention::Archive,
@@ -361,13 +366,15 @@ fn parallel_waves_preserve_receipts_conflicts_and_block_cycles() -> Result<()> {
     assert_eq!(expected.receipts(), actual.receipts());
     assert_eq!(expected.header(), actual.header());
 
-    let duplicate = [txs[0].clone(), txs[0].clone()];
+    let mut duplicate = txs[..7].to_vec();
+    duplicate.push(txs[0].clone());
     assert!(
         workers
             .install(|| parallel.prepare(&duplicate, TIME, true))
             .is_err()
     );
-    let invalid = [txs[0].with_witnesses(vec![])?, txs[1].clone()];
+    let mut invalid = txs.clone();
+    invalid[7] = txs[7].with_witnesses(vec![])?;
     assert!(
         workers
             .install(|| parallel.prepare(&invalid, TIME, true))
@@ -376,6 +383,32 @@ fn parallel_waves_preserve_receipts_conflicts_and_block_cycles() -> Result<()> {
     assert!(parallel.live_cell(&points[0])?.is_some());
 
     let charged: u64 = actual.receipts().iter().map(|receipt| receipt.cycles).sum();
+    serial.commit(expected)?;
+    parallel.commit(actual)?;
+    let (executed, receipts) = parallel.execution(1)?.context("missing block execution")?;
+    assert!(
+        executed
+            .iter()
+            .map(Transaction::as_slice)
+            .eq(txs.iter().map(Transaction::as_slice))
+    );
+    assert_eq!(
+        receipts,
+        serial.execution(1)?.context("missing serial execution")?.1
+    );
+    for point in [&output, &intermediate, &points[0]] {
+        let (serial_cell, serial_proof) = serial.prove_cell(point)?;
+        let (parallel_cell, parallel_proof) = parallel.prove_cell(point)?;
+        let encode = |cell: &stem_ledger::LiveCell| stem_ledger::record::encode_cell(point, cell);
+        assert_eq!(
+            serial_cell.as_ref().map(encode),
+            parallel_cell.as_ref().map(encode)
+        );
+        assert_eq!(serial_proof.encode()?, parallel_proof.encode()?);
+    }
+    assert!(parallel.live_cell(&output)?.is_some());
+    assert!(parallel.live_cell(&intermediate)?.is_none());
+
     fixture.spec.limits.transaction_cycles = charged / 2;
     fixture.spec.limits.block_cycles = charged - 1;
     let limited = Store::open(
