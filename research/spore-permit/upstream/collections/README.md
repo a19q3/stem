@@ -60,7 +60,7 @@ All 18 mint or subsequent transaction bodies were smaller than their correspondi
 
 ## Replay
 
-From the repository root, use the release wallet and the built WASM SDK directory.
+From the repository root, use the release wallet and the built WASM SDK directory. The four commands below can also run as the [ordinary settlement regression baseline](../../compatibility.md).
 
 ```sh
 study=research/spore-permit/upstream/collections

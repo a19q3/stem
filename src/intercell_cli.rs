@@ -9,7 +9,7 @@ use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
 use stem_bridge_wire::intercell::{Delivery, MAX_PAYLOAD, Message, record_key};
-use stem_bridge_wire::spore::{CellTransfer, Handoff, MAX_CELL_SPORE_DATA, MeltReceipt};
+use stem_bridge_wire::spore::{CellTransfer, Handoff, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData};
 use stem_ledger::block::Header;
 use stem_stake::{
     finality::NATIVE_HEADER_BYTES,
@@ -42,6 +42,12 @@ pub enum Intercell {
         recipient: H256,
         #[arg(long)]
         data: PathBuf,
+        /// Validate a new deposit against the standard Spore settlement profile.
+        #[arg(long, conflicts_with = "melt")]
+        deposit: bool,
+        /// JSON containing the live collection's Type and complete data for a Cluster member.
+        #[arg(long, requires = "deposit")]
+        cluster: Option<PathBuf>,
         /// Certify a holder's CKB melt and name the recipient of the native collateral.
         #[arg(long)]
         melt: bool,
@@ -161,6 +167,71 @@ fn historical_evidence(path: PathBuf, network: &[u8; 32]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DepositCluster {
+    #[serde(rename = "type")]
+    type_script: ckb_jsonrpc_types::Script,
+    data: JsonBytes,
+}
+
+fn standard_deposit(data: &[u8], cluster: Option<DepositCluster>) -> Result<()> {
+    let spore = SporeData::from_cell(data)
+        .context("Spore MIME or executable extension is outside the standard custody profile")?;
+    let Some(id) = spore.cluster_id else {
+        ensure!(cluster.is_none(), "unclustered Spore must omit --cluster");
+        return Ok(());
+    };
+    let cluster =
+        cluster.context("Cluster member deposit requires the live collection with --cluster")?;
+    let script: ckb_types::packed::Script = cluster.type_script.into();
+    const RELEASED_CLUSTER_CODE: &str =
+        "7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075";
+    ensure!(
+        u8::from(script.hash_type()) == ckb_types::core::ScriptHashType::Data1 as u8
+            && hex::encode(script.code_hash().as_slice()) == RELEASED_CLUSTER_CODE
+            && script.args().raw_data().as_ref() == id,
+        "collection differs from the member's released Cluster Type"
+    );
+
+    let data = cluster.data.as_bytes();
+    let number = |offset: usize| -> Option<usize> {
+        Some(u32::from_le_bytes(data.get(offset..offset + 4)?.try_into().ok()?) as usize)
+    };
+    let first = number(4).context("truncated Cluster data")?;
+    ensure!(
+        number(0) == Some(data.len()) && matches!(first, 12 | 16 | 20) && first <= data.len(),
+        "unsupported Cluster data layout"
+    );
+    let mut offsets = (4..first)
+        .step_by(4)
+        .map(number)
+        .collect::<Option<Vec<_>>>()
+        .context("truncated Cluster fields")?;
+    offsets.push(data.len());
+    ensure!(offsets.is_sorted(), "invalid Cluster field offsets");
+    let field = |i: usize| &data[offsets[i]..offsets[i + 1]];
+    let body = |entry: &[u8]| {
+        entry
+            .get(..4)
+            .and_then(|len| len.try_into().ok())
+            .is_some_and(|len| u32::from_le_bytes(len) as usize == entry.len() - 4)
+    };
+    ensure!(
+        body(field(0)) && field(0).len() > 4 && body(field(1)),
+        "invalid Cluster name or description"
+    );
+    ensure!(
+        first == 12 || field(2).is_empty(),
+        "collection-level Mutant is outside the standard custody profile"
+    );
+    ensure!(
+        first != 20 || (body(field(3)) && field(3)[4..].starts_with(b"ipfs://")),
+        "unsupported Cluster metadata"
+    );
+    Ok(())
+}
+
 impl Intercell {
     pub fn run(self) -> Result<()> {
         match self {
@@ -224,6 +295,8 @@ impl Intercell {
                 original_type,
                 recipient,
                 data,
+                deposit,
+                cluster,
                 melt,
             } => {
                 let bytes = crate::bridge_cli::read_limited(&data, MAX_CELL_SPORE_DATA)?;
@@ -234,6 +307,15 @@ impl Intercell {
                     return print_json(
                         &json!({ "payload": JsonBytes::from_vec(receipt.to_vec()) }),
                     );
+                }
+                if deposit {
+                    standard_deposit(
+                        &bytes,
+                        cluster
+                            .as_ref()
+                            .map(|path| read_json_limited(path, 2 * MAX_CELL_SPORE_DATA + 2048))
+                            .transpose()?,
+                    )?;
                 }
                 let mut buffer = [0; MAX_PAYLOAD];
                 let payload =
