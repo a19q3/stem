@@ -641,6 +641,8 @@ def main():
     parser.add_argument("--metatype-composed-cell", action="store_true")
     parser.add_argument("--metatype-migration-cap-adapter", type=lambda path: Path(path).resolve(),
                         help="move a redeemed portion to a new Metatype deployment using this replacement adapter")
+    parser.add_argument("--metatype-migration-reorg", action="store_true",
+                        help="reorganize a pending CKB burn and later orphan a guardian-pinned anchor")
     composed_return = parser.add_mutually_exclusive_group()
     composed_return.add_argument("--metatype-composed-partial", action="store_true")
     composed_return.add_argument("--metatype-composed-selective", choices=("partial", "exhaust"))
@@ -776,6 +778,8 @@ def main():
         parser.error("partial and selective returns require --metatype-composed-cell")
     if args.metatype_migration_cap_adapter and args.metatype_composed_selective != "partial":
         parser.error("Metatype migration exercises --metatype-composed-selective partial with an old position still live")
+    if args.metatype_migration_reorg and not args.metatype_migration_cap_adapter:
+        parser.error("--metatype-migration-reorg requires --metatype-migration-cap-adapter")
     if args.intercell_mailbox and (args.reference_script or args.fee_funds or args.xudt or args.xudt_gate):
         parser.error("--intercell-mailbox uses the native CKB lane on its own")
     if args.security_domain and not args.reference_script:

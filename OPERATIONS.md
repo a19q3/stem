@@ -1894,6 +1894,15 @@ and resolve them by the existing data hashes. Each mailbox retains its own
 message and replay state. CKB service recovery resumes from authenticated
 observations and the persisted Stem escrow state. [Migration relation and measured envelope](METATYPE.md#replace-an-adapter-through-settlement) · [SDK package build](sdk/wasm/README.md)
 
+For the reorganisation variant, add `--metatype-migration-reorg` to the
+same command and rerun the WASM replay against the new report. Use only
+a disposable local CKB devnet. The fixture rewinds CKB twice and clears
+its transaction pool. The first rewind removes an unconfirmed burn and
+the second removes an adopted anchor after both settlement spends have
+completed. Check that only the canonical replacement burn releases escrow,
+and that each guardian halts both signing paths when the adopted anchor
+leaves the canonical chain. [Reorganisation results](METATYPE.md#reorganize-a-burn-and-an-adopted-anchor)
+
 ### 创世时启用 StemVM 密码学 ABI v1
 
 新网络可在顶层 genesis JSON 中加入 `"vm_crypto_v1": true`，并让所有节点核对 `stem genesis-hash --genesis genesis.json --header` 的结果。节点会拒绝用另一种配置打开原数据库。现有网络沿用已有配置。开发网脚本 `tools/jolteon_localnet.py --vm-crypto-v1` 可用相同的权限规则演练停机追赶。接口、返回码和预算见 [StemVM 协议](STEM-PROTOCOL.md)。

@@ -1,6 +1,7 @@
 """Settle independently capped Metatype assets across Stem and CKB."""
 
 import json
+import subprocess
 
 from bridge_localnet import (CKB, FEE, binary, ckb_hash, dependency, hex_bytes, l1_reference_request,
                              le, output, packed_script, point, script, script_hash, transaction, wallet_group)
@@ -382,13 +383,21 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         assert cell_info["output"]["type"] == expected
         assert cell_info["data"]["content"] == (representation(lanes[i], remaining[i]) if partial else "0x")
 
+    def observer(command, index, parameters):
+        return [args.binary, "bridge", command, "--genesis", spec_path, "--l1-rpc", l1.url,
+                "--key-file", fixture.guardian_keys[index], "--journal",
+                args.output / f"metatype-batch-{command}-{index}", *parameters]
+
     def attest(command, label, parameters):
-        votes = [json.loads(run(args.binary, "bridge", command, "--genesis", spec_path, "--l1-rpc", l1.url,
-            "--key-file", key, "--journal", args.output / f"metatype-batch-{command}-{i}", *parameters))
-            for i, key in enumerate(fixture.guardian_keys[:3])]
+        votes = [json.loads(run(*observer(command, i, parameters))) for i in range(3)]
         path = args.output / f"metatype-batch-{label}-approvals.json"
         write_json(path, votes)
         return path
+
+    def reject_observers(command, parameters, reason):
+        failures = [subprocess.run(observer(command, i, parameters), capture_output=True, text=True) for i in range(3)]
+        assert all(result.returncode != 0 and reason in result.stderr and not result.stdout for result in failures), failures
+        return [result.stderr.strip() for result in failures]
 
     l1.mine(spec["bridge"]["confirmations"])
     _, previous = query("/stem/bridge-anchor")
@@ -512,12 +521,15 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
 
         receive = packet("migration-return", new, False, 0, friend, migrated)
         fee_capacity -= FEE
-        new_burned = submit_ckb(signed_ckb("migration-burn",
-            [point(new_minted["hash"], 0), new_wrapper, point(new_minted["hash"], 2)],
-            [new_mailbox, output(token_capacity, fixture.friend_lock), output(fee_capacity, fixture.standard)],
-            [hex_bytes(le(1, 8) + root + binary(receive["record"])), "0x", "0x"],
-            [wallet_group(1, [fixture.friend]), wallet_group(2, [fixture.faucet])]))
-        followup_fee = point(new_burned["hash"], 2)
+
+        def replacement_burn(label, change):
+            return signed_ckb(label,
+                [point(new_minted["hash"], 0), new_wrapper, point(new_minted["hash"], 2)],
+                [new_mailbox, output(token_capacity, fixture.friend_lock), output(change, fixture.standard)],
+                [hex_bytes(le(1, 8) + root + binary(receive["record"])), "0x", "0x"],
+                [wallet_group(1, [fixture.friend]), wallet_group(2, [fixture.faucet])])
+
+        new_burned = submit_ckb(replacement_burn("migration-burn", fee_capacity))
         assert l1.call("get_live_cell", new_wrapper, False)["status"] != "live"
         returned = cell(release_capacity - 2 * FEE, friend, amount_data(new, migrated), new["types"])
         redemption_inputs = [(stem_point(new_export, 0), new["escrow"]), (stem_point(new_export, 1), friend)]
@@ -536,6 +548,36 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         finally:
             l1.start("l1-migration-restart.log")
         assert l1.prove_committed(new_burned["hash"])["header"] == new_burned["proof"]["header"]
+        before_reorg = None
+        if args.metatype_migration_reorg:
+            orphan = new_burned["proof"]["header"]
+            shallow = ["--previous-height", str(height), "--previous-hash", hash_, "--height", str(int(orphan["number"], 16))]
+            rejections["unconfirmed_burn_anchor"] = reject_observers(
+                "attest-anchor", shallow, "CKB anchor update has insufficient confirmations")
+            l1.call("truncate", orphan["parent_hash"])
+            l1.call("clear_tx_pool")
+            assert l1.call("get_live_cell", new_wrapper, True)["cell"] == new_l1
+            l1.mine(1)
+            sibling = l1.call("get_block_hash", orphan["number"])
+            assert sibling != orphan["hash"]
+            orphan_point = point(new_burned["hash"], 0)
+            assert l1.call("get_live_cell", orphan_point, False)["status"] != "live"
+            fee_capacity -= FEE
+            replacement_burned = submit_ckb(replacement_burn("migration-canonical-burn", fee_capacity))
+            assert replacement_burned["hash"] != new_burned["hash"]
+            l1.mine(spec["bridge"]["confirmations"])
+            request = args.output / "orphan-burn-reference.json"
+            write_json(request, l1_reference_request(int(orphan["number"], 16), orphan["hash"], (orphan_point, False)))
+            rejections["orphaned_burn_reference"] = reject_observers(
+                "attest-reference", ["--request", request], "CKB observation anchor is unconfirmed or noncanonical")
+            rejections["holder_only_release_after_reorg"] = reject_stem(stem_signed("migration-holder-only-release",
+                redemption_inputs, redemption_outputs, signers=[(friend, fixture.friend)]), "exited with 53")
+            pending_after_reorg = certified("/stem/intercell/inbox", receive["id"])
+            assert pending_after_reorg["record"] is None
+            before_reorg = {"orphaned": new_burned, "canonical_sibling": sibling, "pending": pending_after_reorg,
+                "held": joint_cells([old_escrow, stem_point(new_export, 0)], [release[0], new_escrow])}
+            new_burned = replacement_burned
+        followup_fee = point(new_burned["hash"], 2)
         l1.mine(spec["bridge"]["confirmations"])
         new_anchor = new_burned["proof"]["header"]
         anchor_votes = attest("attest-anchor", "migration-anchor", ["--previous-height", str(height),
@@ -543,6 +585,10 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
         advanced = commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", anchor_votes)))
         height, hash_ = int(new_anchor["number"], 16), new_anchor["hash"]
         new_proof = observations("migration-return", [point(new_burned["hash"], 0)])
+        if before_reorg is not None:
+            rejections["stale_signed_reference_after_reorg"] = reject_stem(stem_signed("migration-stale-reference",
+                redemption_inputs, redemption_outputs, messages=redemption_action, observations=both,
+                signers=[(friend, fixture.friend)]), "L1 reference does not use the committed CKB anchor")
         new_redeemed = commit(stem_signed("migration-redeem",
             redemption_inputs, redemption_outputs, messages=redemption_action,
             observations=new_proof, signers=[(friend, fixture.friend)]))
@@ -559,6 +605,8 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
             "adopted_anchor": advanced, "return": execution(new_redeemed), "inbound": receive, "inbox": adopted,
             "outage": {"start": outage_start, "held": held_during_outage, "pending": pending_during_outage},
             "released": cell_proof(new_released), "old_ckb_cell_during_migration": old_l1}
+        if before_reorg is not None:
+            migration_report["reorg"] = before_reorg
     followup = None
     if selective == "exhaust" or replacement_lane is not None:
         lane = lanes[0]
@@ -641,6 +689,39 @@ def multiasset_round(args, l1, fixture, vault, spec, spec_path, mint, clients, r
     four = commit(probe_tx("four-actions", 4))
     checked = [certified("/stem/intercell/outbox", msg["id"]) for msg in probes]
     assert [item["record"] for item in checked] == [msg["record"] for msg in probes[:4]] + [None]
+
+    if args.metatype_migration_reorg:
+        # Pin a later empty CKB block so this terminal control orphans the
+        # trusted anchor while keeping all accepted burns in its ancestry.
+        confirmations = spec["bridge"]["confirmations"]
+        boundary = int(l1.call("get_tip_block_number"), 16) + 1
+        l1.mine(1 + confirmations)
+        closing = l1.call("get_header_by_number", hex(boundary))
+        anchor_votes = attest("attest-anchor", "terminal-anchor", ["--previous-height", str(height),
+            "--previous-hash", hash_, "--height", str(boundary)])
+        pinned = commit(json.loads(run(args.binary, "bridge", "advance-anchor", "--observations", anchor_votes)))
+        height, hash_ = boundary, closing["hash"]
+        observations("terminal-anchor", [point(rest_burned["hash"], 0)])
+        l1.call("truncate", closing["parent_hash"])
+        l1.call("clear_tx_pool")
+        l1.mine(2 + confirmations)
+        canonical = l1.call("get_block_hash", hex(boundary))
+        assert canonical != hash_
+        for retained in [burned, new_burned, rest_burned]:
+            assert l1.prove_committed(retained["hash"])["header"] == retained["proof"]["header"]
+        halt = "guardian halted: previous L1 anchor was reorganized"
+        rejections["anchor_guardians_halt"] = reject_observers("attest-anchor",
+            ["--previous-height", str(height), "--previous-hash", hash_, "--height", str(boundary + 1)], halt)
+        request = args.output / "after-confirmed-anchor-reorg.json"
+        write_json(request, l1_reference_request(boundary, canonical, (point(rest_burned["hash"], 0), False)))
+        rejections["reference_guardians_halt"] = reject_observers("attest-reference", ["--request", request], halt)
+        halted_at = client.status()["height"]
+        wait_for(lambda: client.status()["height"] > halted_at, "native finality after guardian halt")
+        checkpoint = certified("/stem/bridge-anchor", "0x")
+        assert checkpoint["hash"] == hash_
+        migration_report["reorg"]["terminal"] = {"pinned": execution(pinned), "anchor_height": boundary,
+            "orphaned_anchor": hash_, "canonical_sibling": canonical, "committed": checkpoint,
+            "final_positions": joint_cells([new_released, stem_point(rest, 1)], [returned, next_outputs[1]])}
 
     return {
         "shared_manifests": args.metatype_shared_manifest,
