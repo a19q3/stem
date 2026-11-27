@@ -13,9 +13,10 @@ def main():
     parser.add_argument("--runs", type=Path, required=True)
     parser.add_argument("--stem", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--cases", nargs="+", choices=CASES, default=CASES)
     args = parser.parse_args()
     evidence, trust = {}, {}
-    for case in CASES:
+    for case in args.cases:
         directory = args.runs / case
         report = json.loads((directory / "jolteon-bridge-report.json").read_text())
         history = report["spore_history"]

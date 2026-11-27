@@ -62,7 +62,7 @@ def public_metadata(stem, root):
     return min(samples, key=len)
 
 
-def check_collection(stem, root, name, record, member, cell, public):
+def check_collection(stem, root, name, record, member, cell, public, mint_only=False):
     settlement = record["settlement"]
     cluster = settlement["cluster"]
     history = checked(stem, root, record["collection"])
@@ -82,7 +82,7 @@ def check_collection(stem, root, name, record, member, cell, public):
         assert cluster["type"]["code_hash"] == DATA
     if name in ("ordinary", "custody", "import"):
         assert cluster["data_hash"] == hex_bytes(ckb_hash(public))
-    events = member["transitions"][:1] if name == "import" else member["transitions"]
+    events = member["transitions"][:1] if mint_only or name == "import" else member["transitions"]
     expected = []
     for event in events:
         state = max((s for s in steps if s["height"] <= event["height"]), key=lambda s: s["height"])

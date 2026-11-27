@@ -88,11 +88,11 @@ def verify_spore_history(binary_path, directory, l1_port, report):
             events.insert(-1, report["ckb_wallet_transfer"])
         request["required_dependencies"] = report["mutant_registration"]["required_dependencies"]
     cluster = report.get("cluster")
-    every_step_uses_cluster = cluster and (native or "mutant_registration" in report)
-    if every_step_uses_cluster:
-        deps = request.get("required_dependencies", [{"data_hash": object_type["code_hash"]}])
-        request["required_dependencies"] = [*deps, {"data_hash": cluster["type"]["code_hash"]},
-            {"type_hash": hex_bytes(script_hash(cluster["type"])), "data_hash": cluster["data_hash"]}]
+    if cluster:
+        deps = request.setdefault("required_dependencies", [{"data_hash": object_type["code_hash"]}])
+        if "mutant_registration" in report:
+            request["required_dependencies"] = [*deps, {"data_hash": cluster["type"]["code_hash"]},
+                {"type_hash": hex_bytes(script_hash(cluster["type"])), "data_hash": cluster["data_hash"]}]
     deposit_name = "ckb-return" if native else "spore-deposit"
     deposit = json.loads((directory / f"{deposit_name}.json").read_text())
     index, = [i for i, cell in enumerate(deposit["outputs"]) if cell["type"] == object_type]
@@ -116,8 +116,9 @@ def verify_spore_history(binary_path, directory, l1_port, report):
         assert [s["transaction"] for s in states] == [t["hash"] for t in custody]
         assert all(s["output"]["data_hash"] == cluster["data_hash"] for s in states)
         request["required_dependency_uses"] = []
-        # Ordinary CKB-origin members reference the collection at issuance.
-        for event in events if every_step_uses_cluster else events[:1]:
+        # Ordinary members reference the collection at issuance.
+        collection_events = events if "mutant_registration" in report else events[:1]
+        for event in collection_events:
             height = int(event["inclusion"]["header"]["number"], 16)
             state = max((step for step in states if step["height"] <= height), key=lambda step: step["height"])
             cell = state["output"]
@@ -308,7 +309,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         cluster_point = point(created_cluster["hash"], 0)
         cluster = {"id": hex_bytes(cluster_id), "type": cluster_type, "data_hash": hex_bytes(ckb_hash(cluster_data)),
                    "minted": created_cluster}
-        if mutant or ordinary_member:
+        if mutant:
             deps.extend([cluster_dep, dependency(cluster_point)])
 
     sequencer_id = type_id(mint_source + 1)
@@ -786,8 +787,9 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                 outputs.append(output(mailbox_cap, ckb_escrow, mailbox))
                 values.append(hex_bytes(le(0, 8) + binary(encoded["successor_root"])))
                 witnesses.append(witness(binary(encoded["input_type"])))
+            mint_deps = [*deps, dependency(cluster_point)] if ordinary_member else deps
             tx = transaction(inputs, outputs + [change], values + ["0x"],
-                             deps + ([checkpoint] if include_checkpoint else []))
+                             mint_deps + ([checkpoint] if include_checkpoint else []))
             tx["witnesses"] = witnesses + ["0x"]
             if valid_witness:
                 tx["witnesses"].append(cobuild(object_type, object_id, None, recipient, data=content))
@@ -846,7 +848,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         else:
             # An ordinary CKB wallet can transfer the asset using only Spore and its owner lock.
             moved = transaction([spore, fees], [output(spore_cap, fixture.friend_lock, object_type),
-                output(fee_capacity-2*FEE, fixture.standard)], [hex_bytes(data), "0x"], deps[:2] + (deps[4:] if gate_tag else []))
+                output(fee_capacity-2*FEE, fixture.standard)], [hex_bytes(data), "0x"], deps[:2] + (deps[4:] if mutant else []))
             moved["witnesses"] = ["0x", "0x", cobuild(object_type, object_id, fixture.owner_lock, fixture.friend_lock)]
             moved = submit_ckb(fixture.sign("ckb-wallet-transfer", moved,
                 [wallet_group(0, [fixture.owner]), wallet_group(1, [fixture.faucet])]))
@@ -988,8 +990,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                            "authenticated_inbox": certified("/stem/intercell/inbox", notice["id"])}
         elif not args.spore_immortal and not approved_origin and not mutant:
             last = point(released["hash"], 1)
-            melt = transaction([last], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"],
-                               deps[:2] + (deps[4:] if ordinary_member else []))
+            melt = transaction([last], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"], deps[:2])
             melt["witnesses"] = ["0x", cobuild(object_type, object_id, fixture.owner_lock, None)]
             melted = submit_ckb(fixture.sign("standard-melt", melt, [wallet_group(0, [fixture.owner])]))
             assert l1.call("get_live_cell", last, True)["status"] != "live"

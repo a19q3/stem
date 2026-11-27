@@ -42,6 +42,18 @@ Six independent CKB devnets used four local Jolteon replicas apiece. Native-orig
 
 The standard wallet melt in the first run left the native original in custody. The synchronized path also delivered the terminal receipt and produced the full tagged refund on Stem. The WASM verifier rechecked membership of the refund and absence of the spent original at retirement, and verified native execution against its initial committee. [Native proof replay](../beta2/native.mjs)
 
+## Collection dependencies after issuance
+
+The ordinary import supplied the collection at mint and moved the member after the collection itself changed owners. That result suggested a smaller native-origin transaction. Three additional funded devnets repeated ordinary issuance, two-owner custody and immortal custody using the release's standard transfer path. At mint the wallet resolves the collection Cell while the collection owner's Lock authorizes issuance. After mint the owner's ordinary wallet and the bridge operate on the issued Spore. The wallet independently authenticates the collection history and its exact use at mint. [Upstream mint and transfer rules](https://github.com/sporeprotocol/spore-contract/blob/9e577ea6b5f2fb9cbf555e9e86effcc037c78039/docs/RFC.md) · [Measured transactions and proofs](issuance-deps/settlements.json.xz) · [Native trust roots](issuance-deps/committee-trust.json)
+
+| Native-origin run | CKB member transitions | Fewer bytes in raw transaction bodies, summed | Common Stem height |
+| --- | ---: | ---: | ---: |
+| Ordinary | 5 | 333 | 34 |
+| Two grants and synchronized retirement | 7 | 481 | 52 |
+| Immortal with two grants | 6 | 407 | 44 |
+
+All 18 mint or subsequent transaction bodies were smaller than their corresponding baseline bodies. Each mint shed the separate Cluster executable reference (37 bytes). On each later transaction the two redundant direct dependencies occupied 74 bytes. The ordinary wallet transfer fell from 1,211 to 1,137 witnessed bytes in both meltable cases. Checkpoint and inclusion witnesses vary across independent chains. For example the synchronized route's re-export grew by 130 witnessed bytes despite its smaller body. These savings apply to the ordinary released profile. Registered beta.2 executions continue to pin and resolve their program and collection dependencies. [Offline comparison of packed transaction fields](dependencies.py)
+
 ## Replay
 
 From the repository root, use the release wallet and the built WASM SDK directory.
@@ -50,6 +62,8 @@ From the repository root, use the release wallet and the built WASM SDK director
 study=research/spore-permit/upstream/collections
 python3 "$study/check.py" --stem target/release/stem
 node "$study/../beta2/native.mjs" "$sdk_directory" "$study"
+python3 "$study/dependencies.py" --stem target/release/stem
+node "$study/../beta2/native.mjs" "$sdk_directory" "$study/issuance-deps"
 ```
 
 To regenerate the public evidence, select a new output directory. The collection index uses the public JSON-RPC endpoints for each chain. The three short histories can also be verified fully offline from the archive.
