@@ -145,4 +145,17 @@ Both runs wrote all 720,000 scheduled transactions and failed the sustained rate
 
 VM cache hits rose from 450,119 of 3,481,887 lookups (12.93%) to 1,124,751 of 3,883,837 (28.96%). The absolute miss count fell from 3,031,768 to 2,759,086. Every cache reached capacity. Neither run recorded a wrong-parent miss. Mean Leader proposal time fell from 438.15 to 314.81 ms, Follower preparation from 470.41 to 433.62 ms and control wait from 48.12 to 44.68 ms. Spent-in-parent inputs accounted for 35.0% and 36.6% of scan visits, and 1.0% and 1.2% of measured Leader construction wall time. Neither profile incurred block-cycle rejections or local timeout votes.
 
-Total validator CPU rose from 1,164.10 to 1,190.63 process seconds. Peak RSS ranged from 326.8 to 333.6 MiB per validator at 4,096 entries and 342.0 to 353.4 MiB at 65,536. The expanded cache confirmed 8.82% more payments during measurement, with the same common confirmation count in the final minute. The trial order was 4,096 then 65,536. Keep 4,096 as the default and repeat in reverse order before attributing a sustained throughput improvement to capacity.
+Total validator CPU rose from 1,164.10 to 1,190.63 process seconds. Peak RSS ranged from 326.8 to 333.6 MiB per validator at 4,096 entries and 342.0 to 353.4 MiB at 65,536. The expanded cache confirmed 8.82% more payments during measurement, with the same common confirmation count in the final minute. The trial order was 4,096 then 65,536.
+
+#### Reverse-order cache comparison
+
+The repeat ran 65,536 then 4,096, with identical node, driver, genesis and workload digests. The four loopback ports changed and the CPU placement and RocksDB retention matched. Both runs wrote all 720,000 payments and replayed independently across another 608 archived blocks.
+
+| Success cache entries per validator | Common TPS | Measurement writes without ACK | Peak acknowledged backlog | Backlog growth | Pending at drain | Conditional p99 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 65,536 | 2,218.67 | 101,395 | 85,200 | 40,180 | 0 | 193.433 s |
+| 4,096 | 1,945.60 | 167,811 | 94,119 | 26,240 | 6,320 | 198.285 s |
+
+The larger cache confirmed 14.04% more payments during measurement. It reached 29.38% VM cache hits, versus 13.30% at 4,096 entries. Every cache again reached capacity and neither configuration had wrong-parent misses. With 65,536 entries mean proposal and Follower preparation took 295.37 and 409.31 ms, compared with 425.63 and 460.73 ms at 4,096. The p99 populations were 438,605 and 367,795. Peak RSS ranged from 337.6 to 343.4 MiB for the larger cache and 319.0 to 337.1 MiB for the smaller. Total validator process CPU was 1,211.38 and 1,167.51 seconds respectively.
+
+Both run orders supported more common confirmations and complete drain of acknowledged payments with the larger cache. Each larger-cache run also had greater backlog growth from the post-warmup boundary, and every run missed the throughput, acknowledgment, backlog and tail-latency gates. Keep 4,096 as the default. Use the larger cache as a selectable candidate for the separate baseline and overload profiles and for workloads whose verifications depend on the parent Header.
