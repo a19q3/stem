@@ -26,6 +26,8 @@ use stem_stake::{
 
 use crate::native_store::{Prepared, Store};
 
+#[cfg(feature = "jolteon-admission-pipeline")]
+mod admission_pipeline;
 #[cfg(feature = "jolteon-certificate-experiment")]
 mod certificate_experiment;
 mod client;
@@ -41,8 +43,8 @@ use transport::{Incoming, Network};
 
 pub use client::LatencyHistogram as AdmissionLatency;
 pub use client::{
-    AdmissionMetrics, Certificate, Client, ExecutionMetrics, LatencyHistogram, QueryResult, Status,
-    SubmissionProgress,
+    AdmissionMetrics, AdmissionPipelineMetrics, Certificate, Client, ExecutionMetrics, LatencyHistogram,
+    QueryResult, Status, SubmissionProgress,
 };
 
 const STATE: &[u8] = b"state";
@@ -169,6 +171,8 @@ struct Replica {
     requests: HashMap<Point, Instant>,
     mempool: Mempool,
     admission: AdmissionMetrics,
+    #[cfg(feature = "jolteon-admission-pipeline")]
+    pipeline: admission_pipeline::Pipeline,
     execution: ExecutionMetrics,
     rejected: u64,
     timeout_views: VecDeque<u64>,
@@ -334,6 +338,8 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         .block_on(async {
             let (net, mut incoming) =
                 Network::listen(directory.own, &addresses, committee.epoch()).await?;
+            #[cfg(feature = "jolteon-admission-pipeline")]
+            let (pipeline, mut admission_done) = admission_pipeline::Pipeline::start()?;
             let mut replica = Replica {
                 store,
                 committee,
@@ -369,6 +375,8 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 requests: HashMap::new(),
                 mempool: Mempool::default(),
                 admission: AdmissionMetrics::default(),
+                #[cfg(feature = "jolteon-admission-pipeline")]
+                pipeline,
                 execution: ExecutionMetrics::default(),
                 rejected: 0,
                 timeout_views: VecDeque::new(),
@@ -378,8 +386,22 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
             replica.enter();
             let mut ticker = tokio::time::interval(Duration::from_millis(10));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // The stock build has no background worker or completion channel.
+            #[cfg(not(feature = "jolteon-admission-pipeline"))]
+            let mut admission_done = std::future::pending::<Option<()>>();
             loop {
                 tokio::select! {
+                    result = async {
+                        #[cfg(feature = "jolteon-admission-pipeline")]
+                        { admission_done.recv().await }
+                        #[cfg(not(feature = "jolteon-admission-pipeline"))]
+                        { (&mut admission_done).await }
+                    } => {
+                        #[cfg(feature = "jolteon-admission-pipeline")]
+                        replica.complete_client_admission(result.context("admission worker stopped")?)?;
+                        #[cfg(not(feature = "jolteon-admission-pipeline"))]
+                        let _ = result;
+                    }
                     _ = ticker.tick() => replica.tick()?,
                     event = incoming.recv() => {
                         let event = event.context("replica transport stopped")?;
@@ -510,7 +532,10 @@ impl Replica {
             .verify_parent_view(proposal.view, parent.point, tc.as_ref())?;
         #[cfg(feature = "jolteon-certificate-experiment")]
         let tc = self.certificate_experiment.verify_parent(
-            &self.committee, proposal.view, parent.point, &proposal.timeout,
+            &self.committee,
+            proposal.view,
+            parent.point,
+            &proposal.timeout,
         )?;
         let signature = proposal.signature.as_slice().try_into()?;
         self.committee.verify_share(
@@ -1245,7 +1270,9 @@ impl Replica {
             self.announced = Instant::now();
             #[cfg(feature = "jolteon-certificate-experiment")]
             self.certificate_experiment.quorum_frame.send(
-                &self.net, wire::QUORUM, &self.journal.high,
+                &self.net,
+                wire::QUORUM,
+                &self.journal.high,
             );
             #[cfg(not(feature = "jolteon-certificate-experiment"))]
             self.net.broadcast(wire::QUORUM, self.high.encode());
@@ -1256,7 +1283,9 @@ impl Replica {
             {
                 #[cfg(feature = "jolteon-certificate-experiment")]
                 self.certificate_experiment.timeout_frame.send(
-                    &self.net, wire::TIMEOUT_CERTIFICATE, &self.journal.certificate,
+                    &self.net,
+                    wire::TIMEOUT_CERTIFICATE,
+                    &self.journal.certificate,
                 );
                 #[cfg(not(feature = "jolteon-certificate-experiment"))]
                 self.net.broadcast(wire::TIMEOUT_CERTIFICATE, _tc.encode());
@@ -1318,6 +1347,14 @@ impl Replica {
     fn handle(&mut self, event: Incoming) -> Result<()> {
         let frame = event.frame;
         if let Some(reply) = event.reply {
+            #[cfg(feature = "jolteon-admission-pipeline")]
+            if frame.kind == wire::SUBMIT {
+                return self.queue_client_admission(
+                    frame.body,
+                    event.submit_received_at.unwrap_or_else(Instant::now),
+                    reply,
+                );
+            }
             let started = event.submit_received_at.map(|received| {
                 let started = Instant::now();
                 self.admission
@@ -1434,23 +1471,46 @@ impl Replica {
         if self.mempool.contains(&id) {
             return Ok(id);
         }
+        self.admission_capacity(raw.len())?;
+        let tx = self.check_admission(raw)?;
+        self.mempool.insert(id, tx)?;
+        Ok(id)
+    }
+
+    fn admission_capacity(&self, bytes: usize) -> Result<()> {
         ensure!(
-            raw.len() <= stem_ledger::MAX_TRANSACTION_BYTES
-                && self.mempool.bytes().saturating_add(raw.len()) <= MAX_MEMPOOL_BYTES,
+            bytes <= stem_ledger::MAX_TRANSACTION_BYTES
+                && self.mempool.bytes().saturating_add(bytes) <= MAX_MEMPOOL_BYTES,
             "mempool capacity exceeded"
         );
+        Ok(())
+    }
+
+    fn check_admission(&mut self, raw: &Bytes) -> Result<Transaction> {
         let tx = Transaction::from_bytes(raw.clone())?;
-        self.admission.checks = self.admission.checks.saturating_add(1);
         let started = Instant::now();
-        // Admission is serial. The VM pool is used for parallel block work.
         let checked = self.store.check(&tx);
+        self.record_admission_check(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX));
+        checked?;
+        Ok(tx)
+    }
+
+    fn record_admission_check(&mut self, verification_us: u64) {
+        self.admission.checks = self.admission.checks.saturating_add(1);
         self.admission.verification_us = self
             .admission
             .verification_us
-            .saturating_add(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX));
-        checked?;
-        self.mempool.insert(id, tx)?;
-        Ok(id)
+            .saturating_add(verification_us);
+    }
+
+    fn admitted_client(&mut self, id: Hash32, body: Bytes) -> serde_json::Value {
+        if self
+            .mempool
+            .track_local(id, Instant::now(), self.committee.epoch())
+        {
+            self.net.relay(&self.relay_leaders(), body);
+        }
+        json!({"admitted": hex::encode(id)})
     }
 
     fn client(&mut self, kind: u32, body: Bytes) -> Result<serde_json::Value> {
@@ -1485,17 +1545,17 @@ impl Replica {
                     value["certificate_experiment"] = json!(&self.certificate_experiment);
                     value
                 };
+                #[cfg(feature = "jolteon-admission-pipeline")]
+                let status = {
+                    let mut value = status;
+                    value["admission_pipeline"] = json!(self.pipeline.status());
+                    value
+                };
                 Ok(status)
             }
             wire::SUBMIT => {
                 let id = self.insert_tx(&body, true)?;
-                if self
-                    .mempool
-                    .track_local(id, Instant::now(), self.committee.epoch())
-                {
-                    self.net.relay(&self.relay_leaders(), body);
-                }
-                Ok(json!({"admitted": hex::encode(id)}))
+                Ok(self.admitted_client(id, body))
             }
             wire::HEADER => {
                 let height = u64::from_le_bytes(body.as_ref().try_into()?);

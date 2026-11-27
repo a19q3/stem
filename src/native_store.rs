@@ -278,6 +278,37 @@ pub struct Store {
     live_cache: Arc<Mutex<LiveCache>>,
 }
 
+#[cfg(feature = "jolteon-admission-pipeline")]
+pub(crate) struct AdmissionView(Store);
+
+#[cfg(feature = "jolteon-admission-pipeline")]
+impl AdmissionView {
+    pub(crate) fn check(&self, raw: bytes::Bytes) -> Result<Option<Transaction>> {
+        self.with_snapshot(|view| {
+            let tx = Transaction::from_bytes(raw)?;
+            view.check(&tx)?;
+            Ok(tx)
+        })
+    }
+
+    fn with_snapshot<T>(&self, task: impl FnOnce(&Store) -> Result<T>) -> Result<Option<T>> {
+        let snapshot = self.0.db.snapshot();
+        let tip = snapshot
+            .get(TIP)?
+            .context("missing admission snapshot tip")?;
+        if tip.as_ref() != self.0.tip.encode() {
+            return Ok(None);
+        }
+        let mut options = ReadOptions::default();
+        options.set_snapshot(&snapshot);
+        let mut view = self.0.read_view(&[]);
+        // The private view and its options are dropped before the snapshot.
+        // Its Live Cell and stake caches are private to this committed Header.
+        view.read_options = Arc::new(options);
+        task(&view).map(Some)
+    }
+}
+
 #[derive(Default)]
 struct LiveCache {
     records: HashMap<OutPoint, LiveCell>,
@@ -749,9 +780,9 @@ impl Store {
         branch: &[Arc<Prepared>],
         task: impl FnOnce(&Store) -> Result<T>,
     ) -> Result<T> {
-        let Some(last) = branch.last() else {
+        if branch.is_empty() {
             return task(self);
-        };
+        }
         ensure!(
             self.branch.is_empty(),
             "candidate view cannot own a nested branch"
@@ -765,7 +796,16 @@ impl Store {
             );
             tip = &candidate.next;
         }
-        let view = Self {
+        task(&self.read_view(branch))
+    }
+
+    fn read_view(&self, branch: &[Arc<Prepared>]) -> Self {
+        let (tip, history, stake_inputs) = branch
+            .last()
+            .map_or((&self.tip, &self.history, &self.stake_inputs), |last| {
+                (&last.next, &last.history, &last.stake_inputs)
+            });
+        Self {
             db: self.db.clone(),
             read_options: self.read_options.clone(),
             metrics: self.metrics.clone(),
@@ -773,13 +813,13 @@ impl Store {
             chain_id: self.chain_id.clone(),
             genesis_validators: self.genesis_validators.clone(),
             staking: self.staking.clone(),
-            stake_inputs: Arc::clone(&last.stake_inputs),
+            stake_inputs: Arc::clone(stake_inputs),
             bridge: self.bridge.clone(),
             lineage: self.lineage.clone(),
             keeper: self.keeper,
             genesis_id: self.genesis_id.clone(),
             tip: tip.clone(),
-            history: last.history.clone(),
+            history: history.clone(),
             cells: self.cells.clone(),
             system: self.system.clone(),
             retention: self.retention,
@@ -789,8 +829,15 @@ impl Store {
             cache: self.cache.clone(),
             branch: branch.to_vec(),
             live_cache: Arc::clone(&self.live_cache),
-        };
-        task(&view)
+        }
+    }
+
+    #[cfg(feature = "jolteon-admission-pipeline")]
+    pub(crate) fn admission_view(&self) -> AdmissionView {
+        let mut view = self.read_view(&[]);
+        view.live_cache = Arc::default();
+        view.stake_inputs = Arc::default();
+        AdmissionView(view)
     }
 
     fn read(&self, key: impl AsRef<[u8]>) -> Result<Option<ReadValue<'_>>> {
@@ -866,7 +913,10 @@ impl Store {
         use stem_stake::rewards::epoch_key;
         let (record, proof) = self.prove_system(&epoch_key(epoch))?;
         Ok((
-            record.as_deref().map(stem_ledger::stake_proof::decode_epoch_rewards).transpose()?,
+            record
+                .as_deref()
+                .map(stem_ledger::stake_proof::decode_epoch_rewards)
+                .transpose()?,
             proof,
         ))
     }
@@ -1064,7 +1114,10 @@ impl Store {
         // above is authoritative even when its value is a deletion.
         let found = self
             .db
-            .get(state_key(STATE_RECORD, Namespace::Cells, &id))
+            .get_opt(
+                state_key(STATE_RECORD, Namespace::Cells, &id),
+                &self.read_options,
+            )
             .context(StateReadFault)?
             .map(|bytes| {
                 let (stored_point, record) = record::decode_cell(&bytes)?;
@@ -2369,4 +2422,59 @@ fn sync_with_consensus(
         metrics.commit(purpose, bytes, started.elapsed());
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "jolteon-admission-pipeline"))]
+mod admission_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_reads_old_tip_during_commit_and_rejects_stale_acquisition() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let spec = Spec {
+            vm_crypto_v1: false,
+            chain_id: "admission-snapshot-test".into(),
+            development_validators: vec![],
+            stake: None,
+            bridge: None,
+            lineage_type: None,
+            keeper: None,
+            network: [19; 32].pack(),
+            genesis_time_ms: 1000,
+            capacity: CapacityPolicy {
+                bond_per_byte: 1_000_000,
+                state_overhead: 80,
+            },
+            fees: Default::default(),
+            limits: Limits {
+                transaction_count: 8,
+                transaction_bytes: 1024 * 1024,
+                transaction_cycles: 100_000_000,
+                block_cycles: 300_000_000,
+                cell_reads: 64,
+                cell_read_bytes: 8 * 1024 * 1024,
+                cell_write_bytes: 32 * 1024,
+                header_dep_age: 2,
+            },
+            development_cells: Vec::new(),
+        };
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        let old = store.admission_view();
+        let expected = store.tip().clone();
+        let next = store.prepare(&[], 1001, false)?;
+        let observed = old.with_snapshot(|read| {
+            store.commit(next)?;
+            let bytes = read.read(TIP)?.context("missing snapshot tip")?;
+            Header::decode(&bytes)
+        })?;
+        assert_eq!(observed.as_ref(), Some(&expected));
+        assert_eq!(store.tip().context.height, 1);
+        assert!(old.with_snapshot(|_| Ok(()))?.is_none());
+        let fresh = store.admission_view();
+        assert_eq!(
+            fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
+            Some(store.tip())
+        );
+        Ok(())
+    }
 }

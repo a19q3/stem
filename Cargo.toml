@@ -11,6 +11,7 @@ publish = false
 [features]
 comet-benchmark = []
 jolteon-certificate-experiment = []
+jolteon-admission-pipeline = []
 
 [dependencies]
 anyhow.workspace = true

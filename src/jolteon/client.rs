@@ -80,6 +80,17 @@ pub struct ExecutionMetrics {
     pub commit: LatencyHistogram,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct AdmissionPipelineMetrics {
+    pub dispatched: u64,
+    pub coalesced: u64,
+    pub full: u64,
+    pub snapshot_misses: u64,
+    pub rechecked: u64,
+    pub pending_replies: usize,
+    pub pending_bytes: usize,
+}
+
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct Status {
     pub height: u64,
@@ -102,6 +113,8 @@ pub struct Status {
     pub mempool_transactions: usize,
     pub mempool_bytes: usize,
     pub admission: Option<AdmissionMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_pipeline: Option<AdmissionPipelineMetrics>,
     #[serde(default)]
     pub execution: ExecutionMetrics,
 }
