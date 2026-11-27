@@ -156,7 +156,7 @@ The 1,000/s payment burst accumulated a confirmation queue under the fixed
 cycle limit. The individual Type Script rows use different contracts and
 are single runs, so their differences do not isolate a marginal Type
 Script cost. The full per-run counters, parser measurements and storage
-samples are in the [raw measurement archive](benchmarks/2026-11-25-stem-native.json.xz).
+samples are in the [raw measurement archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-native.json.xz).
 
 ## Funded payments during L1 stake handoff
 
@@ -188,7 +188,7 @@ was admitted and confirmed on all replicas with zero client drops.
 
 Increasing the delivery rate shortened submission and increased time spent
 in the queue. Confirmation stayed near 116–119 TPS in these runs. The
-[measurement archive](benchmarks/2026-11-25-stem-native.json.xz) includes
+[measurement archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-native.json.xz) includes
 process CPU, memory, physical writes and P2P counters for each window.
 
 ## Sustained local cycle-budget sweep
@@ -250,7 +250,7 @@ seconds, 1,158,811,648 peak sampled RSS bytes, and 632,471,552 physical
 process write bytes. This probe did not establish a CPU or storage
 saturation point.
 
-The [cycle sweep archive](benchmarks/2026-11-25-stem-cycle-sweep.json.xz)
+The [cycle sweep archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-cycle-sweep.json.xz)
 contains per-run counters and per-block charged cycles for all six runs.
 
 ## Local pressure and replica sweep
@@ -263,7 +263,7 @@ first series runs the `ee808c9` application binary with the updated load
 fixture. All four replicas must expose H+1 before the runner counts a
 successful execution at H. The whole-run confirmation rate includes drain.
 Rate calculations and per-request timings are in the
-[pressure and certificate archive](benchmarks/2026-11-25-stem-evolution.json.xz).
+[pressure and certificate archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-evolution.json.xz).
 
 | Block cycles | Commit wait | Target TPS | Attempted TPS | Admitted TPS | Confirmed TPS | Confirmed count | Client drops | p99 visibility |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -574,7 +574,7 @@ reservation ingestion occurred before measurement.
 These timings cover local block preparation and synchronous database
 commit. The network runs establish correctness, proof agreement and
 height-based wake behavior. A sustained multi-replica Keeper load has
-yet to be measured. The [raw report and evidence](benchmarks/2026-11-25-stem-keeper.json.xz)
+yet to be measured. The [raw report and evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-keeper.json.xz)
 include each network run, public committees and the local comparison.
 See the [experiment archive](benchmarks/README.md) for earlier rounds and
 rejected experiments.
@@ -621,7 +621,7 @@ Both variants encoded the command in 766 bytes.
 
 The two local runs show observed timing variation. They do not isolate
 the wall-time cost of the field check or measure sustained network
-throughput. The [raw report](benchmarks/2026-11-25-stem-sponsored-lineage.json.xz)
+throughput. The [raw report](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-sponsored-lineage.json.xz)
 preserves both rounds, binary fingerprints, public committees, native
 execution and state proofs and independent verifier output.
 
@@ -693,7 +693,7 @@ STEM_DIRECT_COST_DIR="$PWD/target/stem-runs/direct-cost" \
   cargo test --locked --release --test direct_finality_cost -- --ignored --nocapture
 ```
 
-The [raw report](benchmarks/2026-11-25-stem-direct-finality.json.xz)
+The [raw report](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-direct-finality.json.xz)
 includes all three network rounds, public headers and votes, rejected
 transaction errors, confirmed CKB proofs, 12 VM fixtures and build
 fingerprints.
@@ -704,7 +704,7 @@ required two pages. All five checkpoints confirmed and all six invalid
 submissions were rejected again. Full-transaction estimates ranged from
 4,234,032 to 36,237,820 cycles. This exercises actual paginated committee
 data from CometBFT. The 128-member cycle figure above still comes from
-the VM probe. [Pagination round evidence](benchmarks/2026-11-25-stem-direct-finality-pagination.json.xz)
+the VM probe. [Pagination round evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-direct-finality-pagination.json.xz)
 
 ## Direct bridge withdrawals
 
@@ -740,7 +740,7 @@ pending liabilities to zero and preserved the 2,000,000-shannon fee surplus.
 
 The [bridge runbook](OPERATIONS.md#exercise-the-native-bridge) gives the
 command, native query and witness builder. The
-[raw bridge evidence](benchmarks/2026-11-25-stem-direct-payout.json.xz)
+[raw bridge evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-direct-payout.json.xz)
 preserves both rounds, signed transactions, CKB inclusion, proof
 bundles, node output and executable fingerprints.
 
@@ -763,7 +763,7 @@ scenario also verified a weight increase to 450, five CKB checkpoints and
 250 CKB of delayed unbonding.
 
 This is a low-rate shared-host regression. The
-[raw stake evidence](benchmarks/2026-11-25-stem-bridge-funded-stake-rerun.json.xz)
+[raw stake evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-bridge-funded-stake-rerun.json.xz)
 preserves both attempts, the error, the workload, measured events and
 the public chain evidence.
 
@@ -809,7 +809,7 @@ updates with real L1 backing. The bridge runner also completed native
 CKB and xUDT payouts with the shared checkpoint reader.
 
 The [runbook](OPERATIONS.md#exercise-the-ckb-stake-registry) gives the
-reproduction commands. The [raw retirement archive](benchmarks/2026-11-25-stem-direct-retirement.json.xz)
+reproduction commands. The [raw retirement archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-direct-retirement.json.xz)
 preserves the six successful runs and five fixture failures. It includes
 the observed heads and proof payloads, both canonical precommits, signed
 CKB transactions, observer evidence, test summaries and executable
@@ -886,9 +886,9 @@ workspace target directories. The post-clean rerun used identical
 binaries, genesis and signed workload, with 240-second runner wait limits.
 All 128 replicas confirmed the 32 payments. The confirmation window was
 122.70 seconds. The longer run had sustained host contention and several
-CometBFT rounds passed through timeouts. [Completed 128-replica rerun](benchmarks/2026-11-25-stem-comet-128-post-clean.json.xz)
+CometBFT rounds passed through timeouts. [Completed 128-replica rerun](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-comet-128-post-clean.json.xz)
 
-The earlier attempts and their errors remain available. [Public run archive](benchmarks/2026-11-25-stem-jolteon-runtime.json.xz)
+The earlier attempts and their errors remain available. [Public run archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-jolteon-runtime.json.xz)
 
 A clean rebuild at `ec2b23e` repeated the four-replica test with one
 offline validator. All 32 payments finalized, the survivors formed a
@@ -970,7 +970,7 @@ direct checkpoints through Stem height 34. The initial two Jolteon
 publication attempts stopped before CKB submission because the runner
 had an unbound genesis roster variable. Both are recorded with the
 passing reruns. The workspace run passed 438 tests with 10 opt-in tests
-ignored. [Public evidence and all nine runs](benchmarks/2026-11-25-stem-jolteon-handoffs.json.xz) [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
+ignored. [Public evidence and all nine runs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-jolteon-handoffs.json.xz) [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
 
 ## Jolteon withdrawals, retirement and slashing
 
@@ -1022,7 +1022,7 @@ in the separate replica matrix above. The release workspace tests recorded
 438 passing, zero failing and 10 ignored.
 
 See the [reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
-and [12 archived runs with binary fingerprints and raw evidence](benchmarks/2026-11-25-stem-jolteon-l1-consumers.json.xz).
+and [12 archived runs with binary fingerprints and raw evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-jolteon-l1-consumers.json.xz).
 
 ## Jolteon clock and long-gap recovery
 
@@ -1081,7 +1081,7 @@ initial block download and when the block-view JSON contained derived fields.
 [CKB verification queue](https://github.com/nervosnetwork/ckb/blob/119598b0a1146a569068ac80bdba7eb5f6292fd3/tx-pool/src/component/verify_queue.rs#L59-L72)
 [CKB transaction verification](https://github.com/nervosnetwork/ckb/blob/119598b0a1146a569068ac80bdba7eb5f6292fd3/tx-pool/src/process.rs#L715-L744)
 [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
-[18 successful and failed rounds](benchmarks/2026-11-25-stem-clock-recovery-ckb-relay.json.xz).
+[18 successful and failed rounds](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-clock-recovery-ckb-relay.json.xz).
 
 ## Default Jolteon runtime and ordinary retention
 
@@ -1127,7 +1127,7 @@ The default release workspace suite passed 438 tests. Twelve opt-in
 checks were ignored by that command, including the live composition and
 database inspections run separately above. The Go proof tests and the
 native systemd unit syntax check also passed. [Reproduction commands](OPERATIONS.md#exercise-the-native-jolteon-path)
-[Raw records](benchmarks/2026-11-25-stem-default-jolteon.json.xz).
+[Raw records](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-default-jolteon.json.xz).
 
 ## CKB fee fund settlement
 
@@ -1161,7 +1161,7 @@ archive preserves that failure with the rerun. The release Rust workspace
 suite passed 439 tests, with 12 ignored. The Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#redeem-fee-revenue-on-ckb) ·
-[Raw reports, failures and fingerprints](benchmarks/2026-11-25-stem-fee-funds.json.xz).
+[Raw reports, failures and fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-fee-funds.json.xz).
 
 ## Fixed-precision fee calibration
 
@@ -1195,7 +1195,7 @@ suite passed 439 tests, with 12 ignored. The opt-in four-replica Polytype,
 sponsored OTX, atomic Lineage and Keeper test also passed at height 32.
 
 [Reproduction](OPERATIONS.md#calibrate-native-resource-prices) ·
-[Both attempts and the CKB regression](benchmarks/2026-11-25-stem-resource-pricing.json.xz).
+[Both attempts and the CKB regression](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-resource-pricing.json.xz).
 
 ## CKB delegation and weighted handoffs
 
@@ -1236,7 +1236,7 @@ The archive includes all seven devnet runs and the initial build-test
 failure from a missing fixture field.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
-[Raw run and failure evidence](benchmarks/2026-11-25-stem-ckb-delegation.json.xz).
+[Raw run and failure evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-ckb-delegation.json.xz).
 
 ## In-term CKB delegation reductions
 
@@ -1281,7 +1281,7 @@ Go proof suite passed. The archive also keeps the failed historical
 fixture attempt and the first successful withdrawal run.
 
 [Run instructions](OPERATIONS.md#exercise-ckb-delegation) ·
-[Raw runs and fingerprints](benchmarks/2026-11-25-stem-delegation-reduction.json.xz).
+[Raw runs and fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-delegation-reduction.json.xz).
 
 ## Compact delegation and position-specific liability
 
@@ -1333,7 +1333,7 @@ attempt. Its output was below the beneficiary Lock's occupied Capacity.
 The later runs used 65 CKB.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
-[Raw evidence, fingerprints and failure](benchmarks/2026-11-25-stem-delegation-window.json.xz).
+[Raw evidence, fingerprints and failure](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-delegation-window.json.xz).
 
 ## Closed-epoch stake rewards and commission
 
@@ -1385,7 +1385,7 @@ archive retains both initial failed compilations, due to a visibility
 error in the shared sparse proof module, and all completed devnet runs.
 
 [Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
-[Run evidence and build logs](benchmarks/2026-11-25-stem-stake-rewards.json.xz).
+[Run evidence and build logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-stake-rewards.json.xz).
 
 ## Individual stake reward redemption
 
@@ -1432,7 +1432,7 @@ ignored. The Go proof suite, CometBFT comparison build check and
 RISC-V contract checks passed.
 
 [Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
-[Raw evidence and run logs](benchmarks/2026-11-25-stem-stake-reward-claims.json.xz).
+[Raw evidence and run logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-stake-reward-claims.json.xz).
 
 ## Accrued stake reward balances
 
@@ -1476,7 +1476,7 @@ rotation and reserve movement. The release workspace passed 442 tests
 with 12 ignored. The Go proof suite and CometBFT build check passed.
 
 [Reproduction](OPERATIONS.md#verify-closed-epoch-stake-rewards) ·
-[Raw accrual, recovery and regression evidence](benchmarks/2026-11-25-stem-stake-reward-accrual.json.xz).
+[Raw accrual, recovery and regression evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-stake-reward-accrual.json.xz).
 
 ## Shared CKB checkpoint at genesis
 
@@ -1512,7 +1512,7 @@ archive preserves the failure, both sets of binary fingerprints, and
 the confirmed substituted vault transaction.
 
 [Genesis and deployment](OPERATIONS.md#start-a-native-replica) ·
-[Raw experiment evidence](benchmarks/2026-11-25-stem-checkpoint-policy.json.xz).
+[Raw experiment evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stem-checkpoint-policy.json.xz).
 
 ## CKB Cell references in StemVM
 
@@ -1552,7 +1552,7 @@ receipts. The live result applies to the specified anchor on the
 guardian-observed chain.
 
 [Reproduction](OPERATIONS.md#read-a-ckb-cell-from-stemvm) ·
-[Raw runs and regression evidence](benchmarks/2026-11-26-stem-l1-references.json.xz).
+[Raw runs and regression evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-l1-references.json.xz).
 
 ## Independent CKB anchor refresh
 
@@ -1575,7 +1575,7 @@ fork replacement. A separate four-replica CKB and xUDT run completed
 withdrawal, reserve movement and vault rotation at agreed height 44.
 
 [Reproduction](OPERATIONS.md#read-a-ckb-cell-from-stemvm) ·
-[Both refresh runs and bridge regression](benchmarks/2026-11-26-stem-anchor-refresh.json.xz).
+[Both refresh runs and bridge regression](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-anchor-refresh.json.xz).
 
 ## Delegation occupancy and both vote heights
 
@@ -1616,7 +1616,7 @@ ignored. The Go proof suite and the CometBFT feature build passed. Both
 native and comparison Stake Registry contracts cross-compiled for CKB-VM.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-delegation) ·
-[Signed transactions, rejections and raw runs](benchmarks/2026-11-26-stem-delegation-liability.json.xz).
+[Signed transactions, rejections and raw runs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-delegation-liability.json.xz).
 
 ## Bidirectional Intercell Messaging
 
@@ -1659,7 +1659,7 @@ workspace passed 445 tests with 12 ignored. The Go proof suite and
 CometBFT comparison feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
-[Raw runs, signed transactions and rejection evidence](benchmarks/2026-11-26-stem-intercell.json.xz).
+[Raw runs, signed transactions and rejection evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-intercell.json.xz).
 
 ## Stem-native UDT settlement
 
@@ -1699,7 +1699,7 @@ includes the initial compiler error, successive contract fingerprints,
 all successful devnet runs and signed rejection cases.
 
 [Reproduction](OPERATIONS.md#exercise-stem-native-udt-settlement) ·
-[Raw reports, proofs and rejections](benchmarks/2026-11-26-stem-udt-settlement.json.xz).
+[Raw reports, proofs and rejections](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-udt-settlement.json.xz).
 
 ## CKB Spore V2 settlement through Stem
 
@@ -1741,7 +1741,7 @@ The measured asset used plain MIME content with no Cluster. The tested
 lifecycle begins with an original CKB Spore.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-spore-settlement) ·
-[Raw runs, signed rejections and fingerprints](benchmarks/2026-11-26-stem-spore-settlement.json.xz).
+[Raw runs, signed rejections and fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-spore-settlement.json.xz).
 
 ## CKB Spore V2 with Cluster membership
 
@@ -1794,7 +1794,7 @@ runs. The Rust workspace passed 494 tests with 22 ignored. The Go proof
 suite and release `comet-benchmark` build check passed.
 
 [Reproduction](OPERATIONS.md#exercise-ckb-spore-settlement) ·
-[Signed runs, proofs, controls and build fingerprints](benchmarks/2026-11-26-stem-spore-cluster.json.xz).
+[Signed runs, proofs, controls and build fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-spore-cluster.json.xz).
 
 ## Native compound object settlement over CKB
 
@@ -1833,7 +1833,7 @@ normal settlement paths. The Rust workspace passed 448 tests with 12
 ignored. The Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#exercise-stem-native-object-settlement) ·
-[Full runs, signed rejections, and build fingerprints](benchmarks/2026-11-26-stem-object-settlement.json.xz).
+[Full runs, signed rejections, and build fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-object-settlement.json.xz).
 
 ## Sparse CKB checkpoint publication
 
@@ -1877,7 +1877,7 @@ regressions. The Rust workspace passed 448 tests with 12 ignored. The Go
 proof suite passed.
 
 [Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
-[All runs, signed transactions and build fingerprints](benchmarks/2026-11-26-stem-checkpoint-publisher.json.xz).
+[All runs, signed transactions and build fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-checkpoint-publisher.json.xz).
 
 ## Consensus-time Keeper
 
@@ -1919,7 +1919,7 @@ CometBFT feature check passed. The CKB devnet round exercised
 bidirectional Intercell with the current native transaction schema.
 
 [Reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
-[Raw timings, proofs and the rejected configuration](benchmarks/2026-11-26-stem-keeper-time.json.xz).
+[Raw timings, proofs and the rejected configuration](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-keeper-time.json.xz).
 
 ## CKB checkpoint fees from the PoW Security Fund
 
@@ -1969,7 +1969,7 @@ bridge devnets passed their regressions. The Rust workspace passed
 450 tests with 13 ignored. The Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#fund-ckb-checkpoint-fees) ·
-[Raw measurements, transactions, proofs and failed attempts](benchmarks/2026-11-26-stem-checkpoint-fee-fund.json.xz).
+[Raw measurements, transactions, proofs and failed attempts](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-checkpoint-fee-fund.json.xz).
 
 ## Paid CKB application security domain
 
@@ -2023,7 +2023,7 @@ suite, bidirectional Intercell devnet, and CKB-backed Jolteon
 committee and penalty regressions passed.
 
 [Reproduction](OPERATIONS.md#exercise-a-paid-ckb-security-domain) ·
-[Raw transactions, proof data, measurements, and unsuccessful attempts](benchmarks/2026-11-26-stem-security-domain.json.xz).
+[Raw transactions, proof data, measurements, and unsuccessful attempts](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-security-domain.json.xz).
 
 ## Intercell mailbox recovery after CKB reorganization
 
@@ -2078,7 +2078,7 @@ live-at-anchor references, the four fee fund payouts, and CKB-backed
 delegation, slashing and stake reward redemption.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
-[Raw reports, commands and fingerprints](benchmarks/2026-11-26-stem-intercell-recovery.json.xz).
+[Raw reports, commands and fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-intercell-recovery.json.xz).
 
 ## Native OTX Action authorization
 
@@ -2120,7 +2120,7 @@ four-replica test, Go proof suite and frozen CometBFT feature check
 passed.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
-[Raw proofs, runs, failures and commands](benchmarks/2026-11-26-stem-otx-actions.json.xz).
+[Raw proofs, runs, failures and commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-otx-actions.json.xz).
 
 ## Atomic Lineage batch settlement
 
@@ -2163,7 +2163,7 @@ comparison feature check passed. Bidirectional Intercell Messaging
 passed the real CKB devnet regression.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
-[Original evidence and reproduction commands](benchmarks/2026-11-26-stem-lineage-batch.json.xz).
+[Original evidence and reproduction commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-lineage-batch.json.xz).
 
 ## Keeper scheduling for atomic Lineage batches
 
@@ -2206,7 +2206,7 @@ feature check passed. Bidirectional Intercell Messaging passed a real
 CKB devnet regression.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
-[Both replica rounds, failures and reproduction commands](benchmarks/2026-11-26-stem-keeper-batch.json.xz).
+[Both replica rounds, failures and reproduction commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-keeper-batch.json.xz).
 
 ## Prepaid bounded Keeper retries
 
@@ -2245,7 +2245,7 @@ CKB devnet regression. Sustained replicated Keeper throughput was
 outside these runs.
 
 [Wallet workflow](OPERATIONS.md#wallet-and-proofs) ·
-[Both replica rounds, failures and reproduction commands](benchmarks/2026-11-26-stem-keeper-retry.json.xz).
+[Both replica rounds, failures and reproduction commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-keeper-retry.json.xz).
 
 ## Sustained Keeper load and admission expiry
 
@@ -2315,7 +2315,7 @@ Header at height 21, recovered the canonical CKB inbox after the
 delivery reorg, and reached common Stem height 45 after restart.
 
 [Reproduction](OPERATIONS.md#wallet-and-proofs) ·
-[Raw RPC observations, proofs, controls and regressions](benchmarks/2026-11-26-stem-keeper-load.json.xz).
+[Raw RPC observations, proofs, controls and regressions](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-keeper-load.json.xz).
 
 ## CKB checkpoint publisher handoff
 
@@ -2366,7 +2366,7 @@ fixtures passed. The release workspace passed 456 tests with 14
 ignored. Go proof tests and the CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
-[Signed transactions, inclusion proofs, rejection traces and commands](benchmarks/2026-11-26-stem-checkpoint-adoption.json.xz).
+[Signed transactions, inclusion proofs, rejection traces and commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-checkpoint-adoption.json.xz).
 
 ## 128-member checkpoint contention on CKB
 
@@ -2421,7 +2421,7 @@ ordinary proof relay, 456 Rust release tests, Go proof tests and
 the CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
-[Raw runs, competing transactions, inclusion proofs and resource samples](benchmarks/2026-11-26-stem-ckb-checkpoint-contention.json.xz).
+[Raw runs, competing transactions, inclusion proofs and resource samples](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-ckb-checkpoint-contention.json.xz).
 
 ## CKB-funded 128-member Jolteon handoff
 
@@ -2490,7 +2490,7 @@ wide rotation here replaced one key and changed one continuing
 member's weight.
 
 [Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
-[Raw runs, signed Stake Cell transactions, quorums and CKB proofs](benchmarks/2026-11-26-stem-funded-wide-handoff.json.xz).
+[Raw runs, signed Stake Cell transactions, quorums and CKB proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-funded-wide-handoff.json.xz).
 
 ## 128-member epoch boundary relayed over CKB P2P
 
@@ -2536,7 +2536,7 @@ regressions. The Rust release workspace passed 456 tests with 14
 ignored. The Go proof suite and CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
-[Raw runs, resource samples, signed transactions and inclusion proofs](benchmarks/2026-11-26-stem-wide-epoch-p2p.json.xz).
+[Raw runs, resource samples, signed transactions and inclusion proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-wide-epoch-p2p.json.xz).
 
 ## Automatic CKB checkpoint successor discovery
 
@@ -2590,7 +2590,7 @@ The Rust release workspace passed 456 tests with 14 ignored,
 and the Go proof suite and CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#run-a-sparse-ckb-checkpoint-publisher) ·
-[Raw runs, included transactions and journal outcomes](benchmarks/2026-11-26-stem-publisher-auto-follow.json.xz).
+[Raw runs, included transactions and journal outcomes](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-publisher-auto-follow.json.xz).
 
 ## Intercell delivery after checkpoint advancement
 
@@ -2629,7 +2629,7 @@ The release workspace passed 457 tests with 14 ignored. The Go proof
 suite and frozen CometBFT comparison feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
-[Raw proofs, rejections, commands and binary fingerprints](benchmarks/2026-11-26-stem-intercell-history.json.xz).
+[Raw proofs, rejections, commands and binary fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-intercell-history.json.xz).
 
 ## Portable CKB security-domain accounting
 
@@ -2672,7 +2672,7 @@ CKB-backed stake regressions passed. The final Rust workspace passed
 comparison check passed.
 
 [Reproduction and trust assumptions](OPERATIONS.md#verify-security-domain-capital-and-income) ·
-[All runs, public evidence, commands and fingerprints](benchmarks/2026-11-26-stem-security-domain-audit.json.xz).
+[All runs, public evidence, commands and fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-security-domain-audit.json.xz).
 
 ## Authenticated per-vault fee attribution
 
@@ -2709,7 +2709,7 @@ catalogues and their effect on sustained fee-paying throughput remain
 unmeasured.
 
 [Verification workflow](OPERATIONS.md#verify-per-vault-revenue) ·
-[Raw rounds, finality proofs, failures and build fingerprints](benchmarks/2026-11-26-stem-vault-revenue.json.xz).
+[Raw rounds, finality proofs, failures and build fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-vault-revenue.json.xz).
 
 ## Browser WASM transaction and proof SDK
 
@@ -2753,7 +2753,7 @@ passed 458 tests with 14 ignored. The Go proof suite and frozen
 CometBFT feature check passed.
 
 [Build and reproduce](OPERATIONS.md#exercise-the-browser-sdk) ·
-[Proof inputs, browser output, commands and failures](benchmarks/2026-11-26-stem-wasm-sdk.json.xz).
+[Proof inputs, browser output, commands and failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-wasm-sdk.json.xz).
 
 ## Sustained native payments and durable write attribution
 
@@ -2831,7 +2831,7 @@ the initial compilation failures and the successful smoke run are
 included in the archive.
 
 [Run the fixture and inspect the storage query](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw timing samples, signed workloads and regression logs](benchmarks/2026-11-26-stem-storage-load.json.xz).
+[Raw timing samples, signed workloads and regression logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-storage-load.json.xz).
 
 ## Intercell delivery with multiple CKB references
 
@@ -2873,7 +2873,7 @@ stake handoffs and rewards. The locked Rust release workspace passed
 feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
-[Signed transactions, reference certificates, proofs and failed runs](benchmarks/2026-11-26-stem-intercell-composition.json.xz).
+[Signed transactions, reference certificates, proofs and failed runs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-intercell-composition.json.xz).
 
 ## Intercell delivery across funded committee handoffs
 
@@ -2921,7 +2921,7 @@ expected rejections. The locked Rust release workspace passed 460
 tests with 15 ignored, and the Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#exercise-a-full-funded-committee-handoff) ·
-[Raw CKB spends, witnesses, P2P traces, rejected attempts and commands](benchmarks/2026-11-26-stem-intercell-epoch.json.xz).
+[Raw CKB spends, witnesses, P2P traces, rejected attempts and commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-intercell-epoch.json.xz).
 
 ## Intercell sparse replay proofs and authenticated recovery
 
@@ -2967,7 +2967,7 @@ revision. The locked Rust release workspace passed 464 tests with 18
 ignored. The Go proof suite and frozen CometBFT feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-intercell-messaging) ·
-[Raw devnet outputs, proofs, signed transactions, commands and build fingerprints](benchmarks/2026-11-26-stem-intercell-revalidation.json.xz).
+[Raw devnet outputs, proofs, signed transactions, commands and build fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-intercell-revalidation.json.xz).
 
 ## Sustained replicated Lineage and AMM contention
 
@@ -3051,7 +3051,7 @@ and all control and pressure runs. The locked Rust release workspace
 passed 460 tests with 16 ignored. The Go proof suite passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
-[Signed workloads, per-transaction timing, replay proofs and failures](benchmarks/2026-11-26-stem-lineage-load.json.xz).
+[Signed workloads, per-transaction timing, replay proofs and failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-lineage-load.json.xz).
 
 ## Proposal selection after the Lineage read limit
 
@@ -3094,7 +3094,7 @@ the Store comparison. The workspace passed 461 release tests with
 17 ignored. The Go proof suite and frozen CometBFT build passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
-[Raw timings, signed workloads, pinned contracts and failed controls](benchmarks/2026-11-26-stem-proposal-selection.json.xz).
+[Raw timings, signed workloads, pinned contracts and failed controls](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-proposal-selection.json.xz).
 
 ## Jolteon control transport under Lineage load
 
@@ -3143,7 +3143,7 @@ checkpoint. The locked Rust release workspace passed 463 tests with
 17 ignored. The Go proof tests and frozen CometBFT build passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
-[Signed workloads, pacemaker samples, overload and recovery evidence](benchmarks/2026-11-26-stem-transport-priority.json.xz).
+[Signed workloads, pacemaker samples, overload and recovery evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-transport-priority.json.xz).
 
 ## Bounded parallel admission experiment
 
@@ -3204,7 +3204,7 @@ on the production path. Go proof tests and the frozen CometBFT
 comparison build passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
-[Signed workloads, individual timing samples and default-path validation](benchmarks/2026-11-26-stem-admission-batching.json.xz).
+[Signed workloads, individual timing samples and default-path validation](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-admission-batching.json.xz).
 
 ## Jolteon leader-directed transaction relay
 
@@ -3264,7 +3264,7 @@ payments and agreed on the execution Header and two-chain proof.
 
 [Load reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
 [Fault reproduction](OPERATIONS.md#exercise-the-native-jolteon-path) ·
-[Signed workloads, raw samples and recovery logs](benchmarks/2026-11-26-stem-jolteon-leader-relay.json.xz).
+[Signed workloads, raw samples and recovery logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-jolteon-leader-relay.json.xz).
 
 ## Sustained submission and admission latency
 
@@ -3337,7 +3337,7 @@ zero tests. The archive retains that invocation alongside the
 corrected run and the signed workloads.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
-[Raw timing, signed workloads, proof and failed invocation](benchmarks/2026-11-26-stem-load-dispatch.json.xz).
+[Raw timing, signed workloads, proof and failed invocation](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-load-dispatch.json.xz).
 
 ## Reuse of staged proposal execution
 
@@ -3400,7 +3400,7 @@ The locked release workspace passed 465 tests with 18 ignored.
 The Go proof suite and frozen CometBFT comparison build passed.
 
 [Reproduction](OPERATIONS.md#measure-sustained-lineage-commands) ·
-[Raw samples, signed workloads and regression logs](benchmarks/2026-11-26-stem-proposal-reuse.json.xz).
+[Raw samples, signed workloads and regression logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-proposal-reuse.json.xz).
 
 ## Compact Patricia branch storage
 
@@ -3477,7 +3477,7 @@ locked release workspace passed 466 tests with 19 ignored. The Go
 proof tests and frozen CometBFT feature check passed.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw writes, timing, signed workloads and regressions](benchmarks/2026-11-26-stem-patricia-storage.json.xz).
+[Raw writes, timing, signed workloads and regressions](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-patricia-storage.json.xz).
 
 ## Bounded submission connection reuse
 
@@ -3550,7 +3550,7 @@ A real CKB devnet funded a four-voter handoff at height 40 and
 accepted a historical Intercell Outbox proof at a later checkpoint.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Signed workloads, raw latency, CPU samples and regression logs](benchmarks/2026-11-26-stem-submission-reuse.json.xz).
+[Signed workloads, raw latency, CPU samples and regression logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-submission-reuse.json.xz).
 
 ## Standalone CKB Metatype composition
 
@@ -3605,7 +3605,7 @@ passed 470 tests with 19 ignored. Go proof tests and the frozen
 CometBFT feature check passed.
 
 [Reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
-[Raw CKB evidence and controls](benchmarks/2026-11-26-stem-metatype-ckb.json.xz).
+[Raw CKB evidence and controls](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-ckb.json.xz).
 
 ## Metatype object approvals and Native Polytype comparison
 
@@ -3675,7 +3675,7 @@ compound object, Spore, native UDT and funded Jolteon handoff with
 historical Intercell delivery.
 
 [Reproduction](OPERATIONS.md#exercise-immutable-objects-and-independent-approvals) ·
-[Signed cases, failures, proofs and exact commands](benchmarks/2026-11-26-stem-metatype-object.json.xz).
+[Signed cases, failures, proofs and exact commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-object.json.xz).
 
 ## Immutable Metatype custody round trip
 
@@ -3732,7 +3732,7 @@ four-to-four Jolteon handoff with historical Intercell delivery
 passed on the devnets.
 
 [Reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
-[Signed runs, rejected controls and proof verification](benchmarks/2026-11-26-stem-metatype-custody.json.xz).
+[Signed runs, rejected controls and proof verification](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-custody.json.xz).
 
 ## Sparse assembly trace invalidation
 
@@ -3813,7 +3813,7 @@ an ambiguous pointer type in the regression test. Both logs are
 included alongside the successful retry.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[All runs, signed workloads, CPU samples and regression logs](benchmarks/2026-11-26-stem-vm-trace-reset.json.xz).
+[All runs, signed workloads, CPU samples and regression logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-vm-trace-reset.json.xz).
 
 ## RISC-V instruction-width dispatch
 
@@ -3891,7 +3891,7 @@ at setup because its output directory matched an ELF corpus filename.
 The corrected run and the first failure are both included.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Exact ELF bytes, signed workloads, raw profiles and regression logs](benchmarks/2026-11-26-stem-vm-decoder.json.xz).
+[Exact ELF bytes, signed workloads, raw profiles and regression logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-vm-decoder.json.xz).
 
 ## Shared Metatype manifest definitions
 
@@ -3963,7 +3963,7 @@ that failure, the corrected build and both standalone shared runs.
 
 [Standalone reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
 [Custody reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
-[Signed runs, raw proofs and build logs](benchmarks/2026-11-26-stem-metatype-shared.json.xz).
+[Signed runs, raw proofs and build logs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-shared.json.xz).
 
 ## Cap-bound fungible Metatype custody
 
@@ -4023,7 +4023,7 @@ the specialized UDT route, standalone Metatype UDT, Spore, and
 funded Jolteon handoff with historical Intercell delivery.
 
 [Reproduction](OPERATIONS.md#exercise-cap-bound-metatype-fungible-custody) ·
-[Signed transactions, proofs and failed attempts](benchmarks/2026-11-26-stem-metatype-fungible.json.xz).
+[Signed transactions, proofs and failed attempts](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-fungible.json.xz).
 
 ## Borrowed Metatype Manifest views
 
@@ -4071,7 +4071,7 @@ failed because the devnet RPC listener port was occupied. The
 successful retry and the failed start logs are both in the archive.
 
 [Reproduction](OPERATIONS.md#exercise-standalone-ckb-metatype) ·
-[Signed transactions, proofs and failed start](benchmarks/2026-11-26-stem-metatype-view.json.xz).
+[Signed transactions, proofs and failed start](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-view.json.xz).
 
 ## Revisable Metatype objects across CKB
 
@@ -4141,7 +4141,7 @@ historical Intercell delivery, all four CKB fee payouts, and
 historical and live-at-anchor CKB references.
 
 [Reproduction](OPERATIONS.md#exercise-stem-to-ckb-metatype-custody) ·
-[Signed transactions, proofs, timings and failed runs](benchmarks/2026-11-26-stem-metatype-revision.json.xz).
+[Signed transactions, proofs, timings and failed runs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-revision.json.xz).
 
 ## VM verification reuse across parent changes
 
@@ -4219,7 +4219,7 @@ kinds of L1 Cell Reference, and the revisable Metatype round trip
 with a Stem Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Signed workloads, raw profiles, proof and recovery evidence](benchmarks/2026-11-26-stem-vm-parent-cache.json.xz).
+[Signed workloads, raw profiles, proof and recovery evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-vm-parent-cache.json.xz).
 
 ## Live Cell reuse across candidate branches
 
@@ -4282,7 +4282,7 @@ handoff and historical Intercell delivery, both kinds of L1 Cell
 Reference, and the revisable Metatype return with Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Signed workloads, raw timings, state replay and proofs](benchmarks/2026-11-26-stem-live-cell-reuse.json.xz).
+[Signed workloads, raw timings, state replay and proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-live-cell-reuse.json.xz).
 
 ## Deferred Live Cell record encoding
 
@@ -4389,7 +4389,7 @@ CKB references, and the revisable Metatype return with a signed
 Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Signed workloads, ordered and initial timings, byte accounting and recovery evidence](benchmarks/2026-11-26-stem-live-cell-finality.json.xz).
+[Signed workloads, ordered and initial timings, byte accounting and recovery evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-live-cell-finality.json.xz).
 
 ## Fixed-buffer Patricia reads
 
@@ -4448,7 +4448,7 @@ historical and live-at-anchor Cell references and a revisable
 Metatype custody round trip with a signed Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw editor samples, signed workloads, build fingerprints and CKB evidence](benchmarks/2026-11-26-stem-patricia-inline-read.json.xz).
+[Raw editor samples, signed workloads, build fingerprints and CKB evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-patricia-inline-read.json.xz).
 
 ## Reusing RocksDB point-read options
 
@@ -4531,7 +4531,7 @@ Cell references, and a revisable Metatype return with a signed
 Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw point reads, signed loads, contention evidence and CKB proofs](benchmarks/2026-11-26-stem-patricia-point-reads.json.xz).
+[Raw point reads, signed loads, contention evidence and CKB proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-patricia-point-reads.json.xz).
 
 ## Serial admission dispatch
 
@@ -4605,7 +4605,7 @@ Intercell delivery, historical and live-at-anchor Cell references,
 and the Metatype return with a signed Capacity top-up.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw checks, signed workloads, per-run host samples and CKB proofs](benchmarks/2026-11-26-stem-inline-admission.json.xz).
+[Raw checks, signed workloads, per-run host samples and CKB proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-inline-admission.json.xz).
 
 ## Stake Registry loading during admission
 
@@ -4661,7 +4661,7 @@ references and the revisable Metatype return. The archive
 retains the initial probe-launch and signing-context failures.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw timings, both funded snapshots and CKB proofs](benchmarks/2026-11-26-stem-staked-admission.json.xz).
+[Raw timings, both funded snapshots and CKB proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-staked-admission.json.xz).
 
 ## Reusing decoded stake inputs across blocks
 
@@ -4709,7 +4709,7 @@ offline voter. Separate runs verified historical and live-at-anchor
 Cell references and the revisable Metatype custody round trip.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw preparations, signed workloads, state images and CKB proofs](benchmarks/2026-11-26-stem-stake-view-cache.json.xz).
+[Raw preparations, signed workloads, state images and CKB proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-stake-view-cache.json.xz).
 
 ## Jolteon frame writes
 
@@ -4767,7 +4767,7 @@ The archive retains the first failed build, the disk-full run and the
 successful retry.
 
 [Reproduction](OPERATIONS.md#measure-native-storage-and-sustained-payments) ·
-[Raw traces, signed workloads, logs and CKB proofs](benchmarks/2026-11-26-stem-framed-writes.json.xz).
+[Raw traces, signed workloads, logs and CKB proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-framed-writes.json.xz).
 
 ## Borrowed transaction output validation
 
@@ -4835,7 +4835,7 @@ Cell Reference modes, and revisable Metatype custody including a 5 CKB
 top-up and proofs of the restored object. The Go proof suite and
 frozen CometBFT build check passed.
 
-[Raw results, build fingerprints, proofs and reproduction commands](benchmarks/2026-11-26-stem-transaction-decode.json.xz).
+[Raw results, build fingerprints, proofs and reproduction commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-transaction-decode.json.xz).
 
 ## Three-constraint Metatype with an external rule
 
@@ -4897,7 +4897,7 @@ with Intercell delivery, four fee payouts, the CKB and xUDT bridge,
 and both L1 Cell Reference modes. The Go proof suite and frozen
 CometBFT build check passed.
 
-[Signed transactions, proof inputs, measurements, failed runs and reproduction commands](benchmarks/2026-11-26-stem-metatype-external-rule.json.xz).
+[Signed transactions, proof inputs, measurements, failed runs and reproduction commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-external-rule.json.xz).
 
 ## Live Metatype rule registry
 
@@ -4942,7 +4942,7 @@ settlement, four fee payouts, both L1 Cell Reference modes, and
 funded Jolteon handoff with historical Intercell delivery. The Go
 proof suite and CometBFT build check passed.
 
-[Signed cases, proof traces, build fingerprints, measurements and commands](benchmarks/2026-11-26-stem-metatype-live-rule.json.xz).
+[Signed cases, proof traces, build fingerprints, measurements and commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-live-rule.json.xz).
 
 ## CKB reference-set certificates
 
@@ -4983,7 +4983,7 @@ receipt, capped Metatype UDT, Spore, funded handoff, and individual
 L1 Cell Reference regressions passed. Earlier build failures and the
 security fixture's missing argument are in the archive.
 
-[Signed transactions, measurements, proof traces and reproduction commands](benchmarks/2026-11-26-stem-reference-set.json.xz).
+[Signed transactions, measurements, proof traces and reproduction commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-reference-set.json.xz).
 
 ## Reusing verified CKB reference sets
 
@@ -5036,7 +5036,7 @@ workspace and benchmark-helper build errors, an incompatible WASM
 binding tool version, and a fee-run command that combined mutually
 exclusive modes.
 
-[CPU samples, signed inputs, execution proofs, build fingerprints and commands](benchmarks/2026-11-26-stem-reference-cache.json.xz).
+[CPU samples, signed inputs, execution proofs, build fingerprints and commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-reference-cache.json.xz).
 
 ## Append-only Metatype revisions
 
@@ -5088,7 +5088,7 @@ ID preservation, CKB and xUDT, capped Metatype UDT, four fee fund
 payouts, Intercell recovery, and a funded committee handoff. The Go
 proof suite and frozen CometBFT build check passed.
 
-[Signed cases, proofs, cycle and capacity measurements, fingerprints, commands and failures](benchmarks/2026-11-26-stem-metatype-append-only.json.xz).
+[Signed cases, proofs, cycle and capacity measurements, fingerprints, commands and failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-append-only.json.xz).
 
 ## Metatype workflow history
 
@@ -5127,7 +5127,7 @@ funded committee handoff and four fee payouts. The first CKB build
 reported a missing Molecule trait import, which the archived rebuild
 corrected.
 
-[Signed transactions, inclusion and finality proofs, measurements, build fingerprints and commands](benchmarks/2026-11-26-stem-metatype-workflow.json.xz).
+[Signed transactions, inclusion and finality proofs, measurements, build fingerprints and commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-workflow.json.xz).
 
 ## Recovering Metatype workflow proofs from CKB
 
@@ -5163,7 +5163,7 @@ The workspace, Go proof suite and CometBFT comparison build passed.
 Devnet regressions verified Intercell, CKB and xUDT, Spore, fee payouts,
 funded committee handoff and append-only custody.
 
-[Recovery requests, signed transactions, proofs, timings, commands and failures](benchmarks/2026-11-26-stem-workflow-recovery.json.xz).
+[Recovery requests, signed transactions, proofs, timings, commands and failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-workflow-recovery.json.xz).
 
 ## Atomic settlement of two Metatype assets
 
@@ -5207,7 +5207,7 @@ check passed. Real CKB devnet regressions covered the single-lane
 Metatype return, workflow proof recovery, Intercell, native CKB
 and xUDT, Spore, fee payouts and funded committee handoff.
 
-[Signed transactions, proofs, measurements, commands and rejection controls](benchmarks/2026-11-26-stem-metatype-multiasset.json.xz).
+[Signed transactions, proofs, measurements, commands and rejection controls](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-multiasset.json.xz).
 
 ## Composed Metatype asset Cells
 
@@ -5262,7 +5262,7 @@ and a CKB-funded committee handoff. The 2–8-key encoding is
 bounded in code. The composed custody devnet fixture used two
 assets and four Type Scripts.
 
-[Signed data, proofs, build fingerprints, commands and rejection controls](benchmarks/2026-11-26-stem-composed-assets.json.xz).
+[Signed data, proofs, build fingerprints, commands and rejection controls](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-composed-assets.json.xz).
 
 ## Selective Metatype redemptions
 
@@ -5313,7 +5313,7 @@ from a missing import and the first offline checker failure from
 reading the transaction hash at the wrong JSON level. Corrected
 reruns succeeded.
 
-[Signed transactions, proofs, result JSON, commands and failed attempts](benchmarks/2026-11-26-stem-selective-metatype.json.xz).
+[Signed transactions, proofs, result JSON, commands and failed attempts](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-selective-metatype.json.xz).
 
 ## Metatype object royalties
 
@@ -5359,7 +5359,7 @@ CKB/xUDT, Spore, fee payouts and funded committee handoff.
 The Rust workspace passed 491 tests with 22 ignored. The Go proof
 suite and the CometBFT build check passed.
 
-[Signed payments, paired controls, rejection logs, proofs and reproduction commands](benchmarks/2026-11-26-stem-metatype-royalty.json.xz).
+[Signed payments, paired controls, rejection logs, proofs and reproduction commands](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-royalty.json.xz).
 
 ## Metatype approval key rotation
 
@@ -5413,7 +5413,7 @@ needed a key-only attestation to isolate the missing-ceiling
 control. A separate fungible rerun moved to fresh ports after a
 CKB RPC bind conflict.
 
-[Signed registry changes, detached seals, proofs, commands and failures](benchmarks/2026-11-26-stem-metatype-rotation.json.xz).
+[Signed registry changes, detached seals, proofs, commands and failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-rotation.json.xz).
 
 ## Metatype freeze and thaw
 
@@ -5457,7 +5457,7 @@ The reruns isolated each check. The archive also retains the first
 offline checker failure, which passed the new state byte to the
 public-key decoder.
 
-[Registry changes, signed tests, pending and released proofs, measurements and failed runs](benchmarks/2026-11-26-stem-metatype-freeze.json.xz).
+[Registry changes, signed tests, pending and released proofs, measurements and failed runs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-freeze.json.xz).
 
 ## Metatype quorum approval
 
@@ -5523,7 +5523,7 @@ Spore Cluster preservation, royalties and ceiling-proof recovery.
 Reproduce with the rotating approval fixture in [OPERATIONS.md](OPERATIONS.md).
 The archive contains exact commands, build fingerprints, signed
 transactions, fixtures, verification scripts and unsuccessful
-attempts. [Quorum experimental records](benchmarks/2026-11-26-stem-metatype-quorum.json.xz).
+attempts. [Quorum experimental records](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-quorum.json.xz).
 
 ## Metatype ceiling decreases
 
@@ -5576,7 +5576,7 @@ together. The final runner resolves the actual registry head and
 splits the deployment into two transactions under the same pool
 limits.
 
-[Registry updates, signed transfers, route proofs, finality and failed runs](benchmarks/2026-11-26-stem-metatype-ceiling.json.xz).
+[Registry updates, signed transfers, route proofs, finality and failed runs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-ceiling.json.xz).
 
 ## Recovering Metatype ceiling proofs from CKB
 
@@ -5618,7 +5618,7 @@ Metatype, Intercell, CKB/xUDT, Spore, fee payouts and funded
 handoff. The Rust workspace passed 493 tests with 22 ignored.
 Go proof tests and the CometBFT comparison build check passed.
 
-[Recovery requests and results, CKB restarts and reorg, signed transactions and proof checks](benchmarks/2026-11-26-stem-metatype-ceiling-recovery.json.xz).
+[Recovery requests and results, CKB restarts and reorg, signed transactions and proof checks](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-metatype-ceiling-recovery.json.xz).
 
 ## On-demand VM code dependency indexing
 
@@ -5687,7 +5687,7 @@ checkout path. The initial shared-build run used the previous absolute
 fixture path and its failures are retained. `go -C tools/proof test
 -count=1 ./...` and the release `comet-benchmark` feature check passed.
 
-[Resolver samples, four-replica measurements and CKB devnet evidence](benchmarks/2026-11-26-stem-program-resolution.json.xz).
+[Resolver samples, four-replica measurements and CKB devnet evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-program-resolution.json.xz).
 
 ## Shared block context and resolved transaction IDs
 
@@ -5776,7 +5776,7 @@ Spore V2 Cluster route.
 The release workspace suite passed 494 tests with 22 ignored. The Go
 proof suite and frozen `comet-benchmark` build check passed.
 
-[Signed workloads, phase metrics, history proofs and build fingerprints](benchmarks/2026-11-26-stem-block-context.json.xz).
+[Signed workloads, phase metrics, history proofs and build fingerprints](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-block-context.json.xz).
 
 ## Canonical execution records and Merkle allocations
 
@@ -5848,7 +5848,7 @@ and its execution receipt. It rejected a changed transaction and a
 changed receipt in each checked proof.
 
 The release workspace passed 494 tests, the Go proof suite passed,
-and the frozen CometBFT feature built. [Raw experiments, signed workloads, executable fingerprints, and reproduction scripts](benchmarks/2026-11-26-stem-execution-merkle.json.xz).
+and the frozen CometBFT feature built. [Raw experiments, signed workloads, executable fingerprints, and reproduction scripts](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-execution-merkle.json.xz).
 
 ## Shared Jolteon receive buffers
 
@@ -5930,7 +5930,7 @@ and frozen CometBFT build check passed. The archive retains the
 initial Rust build failures from converting protobuf byte fields
 and the passing receive-buffer and canonical decoding tests.
 
-[Raw run records, signed workloads, build fingerprints and reproduction scripts](benchmarks/2026-11-26-stem-consensus-bytes.json.xz).
+[Raw run records, signed workloads, build fingerprints and reproduction scripts](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-consensus-bytes.json.xz).
 
 ## Canonical Lineage references
 
@@ -5946,4 +5946,4 @@ proof bundles, public test trust anchors, workspace output and build
 fingerprints. Reproduce with the four-replica integration test and the
 WASM proof runner described in [Operations](OPERATIONS.md).
 
-[Raw evidence](benchmarks/2026-11-26-stem-lineage-ref.json.xz).
+[Raw evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-26-stem-lineage-ref.json.xz).

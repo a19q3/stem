@@ -20,20 +20,20 @@ sequenceDiagram
 
 | Profile | Socket writes | Acknowledged and eventually confirmed | In 180 s | Window TPS | Confirmed after 180 s | Write-to-common p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [250 ms stock, original](../external/540k.json.xz) | 361,707 | 361,707 | 309,720 | 1,720.67 | 51,987 | 187.15 s |
-| [250 ms stock, repeat](repeat250.json.xz) | 354,848 | 354,848 | 305,684 | 1,698.24 | 49,164 | 184.70 s |
-| [100 ms stock](c100.json.xz) | 376,158 | 376,158 | 374,391 | 2,079.95 | 1,767 | 1.32 s |
-| [100 ms stock, repeat](repeat100.json.xz) | 379,751 | 379,751 | 377,936 | 2,099.64 | 1,815 | 1.25 s |
-| [250 ms wide](wide250.json.xz) | 341,063 | 341,063 | 338,321 | 1,879.56 | 2,742 | 1.90 s |
-| [100 ms wide](wide100.json.xz) | 369,182 | 369,182 | 367,659 | 2,042.55 | 1,523 | 1.39 s |
-| [100 ms stock, 128 shared](send128.json.xz) | 424,821 | 403,724 | 400,430 | 2,224.61 | 3,294 | 3.25 s |
-| [100 ms stock, 128 split equally](shard128.json.xz) | 402,468 | 402,468 | 392,372 | 2,179.84 | 10,096 | 77.40 s |
+| [250 ms stock, original](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/external/540k.json.xz) | 361,707 | 361,707 | 309,720 | 1,720.67 | 51,987 | 187.15 s |
+| [250 ms stock, repeat](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/repeat250.json.xz) | 354,848 | 354,848 | 305,684 | 1,698.24 | 49,164 | 184.70 s |
+| [100 ms stock](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/c100.json.xz) | 376,158 | 376,158 | 374,391 | 2,079.95 | 1,767 | 1.32 s |
+| [100 ms stock, repeat](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/repeat100.json.xz) | 379,751 | 379,751 | 377,936 | 2,099.64 | 1,815 | 1.25 s |
+| [250 ms wide](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/wide250.json.xz) | 341,063 | 341,063 | 338,321 | 1,879.56 | 2,742 | 1.90 s |
+| [100 ms wide](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/wide100.json.xz) | 369,182 | 369,182 | 367,659 | 2,042.55 | 1,523 | 1.39 s |
+| [100 ms stock, 128 shared](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/send128.json.xz) | 424,821 | 403,724 | 400,430 | 2,224.61 | 3,294 | 3.25 s |
+| [100 ms stock, 128 split equally](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/shard128.json.xz) | 402,468 | 402,468 | 392,372 | 2,179.84 | 10,096 | 77.40 s |
 
 Each row uses a fresh database, 2,110 prefunding splits and a fixed network and committee. The workload commitment is `54db5ad9c4dd14032ffccef652b6ce7137aeecd17b0661d5c9fd7201bf8ceadd`. The 1,024-transaction / 2-billion-cycle profile and the 2,048 / 4-billion profile have different genesis IDs. A sampled ordinary payment cost 1,920,477 native cycles. Keeping the 2-billion-cycle limit would fit at most 1,041 of these payments even with a higher count limit. The wider profile therefore changes both limits together. [Exact profiles, artifact hashes, per-node RocksDB deltas and client errors](runs.json)
 
 ### Where the queue accumulated
 
-In the earlier stock run, 302 of the 303 nonempty blocks seen in the offer window contained exactly 1,024 payments. Among the 51,987 payments first seen during drain, the median time from socket write to admission acknowledgement was 0.3 ms. Acknowledgement to the containing Header's timestamp took approximately 105.39 s, followed by about 1.37 s until the block was visible on all four replicas. The 100 ms stock trial recorded a median of 209 ms and 551 ms for these last two stages among its 1,767 drain payments. Across the entire offer window its median nonempty block held 706 transactions. [Original stock archive](../external/540k.json.xz) · [100 ms stock archive](c100.json.xz)
+In the earlier stock run, 302 of the 303 nonempty blocks seen in the offer window contained exactly 1,024 payments. Among the 51,987 payments first seen during drain, the median time from socket write to admission acknowledgement was 0.3 ms. Acknowledgement to the containing Header's timestamp took approximately 105.39 s, followed by about 1.37 s until the block was visible on all four replicas. The 100 ms stock trial recorded a median of 209 ms and 551 ms for these last two stages among its 1,767 drain payments. Across the entire offer window its median nonempty block held 706 transactions. [Original stock archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/external/540k.json.xz) · [100 ms stock archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/c100.json.xz)
 
 The Header carries the proposer's millisecond timestamp before candidate construction. Some acknowledgements arrive after that timestamp. This is an approximate division of delay. It cannot identify an exact mempool residence or execution-completion time. The original run uses the mtime of its immediately preceding `before.json` write, 1795725184037938 Unix microseconds. The later runs bracket two wall-clock readings with the driver's monotonic clock and report the change in offset. Cross-host timing analysis also needs measured clock offsets and uncertainty for each proposer. Window TPS and write-to-common latency use only the observer's monotonic clock.
 

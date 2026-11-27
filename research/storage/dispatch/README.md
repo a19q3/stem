@@ -4,10 +4,10 @@ Four disk-backed Jolteon replicas processed the same corpus of 540,000 funded, i
 
 | Mode | Socket writes | Rejected by full mempool | Acknowledged and confirmed by end | Common in 180 s | Window TPS | Write-to-common p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Round-robin, stock, 2 workers](round-a.json.xz) | 333,950 | 0 | 333,950 | 331,926 | 1,844.03 | 2.24 s |
-| [Fixed senders, stock, 2 workers](ready-a.json.xz) | 447,819 | 24,054 | 423,765 | 351,814 | 1,954.52 | 192.75 s |
-| [Fixed senders, wide, 2 workers](ready-wide.json.xz) | 415,001 | 0 | 415,001 | 399,806 | 2,221.14 | 21.98 s |
-| [Fixed senders, wide, 4 workers](ready-wide-4w.json.xz) | 406,292 | 0 | 406,292 | 397,606 | 2,208.92 | 14.89 s |
+| [Round-robin, stock, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/dispatch/round-a.json.xz) | 333,950 | 0 | 333,950 | 331,926 | 1,844.03 | 2.24 s |
+| [Fixed senders, stock, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/dispatch/ready-a.json.xz) | 447,819 | 24,054 | 423,765 | 351,814 | 1,954.52 | 192.75 s |
+| [Fixed senders, wide, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/dispatch/ready-wide.json.xz) | 415,001 | 0 | 415,001 | 399,806 | 2,221.14 | 21.98 s |
+| [Fixed senders, wide, 4 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/dispatch/ready-wide-4w.json.xz) | 406,292 | 0 | 406,292 | 397,606 | 2,208.92 | 14.89 s |
 
 ## Where the extra deliveries went
 
@@ -25,7 +25,7 @@ At four workers the 180-second backlog fell to 8,678 payments and p99 to 14.89 s
 
 ## Writes during offer and drain
 
-The cgroup v2 counter covers both block devices and all four validators plus their driver. The per-payment figure divides the bounded 225-second device total by the payments finalized on all four replicas. RocksDB WAL counters come from each validator and are summed separately. Values use decimal GB and kB. [Raw device samples](io-samples.json.xz) · [Integer byte bounds](device-bounds.json)
+The cgroup v2 counter covers both block devices and all four validators plus their driver. The per-payment figure divides the bounded 225-second device total by the payments finalized on all four replicas. RocksDB WAL counters come from each validator and are summed separately. Values use decimal GB and kB. [Raw device samples](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/dispatch/io-samples.json.xz) · [Integer byte bounds](device-bounds.json)
 
 | Mode | Device writes, GB | Device kB per finalized payment | RocksDB WAL, GB | WAL syncs |
 | --- | ---: | ---: | ---: | ---: |
@@ -36,7 +36,7 @@ The cgroup v2 counter covers both block devices and all four validators plus the
 
 ## Which delay the driver observed
 
-The earlier 100 ms disk trial scheduled 540,000 independently signed payments and wrote 332,045. The four validators recorded a total of 9,068.283 seconds from receipt of a submission frame to the start of application handling and 66.062 seconds servicing those client requests. The load generator recorded 9,143.883 cumulative worker-seconds from socket write to reply. Server queue time accounted for 99.17% of the aggregate client wait. The four server queue sample counts matched all four client acknowledgement totals. The unit is wall time summed across concurrent requests. [Earlier payment archive](../proposal-cadence/nvme/nvme100.json.xz) · [Replica counters](nvme100-counters.json)
+The earlier 100 ms disk trial scheduled 540,000 independently signed payments and wrote 332,045. The four validators recorded a total of 9,068.283 seconds from receipt of a submission frame to the start of application handling and 66.062 seconds servicing those client requests. The load generator recorded 9,143.883 cumulative worker-seconds from socket write to reply. Server queue time accounted for 99.17% of the aggregate client wait. The four server queue sample counts matched all four client acknowledgement totals. The unit is wall time summed across concurrent requests. [Earlier payment archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/nvme/nvme100.json.xz) · [Replica counters](nvme100-counters.json)
 
 For each scheduled payment that did not reach a socket write, the analysis counted unfinished requests at its scheduled instant. A request contributes to an endpoint's count from its write time until its successful acknowledgement. In the historical trial, all 332,045 written requests had an acknowledgement. All 207,955 unwritten positions coincided with at least 60 of 64 senders awaiting replies. At 190,751 of those positions the quietest endpoint had at most three requests still awaiting acknowledgement. Each endpoint reached 64 concurrent submissions at some point. New trials record the instant the nonblocking enqueue reports a full queue and the reply time for explicit admission refusals. [Reconstruction](pressure.py) · [Timing results](pressure.json)
 

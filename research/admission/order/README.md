@@ -12,11 +12,11 @@ Values are medians across the listed runs. CPU sums the four node processes from
 
 | Order | Runs | Window TPS | Write-to-common p50 | Write-to-common p99 | CPU seconds |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Stock | [1](order-stock1.json.xz), [2](order-stock2.json.xz), [3](order-stock3.json.xz) | 1,884.71 | 1.419 s | 63.624 s | 179.57 |
-| Arrival | [1](order-fifo1.json.xz), [2](order-fifo2.json.xz) | 1,466.11 | 18.291 s | 32.899 s | 223.45 |
-| Rotate every block | [1](order-rotate1.json.xz), [2](order-rotate2.json.xz) | 1,486.21 | 10.821 s | 48.877 s | 210.67 |
-| Rotate one in four | [1](order-quarter1.json.xz), [2](order-quarter2.json.xz) | 1,851.20 | 1.700 s | 60.811 s | 184.78 |
-| Mixed stock and arrival | [1](order-mixed.json.xz) | 1,503.16 | 11.898 s | 35.190 s | 202.18 |
+| Stock | [1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-stock1.json.xz), [2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-stock2.json.xz), [3](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-stock3.json.xz) | 1,884.71 | 1.419 s | 63.624 s | 179.57 |
+| Arrival | [1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-fifo1.json.xz), [2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-fifo2.json.xz) | 1,466.11 | 18.291 s | 32.899 s | 223.45 |
+| Rotate every block | [1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-rotate1.json.xz), [2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-rotate2.json.xz) | 1,486.21 | 10.821 s | 48.877 s | 210.67 |
+| Rotate one in four | [1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-quarter1.json.xz), [2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-quarter2.json.xz) | 1,851.20 | 1.700 s | 60.811 s | 184.78 |
+| Mixed stock and arrival | [1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-mixed.json.xz) | 1,503.16 | 11.898 s | 35.190 s | 202.18 |
 
 ## Three-minute pressure
 
@@ -24,10 +24,10 @@ Each row used a 3,000/s target and one run. Completed socket writes, successful 
 
 | Order | Written | Acknowledged | Confirmed | In 180 s | Window TPS | Write-to-common p50 / p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Stock](../../storage/sustained/prefund-3m.json.xz) | 327,306 | 327,306 | 327,306 | 293,336 | 1,629.64 | 1.316 / 173.667 s |
-| [Arrival](order-fifo-3m.json.xz) | 237,965 | 237,597 | 237,620 | 223,791 | 1,243.28 | 6.548 / 11.598 s |
-| [Rotate every block](order-rotate-3m.json.xz) | 260,815 | 260,573 | 260,596 | 247,347 | 1,374.15 | 4.638 / 22.823 s |
-| [Rotate one in four](order-quarter-3m.json.xz) | 313,739 | 313,739 | 313,739 | 288,348 | 1,601.93 | 1.591 / 139.739 s |
+| [Stock](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/sustained/prefund-3m.json.xz) | 327,306 | 327,306 | 327,306 | 293,336 | 1,629.64 | 1.316 / 173.667 s |
+| [Arrival](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-fifo-3m.json.xz) | 237,965 | 237,597 | 237,620 | 223,791 | 1,243.28 | 6.548 / 11.598 s |
+| [Rotate every block](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-rotate-3m.json.xz) | 260,815 | 260,573 | 260,596 | 247,347 | 1,374.15 | 4.638 / 22.823 s |
+| [Rotate one in four](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/admission/order/order-quarter-3m.json.xz) | 313,739 | 313,739 | 313,739 | 288,348 | 1,601.93 | 1.591 / 139.739 s |
 
 ## Decision
 

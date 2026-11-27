@@ -159,7 +159,7 @@ Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_he
 | 1 | 1 至 64 条定长 129 字节记录，每条依次为 33 字节压缩 secp256k1 公钥、32 字节摘要和 64 字节低 S 紧凑 ECDSA 签名 | 每条 2,200,000 |
 | 2 | 1 至 64 条定长 128 字节记录，每条依次为 32 字节 Ed25519 公钥、32 字节消息和 64 字节签名，使用严格验证 | 每条 3,200,000 |
 
-每次调用先计 25,000 cycles。长度合法的批次在读内存前按全批计费。每条签名独立验证，整批通过才返回成功。脚本可根据网络的交易或 Executor 预算使用更小的批次。计费标定、完整 ELF 验证与四副本创世重启实测见[原始记录](benchmarks/2026-11-27-crypto-v1.json.xz)。
+每次调用先计 25,000 cycles。长度合法的批次在读内存前按全批计费。每条签名独立验证，整批通过才返回成功。脚本可根据网络的交易或 Executor 预算使用更小的批次。计费标定、完整 ELF 验证与四副本创世重启实测见[原始记录](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-27-crypto-v1.json.xz)。
 
 
 ### Stem Header 与时间
@@ -624,4 +624,4 @@ CKB 历史输出验证器从可信区块哈希重算 Header、交易及见证根
 
 创世参数由固定宽度的限制、费率、容量策略和链名长度开头，随后是原始链名字节及验证者条目。桥接配置的主体使用 `BridgeGenesisConfig`，包含三类控制预算、守护者、按创世顺序给出的通道及收款约束。尾部沿用既有约定，依次为可选的 32 字节邮箱代码哈希，以及可选的基金标签和代码哈希。Keeper 策略保留高度策略后的可选时间策略。单字节标识、计数和高度使用既有原始字节和小端整数。
 
-质押系统沿用长度为 40 字节的成员条目。创世快照中的声明长度、轮换人数、Registry 记录数和证明签名数均按历史 u16 读取。运行期快照继续按原签名域验证声明、轮换授权与 Registry 业务规则。提款收据保存固定原生前缀和原始 CKB 收款 Script。Intercell 信封后的业务负载保持原字节，CKB 合约和 Stem 共享消息 ID。以上布局可在 [Strand schema](ledger/schemas/strand.json) 查阅。新旧导出、C/Rust 读取器及创世夹具见[验证记录](evidence/2026-11-27-strand-system-records.json.xz)。
+质押系统沿用长度为 40 字节的成员条目。创世快照中的声明长度、轮换人数、Registry 记录数和证明签名数均按历史 u16 读取。运行期快照继续按原签名域验证声明、轮换授权与 Registry 业务规则。提款收据保存固定原生前缀和原始 CKB 收款 Script。Intercell 信封后的业务负载保持原字节，CKB 合约和 Stem 共享消息 ID。以上布局可在 [Strand schema](ledger/schemas/strand.json) 查阅。新旧导出、C/Rust 读取器及创世夹具见[验证记录](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/evidence/2026-11-27-strand-system-records.json.xz)。

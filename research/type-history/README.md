@@ -14,7 +14,7 @@ An optional ordered list of intermediate Lock or Cell-data hashes lets a caller 
 | Revisable Metatype workflow | 5 | The full history includes an ownership-only transition, two witnessed revisions and the burn. The intermediate OutPoints and complete path match the existing workflow-specific recovery. |
 | Fresh approved Spore | 4 | A new four-replica run verified the integrated wallet commands at agreed Stem height 39. |
 
-The unmodified shared-Manifest workflow and live-ceiling recovery fixtures also completed on fresh four-replica networks at heights 35 and 69. The archived reports include the actual escrow and CKB transactions, the existing recovery outputs and their controls. [Complete portable witnesses](histories.json.xz) · [Four-replica and CKB reports](integration.json.xz)
+The unmodified shared-Manifest workflow and live-ceiling recovery fixtures also completed on fresh four-replica networks at heights 35 and 69. The archived reports include the actual escrow and CKB transactions, the existing recovery outputs and their controls. [Complete portable witnesses](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/type-history/histories.json.xz) · [Four-replica and CKB reports](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/type-history/integration.json.xz)
 
 Build the release CLI and run the following command without an RPC endpoint.
 

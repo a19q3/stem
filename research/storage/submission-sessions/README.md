@@ -4,10 +4,10 @@ Four local Jolteon validators received 720,000 scheduled, independently funded p
 
 | Connections and senders | Writes by 180 s | Acks by 180 s | Full-mempool replies, total | Common by 180 s | Common TPS | Common by 225 s | Acks pending at 225 s | p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Fresh, 64](fresh64.json.xz) | 571,502 | 428,700 | 142,786 | 340,213 | 1,890.07 | 418,037 | 10,679 | 195.88 s |
-| [Reuse, 64](reuse64.json.xz) | 550,327 | 443,656 | 106,639 | 357,718 | 1,987.32 | 439,638 | 4,050 | 189.72 s |
-| [Reuse, 128](reuse128.json.xz) | 637,668 | 434,965 | 202,639 | 338,795 | 1,882.19 | 416,619 | 18,410 | 195.55 s |
-| [Fresh, 64, pause on full](pause64.json.xz) | 446,267 | 434,932 | 11,333 | 340,938 | 1,894.10 | 420,810 | 14,124 | 196.76 s |
+| [Fresh, 64](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/fresh64.json.xz) | 571,502 | 428,700 | 142,786 | 340,213 | 1,890.07 | 418,037 | 10,679 | 195.88 s |
+| [Reuse, 64](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/reuse64.json.xz) | 550,327 | 443,656 | 106,639 | 357,718 | 1,987.32 | 439,638 | 4,050 | 189.72 s |
+| [Reuse, 128](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/reuse128.json.xz) | 637,668 | 434,965 | 202,639 | 338,795 | 1,882.19 | 416,619 | 18,410 | 195.55 s |
+| [Fresh, 64, pause on full](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/pause64.json.xz) | 446,267 | 434,932 | 11,333 | 340,938 | 1,894.10 | 420,810 | 14,124 | 196.76 s |
 
 A 64-sender connection pool reused an existing socket 528,641 times. It halved the driver's CPU time and added 17,505 common confirmations by the deadline. Doubling its senders raised the socket-write rate from 3,057 to 3,543 per second, brought the first full-mempool reply forward from 97.7 to 66.5 seconds, and reduced common confirmations by 18,923. All four modes completed the first minute without a full-mempool reply.
 
@@ -36,10 +36,10 @@ flowchart LR
 
 | Configuration | Driver CPU, offer (s) | Four validators CPU, offer (s) | Queue share of total reply wait | WAL (GB) | Flush / compaction SST files (GB) | Device writes, 225 s (GB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Fresh, 64 observations](fresh64-observations.json.xz) | 19.59–19.63 | 658.97–660.27 | 98.61% | 4.989 | 3.475 / 5.132 | 13.812–13.876 |
-| [Reuse, 64 observations](reuse64-observations.json.xz) | 9.84–9.87 | 664.33–666.74 | 98.65% | 5.245 | 3.630 / 5.742 | 14.536–15.030 |
-| [Reuse, 128 observations](reuse128-observations.json.xz) | 12.11–12.14 | 648.58–649.85 | 99.28% | 4.971 | 3.484 / 5.136 | 13.832–13.902 |
-| [Fresh, 64, pause observations](pause64-observations.json.xz) | 15.76–15.83 | 648.89–649.86 | 98.60% | 5.019 | 3.481 / 5.135 | 13.872–13.905 |
+| [Fresh, 64 observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/fresh64-observations.json.xz) | 19.59–19.63 | 658.97–660.27 | 98.61% | 4.989 | 3.475 / 5.132 | 13.812–13.876 |
+| [Reuse, 64 observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/reuse64-observations.json.xz) | 9.84–9.87 | 664.33–666.74 | 98.65% | 5.245 | 3.630 / 5.742 | 14.536–15.030 |
+| [Reuse, 128 observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/reuse128-observations.json.xz) | 12.11–12.14 | 648.58–649.85 | 99.28% | 4.971 | 3.484 / 5.136 | 13.832–13.902 |
+| [Fresh, 64, pause observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/submission-sessions/pause64-observations.json.xz) | 15.76–15.83 | 648.89–649.86 | 98.60% | 5.019 | 3.481 / 5.135 | 13.872–13.905 |
 
 Candidate verification took an average of 71.84–73.57 elapsed seconds per validator over the offer and drain. Proposal work averaged 22.52–23.11 seconds and commit work 8.56–9.27 seconds. A follow-up traced the entire interval from receipt to dispatch for each written payment. At 1,800 writes per second with two workers, 53.30% of aggregate queue time overlapped candidate verification. [Per-request attribution at matched arrivals and overload](../queue-attribution/README.md)
 

@@ -4,10 +4,10 @@ Four uninstrumented Jolteon validators ran the reference and parallel receipt im
 
 | Run, in order | Written by 120 s | Acknowledged by 120 s | Common by 120 s | Common TPS | Refused by full mempool | Common by 165 s | Write-to-common p99 | Four-validator CPU in offer (s) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| [Serial A1](a1/payments.json.xz) | 360,000 | 335,099 | 245,012 | 2,041.77 | 24,709 | 335,291 | 140.444 s | 450.71–452.03 |
-| [Parallel B1](b1/payments.json.xz) | 360,000 | 339,094 | 252,405 | 2,103.38 | 20,841 | 339,159 | 139.673 s | 456.74–457.79 |
-| [Parallel B2](b2/payments.json.xz) | 360,000 | 339,741 | 251,505 | 2,095.88 | 20,236 | 339,764 | 140.394 s | 458.79–459.96 |
-| [Serial A2](a2/payments.json.xz) | 360,000 | 338,668 | 251,007 | 2,091.73 | 21,268 | 338,732 | 137.788 s | 453.49–454.66 |
+| [Serial A1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/a1/payments.json.xz) | 360,000 | 335,099 | 245,012 | 2,041.77 | 24,709 | 335,291 | 140.444 s | 450.71–452.03 |
+| [Parallel B1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/b1/payments.json.xz) | 360,000 | 339,094 | 252,405 | 2,103.38 | 20,841 | 339,159 | 139.673 s | 456.74–457.79 |
+| [Parallel B2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/b2/payments.json.xz) | 360,000 | 339,741 | 251,505 | 2,095.88 | 20,236 | 339,764 | 140.394 s | 458.79–459.96 |
+| [Serial A2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/a2/payments.json.xz) | 360,000 | 338,668 | 251,007 | 2,091.73 | 21,268 | 338,732 | 137.788 s | 453.49–454.66 |
 
 All acknowledged payments in these four runs reached the certified chain within the 45-second drain. The denominator for window throughput is 120 seconds. The p99 starts at the socket write and includes payments that finalized during drain. CPU intervals bracket the exact start and end on the driver's wall clock using the adjacent process accounting samples. Those intervals bound sampling error only. The candidate used more validator CPU during the offer in both comparisons. Dividing the CPU interval by the in-window common confirmations gives 1.840–1.845 ms per payment for A1 and 1.810–1.814 ms for B1. In reverse order, B2 used 1.824–1.829 ms and A2 used 1.807–1.811 ms. This cost ratio includes work on payments that confirmed later. [Replay and CPU bounds](analyze.py)
 
@@ -32,10 +32,10 @@ The second sequence repeated the same executable order with a smaller genesis an
 
 | Run | Common by 60 s | Common TPS | Write-to-common p99 | Four-validator CPU in offer (s) | Payment blocks with ≥256 transactions / total |
 | --- | ---: | ---: | ---: | --- | ---: |
-| [Serial A1](paced/a1/payments.json.xz) | 106,896 | 1,781.60 | 1.373 s | 135.70–136.48 | 252 / 256 |
-| [Parallel B1](paced/b1/payments.json.xz) | 107,036 | 1,783.93 | 2.104 s | 135.74–136.59 | 269 / 273 |
-| [Parallel B2](paced/b2/payments.json.xz) | 106,963 | 1,782.72 | 1.045 s | 136.44–137.32 | 278 / 280 |
-| [Serial A2](paced/a2/payments.json.xz) | 104,239 | 1,737.32 | 2.302 s | 133.00–134.29 | 256 / 259 |
+| [Serial A1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/paced/a1/payments.json.xz) | 106,896 | 1,781.60 | 1.373 s | 135.70–136.48 | 252 / 256 |
+| [Parallel B1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/paced/b1/payments.json.xz) | 107,036 | 1,783.93 | 2.104 s | 135.74–136.59 | 269 / 273 |
+| [Parallel B2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/paced/b2/payments.json.xz) | 106,963 | 1,782.72 | 1.045 s | 136.44–137.32 | 278 / 280 |
+| [Serial A2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/receipt-crossover/paced/a2/payments.json.xz) | 104,239 | 1,737.32 | 2.302 s | 133.00–134.29 | 256 / 259 |
 
 The two candidate-minus-reference differences were +2.33 and +45.40 common TPS. End-to-end p99 changed by +0.731 and -1.257 seconds. At one-second boundaries the maximum cumulative write differences were 518 and 1,541 payments. A ready sender selected the receiving replica independently in each run. [Per-run counters and timing](paced/results.json)
 

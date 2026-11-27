@@ -31,7 +31,7 @@ Configured networks carry Intercell messages between Stem and a CKB Mailbox. The
 - [Implementation and VM ABI](ARCHITECTURE.md)
 - [Build, configuration and reproducible network tests](OPERATIONS.md)
 - [Measurements and historical comparison](BENCHMARKS.md)
-- [Experiment reports and raw evidence](benchmarks/README.md)
+- [Experiment results, archived inputs and shallow clone](benchmarks/README.md)
 - [Protocol evolution and research status](STEM-EVOLUTION.md)
 
 The protocol needs an independent review before custody of real funds. See the implementation status in the [protocol](STEM-PROTOCOL.md#9-当前实现与实测证据).
