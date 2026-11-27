@@ -80,6 +80,23 @@ An all-enabled four-replica smoke run offered 26,400 payments at 2,200/s for 12 
 
 The Cell tree recursion is still serial inside its namespace. Stage timing in the planned ablation can show whether Patricia subtree parallelism helps once receipt and System work overlap.
 
+### Commitment-only mixed-script comparison
+
+Both builds of `6260bc569da037d2748b0389055b98f8f44e1612` enabled Admission and Commit, including Follower. Both used synchronous Leader construction and fixed verification waves. The candidate added `native-commitment-pipeline`. Four same-host validators and the driver shared logical CPUs `2-7,10-15,18-23,26-31`. Each validator used four VM workers, a 100 ms cadence, an 8B cycle cap, a 2,048 transaction cap and 256 retained heights.
+
+The [mixed Type Group fixture](../scheduling/README.md#mixed-type-groups-with-the-native-pipeline) used 64 persistent senders to offer the same 46,000 signed transactions at 2,300/s for 20 seconds, followed by 25 seconds of drain. The run order was serial, concurrent, concurrent, serial. All transactions were written and acknowledged within the offer and confirmed by drain. Finality and history-index checks passed, and the read-only audit rebuilt the two roots for 931 observed blocks.
+
+| Run | Commitments | Common TPS during offer | Write-to-common p99 | Mean control wait | Mean Follower prep | CPU | Blocks with at least 256 items |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | Serial | 2,239.20 | 5.037 s | 7.749 ms | 34.243 ms | 94.60 s | 58 |
+| B1 | Concurrent | 2,230.55 | 0.845 s | 6.863 ms | 33.544 ms | 93.29 s | 76 |
+| B2 | Concurrent | 2,202.40 | 0.944 s | 4.988 ms | 31.524 ms | 92.44 s | 73 |
+| A2 | Serial | 2,209.65 | 0.876 s | 9.404 ms | 33.288 ms | 91.62 s | 75 |
+
+Both candidate runs exercised the 256-item threshold. The candidate reduced mean Follower preparation and control wait in both pairs. Window TPS changed by less than 0.4% in each pair. The large forward p99 improvement did not repeat, and only the first serial run filled the transaction budget. The recorded timings cover complete stages including work outside the commitment calculation. Keep the feature opt-in and attribute time inside Cell, System and receipt commitment work before selecting a subtree optimisation.
+
+The serial and concurrent binary SHA-256 values were `75a3899438c82994594f51235f9b15048efd5da76557c6344eb7496ad863d1ad` and `b6b753d81fb87bb21f08ddbde55d3b4e393ebaf735e2ba78e6ac4089fd06be89`. The genesis was `d16c1038a4f652341ae3b9b162e5c6beec3876d782330928ddeced7f7b847803` and the signed workload was `cc6ac4f00fdf9d79bb5dca848d3181c08a6df90028f1c0f9ad9854dceff60240`.
+
 ## Certified Commit Pipeline
 
 `jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.
