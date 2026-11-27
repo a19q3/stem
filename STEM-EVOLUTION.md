@@ -152,3 +152,5 @@ Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验
 第 20 项已用主网发布版 Spore V2 验证普通 Cluster 成员从 Stem 首发，经集合持有人授权在 CKB 铸造、钱包换手、返回 Stem 和再次导出。六组四副本开发网还覆盖永生成员、两次 CKB 授权的原生换手、同步销毁退款及 CKB 首发方向的集合换主。三组实验复用了公开测试网四字段集合的原始字节。集合自身挂载 Mutant 仍缺少可确认的发行样本。[公开发行证明与六组结算](research/spore-permit/upstream/collections/README.md)
 
 第 20 项新增 CKB 历史输入证明。四笔公开测试网成员铸造分别验证了实际花费的 Cluster Agent、引用的集合版本和另一个与集合持有人同锁的输入。两个方向的普通集合成员首发也用已有结算证明复验了实际花费的持有人输入。[16 份公开历史证明与两个本地铸造](research/spore-permit/upstream/collections/agent/README.md)
+
+第 10 项用相同签名支付比较了三种提案顺序。在每秒投递 3,000 笔的两组同机对照中，按接收顺序选取分别少确认 319.43 和 248.18 TPS，按父 Header 哈希轮换起点分别少确认 230.29 和 152.69 TPS。两种候选在排空截止时都有更多已接收支付仍待共同确认。继续使用原有哈希顺序，独立节点的持续吞吐仍待实测。[逐笔时钟、四副本证明与固定区块对照](research/storage/admission-order/README.md)

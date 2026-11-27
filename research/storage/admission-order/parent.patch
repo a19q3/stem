@@ -1,0 +1,65 @@
+diff --git a/src/jolteon.rs b/src/jolteon.rs
+index ec292e5..3c1c9cc 100644
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -1179,7 +1179,11 @@ impl Replica {
+             let started = Instant::now();
+             let (transactions, execution) = self.workers.install(|| {
+                 self.store.on_branch(&batches, |state| {
+-                    state.build_proposal(self.mempool.transactions(), at, MAX_PROPOSAL_BYTES)
++                    state.build_proposal(
++                        self.mempool.transactions_from(parent.point.header),
++                        at,
++                        MAX_PROPOSAL_BYTES,
++                    )
+                 })
+             })?;
+             self.execution.proposal.observe(started.elapsed());
+diff --git a/src/jolteon/mempool.rs b/src/jolteon/mempool.rs
+index afa8c8d..a355907 100644
+--- a/src/jolteon/mempool.rs
++++ b/src/jolteon/mempool.rs
+@@ -72,8 +72,11 @@ impl Mempool {
+         self.bytes
+     }
+
+-    pub(super) fn transactions(&self) -> impl Iterator<Item = &Transaction> {
+-        self.entries.values().map(|entry| &entry.tx)
++    pub(super) fn transactions_from(&self, start: Hash32) -> impl Iterator<Item = &Transaction> {
++        self.entries
++            .range(start..)
++            .chain(self.entries.range(..start))
++            .map(|(_, entry)| &entry.tx)
+     }
+
+     pub(super) fn insert(&mut self, id: Hash32, tx: Transaction) -> anyhow::Result<()> {
+@@ -192,6 +195,29 @@ mod tests {
+
+     use super::*;
+
++    #[test]
++    fn selection_wraps_once_at_the_parent_header() -> anyhow::Result<()> {
++        let mut pool = Mempool::default();
++        let input = CellInput::new(OutPoint::default(), None);
++        let tx = Transaction::new(vec![], vec![], vec![input], vec![], vec![])?;
++        let order = |pool: &Mempool, start| {
++            pool.transactions_from([start; 32])
++                .map(|tx| tx.valid_before_height().unwrap())
++                .collect::<Vec<_>>()
++        };
++        assert!(order(&pool, 30).is_empty());
++        for key in [30, 10, 50] {
++            pool.insert([key; 32], tx.with_valid_before_height(key.into())?)?;
++        }
++        assert_eq!(order(&pool, 0), [10, 30, 50]);
++        assert_eq!(order(&pool, 30), [30, 50, 10]);
++        assert_eq!(order(&pool, 40), [50, 10, 30]);
++        assert_eq!(order(&pool, 255), [10, 30, 50]);
++        pool.remove(&[50; 32]);
++        assert_eq!(order(&pool, 40), [10, 30]);
++        Ok(())
++    }
++
+     #[test]
+     fn relay_retries_are_local_bounded_and_removed_with_the_entry() -> anyhow::Result<()> {
+         let at = Instant::now();

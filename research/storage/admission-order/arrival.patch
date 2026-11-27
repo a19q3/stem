@@ -1,0 +1,112 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 573f051..5cb80ea 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3660,6 +3660,7 @@ dependencies = [
+  "clap",
+  "ed25519-dalek",
+  "hex",
++ "linked-hash-map",
+  "prost",
+  "rayon",
+  "reqwest",
+diff --git a/Cargo.toml b/Cargo.toml
+index 2841212..d1a9d9e 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -28,6 +28,7 @@ ckb-types.workspace = true
+ ed25519-dalek.workspace = true
+ clap = { workspace = true, features = ["derive"] }
+ hex.workspace = true
++linked-hash-map = "0.5.6"
+ prost = "0.13"
+ rayon.workspace = true
+ reqwest.workspace = true
+diff --git a/src/jolteon/mempool.rs b/src/jolteon/mempool.rs
+index afa8c8d..f0ed0a1 100644
+--- a/src/jolteon/mempool.rs
++++ b/src/jolteon/mempool.rs
+@@ -1,8 +1,9 @@
+ use std::{
+-    collections::{BTreeMap, BTreeSet},
++    collections::BTreeSet,
+     time::{Duration, Instant},
+ };
+
++use linked_hash_map::{Entry as MapEntry, LinkedHashMap};
+ use stem_ledger::{
+     Transaction,
+     keeper::{Action, Trigger, decode_command},
+@@ -40,7 +41,7 @@ impl Deadline {
+
+ #[derive(Default)]
+ pub(super) struct Mempool {
+-    entries: BTreeMap<Hash32, Entry>,
++    entries: LinkedHashMap<Hash32, Entry>,
+     heights: BTreeSet<(u64, Hash32)>,
+     parent_times: BTreeSet<(u64, Hash32)>,
+     relays: BTreeSet<(Instant, Hash32)>,
+@@ -77,6 +78,9 @@ impl Mempool {
+     }
+
+     pub(super) fn insert(&mut self, id: Hash32, tx: Transaction) -> anyhow::Result<()> {
++        let MapEntry::Vacant(slot) = self.entries.entry(id) else {
++            return Ok(());
++        };
+         let deadline = Deadline::for_transaction(&tx)?;
+         if let Some(height) = deadline.height {
+             self.heights.insert((height, id));
+@@ -85,14 +89,11 @@ impl Mempool {
+             self.parent_times.insert((time, id));
+         }
+         self.bytes += tx.as_slice().len();
+-        self.entries.insert(
+-            id,
+-            Entry {
+-                tx,
+-                deadline,
+-                relay: None,
+-            },
+-        );
++        slot.insert(Entry {
++            tx,
++            deadline,
++            relay: None,
++        });
+         Ok(())
+     }
+
+@@ -192,6 +193,33 @@ mod tests {
+
+     use super::*;
+
++    #[test]
++    fn selection_preserves_local_arrival_order_through_retry_removal_and_expiry() -> anyhow::Result<()> {
++        let mut pool = Mempool::default();
++        let at = Instant::now();
++        let input = CellInput::new(OutPoint::default(), None);
++        let tx = Transaction::new(vec![], vec![], vec![input], vec![], vec![])?;
++        for (id, height) in [(3, 30), (1, 10), (4, 40), (2, 20)] {
++            pool.insert([id; 32], tx.with_valid_before_height(height)?)?;
++        }
++        let order = |pool: &Mempool| {
++            pool.transactions()
++                .map(|tx| tx.valid_before_height().unwrap())
++                .collect::<Vec<_>>()
++        };
++        let bytes = pool.bytes();
++        assert!(pool.track_local([3; 32], at, 1));
++        assert!(pool.retry(at + RELAY_INTERVAL, 1, 2).is_some());
++        pool.insert([3; 32], tx.with_valid_before_height(30)?)?;
++        assert_eq!(pool.bytes(), bytes);
++        assert_eq!(order(&pool), [30, 10, 40, 20]);
++        pool.remove(&[4; 32]);
++        pool.expire(9, 0);
++        pool.insert([4; 32], tx.with_valid_before_height(40)?)?;
++        assert_eq!(order(&pool), [30, 20, 40]);
++        Ok(())
++    }
++
+     #[test]
+     fn relay_retries_are_local_bounded_and_removed_with_the_entry() -> anyhow::Result<()> {
+         let at = Instant::now();

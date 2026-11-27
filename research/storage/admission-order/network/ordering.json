@@ -1,0 +1,502 @@
+{
+  "a1": {
+    "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+    "offer_seconds": 120,
+    "drain_seconds": 45,
+    "multiple_payment_blocks": 178,
+    "blocks_in_fixed_order": 178,
+    "blocks_in_parent_order": 63,
+    "certified_payments": 351332,
+    "payment_blocks": 178,
+    "full_blocks": 164,
+    "aggregate_execution_us": {
+      "proposal": 64871221,
+      "candidate_verify": 201482679,
+      "commit": 25569467
+    },
+    "all": {
+      "acknowledged": 351332,
+      "common_in_window": 267742,
+      "pending_at_drain": 0,
+      "median_us": 4150533,
+      "p99_us": 134941650
+    },
+    "by_first_hash_byte_band": [
+      {
+        "acknowledged": 35519,
+        "common_in_window": 34699,
+        "pending_at_drain": 0,
+        "median_us": 3385178,
+        "p99_us": 6310561
+      },
+      {
+        "acknowledged": 35488,
+        "common_in_window": 34680,
+        "pending_at_drain": 0,
+        "median_us": 3402053,
+        "p99_us": 6315408
+      },
+      {
+        "acknowledged": 34354,
+        "common_in_window": 33584,
+        "pending_at_drain": 0,
+        "median_us": 3390708,
+        "p99_us": 6303931
+      },
+      {
+        "acknowledged": 35699,
+        "common_in_window": 34918,
+        "pending_at_drain": 0,
+        "median_us": 3398169,
+        "p99_us": 6306613
+      },
+      {
+        "acknowledged": 34240,
+        "common_in_window": 33474,
+        "pending_at_drain": 0,
+        "median_us": 3405111,
+        "p99_us": 6339070
+      },
+      {
+        "acknowledged": 35908,
+        "common_in_window": 35077,
+        "pending_at_drain": 0,
+        "median_us": 3410408,
+        "p99_us": 6366260
+      },
+      {
+        "acknowledged": 35585,
+        "common_in_window": 34797,
+        "pending_at_drain": 0,
+        "median_us": 3528183,
+        "p99_us": 11810082
+      },
+      {
+        "acknowledged": 34425,
+        "common_in_window": 23017,
+        "pending_at_drain": 0,
+        "median_us": 10951268,
+        "p99_us": 112328100
+      },
+      {
+        "acknowledged": 35839,
+        "common_in_window": 1860,
+        "pending_at_drain": 0,
+        "median_us": 70713211,
+        "p99_us": 131706632
+      },
+      {
+        "acknowledged": 34275,
+        "common_in_window": 1636,
+        "pending_at_drain": 0,
+        "median_us": 88478764,
+        "p99_us": 149018135
+      }
+    ],
+    "by_socket_write_quarter": [
+      {
+        "acknowledged": 90000,
+        "common_in_window": 73871,
+        "pending_at_drain": 0,
+        "median_us": 3503966,
+        "p99_us": 145294411
+      },
+      {
+        "acknowledged": 89979,
+        "common_in_window": 69333,
+        "pending_at_drain": 0,
+        "median_us": 4450196,
+        "p99_us": 120359953
+      },
+      {
+        "acknowledged": 89999,
+        "common_in_window": 69177,
+        "pending_at_drain": 0,
+        "median_us": 4721978,
+        "p99_us": 90444613
+      },
+      {
+        "acknowledged": 81354,
+        "common_in_window": 55361,
+        "pending_at_drain": 0,
+        "median_us": 4403636,
+        "p99_us": 60817774
+      }
+    ]
+  },
+  "b1": {
+    "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+    "offer_seconds": 120,
+    "drain_seconds": 45,
+    "multiple_payment_blocks": 165,
+    "blocks_in_fixed_order": 0,
+    "blocks_in_parent_order": 0,
+    "certified_payments": 325666,
+    "payment_blocks": 165,
+    "full_blocks": 152,
+    "aggregate_execution_us": {
+      "proposal": 76414047,
+      "candidate_verify": 191262470,
+      "commit": 24288004
+    },
+    "all": {
+      "acknowledged": 351912,
+      "common_in_window": 229410,
+      "pending_at_drain": 26246,
+      "median_us": 32307490,
+      "p99_us": 56077216
+    },
+    "by_first_hash_byte_band": [
+      {
+        "acknowledged": 35590,
+        "common_in_window": 23293,
+        "pending_at_drain": 2608,
+        "median_us": 32247338,
+        "p99_us": 56078083
+      },
+      {
+        "acknowledged": 35569,
+        "common_in_window": 23135,
+        "pending_at_drain": 2698,
+        "median_us": 32305707,
+        "p99_us": 56135171
+      },
+      {
+        "acknowledged": 34386,
+        "common_in_window": 22480,
+        "pending_at_drain": 2572,
+        "median_us": 32199591,
+        "p99_us": 56067257
+      },
+      {
+        "acknowledged": 35721,
+        "common_in_window": 23230,
+        "pending_at_drain": 2660,
+        "median_us": 32343281,
+        "p99_us": 56071490
+      },
+      {
+        "acknowledged": 34305,
+        "common_in_window": 22283,
+        "pending_at_drain": 2592,
+        "median_us": 32313611,
+        "p99_us": 56069919
+      },
+      {
+        "acknowledged": 35979,
+        "common_in_window": 23383,
+        "pending_at_drain": 2737,
+        "median_us": 32286583,
+        "p99_us": 56077719
+      },
+      {
+        "acknowledged": 35673,
+        "common_in_window": 23388,
+        "pending_at_drain": 2592,
+        "median_us": 32309920,
+        "p99_us": 56059538
+      },
+      {
+        "acknowledged": 34455,
+        "common_in_window": 22224,
+        "pending_at_drain": 2625,
+        "median_us": 32812353,
+        "p99_us": 56114365
+      },
+      {
+        "acknowledged": 35882,
+        "common_in_window": 23472,
+        "pending_at_drain": 2663,
+        "median_us": 32287679,
+        "p99_us": 56057543
+      },
+      {
+        "acknowledged": 34352,
+        "common_in_window": 22522,
+        "pending_at_drain": 2499,
+        "median_us": 32275518,
+        "p99_us": 56054394
+      }
+    ],
+    "by_socket_write_quarter": [
+      {
+        "acknowledged": 90000,
+        "common_in_window": 90000,
+        "pending_at_drain": 0,
+        "median_us": 8966829,
+        "p99_us": 20272282
+      },
+      {
+        "acknowledged": 90000,
+        "common_in_window": 90000,
+        "pending_at_drain": 0,
+        "median_us": 26272983,
+        "p99_us": 36580590
+      },
+      {
+        "acknowledged": 89903,
+        "common_in_window": 49410,
+        "pending_at_drain": 0,
+        "median_us": 42496114,
+        "p99_us": 50408543
+      },
+      {
+        "acknowledged": 82009,
+        "common_in_window": 0,
+        "pending_at_drain": 26246,
+        "median_us": 52373321,
+        "p99_us": 56419518
+      }
+    ]
+  },
+  "b2": {
+    "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+    "offer_seconds": 120,
+    "drain_seconds": 45,
+    "multiple_payment_blocks": 163,
+    "blocks_in_fixed_order": 0,
+    "blocks_in_parent_order": 0,
+    "certified_payments": 321982,
+    "payment_blocks": 163,
+    "full_blocks": 150,
+    "aggregate_execution_us": {
+      "proposal": 75229528,
+      "candidate_verify": 190629456,
+      "commit": 23933028
+    },
+    "all": {
+      "acknowledged": 353545,
+      "common_in_window": 231870,
+      "pending_at_drain": 31563,
+      "median_us": 30976098,
+      "p99_us": 57010944
+    },
+    "by_first_hash_byte_band": [
+      {
+        "acknowledged": 35745,
+        "common_in_window": 23509,
+        "pending_at_drain": 3112,
+        "median_us": 30880767,
+        "p99_us": 57085108
+      },
+      {
+        "acknowledged": 35675,
+        "common_in_window": 23382,
+        "pending_at_drain": 3208,
+        "median_us": 30949627,
+        "p99_us": 57019945
+      },
+      {
+        "acknowledged": 34546,
+        "common_in_window": 22725,
+        "pending_at_drain": 3101,
+        "median_us": 30777099,
+        "p99_us": 56940276
+      },
+      {
+        "acknowledged": 35849,
+        "common_in_window": 23482,
+        "pending_at_drain": 3195,
+        "median_us": 31041343,
+        "p99_us": 56954108
+      },
+      {
+        "acknowledged": 34442,
+        "common_in_window": 22539,
+        "pending_at_drain": 3100,
+        "median_us": 30978719,
+        "p99_us": 57053614
+      },
+      {
+        "acknowledged": 36162,
+        "common_in_window": 23613,
+        "pending_at_drain": 3256,
+        "median_us": 30948587,
+        "p99_us": 56945776
+      },
+      {
+        "acknowledged": 35827,
+        "common_in_window": 23653,
+        "pending_at_drain": 3117,
+        "median_us": 30987377,
+        "p99_us": 56950611
+      },
+      {
+        "acknowledged": 34652,
+        "common_in_window": 22463,
+        "pending_at_drain": 3176,
+        "median_us": 31176124,
+        "p99_us": 57030278
+      },
+      {
+        "acknowledged": 36071,
+        "common_in_window": 23735,
+        "pending_at_drain": 3220,
+        "median_us": 30966108,
+        "p99_us": 57098946
+      },
+      {
+        "acknowledged": 34576,
+        "common_in_window": 22769,
+        "pending_at_drain": 3078,
+        "median_us": 30909047,
+        "p99_us": 57033441
+      }
+    ],
+    "by_socket_write_quarter": [
+      {
+        "acknowledged": 89932,
+        "common_in_window": 89932,
+        "pending_at_drain": 0,
+        "median_us": 9235749,
+        "p99_us": 19992258
+      },
+      {
+        "acknowledged": 90068,
+        "common_in_window": 90068,
+        "pending_at_drain": 0,
+        "median_us": 26268073,
+        "p99_us": 36113978
+      },
+      {
+        "acknowledged": 89929,
+        "common_in_window": 51870,
+        "pending_at_drain": 0,
+        "median_us": 41472399,
+        "p99_us": 52505143
+      },
+      {
+        "acknowledged": 83589,
+        "common_in_window": 0,
+        "pending_at_drain": 31536,
+        "median_us": 54570736,
+        "p99_us": 59305535
+      }
+    ]
+  },
+  "a2": {
+    "workload": "df558f6003c4995c221da2fbef3888918ada215c92e0a7bc2d29ab43529356cd",
+    "offer_seconds": 120,
+    "drain_seconds": 45,
+    "multiple_payment_blocks": 175,
+    "blocks_in_fixed_order": 175,
+    "blocks_in_parent_order": 75,
+    "certified_payments": 345516,
+    "payment_blocks": 175,
+    "full_blocks": 161,
+    "aggregate_execution_us": {
+      "proposal": 63779724,
+      "candidate_verify": 198231013,
+      "commit": 23881592
+    },
+    "all": {
+      "acknowledged": 345516,
+      "common_in_window": 261651,
+      "pending_at_drain": 0,
+      "median_us": 4620759,
+      "p99_us": 135796326
+    },
+    "by_first_hash_byte_band": [
+      {
+        "acknowledged": 34947,
+        "common_in_window": 34336,
+        "pending_at_drain": 0,
+        "median_us": 3470787,
+        "p99_us": 6950170
+      },
+      {
+        "acknowledged": 34881,
+        "common_in_window": 34293,
+        "pending_at_drain": 0,
+        "median_us": 3464146,
+        "p99_us": 6915111
+      },
+      {
+        "acknowledged": 33731,
+        "common_in_window": 33166,
+        "pending_at_drain": 0,
+        "median_us": 3466932,
+        "p99_us": 7002986
+      },
+      {
+        "acknowledged": 35110,
+        "common_in_window": 34526,
+        "pending_at_drain": 0,
+        "median_us": 3500812,
+        "p99_us": 7102643
+      },
+      {
+        "acknowledged": 33698,
+        "common_in_window": 33122,
+        "pending_at_drain": 0,
+        "median_us": 3507696,
+        "p99_us": 7211726
+      },
+      {
+        "acknowledged": 35330,
+        "common_in_window": 34694,
+        "pending_at_drain": 0,
+        "median_us": 3545228,
+        "p99_us": 9273968
+      },
+      {
+        "acknowledged": 34996,
+        "common_in_window": 34397,
+        "pending_at_drain": 0,
+        "median_us": 4286474,
+        "p99_us": 33521076
+      },
+      {
+        "acknowledged": 33857,
+        "common_in_window": 19945,
+        "pending_at_drain": 0,
+        "median_us": 33871678,
+        "p99_us": 115860016
+      },
+      {
+        "acknowledged": 35204,
+        "common_in_window": 1728,
+        "pending_at_drain": 0,
+        "median_us": 72828144,
+        "p99_us": 132507602
+      },
+      {
+        "acknowledged": 33762,
+        "common_in_window": 1444,
+        "pending_at_drain": 0,
+        "median_us": 89976654,
+        "p99_us": 149835192
+      }
+    ],
+    "by_socket_write_quarter": [
+      {
+        "acknowledged": 89925,
+        "common_in_window": 72478,
+        "pending_at_drain": 0,
+        "median_us": 4544092,
+        "p99_us": 146172401
+      },
+      {
+        "acknowledged": 90073,
+        "common_in_window": 68275,
+        "pending_at_drain": 0,
+        "median_us": 5033108,
+        "p99_us": 120498589
+      },
+      {
+        "acknowledged": 90002,
+        "common_in_window": 68033,
+        "pending_at_drain": 0,
+        "median_us": 4765492,
+        "p99_us": 90810847
+      },
+      {
+        "acknowledged": 75516,
+        "common_in_window": 52865,
+        "pending_at_drain": 0,
+        "median_us": 3883991,
+        "p99_us": 61611199
+      }
+    ]
+  }
+}
