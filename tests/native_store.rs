@@ -694,3 +694,6 @@ fn vm_crypto_activation_changes_genesis_and_reopen_checks_it() -> Result<()> {
     assert_eq!(open(old_path.path(), &fixture.spec)?.genesis_id(), &old);
     Ok(())
 }
+
+#[path = "../research/delayed-execution/model.rs"]
+mod delayed_execution;

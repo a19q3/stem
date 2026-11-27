@@ -2,7 +2,7 @@
 
 ## 1. 网络定位
 
-Stem 是一条以 CKB 计价、由加权 Jolteon 最终确认的 Cell 网络。Stem 使用唯一的原生 Polytype Cell 模型与交易格式。一个 Cell 可同时绑定多个 Type Scripts，内核按完整 Script 身份派生并执行所有验证组。CKB L1 的真实质押决定验证者权重，独立桥金库负责 CKB 和 xUDT 的兑付。Stem 不发行独立原生代币。可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
+Stem 是由加权 Jolteon 最终确认的原生 Polytype Cell 协议。一个 Cell 可同时绑定多个 Type Scripts，内核按完整 Script 身份派生并执行验证组。已配置的 CKB 网络以 CKB 计价，由其 Stake Registry 提供委员会权重，独立桥金库负责 CKB 和 xUDT 的兑付。这些部署不发行独立原生代币。独立 Stem 网络可以固定初始委员会并直接认证原生执行。CKB 结算适配器消费已经认证的执行 Header。[执行最终性与适配器边界](research/delayed-execution/README.md)可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
 
 [Metatype](METATYPE.md) 在 CKB 上用单一 Type Script 表示一个部署中的多项独立约束。CKB 合约从实际输入输出及 Manifest 推导完整虚拟组，保持 CKB Lock 的消费授权。当前运行路径覆盖 CKB 独立发行、转移及合并结算。定义 Cell 可按 CKB 数据哈希复用完整 Script 集合，状态仍在各自的 Cell 内。两种存储形式共享虚拟组，字节预算按展开后的逻辑视图计算。虚拟组可读取独立消息、证明和 Seal。不可变对象的审批 Seal 承诺实际 CKB 创世、完整部署和原始交易。对象夹具已与四副本原生 Polytype 对照。不可变托管路径可将同一对象及原始约束集合带到 CKB，再销毁映射、取回 Stem 原件。已接入每 Cell 数量上限与资产守恒两项独立约束的同质资产托管。CKB 按认证的增减量发行及销毁，Stem 支持部分和全额赎回并保留完整 Script 集合。可修订对象配置在两侧使用相同的单调版本规则并分别执行独立审批。导出时保留当前状态，返程使用已认证的 CKB 销毁状态，保留原始 Capacity 本金及完整 Type Script 集合。返程可通过普通授权输入补足额外状态抵押，CKB 导入时须先为信箱预留最大返程载荷容量。
 

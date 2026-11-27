@@ -84,7 +84,9 @@
 | 优先级 | 下一项交付 | 建议验收 |
 | --- | --- | --- |
 | P0 | **动态开放验证者准入与 guardian 权限说明。** 当前成员权重与接续委员会已有 CKB 交接证据；Jolteon 从本地排序的静态公钥与地址目录查找网络路由。Stake 快照激活及部分 CKB 观察另有 guardian 授权。 | 在独立运营的节点上让一个创世目录外的新公钥加入、交接并退出；让旧节点重启追赶，独立核对 CKB 检查点及两链最终性证明。列清快照激活、历史输出、锚点存活各用哪组密钥、认证什么、怎样轮换，记录 guardian 不足时受影响的操作。见[权限与停机影响对照](OPERATIONS.md#validator-admission-and-guardian-authority)、[节点目录](src/jolteon.rs)和[协议](STEM-PROTOCOL.md)。 |
-| P0 | **跨区块执行流水线。** 客户端后台入池保留研究开关。Follower 候选准备现有单任务后台原型，返回时核对 epoch、已提交基点、完整父链与交易序列。两组同机对照的控制消息等待下降，窗口共同确认分别增加 241 和 197 TPS。 | 继续核对持续负载、超时与崩溃交错，独立验证 Patricia 子树并行和认证提交重叠。保持完整签名 Header 和投票持久化。[入池研究](research/admission/pipeline/README.md) · [候选准备实验](research/execution-pipeline/README.md) |
+| P0 | **V1 原生流水线。** 保持 Jolteon 投票绑定已执行的 Header 和状态承诺。Follower 候选准备先做长窗口、跨主机与故障注入。 | 核对实际写入、四副本共同确认、控制消息等待、超时、CPU、尾延迟与排空。继续研究 Leader 构块、状态承诺和区块资源上限。[V1 验收顺序](#stem-v1-执行路线) · [候选准备实验](research/execution-pipeline/README.md) |
+| P1 | **后台持久化与联合入池。** 研究认证提交与后继执行重叠，并对照 Admission 与 Candidate Pipeline 的资源争用。 | 核对原子提交、投票日志、崩溃恢复以及单开与双开下的 CPU、排队和确认量。[入池原型](research/admission/pipeline/README.md) |
+| Deferred | **Monad 式延迟执行。** 保留三块延迟模型和实验结果。 | 跨地域验收若显示执行长期限制共识推进，再复议证书、Cell 失败语义和委员会交接。[归档模型及结算适配器](research/delayed-execution/README.md) |
 | P0 | **持续支付吞吐与热点 AMM 分开攻关。** 先定位客户端投递、候选复验、同步落盘各自占用，再逐级挑战 3,000、5,000、10,000 TPS。 | 在独立负载机与多主机副本上固定签名输入、机器规格及测试时长。每档记录实际写入、准入、窗口内全副本可见、排空后确认、丢弃、p99 和积压曲线。热点命令另外核对串行归档重放；存储分别记录 WAL、SST 和设备层写入。[跨主机可持续与过载验收](research/storage/external/qualification.md) · [准入实测](research/admission/README.md) · [存储实测](research/storage/README.md) |
 | P1 | **自适应经济策略。** 定义质押门槛、委托比例上限与动态费率的计量输入、调整边界和生效高度。 | 先用历史负载离线重放，在费率和权重边界核对相同状态输入产生相同结果，覆盖费率振荡、委员会更替和恢复。策略参数由单独协议提案决定。 |
 | P1 | **安全域独立资本与 L1 运营支出闭环。** 从已有 Live Cell 认证服务和检查点矿工费出发，选择一种额外服务和一种可验证支出。 | 走通服务收入、资本占用、支出证明、去重兑付、双端对账与重启；独立验证运营金库和质押本金的账目。 |
@@ -96,6 +98,21 @@
 [14 项独立实验索引](research/README.md)给出了候选实现与原始记录。其中 #5 的独立验证调度、#7 的证书复用适合进入真实区块或异地混合版本对照。#9/#10 的稀疏拓扑应先测独立主机出口、重复字节和补传时间。#11 的局部纠删码与 #13 的同步广播保留各自的研究边界。Strand 和密码学 syscall 的兼容性证据已归入[原始计划验收索引](research/original-21.md)。钱包已实测任意指定的中间 Lock／数据哈希按序出现，完整见证可离线复验；四副本已验证由 CKB 为每次原生对象转移签发凭证，并将返程凭证签发合并到 CKB 入库交易。beta.2 测试网发布的 Spore 和 Lua 程序已完成单 Mutant 资产的双向托管。Stem 首发路径也已实测 CKB 钱包换手、返程、再导出与同步销毁退款。Stem 和 CKB 首发的注册 Spore 均已用真实 CKB 托管换锁交易授权原生钱包直接花费。六组四副本实验覆盖 12 次换手、两个方向的 496 KiB 内容和旧输入凭证后的赎回。496 KiB 成员换手采用 CKB 数据长度和哈希校验后，两种首发方向的整笔 CKB cycles 均下降约 36%。其他 Lua 策略仍待实证。[托管合约成本对照](research/spore-permit/upstream/beta2/cost/README.md)[直接换手与费用](research/spore-permit/upstream/beta2/handoff.md)[双向生命周期和离线复验](research/spore-permit/upstream/beta2/README.md)[通用历史见证](research/type-history/README.md) · [逐笔凭证和实测成本](research/spore-permit/README.md)
 
 第 10 项现已支持在独立压测机上连接预先启动的验证者。单机演练在 180 秒内共同确认 309,720 笔，停机后离线重建了签名交易根和最终性证书。下一次验收需在不同物理主机上使用同一口径。[跨主机压测流程与实测](research/storage/external/README.md)
+
+## Stem V1 执行路线
+
+Stem V1 沿用执行绑定的加权 Jolteon。投票签名继续认证完整执行 Header，CKB 通过结算适配器消费执行最终性。现有 Cell、Keeper、Lineage、提款和检查点证明格式沿用 V1 规则。延迟执行研究原型留在仓库，状态为 Deferred。适配器拆分独立进入 V1 路线。[执行绑定实验](research/execution-pipeline/README.md) · [结算适配器及预研模型](research/delayed-execution/README.md)
+
+| 优先级 | 工作 | 验收 |
+| --- | --- | --- |
+| P0 | Follower Candidate Pipeline | 先跑独立主机的 1,800 TPS 基线和 3,000 TPS 可持续档。用至少 3,300 TPS 的实际写入验证过载，并在同负载加入分支切换、超时、重启及委员会交接。 |
+| P0 | Leader Proposal Pipeline | 将构块移出事件循环。结果提交前复核 epoch、view、父 Header、待投票内容和投票日志。 |
+| P0 | State Commitment Pipeline | 独立对照状态根和收据根的并行计算，保持同一父状态、顺序、收据字节和 Header。 |
+| P0 | 区块资源扩容 | 用相同签名负载交叉比较 40 亿、80 亿和 160 亿 cycles 的独立创世。首轮固定 2,048 笔上限，同时记录真实写入、块满原因、排队和持久化 CPU。若先触及交易数上限，再单独提高交易数上限复测。 |
+| P1 | Commit Pipeline | 核对认证写入与投票日志的持久化边界，测试提交前后进程故障以及后继候选的恢复。 |
+| P1 | Admission 与 Candidate 联合测试 | 在同一核心预算下比较均关闭、单开两种和双开四组，复核资源争用、重验率和四副本共同确认。 |
+
+3,000、5,000 和 10,000 TPS 是决策档位。跨主机可持续结果低于 3,000 TPS 时继续剖析原生流水线。达到 3,000–5,000 TPS 且尾延迟与积压满足验收时保留现有架构。达到 5,000–10,000 TPS 且同样满足验收时，V1 可按当前执行绑定语义发布。跨地域实测若显示执行长期占用共识关键路径，再启动延迟执行协议研究。[可持续与过载各自的验收门槛](research/storage/external/qualification.md)
 
 ## 本轮新增范围
 
