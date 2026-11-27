@@ -725,6 +725,23 @@ deployment and a new approved table. Available live dependencies,
 the Jolteon checkpoint assumptions, and guardian validation of
 canonical CKB anchors remain part of the trust boundary.
 
+## Native late attachment control
+
+The four-replica test issues 100 units under the native UDT with only issuer and series arguments. It finalizes issuance before compiling and deploying an independent obligation Type. The test attaches the new Type to 70 units and spends constrained and unconstrained holdings in one transaction. The original asset Type sees two inputs and three outputs, while the new Type sees one input and two outputs. Both retain their complete Script identities.
+
+The test covers split, merge, release of 25 units and release of the remaining 45 units. The fixture obligation Type requires both the asset owner's input authorization and an input under the named release authority when constrained units decrease. Strip, dust dilution, an output without the required asset identity, and either missing Lock witness are rejected. The final asset has 100 units and its original Type only. Each accepted transition has a matching common Header, signed finality proof, transaction and receipt proof.
+
+The obligation program is a native test example. The cross-layer encoding, independent CKB adapter and redemption resource envelope require their own conformance evidence. Run the fixture and optionally retain its public proof bundle.
+
+```sh
+STEM_TEST_EVIDENCE_ROOT=/tmp/stem-late-type-evidence \
+  cargo test --release --locked --test native_store \
+  polytype_attachment::independent_type_attaches_after_issuance_and_discharges_by_authority \
+  -- --exact --ignored --nocapture
+```
+
+[Native test](tests/native_store/polytype_attachment.rs) · [Example obligation](contracts/examples/polytype-obligation.rs)
+
 ## Threat model
 
 The protected assets are supply, object identity, custody, script

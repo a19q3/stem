@@ -707,6 +707,9 @@ mod lineage_selection;
 #[path = "native_store/storage_load.rs"]
 mod storage_load;
 
+#[path = "native_store/polytype_attachment.rs"]
+mod polytype_attachment;
+
 #[path = "native_store/lineage_batch.rs"]
 mod lineage_batch;
 #[path = "native_store/sponsored_lineage.rs"]

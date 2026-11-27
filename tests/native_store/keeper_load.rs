@@ -646,7 +646,7 @@ pub(super) fn transactions(client: &Client, height: u64) -> Result<Vec<String>> 
     Ok(serde_json::from_slice(&result.value)?)
 }
 
-fn execution(
+pub(super) fn execution(
     client: &Client,
     fixture: &Fixture,
     height: u64,

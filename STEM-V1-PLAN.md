@@ -57,7 +57,7 @@ These experiments have the original evidence and reproduction links in the [rese
 
 | Issue | Evidence or current scope | Next gate |
 | --- | --- | --- |
-| [#15 Late Type attachment](https://github.com/a19q3/stem/issues/15) | Canonical group derivation and predefined compositions have live evidence. | Issue A before B exists. Exercise late attachment, mixed holdings, split and discharge including unauthorised transitions. |
+| [#15 Late Type attachment](https://github.com/a19q3/stem/issues/15) | Four native replicas verified issuance, later deployment, attachment, mixed-group conservation, split, merge and signed discharge. Strip, dust dilution, missing asset identity and missing Lock witnesses were rejected. | Carry the same logical predicates into the cross-runtime and resource gates in #17 and #20. |
 | [#16 Composition](https://github.com/a19q3/stem/issues/16) | Existing rules cover freeze, approval, royalty and append-only state in specific profiles. | Add conflicts, incompatible schemas, split and dust cases with an independent obligation oracle and atomic rollback checks. |
 | [#17 Cross-runtime conformance](https://github.com/a19q3/stem/issues/17) | Mixed native Type Groups compare exact ordered Headers and receipts. Existing portable deployments have paired functional evidence. | Check complete native and CKB group and predicate conformance with supported boundary cases and failures. |
 | [#18 Adapter migration](https://github.com/a19q3/stem/issues/18) | The physical Metatype Type binds an immutable adapter table. | Pin a migration relation and demonstrate authorised conservation or unique transfer with outstanding messages and rollback. |
