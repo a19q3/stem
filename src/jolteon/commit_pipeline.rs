@@ -109,12 +109,9 @@ impl Replica {
         {
             return false;
         }
-        let Ok(peer) = u16::try_from(frame.sender) else {
+        let Some(peer) = self.directory.sender(event) else {
             return false;
         };
-        if usize::from(peer) >= self.directory.keys.len() {
-            return false;
-        }
         let Ok(proposal) = wire::canonical_bytes::<wire::Proposal>(frame.body.clone()) else {
             return false;
         };

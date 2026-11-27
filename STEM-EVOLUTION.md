@@ -83,8 +83,8 @@
 
 | 优先级 | 下一项交付 | 建议验收 |
 | --- | --- | --- |
-| P0 | **动态开放验证者准入与 guardian 权限说明。** 当前成员权重与接续委员会已有 CKB 交接证据；Jolteon 从本地排序的静态公钥与地址目录查找网络路由。Stake 快照激活及部分 CKB 观察另有 guardian 授权。 | 在独立运营的节点上让一个创世目录外的新公钥加入、交接并退出；让旧节点重启追赶，独立核对 CKB 检查点及两链最终性证明。列清快照激活、历史输出、锚点存活各用哪组密钥、认证什么、怎样轮换，记录 guardian 不足时受影响的操作。见[权限与停机影响对照](OPERATIONS.md#validator-admission-and-guardian-authority)、[节点目录](src/jolteon.rs)和[协议](STEM-PROTOCOL.md)。 |
-| P0 | **V1 原生流水线。** 保持 Jolteon 投票绑定已执行的 Header 和状态承诺。Follower 候选准备先做长窗口、跨主机与故障注入。 | 核对实际写入、四副本共同确认、控制消息等待、超时、CPU、尾延迟与排空。继续研究 Leader 构块、状态承诺和区块资源上限。[V1 验收顺序](#stem-v1-执行路线) · [候选准备实验](research/execution-pipeline/README.md) |
+| P0 | **动态开放验证者准入与 guardian 权限说明。** 单机 CKB 开发网发现未预配置的验证者，确认其投票、退役和 400 CKB 赎回。签名端点在可选模式下启用。 | 在负载下复验发现、交接、重启和追赶。已测试两份 guardian 签名不足和补足第三份后的恢复。分别验收跨主机可达性、版本过渡和 quorum 无法恢复的运维边界。[端点发现验收](OPERATIONS.md#discovery-mode) · [权限与停机影响](OPERATIONS.md#validator-admission-and-guardian-authority) |
+| P0 | **V1 原生流水线。** 保持 Jolteon 投票绑定已执行的 Header 和状态承诺。单独启用 Follower 在同机长窗口内减少控制等待，平均共同确认从 2,082 降至 1,911 TPS。 | 核对实际写入、四副本共同确认、控制消息等待、超时、CPU、尾延迟与排空。继续比较各阶段组合。[V1 验收顺序](#stem-v1-执行路线) · [长窗口对照](research/storage/external/README.md#follower-only-sustainable-profile-pair) |
 | P1 | **后台持久化与联合入池。** 研究认证提交与后继执行重叠，并对照 Admission 与 Candidate Pipeline 的资源争用。 | 核对原子提交、投票日志、崩溃恢复以及单开与双开下的 CPU、排队和确认量。[入池原型](research/admission/pipeline/README.md) |
 | P0 | **持续支付吞吐与热点 AMM 分开攻关。** 先定位客户端投递、候选复验、同步落盘各自占用，再逐级挑战 3,000、5,000、10,000 TPS。 | 在独立负载机与多主机副本上固定签名输入、机器规格及测试时长。每档记录实际写入、准入、窗口内全副本可见、排空后确认、丢弃、p99 和积压曲线。热点命令另外核对串行归档重放；存储分别记录 WAL、SST 和设备层写入。[跨主机可持续与过载验收](research/storage/external/qualification.md) · [准入实测](research/admission/README.md) · [存储实测](research/storage/README.md) |
 | P1 | **自适应经济策略。** 定义质押门槛、委托比例上限与动态费率的计量输入、调整边界和生效高度。 | 先用历史负载离线重放，在费率和权重边界核对相同状态输入产生相同结果，覆盖费率振荡、委员会更替和恢复。策略参数由单独协议提案决定。 |
@@ -106,7 +106,7 @@ Stem V1 沿用执行绑定的加权 Jolteon。投票签名继续认证完整执�
 
 | 优先级 | 工作 | 验收 |
 | --- | --- | --- |
-| P0 | Follower Candidate Pipeline | 先跑独立主机的 1,800 TPS 基线和 3,000 TPS 可持续档。用至少 3,300 TPS 的实际写入验证过载，并在同负载加入分支切换、超时、重启及委员会交接。 |
+| P0 | Follower Candidate Pipeline | 同机长窗口对照两轮均未通过持续档。Follower 保留可选。联合对照继续核对事务积压、认证提交和超时。[3,000/s 对照](research/storage/external/README.md#follower-only-sustainable-profile-pair) |
 | P0 | Leader Proposal Pipeline | 可选原型已移出选块和构块。主循环复核 epoch、view、父链和投票日志。混合版本重启、丢弃超时结果和两次 CKB 交接已验证。四轮同机消融未建立后台构块收益，35.5%–36.7% 的选块访问遇到候选父分支已花费输入。继续测量这些访问的耗时和跨主机频率。[Leader 验收](research/execution-pipeline/README.md#leader-proposal-construction) · [Leader 消融](research/execution-pipeline/README.md#leader-only-payment-comparison) |
 | P0 | State Commitment Pipeline | 可选原型已并行计算 Cell、System 和收据承诺。串行对照核对根、收据和有序写入批次。固定其他特性的混合脚本对照中，平均 Follower 准备和控制消息等待均下降，两组窗口吞吐差异均低于 0.4%。继续量化各树耗时与 Patricia 子树成本。[状态承诺验收](research/execution-pipeline/README.md#concurrent-state-commitments) · [状态承诺消融](research/execution-pipeline/README.md#commitment-only-mixed-script-comparison) |
 | P0 | 区块资源扩容 | 普通支付对照了 40 亿、80 亿、160 亿 cycles，以及 2,048 和 4,096 笔上限。混合 Type Group 已用同负载复测三档预算。40 亿一轮积压未排空，反向对照接近投递速率。较大预算全数排空，三个试次触及笔数上限。继续定位提案扫描与超时，再做独立主机对照。[区块资源实测](research/execution-pipeline/README.md#block-resource-limits-under-a-payment-burst) · [混合脚本](research/scheduling/README.md#mixed-type-groups-with-the-native-pipeline) |

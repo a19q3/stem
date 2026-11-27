@@ -37,6 +37,7 @@ ed25519-dalek.workspace = true
 clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
 prost = "0.13"
+rand.workspace = true
 rayon.workspace = true
 reqwest.workspace = true
 serde = { workspace = true, features = ["derive"] }

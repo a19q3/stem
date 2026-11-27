@@ -10,25 +10,36 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use bytes::Buf;
 use prost::Message;
+use stem_stake::Hash32;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{Semaphore, mpsc, oneshot},
+    task::JoinHandle,
     time::timeout,
 };
 
-use super::wire::{self, Frame};
+use super::{
+    peer_discovery::{
+        AUTHENTICATED_PEER, Authentication, CHALLENGE_BYTES, MAX_SIGNED_ENDPOINT_BYTES,
+        SIGNED_CHALLENGE_BYTES,
+    },
+    wire::{self, Frame},
+};
 
 const QUEUE: usize = 8;
 const INBOUND_QUEUE: usize = 128;
 const CONTROL_BURST: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_secs(6);
+const MAX_ENDPOINT_RESPONSE: usize = SIGNED_CHALLENGE_BYTES + 32;
 
 pub struct Incoming {
     pub frame: Frame,
     pub reply: Option<oneshot::Sender<Vec<u8>>>,
     pub submit_received_at: Option<Instant>,
     pub control_received_at: Option<Instant>,
+    pub peer_key: Option<Hash32>,
+    pub signed_endpoint: Option<Arc<Vec<u8>>>,
 }
 
 pub(super) struct Inbox {
@@ -88,6 +99,32 @@ impl Inbox {
 struct PeerQueues {
     control: mpsc::Sender<Arc<Vec<u8>>>,
     relay: mpsc::Sender<Arc<Vec<u8>>>,
+    tasks: [JoinHandle<()>; 2],
+}
+
+impl PeerQueues {
+    fn connect(
+        address: SocketAddr,
+        traffic: &Arc<Traffic>,
+        endpoint_identity: Option<(Hash32, Arc<Authentication>)>,
+    ) -> Self {
+        let (control, control_in) = mpsc::channel(QUEUE);
+        let (relay, relay_in) = mpsc::channel(QUEUE);
+        // Independent streams also keep TCP backpressure off the control path.
+        let tasks = [
+            tokio::spawn(send(address, control_in, traffic.clone(), endpoint_identity.clone())),
+            tokio::spawn(send(address, relay_in, traffic.clone(), endpoint_identity)),
+        ];
+        Self { control, relay, tasks }
+    }
+}
+
+impl Drop for PeerQueues {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -108,6 +145,7 @@ pub struct Network {
     own: u16,
     pub epoch: u64,
     peers: Vec<Option<PeerQueues>>,
+    authentication: Option<Arc<Authentication>>,
 }
 
 impl Network {
@@ -115,6 +153,7 @@ impl Network {
         own: u16,
         addresses: &[SocketAddr],
         epoch: u64,
+        authentication: Option<Authentication>,
     ) -> Result<(Self, Inbox)> {
         let (control_sender, control) = mpsc::channel(INBOUND_QUEUE);
         let (application_sender, application) = mpsc::channel(INBOUND_QUEUE);
@@ -125,7 +164,10 @@ impl Network {
         let listener = TcpListener::bind(addresses[usize::from(own)]).await?;
         let traffic = Arc::new(Traffic::default());
         let counters = traffic.clone();
-        let limit = Arc::new(Semaphore::new(4 * addresses.len() + 64));
+        let authentication = authentication.map(Arc::new);
+        let inbound_authentication = authentication.clone();
+        let additional_peers = authentication.as_ref().map_or(0, |_| 3 * stem_stake::jolteon::MAX_MEMBERS);
+        let limit = Arc::new(Semaphore::new(4 * (addresses.len() + additional_peers) + 64));
         tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let Ok(permit) = limit.clone().try_acquire_owned() else {
@@ -133,26 +175,17 @@ impl Network {
                 };
                 let sender = sender.clone();
                 let counters = counters.clone();
+                let authentication = inbound_authentication.clone();
                 tokio::spawn(async move {
                     let _permit = permit;
-                    let _ = receive(socket, sender, counters).await;
+                    let _ = receive(socket, sender, counters, authentication.as_deref()).await;
                 });
             }
         });
         let peers = addresses
             .iter()
             .enumerate()
-            .map(|(index, &addr)| {
-                if index == usize::from(own) {
-                    return None;
-                }
-                let (control, control_in) = mpsc::channel(QUEUE);
-                let (relay, relay_in) = mpsc::channel(QUEUE);
-                // Independent streams also keep TCP backpressure off the control path.
-                tokio::spawn(send(addr, control_in, traffic.clone()));
-                tokio::spawn(send(addr, relay_in, traffic.clone()));
-                Some(PeerQueues { control, relay })
-            })
+            .map(|(index, &addr)| (index != usize::from(own)).then(|| PeerQueues::connect(addr, &traffic, None)))
             .collect();
         Ok((
             Self {
@@ -160,6 +193,7 @@ impl Network {
                 own,
                 epoch,
                 peers,
+                authentication,
             },
             Inbox {
                 control,
@@ -173,17 +207,38 @@ impl Network {
         ))
     }
 
+    pub(super) fn update_endpoint(&mut self, peer: u16, endpoint: Option<(SocketAddr, Hash32)>) {
+        debug_assert_ne!(peer, self.own);
+        let index = usize::from(peer);
+        if self.peers.len() <= index {
+            self.peers.resize_with(index + 1, || None);
+        }
+        self.peers[index] = endpoint.map(|(address, key)| {
+            let identity = self.authentication.as_ref().map(|auth| (key, auth.clone()));
+            PeerQueues::connect(address, &self.traffic, identity)
+        });
+    }
+
+    pub(super) fn has_route(&self, peer: u16) -> bool {
+        self.peers.get(usize::from(peer)).is_some_and(Option::is_some)
+    }
+
     pub(super) fn frame(
         &self,
         epoch: u64,
         kind: u32,
         body: impl Into<bytes::Bytes>,
     ) -> Arc<Vec<u8>> {
+        let body = body.into();
+        let (sender, body) = match &self.authentication {
+            Some(auth) => (AUTHENTICATED_PEER, auth.sign(epoch, kind, body)),
+            None => (u32::from(self.own), body),
+        };
         Arc::new(
             Frame {
-                sender: u32::from(self.own),
+                sender,
                 kind,
-                body: body.into(),
+                body,
                 epoch,
             }
             .encode_to_vec(),
@@ -219,7 +274,7 @@ impl Network {
         for (index, route) in routes.iter().enumerate() {
             if let Some(id) = route
                 && !routes[..index].contains(route)
-                && let Some(peer) = &self.peers[usize::from(*id)]
+                && let Some(Some(peer)) = self.peers.get(usize::from(*id))
             {
                 let message = frame
                     .get_or_insert_with(|| self.frame(self.epoch, wire::RELAY_TX, body.clone()));
@@ -244,8 +299,10 @@ async fn receive(
     mut stream: TcpStream,
     incoming: IncomingQueues,
     traffic: Arc<Traffic>,
+    auth: Option<&Authentication>,
 ) -> Result<()> {
     let mut submissions = 0;
+    let mut first = true;
     loop {
         let frame_timeout = if submissions == 0 {
             IO_TIMEOUT
@@ -256,7 +313,8 @@ async fn receive(
         traffic
             .received
             .fetch_add(4 + raw.len() as u64, Ordering::Relaxed);
-        let frame: Frame = wire::canonical_bytes(raw.into())?;
+        let mut frame: Frame = wire::canonical_bytes(raw.into())?;
+        let first_frame = std::mem::replace(&mut first, false);
         if submissions != 0 {
             ensure!(
                 frame.sender == wire::CLIENT && frame.kind == wire::SUBMIT,
@@ -291,6 +349,8 @@ async fn receive(
                     reply: Some(sender),
                     submit_received_at,
                     control_received_at: None,
+                    peer_key: None,
+                    signed_endpoint: None,
                 })
                 .await?;
             let response = timeout(IO_TIMEOUT, receiver).await??;
@@ -300,10 +360,34 @@ async fn receive(
             }
             continue;
         }
+        if frame.kind == wire::ENDPOINT_CHALLENGE {
+            let auth = auth.context("endpoint authentication is disabled")?;
+            ensure!(first_frame && frame.epoch == 0 && frame.body.len() == SIGNED_CHALLENGE_BYTES,
+                "invalid endpoint challenge");
+            let (_, challenge) = auth.verify(&frame)?;
+            let response = Frame {
+                sender: AUTHENTICATED_PEER,
+                kind: wire::ENDPOINT_RESPONSE,
+                epoch: 0,
+                body: auth.sign(0, wire::ENDPOINT_RESPONSE, challenge),
+            };
+            timeout(IO_TIMEOUT, write(&mut stream, &response.encode_to_vec())).await??;
+            continue;
+        }
         ensure!(
-            matches!(frame.kind, wire::PROPOSAL..=wire::REPLAY),
+            matches!(frame.kind, wire::PROPOSAL..=wire::PEER_ENDPOINT),
             "unsupported peer frame"
         );
+        let endpoint = frame.kind == wire::PEER_ENDPOINT;
+        ensure!(!endpoint || (auth.is_some() && frame.body.len() <= MAX_SIGNED_ENDPOINT_BYTES), "invalid endpoint envelope");
+        let (peer_key, signed_endpoint) = if let Some(auth) = auth {
+            let (author, body) = auth.verify(&frame)?;
+            let signed_endpoint = endpoint.then(|| Arc::new(frame.encode_to_vec()));
+            frame.body = body;
+            (Some(author), signed_endpoint)
+        } else {
+            (None, None)
+        };
         let queue = if frame.kind == wire::RELAY_TX {
             &incoming.application
         } else {
@@ -316,6 +400,8 @@ async fn receive(
                 reply: None,
                 submit_received_at: None,
                 control_received_at,
+                peer_key,
+                signed_endpoint,
             })
             .await?;
     }
@@ -325,6 +411,7 @@ async fn send(
     address: SocketAddr,
     mut frames: mpsc::Receiver<Arc<Vec<u8>>>,
     traffic: Arc<Traffic>,
+    endpoint_identity: Option<(Hash32, Arc<Authentication>)>,
 ) {
     let mut socket = None;
     while let Some(frame) = frames.recv().await {
@@ -333,8 +420,13 @@ async fn send(
                 .await
                 .ok()
                 .and_then(Result::ok);
-            if let Some(stream) = &socket {
+            if let Some(stream) = &mut socket {
                 let _ = stream.set_nodelay(true);
+                if let Some((expected, auth)) = &endpoint_identity
+                    && !matches!(timeout(IO_TIMEOUT, check_endpoint(stream, expected, auth)).await, Ok(Ok(())))
+                {
+                    socket = None;
+                }
             }
         }
         if let Some(stream) = &mut socket
@@ -350,10 +442,31 @@ async fn send(
     }
 }
 
+async fn check_endpoint(stream: &mut TcpStream, expected: &Hash32, auth: &Authentication) -> Result<()> {
+    let challenge = rand::random::<[u8; CHALLENGE_BYTES]>();
+    let request = Frame {
+        sender: AUTHENTICATED_PEER,
+        kind: wire::ENDPOINT_CHALLENGE,
+        epoch: 0,
+        body: auth.sign(0, wire::ENDPOINT_CHALLENGE, bytes::Bytes::copy_from_slice(&challenge)),
+    };
+    write(stream, &request.encode_to_vec()).await?;
+    let frame: Frame = wire::canonical_bytes(read_limited(stream, MAX_ENDPOINT_RESPONSE).await?.into())?;
+    ensure!(frame.kind == wire::ENDPOINT_RESPONSE && frame.epoch == 0
+        && frame.body.len() == SIGNED_CHALLENGE_BYTES, "invalid endpoint challenge response");
+    let (author, reply) = auth.verify(&frame)?;
+    ensure!(&author == expected && reply.as_ref() == challenge, "endpoint identity mismatch");
+    Ok(())
+}
+
 async fn read(stream: &mut TcpStream) -> Result<Vec<u8>> {
+    read_limited(stream, wire::MAX_FRAME).await
+}
+
+async fn read_limited(stream: &mut TcpStream, limit: usize) -> Result<Vec<u8>> {
     let length = stream.read_u32().await? as usize;
     ensure!(
-        (1..=wire::MAX_FRAME).contains(&length),
+        (1..=limit).contains(&length),
         "invalid consensus frame length"
     );
     let mut bytes = vec![0; length];
@@ -373,6 +486,45 @@ async fn write(stream: &mut TcpStream, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_learned_endpoint_must_prove_the_announcing_key() -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let authentication = |seed| Authentication {
+            network: [1; 32],
+            genesis: [2; 32],
+            key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32]),
+        };
+        let server = authentication(3);
+        let expected = server.key.verifying_key().to_bytes();
+        let requests = async {
+            let (mut oversized, _) = listener.accept().await?;
+            let _ = read(&mut oversized).await?;
+            oversized.write_u32((MAX_ENDPOINT_RESPONSE + 1) as u32).await?;
+            let (control, _control_rx) = mpsc::channel(1);
+            let (application, _app_rx) = mpsc::channel(1);
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await?;
+                let queues = IncomingQueues { control: control.clone(), application: application.clone() };
+                let _ = receive(stream, queues, Arc::new(Traffic::default()), Some(&server)).await;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        let client = async {
+            let client = authentication(4);
+            let mut oversized = TcpStream::connect(address).await?;
+            let failure = check_endpoint(&mut oversized, &expected, &client).await.unwrap_err();
+            assert!(failure.to_string().contains("invalid consensus frame length"));
+            let mut wrong = TcpStream::connect(address).await?;
+            assert!(check_endpoint(&mut wrong, &[5; 32], &client).await.is_err());
+            drop(wrong);
+            let mut right = TcpStream::connect(address).await?;
+            check_endpoint(&mut right, &expected, &client).await
+        };
+        timeout(IO_TIMEOUT, async { tokio::try_join!(requests, client) }).await??;
+        Ok(())
+    }
 
     #[tokio::test]
     async fn control_overtakes_application_with_a_bounded_burst() -> Result<()> {
@@ -395,6 +547,8 @@ mod tests {
             reply: None,
             submit_received_at: None,
             control_received_at: None,
+            peer_key: None,
+            signed_endpoint: None,
         };
         app_tx.try_send(event(wire::RELAY_TX))?;
         for _ in 0..=CONTROL_BURST {
@@ -435,6 +589,7 @@ mod tests {
                 application,
             },
             Arc::new(Traffic::default()),
+            None,
         ));
         let replies = tokio::spawn(async move {
             for index in 0..wire::SUBMIT_SESSION_REQUESTS {
@@ -472,7 +627,7 @@ mod tests {
     async fn relay_backpressure_leaves_a_separate_control_socket() -> Result<()> {
         let peer = TcpListener::bind("127.0.0.1:0").await?;
         let local = "127.0.0.1:0".parse()?;
-        let (network, _inbox) = Network::listen(0, &[local, peer.local_addr()?], 3).await?;
+        let (network, _inbox) = Network::listen(0, &[local, peer.local_addr()?], 3, None).await?;
         let payload = vec![1; stem_ledger::MAX_TRANSACTION_BYTES];
         network.send(1, wire::RELAY_TX, payload.clone());
         let (_unread_relay, _) = timeout(Duration::from_secs(2), peer.accept()).await??;

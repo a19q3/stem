@@ -100,18 +100,20 @@ impl Replica {
         {
             return;
         }
-        let count = self.directory.keys.len();
+        let count = self.directory.slots();
         if count < 2 {
             return;
         }
-        let mut peer = self.recovery.next_peer;
-        if peer == usize::from(self.directory.own) {
-            peer = (peer + 1) % count;
-        }
-        self.recovery.next_peer = (peer + 1) % count;
+        let Some(peer) = (0..count)
+            .map(|offset| ((self.recovery.next_peer + offset) % count) as u16)
+            .find(|&peer| self.net.has_route(peer))
+        else {
+            return;
+        };
+        self.recovery.next_peer = (usize::from(peer) + 1) % count;
         self.recovery.request_at = Some(Instant::now());
         self.net
-            .send(peer as u16, wire::GET_REPLAY, height.to_le_bytes().to_vec());
+            .send(peer, wire::GET_REPLAY, height.to_le_bytes().to_vec());
     }
 
     pub(super) fn serve_replay(&self, epoch: u64, peer: u16, raw: &[u8]) -> Result<()> {

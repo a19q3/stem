@@ -414,15 +414,15 @@ def publish_checkpoints(args, l1, scenario, relay, spec, client, target_height, 
     failures = {}
     since = (1 << 63) | DELAY
     if exit_case:
-        signer, old_meta, low, effective, early_marker = exit_case
+        signer, old_meta, low, activation, effective, early_marker = exit_case
         validator = public(signer)
         epoch = None if active_freeze else (effective - 1) // 10
         if active_freeze:
             frozen, old_meta, failures = active_freeze
-        old_record = mk_record(validator, 0, 0, epoch, old_meta, True, bool(frozen))
+        old_record = mk_record(validator, 0, activation, epoch, old_meta, True, bool(frozen))
         retired_meta = old_meta[:40] + le(effective, 8) + old_meta[48:]
-        retired_record = mk_record(validator, low, 0, epoch, retired_meta, frozen=bool(frozen))
-        final_record = mk_record(validator, 0, 0, epoch, retired_meta, True, bool(frozen))
+        retired_record = mk_record(validator, low, activation, epoch, retired_meta, frozen=bool(frozen))
+        final_record = mk_record(validator, 0, activation, epoch, retired_meta, True, bool(frozen))
 
     for height, label in ((10, "handoff-0"), (20, "handoff-1"), (target_height, "post-handoff")):
         if relay.publications and height <= relay.publications[-1]["height"]:
@@ -442,8 +442,8 @@ def publish_checkpoints(args, l1, scenario, relay, spec, client, target_height, 
                 3 if args.replace else 12, target_height, old_meta, low, epoch, dependency)
             failures.update(rejected)
             retired_meta = retired_meta[:48] + frozen_meta[48:]
-            retired_record = mk_record(validator, low, 0, epoch, retired_meta, frozen=True)
-            final_record = mk_record(validator, 0, 0, epoch, retired_meta, True, True)
+            retired_record = mk_record(validator, low, activation, epoch, retired_meta, frozen=True)
+            final_record = mk_record(validator, 0, activation, epoch, retired_meta, True, True)
         marker, captured = retirement_marker(client, validator, effective)
         # Empty execution after the last announcement preserves the SystemRoot.
         assert relay.header(captured)[112:144] == relay.header(target_height)[112:144]
@@ -465,7 +465,7 @@ def publish_checkpoints(args, l1, scenario, relay, spec, client, target_height, 
             l1.mine(DELAY)
             failures["withdraw_before_slash"] = scenario.change("unbond-before-slash", 5, validator, final_record,
                 since=since, expected="error code 23")
-            slash_record = mk_record(validator, 0, 0, epoch, retired_meta, frozen=True)
+            slash_record = mk_record(validator, 0, activation, epoch, retired_meta, frozen=True)
             failures["unfunded_slash"] = scenario.change("slash-unfunded", 8, validator, slash_record,
                 expected="error code 23")
             slashed = scenario.change("finalize-slash", 8, validator, slash_record, fee=low + FEE, measure=True)
@@ -577,8 +577,16 @@ def run_epochs(args, l1, scenario, fixture):
                json.loads(run(args.binary, "genesis-hash", "--genesis", spec, "--header")))
     keys = sorted([old, incoming, observer], key=public)
     ports = {public(key): args.port + i for i, key in enumerate(keys)}
-    cadence, timeout = (2400, 5200) if args.reward_accounting else (1700, 4000) if args.delegation else (1400, 3600) if args.active_slash else (750, 2800)
-    configuration = write_configuration(args.output, [public(key) for key in keys], ports.values(), cadence, timeout)
+    cadence, timeout = (2400, 5200) if args.reward_accounting else (1700, 4000) if args.delegation or args.open_admission else (1400, 3600) if args.active_slash else (750, 2800)
+    seed_keys = [public(key) for key in keys if not args.open_admission or key != incoming]
+    configuration = write_configuration(args.output, seed_keys, [ports[key] for key in seed_keys], cadence, timeout)
+    configurations = {public(key): configuration for key in keys}
+    if args.open_admission:
+        seed_config = json.loads(configuration.read_text())
+        assert public(incoming).hex() not in {peer["key"] for peer in seed_config["peers"]}
+        for pub, port in ports.items():
+            configurations[pub] = args.output / f"replicas-{port}.json"
+            write_json(configurations[pub], dict(seed_config, discovery_address=f"127.0.0.1:{port}"))
     key_files = {public(key): write_key(args.output, f"jolteon-{i}", key.private_bytes_raw())
                  for i, key in enumerate(keys)}
     processes = {}
@@ -587,7 +595,7 @@ def run_epochs(args, l1, scenario, fixture):
         pub = public(key)
         data_dir = home or args.output / f"node-{ports[pub]}"
         command = [args.binary, "run", "--home", data_dir, "--genesis", spec,
-                   "--configuration", configuration, "--key-file", key_files[pub]]
+                   "--configuration", configurations[pub], "--key-file", key_files[pub]]
         if pub == public(incoming):
             command.append("--archive")
         else:
@@ -614,13 +622,22 @@ def run_epochs(args, l1, scenario, fixture):
     def header(key, height):
         return request(key, HEADER, struct.pack("<Q", height))
 
+    insufficient_guardians = None
+
     def snapshot(epoch, submitter, parent):
+        nonlocal insufficient_guardians
         signing_height = 10 * epoch - 5
         progress(submitter, signing_height, epoch - 1)
         anchor = hex_bytes(ckb_hash(b"Stem Header\0" + scenario.network + bytes.fromhex(header(submitter, signing_height)["header"])))
         votes = scenario.observe(f"epoch-{epoch}", epoch, parent, count=3, signing_anchor=anchor)
         attestations = args.output / f"epoch-{epoch}-votes.json"
         write_json(attestations, votes)
+        if args.open_admission and epoch == 2:
+            reduced = args.output / "insufficient-epoch-2-votes.json"
+            write_json(reduced, votes[:2])
+            insufficient = binary(json.loads(run(args.binary, "stake", "snapshot", "--observations", reduced)))
+            insufficient_guardians = request(submitter, SUBMIT, insufficient)
+            assert insufficient_guardians.get("error") == "Quorum", insufficient_guardians
         tx = binary(json.loads(run(args.binary, "stake", "snapshot", "--observations", attestations)))
         reply = request(submitter, SUBMIT, tx)
         assert "admitted" in reply, reply
@@ -641,9 +658,13 @@ def run_epochs(args, l1, scenario, fixture):
     try:
         for key in keys:
             launch(key, True)
-        initial = [progress(key, 3, 0) for key in (old, incoming, observer)]
+        initial_old = progress(old, 3, 0)
+        initial_incoming = request(incoming, STATUS) if args.open_admission else progress(incoming, 3, 0)
+        initial = [initial_old, initial_incoming, progress(observer, 3, 0)]
         assert initial[0]["member"] == 0 and all(status["member"] is None for status in initial[1:])
         assert [status["voting_power"] for status in initial] == [350 if delegation else 250, None, None]
+        if args.open_admission:
+            assert initial_incoming["epoch"] == 0 and initial_incoming["height"] == 0
         rewards = None
         if vault:
             client = Client(args, ports[public(old)], hex_bytes(scenario.network))
@@ -663,6 +684,38 @@ def run_epochs(args, l1, scenario, fixture):
         stake_client = Client(args, ports[public(incoming)], hex_bytes(scenario.network))
         archive = args.output / f"node-{ports[public(incoming)]}" / "db"
         relay = Relay(args, l1, fixture, scenario.checkpoint, archive, spec, genesis_committee, stake_client) if args.publish_checkpoint or args.exercise_publisher or args.exercise_publisher_handoff or args.checkpoint_fee_fund else None
+        if args.open_admission:
+            assert [member["voting_power"] for member in joined] == [250, 400]
+            first_handoff = request(old, HANDOFF, le(0, 8))["proof"]
+            assert verify(first_handoff, "handoff-0", terminal=True) == header(incoming, 10)
+            active = request(old, FINALITY, le(11, 8))
+            assert active["epoch"] == 1 and not active["handoff"]
+            active_header = verify(active["proof"], "unconfigured-member-vote", (0,))
+            progress(incoming, active_header["height"], 1)
+            assert active_header["height"] >= 11 and header(incoming, active_header["height"]) == active_header
+            retired = scenario.change("request-discovered-validator-exit", 2, public(incoming),
+                                      mk_record(public(incoming), high, 1, 2, new_meta))
+            snapshot(2, old, original)
+            current = [progress(key, 21, 2) for key in (old, incoming)]
+            assert [member["voting_power"] for member in current] == [250, None]
+            launch(observer, False)
+            caught_up = [progress(key, 24, 2) for key in (old, incoming, observer)]
+            common_height = min(status["height"] for status in caught_up)
+            agreed = header(old, common_height)
+            assert all(header(key, common_height) == agreed for key in keys)
+            second_handoff = request(observer, HANDOFF, le(1, 8))["proof"]
+            assert verify(second_handoff, "handoff-1", (0,), terminal=True) == header(incoming, 20)
+            ordinary = request(observer, FINALITY, le(common_height, 8))
+            checked = verify(ordinary["proof"], "post-handoff", (0, 1))
+            assert checked == header(incoming, checked["height"])
+            early, _ = retirement_marker(stake_client, public(incoming), 21)
+            checkpoints, exit_report = publish_checkpoints(args, l1, scenario, relay, spec,
+                stake_client, checked["height"], (incoming, new_meta, high, 1, 21, early), None)
+            return {"unconfigured_key": hex_bytes(public(incoming)), "initial_seed_peers": seed_config["peers"],
+                "initial": initial, "joined": joined, "active_vote_header": active_header,
+                "insufficient_guardians": insufficient_guardians, "exit_requested": retired,
+                "after_exit": current, "caught_up": caught_up, "agreed": agreed,
+                "ckb_checkpoints": checkpoints, "ckb_retirement": exit_report}
         if delegation:
             delegation["activation"] = confirm_positions(args, scenario, relay, public(old), genesis[0]["registry"], original)
         if rewards:
@@ -782,7 +835,7 @@ def run_epochs(args, l1, scenario, fixture):
         assert bad_handoff.returncode != 0
         checkpoints = exit_report = None
         if args.publish_checkpoint:
-            exit_case = (old, old_meta, low, 11 if args.replace else 21, early) if args.retire else None
+            exit_case = (old, old_meta, low, 0, 11 if args.replace else 21, early) if args.retire else None
             checkpoints, exit_report = publish_checkpoints(args, l1, scenario, relay, spec,
                 stake_client, verified["height"], exit_case, active_freeze)
         if args.exercise_publisher:
@@ -886,6 +939,7 @@ def main():
     parser.add_argument("--observer-extra-lag", type=int, default=0, help="additional blocks before restarting both offline replicas")
     parser.add_argument("--snapshot-restore", action="store_true", help="rebuild a fresh observer from a confirmed CKB checkpoint")
     parser.add_argument("--replace", action="store_true", help="replace the entire first committee, then increase power")
+    parser.add_argument("--open-admission", action="store_true", help="discover a key absent from all seed directories, then verify its vote and retirement on CKB")
     parser.add_argument("--publish-checkpoint", action="store_true", help="publish native Jolteon checkpoints on the CKB devnet")
     parser.add_argument("--exercise-publisher", action="store_true", help="exercise durable sparse publication on a disposable CKB devnet")
     parser.add_argument("--exercise-publisher-handoff", action="store_true", help="switch independent checkpoint publishers on CKB")
@@ -905,6 +959,11 @@ def main():
     for optional in ("vault", "deposit-lock", "native-lock", "wrapped"):
         parser.add_argument(f"--{optional}", type=lambda path: Path(path).resolve())
     args = parser.parse_args()
+    if args.open_admission:
+        if any((args.replace, args.exercise_publisher, args.exercise_publisher_handoff, args.checkpoint_fee_fund,
+                args.delegation, args.slash, args.snapshot_restore, args.observer_extra_lag)):
+            parser.error("--open-admission uses its own join, guardian and retirement scenario")
+        args.publish_checkpoint = True
     if args.checkpoint_fee_fund and (args.exercise_publisher or args.exercise_publisher_handoff or args.publish_checkpoint or args.delegation or args.slash):
         parser.error("--checkpoint-fee-fund uses an isolated committee handoff fixture")
     if args.exercise_publisher and (args.publish_checkpoint or args.delegation or args.slash):

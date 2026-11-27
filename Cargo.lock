@@ -3661,6 +3661,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "prost",
+ "rand 0.8.6",
  "rayon",
  "reqwest",
  "serde",

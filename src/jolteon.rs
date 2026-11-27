@@ -36,6 +36,7 @@ mod client;
 #[cfg(feature = "jolteon-commit-pipeline")]
 mod commit_pipeline;
 mod mempool;
+mod peer_discovery;
 #[cfg(feature = "jolteon-proposal-pipeline")]
 mod proposal_pipeline;
 mod recovery;
@@ -66,6 +67,9 @@ const RELAY_RETRIES_PER_TICK: usize = 8;
 pub struct Config {
     /// Static peer directory in ascending Ed25519 public-key order.
     pub peers: Vec<Peer>,
+    /// Enable signed peer transport and announce this node's listening endpoint.
+    #[serde(default)]
+    pub discovery_address: Option<SocketAddr>,
     pub view_timeout_ms: u64,
     pub proposal_interval_ms: u64,
     #[serde(default = "worker_count")]
@@ -82,11 +86,20 @@ pub struct Peer {
 struct Directory {
     keys: Vec<Hash32>,
     own: u16,
+    local_key: Hash32,
+    discovery: Option<peer_discovery::Discovery>,
 }
 
 impl Directory {
     fn id(&self, key: &Hash32) -> Option<u16> {
-        self.keys.binary_search(key).ok().map(|index| index as u16)
+        if key == &self.local_key {
+            return Some(self.own);
+        }
+        self.keys
+            .binary_search(key)
+            .ok()
+            .map(|index| index as u16)
+            .or_else(|| self.discovery.as_ref()?.id(key))
     }
 
     fn routes(&self, members: &[Member]) -> Vec<Option<u16>> {
@@ -95,9 +108,23 @@ impl Directory {
 
     fn member(&self, members: &[Member]) -> Option<u16> {
         members
-            .binary_search_by_key(&self.keys[usize::from(self.own)], |member| member.key)
+            .binary_search_by_key(&self.local_key, |member| member.key)
             .ok()
             .map(|index| index as u16)
+    }
+
+    fn slots(&self) -> usize {
+        self.discovery
+            .as_ref()
+            .map_or(self.keys.len(), peer_discovery::Discovery::slots)
+    }
+
+    fn sender(&self, event: &Incoming) -> Option<u16> {
+        if let Some(key) = &event.peer_key {
+            return self.id(key).filter(|id| *id != self.own);
+        }
+        let index = u16::try_from(event.frame.sender).ok()?;
+        (usize::from(index) < self.keys.len()).then_some(index)
     }
 }
 
@@ -223,18 +250,35 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 .map_err(|_| anyhow::anyhow!("peer key must be 32 bytes"))
         })
         .collect::<Result<Vec<_>>>()?;
-    let addresses: Vec<_> = config.peers.iter().map(|peer| peer.address).collect();
+    let mut addresses: Vec<_> = config.peers.iter().map(|peer| peer.address).collect();
     ensure!(
         (1..=512).contains(&keys.len())
             && keys.windows(2).all(|pair| pair[0] < pair[1])
             && addresses.iter().collect::<HashSet<_>>().len() == addresses.len(),
         "peer directory must contain distinct keys and addresses in key order"
     );
-    let own = keys
-        .binary_search(&public)
-        .map_err(|_| anyhow::anyhow!("local key is outside the peer directory"))?
-        as u16;
-    let directory = Directory { keys, own };
+    let own = match (keys.binary_search(&public), config.discovery_address) {
+        (Ok(index), discover) => {
+            ensure!(
+                discover.is_none_or(|address| address == addresses[index]),
+                "configured local peer and discovery address differ"
+            );
+            index
+        }
+        (Err(_), Some(address)) => {
+            ensure!(!addresses.contains(&address), "local discovery address duplicates a seed");
+            let index = addresses.len();
+            addresses.push(address);
+            index
+        }
+        (Err(_), None) => anyhow::bail!("local key is outside the peer directory"),
+    } as u16;
+    let mut directory = Directory {
+        keys,
+        own,
+        local_key: public,
+        discovery: None,
+    };
     ensure!(
         genesis_members
             .iter()
@@ -318,6 +362,19 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
     let pending = store
         .announced_committee()?
         .filter(|change| change.epoch > committee.epoch());
+    let auth = if let Some(address) = config.discovery_address {
+        let now = now_ms()?;
+        peer_discovery::Endpoint::decode(&peer_discovery::Endpoint::announce(address, now), now)?;
+        let publish = (usize::from(own) >= directory.keys.len()).then_some(address);
+        directory.discovery = Some(peer_discovery::Discovery::new(publish, addresses.len(), active));
+        Some(peer_discovery::Authentication {
+            network: store.network().unpack(),
+            genesis: store.genesis_id().unpack(),
+            key: key.clone(),
+        })
+    } else {
+        None
+    };
     let high = Quorum::decode(&journal.high, committee.size())?;
     committee.verify_quorum(&high)?;
     let finalized = Point::decode(&journal.finalized)?;
@@ -355,7 +412,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         .build()?
         .block_on(async {
             let (net, mut incoming) =
-                Network::listen(directory.own, &addresses, committee.epoch()).await?;
+                Network::listen(directory.own, &addresses, committee.epoch(), auth).await?;
             #[cfg(feature = "jolteon-admission-pipeline")]
             let (pipeline, mut admission_done) = admission_pipeline::Pipeline::start()?;
             let workers = Arc::new(rayon::ThreadPoolBuilder::new()
@@ -1000,6 +1057,9 @@ impl Replica {
         self.recovery.record_commit(high.point, commit_count);
         if let Some((change, committee)) = successor {
             self.net.broadcast_at(old_epoch, wire::HANDOFF, proof);
+            if let Some(discovery) = &mut self.directory.discovery {
+                discovery.handoff(&change.members, &mut self.net);
+            }
             self.routes = self.directory.routes(&change.members);
             self.member = (!self.journal.observer_only)
                 .then(|| self.directory.member(&change.members))
@@ -1489,6 +1549,11 @@ impl Replica {
                 }
             }
         }
+        if let Some(discovery) = &mut self.directory.discovery
+            && let Ok(now) = now_ms()
+        {
+            discovery.tick(now, &mut self.net);
+        }
         self.retry_relays();
         Ok(())
     }
@@ -1522,12 +1587,39 @@ impl Replica {
         }
     }
 
+    fn learn_endpoint(&mut self, event: Incoming) -> Result<()> {
+        let key = event.peer_key.context("missing endpoint signer")?;
+        if self.directory.keys.binary_search(&key).is_ok() || key == self.directory.local_key {
+            return Ok(());
+        }
+        let discovery = self
+            .directory
+            .discovery
+            .as_mut()
+            .context("peer discovery is disabled")?;
+        let pending = self
+            .pending
+            .as_ref()
+            .map_or(&[][..], |change| change.members.as_slice());
+        if !discovery.eligible(&key, pending) {
+            return Ok(());
+        }
+        let endpoint = peer_discovery::Endpoint::decode(&event.frame.body, now_ms()?)?;
+        if discovery.learn(key, endpoint, &mut self.net)? {
+            let active = &self.directory.discovery.as_ref().expect("peer discovery").active;
+            self.routes = self.directory.routes(active);
+            let signed = event.signed_endpoint.context("missing signed endpoint frame")?;
+            self.net.broadcast_frame(wire::PEER_ENDPOINT, signed);
+        }
+        Ok(())
+    }
+
     fn handle(&mut self, event: Incoming) -> Result<()> {
         if let Some(received) = event.control_received_at {
             self.execution.control_queue.observe(received.elapsed());
         }
-        let frame = event.frame;
         if let Some(reply) = event.reply {
+            let frame = event.frame;
             #[cfg(feature = "jolteon-admission-pipeline")]
             if frame.kind == wire::SUBMIT {
                 return self.queue_client_admission(
@@ -1553,11 +1645,11 @@ impl Replica {
             let _ = reply.send(bytes);
             return Ok(());
         }
-        let peer = u16::try_from(frame.sender)?;
-        ensure!(
-            usize::from(peer) < self.directory.keys.len(),
-            "unknown peer route"
-        );
+        if event.frame.kind == wire::PEER_ENDPOINT {
+            return self.learn_endpoint(event);
+        }
+        let peer = self.directory.sender(&event).context("unknown peer route")?;
+        let frame = event.frame;
         let epoch = self.committee.epoch();
         if frame.kind == wire::GET {
             let point = Point::decode(&frame.body)?;

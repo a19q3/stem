@@ -45,13 +45,32 @@ build whose database predates ordered pruning.
 
 | Decision | Who authorizes it | What operators can verify |
 | --- | --- | --- |
-| Route a message to a peer | Each node loads an ordered Ed25519 public-key and address directory at startup. The local signing key and genesis voters must be present. | A newly elected key can lack a route. The committee handoff rebuilds routing from the existing directory. Directory membership alone grants zero voting weight. [Peer configuration and handoff](src/jolteon.rs) |
+| Route a message to a peer | Each node loads an ordered Ed25519 public-key and address directory at startup. In discovery mode the finalized active and announced committees determine which additional keys may publish endpoints. | A learned endpoint must answer a fresh challenge with its announced key. Voting power is calculated independently from the authenticated committee. [Peer directory](src/jolteon.rs) · [Discovery and leases](src/jolteon/peer_discovery.rs) |
 | Recognize CKB stake and activate a new validator set | Stake guardians certify the registry observation. Stem applies the registry, election and activation rules. Rotation of the stake guardian generation requires the departing and arriving quorums over the same registry transition. | Compare the CKB registry identity, sequence, and snapshot against the pinned network. Without a stake guardian quorum, a fresh snapshot requiring that certificate cannot activate. [Registry rotation](stake/src/l1.rs) · [Snapshot activation](src/native_store/staking.rs) |
 | Finalize a Stem block or verify its direct CKB checkpoint | The active weighted Jolteon committee certifies the chain. The CKB contract verifies the finality evidence and committee handoffs against its pinned checkpoint. | Check the execution Header, committee and two-chain proof. A guardian statement alone cannot finalize a block. [Jolteon verifier](contracts/src/bin/jolteon-checkpoint.rs) |
 | Accept a new CKB anchor or authenticated Cell observation on Stem | The bridge guardian generation is pinned in the bridge genesis. Its certificate requires strictly more than two-thirds of its weight. Historical output and anchored live Cell statements have distinct semantics. | Check the network, header, outpoint, observation kind and anchor against the operation. Losing this quorum prevents fresh certificates for these operations. Stake guardian rotation has a separate domain. [Bridge state](src/native_store/bridge.rs) · [Observation CLI](src/bridge_cli/reference.rs) |
 | Move reserves on CKB | The vault Type Script enforces the applicable transition. The CKB custody multisig authorizes reserve consolidation, reserve movement and vault rotation. | Compare the live vault, its full Type Script and the actual CKB transaction. A certificate accepted by Stem supplies evidence to Stem. Spending the vault uses its CKB rules. [Vault contract](contracts/src/bin/vault-type.rs) |
 
-For an open-admission rehearsal, start with a new operator whose key is absent from the existing nodes' startup directories. Record how the network learns its endpoint, when its on-chain weight takes effect, the first finalized block carrying its vote, and a verified exit and handoff. Restart an older replica and compare its authenticated tip and direct CKB checkpoint with an independent observer. The existing preconfigured handoff experiments exercise the stake and voting path. Dynamic endpoint discovery is still required for this rehearsal.
+### Discovery mode
+
+Add `discovery_address` to each replica configuration on the participating network. Set it to that replica's reachable listening socket. Existing seed entries in `peers` retain their configured addresses and key order. A new operator can use the same seed list with its own `discovery_address` and its own signing key. Keep the genesis keys in the seed list and an archive reachable for replay. The operator needs the same authenticated genesis and a fresh, private node home.
+
+The joining process refreshes a signed 30-second endpoint lease every two seconds. Eligible keys come from the active, finalized pending and previous committees. The previous committee is retained for handoff recovery. The announcement can arrive from a joining process that is still behind the chain. Each learned outbound connection challenges the endpoint for possession of the announced key before sending peer data. Peer messages authenticate the network ID, genesis, author, epoch, kind and payload. Discovery mode uses a mesh of replicas that understand signed peer frames. Ordinary client requests use the same wire format in both modes.
+
+The endpoint lease is transient. A restarted replica learns addresses again from the active mesh. Participation starts after verified history and the certified handoff install the member's stake weight in its local journal. A fully retired key loses that weight independently of any lease still serving handoff recovery. Keep enough history available to bring a fresh signer up from genesis. The current snapshot restore is an observer path.
+
+Use the CKB stake devnet runner to exercise an operator whose key is absent from every startup directory. It checks discovery, a finalized vote, insufficient guardian weight and retry, and the new operator's exit and CKB unbonding. Configure a separate output directory for each run. [Fixture](tools/jolteon_stake_localnet.py)
+
+```sh
+python3 tools/jolteon_stake_localnet.py --binary target/release/stem \
+  --l1 /path/to/ckb --stake-registry "$contracts_dir/stake-registry" \
+  --direct-checkpoint "$contracts_dir/jolteon-checkpoint" \
+  --open-admission --output /tmp/stem-open-admission
+```
+
+In the single-host CKB 0.210.0 rehearsal the new key started at height zero with no voting power. It could not obtain a learned route from the existing replicas until the certified change listed it. The epoch-1 Header at height 11 required both the original 250-weight voter and the newly discovered 400-weight voter. Two of the four stake guardians produced `Quorum` on the next snapshot. Adding the third signature to the same observation restored progress. At height 21 the new key lost its voting power. A restarted observer then matched both other replicas at height 24. CKB accepted checkpoints at heights 10, 20 and 24 and released the new operator's 400 CKB bond after verified retirement and maturity. The fixture rejects early retirement, missing or changed proof, replay and unauthorized or immature unbonding.
+
+The rehearsal used one physical host and the native Stem binary with no experimental Cargo features. Signed-frame cost, routability under load, moving between bootstrap archives and a permanent loss of guardian quorum have separate operational acceptance requirements. Temporary loss of guardian signatures can be retried while the observation is still valid. A quorum that cannot be restored also prevents a guardian rotation requiring its authorization.
 
 ## Operate a replica under systemd
 
@@ -67,8 +86,9 @@ journalctl --user -u "stem@${instance}.service"
 
 Each validator key requires a single signing process. Back up the Stem
 specification, guardian trust, and validator key and journal independently
-of disposable observer snapshots. The peer directory is static and the
-transport is intended for a private network.
+of disposable observer snapshots. The static transport is intended for a
+private network. Use the discovery configuration for the signed-transport
+devnet exercise.
 
 ## Exercise the native Jolteon path
 
