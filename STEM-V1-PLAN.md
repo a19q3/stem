@@ -75,7 +75,7 @@ These experiments have the original evidence and reproduction links in the [rese
 | [#28 Keeper](https://github.com/a19q3/stem/issues/28) | Native agenda bounds, retry semantics and scheduled atomic execution have live evidence. | Define larger admissible index sizes, measure due-work fairness and bound skipped and expired work. |
 | [#29 Intercell](https://github.com/a19q3/stem/issues/29) | Native authenticated CKB/Stem lanes and bounded message payloads have live evidence. | Measure batched proof and relay cost by source, destination and settlement, with exact replay and acknowledgement. |
 | [#30 DEX benchmark](https://github.com/a19q3/stem/issues/30) | Signed native AMM and mixed-script fixtures supply initial baselines. | Pin market and accounting oracles. Measure independent and hot pools, then CLOB operations and fills separately across committee sizes. |
-| [#31 Stem Primary](https://github.com/a19q3/stem/issues/31) | Architecture study for sovereign chains and Primary-secured execution domains. | Publish explicit registration, verifier, availability, halt, recovery and CKB role state machines before a prototype. |
+| [#31 Stem Primary](https://github.com/a19q3/stem/issues/31) | The fixed-route Case A reference checks late execution receipts and cancellation with native Jolteon and Patricia proofs from three separate fixture histories. [Protocol design and reference](research/primary/README.md) | Implement signed registration and authenticated handoff for three live devnets. Exercise stored workflow recovery and the C1/C3 paths separately. |
 
 ## Evidence for each development round
 
