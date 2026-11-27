@@ -1,0 +1,138 @@
+[
+  {
+    "rpc": "https://mainnet.ckb.dev",
+    "tip": {
+      "block_hash": "0xd2306b438653c3634e9a14611b71ba7f7a839fe983a7fb7d3a6d02385e5b80a9",
+      "block_number": "0x14242c0"
+    },
+    "queries": [
+      {
+        "script": {
+          "code_hash": "0x7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075",
+          "hash_type": "data",
+          "args": "0x"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x0",
+            "0x14242c1"
+          ]
+        }
+      },
+      {
+        "script": {
+          "code_hash": "0x7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075",
+          "hash_type": "data2",
+          "args": "0x"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x0",
+            "0x14242c1"
+          ]
+        }
+      }
+    ],
+    "pages": [
+      {
+        "last_cursor": "0x",
+        "objects": []
+      },
+      {
+        "last_cursor": "0x",
+        "objects": []
+      }
+    ]
+  },
+  {
+    "rpc": "https://testnet.ckb.dev",
+    "tip": {
+      "block_hash": "0x9b18da3d187a9598e0c57bd918ccaf07191bd6ad61cbe6ebdd99f06aa04a9fc2",
+      "block_number": "0x161f007"
+    },
+    "queries": [
+      {
+        "script": {
+          "code_hash": "0x7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075",
+          "hash_type": "data",
+          "args": "0x"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x0",
+            "0x161f008"
+          ]
+        }
+      },
+      {
+        "script": {
+          "code_hash": "0x7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075",
+          "hash_type": "data2",
+          "args": "0x"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x0",
+            "0x161f008"
+          ]
+        }
+      },
+      {
+        "script": {
+          "code_hash": "0x0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058",
+          "hash_type": "data",
+          "args": "0x"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x0",
+            "0x161f008"
+          ]
+        }
+      },
+      {
+        "script": {
+          "code_hash": "0x0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058",
+          "hash_type": "data2",
+          "args": "0x"
+        },
+        "script_type": "type",
+        "script_search_mode": "prefix",
+        "filter": {
+          "block_range": [
+            "0x0",
+            "0x161f008"
+          ]
+        }
+      }
+    ],
+    "pages": [
+      {
+        "last_cursor": "0x",
+        "objects": []
+      },
+      {
+        "last_cursor": "0x",
+        "objects": []
+      },
+      {
+        "last_cursor": "0x",
+        "objects": []
+      },
+      {
+        "last_cursor": "0x",
+        "objects": []
+      }
+    ]
+  }
+]

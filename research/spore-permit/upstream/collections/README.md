@@ -14,6 +14,8 @@ The two historical deployments use the same Cluster binary, with data hash `7366
 
 For all three four-field records, the offline wallet verified the creating transaction and its Cluster executable against the archived creation-block header. The fourth field contains a length-prefixed IPFS URI. Two distinct IDs shared the same 124-byte record. The third record was 91 bytes and had a different digest. Its exact bytes served as collection data in three funded devnets. Those runs issued fresh IDs. The public records establish the observed layout and bytes. The separate case of a nonempty collection-level Mutant still needs a successful original-program issuance. [Three public history proofs](four-field-histories.json.xz) · [Upstream Mutant specification](https://github.com/sporeprotocol/spore-contract/blob/9e577ea6b5f2fb9cbf555e9e86effcc037c78039/docs/MUTANT.md) · [Earlier beta.2 deployment scan](../beta2/README.md#cluster-membership-and-collection-level-registration)
 
+The same deployed executable hashes were also queried under Data and Data2 addressing through mainnet height 21,119,680 and testnet height 23,195,655. All six bounded indexer queries returned an empty first page. This covers the two additional addressing modes for the January mainnet and testnet binaries and the March testnet binary. [Query bodies, responses and rechecked anchors](alternate-addresses.json)
+
 ```mermaid
 flowchart LR
     P["Authenticated public collection data"] -->|same bytes, new ID| C["Local CKB collection"]
