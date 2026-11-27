@@ -64,6 +64,7 @@ const HEADER: u8 = b'h';
 const HEADER_ID: u8 = b'i';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
+const MAX_CELL_PROOF_BATCH: usize = 1024;
 #[derive(Debug)]
 pub(crate) struct StateReadFault;
 
@@ -1192,6 +1193,29 @@ impl Store {
             self.node(Namespace::Cells, id)
         });
         let (actual, proof) = tree.prove(&key)?;
+        Ok((self.live_cell_for_proof(point, actual)?, proof))
+    }
+
+    pub fn prove_cells(&self, points: &[OutPoint]) -> Result<Vec<(Option<LiveCell>, Proof)>> {
+        ensure!(
+            points.len() <= MAX_CELL_PROOF_BATCH,
+            "too many Live Cell proofs in one batch"
+        );
+        let keys: Vec<_> = points
+            .iter()
+            .map(|point| record::cell_key(&self.cells, point))
+            .collect();
+        let mut tree = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
+            self.node(Namespace::Cells, id)
+        });
+        points
+            .iter()
+            .zip(tree.prove_many(&keys)?)
+            .map(|(point, (actual, proof))| Ok((self.live_cell_for_proof(point, actual)?, proof)))
+            .collect()
+    }
+
+    fn live_cell_for_proof(&self, point: &OutPoint, actual: Option<Key>) -> Result<Option<LiveCell>> {
         let record = self.live_cell(point)?;
         ensure!(
             actual
@@ -1200,7 +1224,7 @@ impl Store {
                     .map(|record| record::cell_value(&self.cells, point, record)),
             "Live Cell record differs from its authenticated value"
         );
-        Ok((record, proof))
+        Ok(record)
     }
 
     pub fn header(&self, height: u64) -> Result<Option<Header>> {
@@ -2660,6 +2684,83 @@ mod pipeline_store_tests {
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-candidate-pipeline")]
+    #[test]
+    fn shared_prefix_proofs_reduce_rocksdb_snapshot_reads() -> Result<()> {
+        use bytes::Bytes;
+        use ckb_types::packed::Script;
+
+        const CELLS: u32 = 16_384;
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let lock = Script::default();
+        let capacity = Cell::minimum_capacity(&lock, &[], 0)? + 1_000_000_000;
+        let cell = Cell::new(capacity, lock, vec![], Bytes::new())?;
+        let point = |index| OutPoint::new([44; 32].pack(), index);
+        spec.development_cells = (0..CELLS).map(|index| (point(index), cell.clone())).collect();
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        store.db.flush()?;
+        let points: Vec<_> = (0..1024)
+            .rev()
+            .map(|index| {
+                if index % 4 == 0 {
+                    point(CELLS + index)
+                } else {
+                    point((index * 17) % 8192)
+                }
+            })
+            .collect();
+        let pinned = store.pinned_view();
+        let first = points[0].clone();
+        let root = Tree::transactions(store.network().clone(), &[])?.root();
+        let context = HeaderContext::after(store.network(), store.tip(), 1001, root)?;
+        let mut overlay = store.overlay(None);
+        overlay.live.insert(first.clone(), None);
+        let next = store.finish_block(context, overlay, &[], Vec::new(), 0, 0, false)?;
+        pinned.with_snapshot(|view| {
+            let root = as_key(&view.tip.state.cell_root);
+            let keys: Vec<_> = points
+                .iter()
+                .map(|point| record::cell_key(&view.cells, point))
+                .collect();
+            let measure = |batch| -> Result<_> {
+                let mut reads = 0;
+                let mut tree = view.cells.edit(root, |id| {
+                    reads += 1;
+                    view.node(Namespace::Cells, id)
+                });
+                let proofs = if batch {
+                    tree.prove_many(&keys)?
+                } else {
+                    keys.iter()
+                        .map(|key| tree.prove(key))
+                        .collect::<Result<Vec<_>>>()?
+                };
+                Ok((proofs, reads))
+            };
+            let (serial, reads) = measure(false)?;
+            let (shared, batch_reads) = measure(true)?;
+            assert_eq!(serial, shared);
+            assert!(batch_reads < reads);
+            store.commit(next)?;
+            for ((key, (value, expected)), (point, (cell, actual))) in keys.iter()
+                .zip(serial)
+                .zip(points.iter().zip(view.prove_cells(&points)?))
+            {
+                assert_eq!(actual.encode()?, expected.encode()?);
+                assert_eq!(
+                    cell.as_ref().map(|cell| record::cell_value(&view.cells, point, cell)),
+                    value
+                );
+                assert!(view.cells.verify(&root, key, value.as_ref(), &actual));
+            }
+            println!("RocksDB snapshot node reads for 1024 proofs: {reads} single, {batch_reads} batched");
+            Ok(())
+        })?.context("missing Cell proof snapshot")?;
+        assert!(store.prove_cells(&[first])?[0].0.is_none());
         Ok(())
     }
 

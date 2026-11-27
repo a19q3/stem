@@ -10,6 +10,11 @@ use stem_ledger::{lineage::LineageRef, proof::Tree, record};
 
 use crate::native_store::Store;
 
+const MAX_RPC_CELL_PROOFS: usize = 12;
+// Cell and proof bytes are hex encoded in the result and the result is hex
+// encoded again in Jolteon's response envelope.
+const MAX_RPC_CELL_PROOF_BYTES: usize = 4 * 1024 * 1024;
+
 pub(crate) fn query(
     store: &Store,
     path: &str,
@@ -355,6 +360,35 @@ pub(crate) fn query(
                 "proof": format!("0x{}", hex::encode(proof.encode()?)),
             }))?
             .into()
+        }
+        "/stem/cells" if prove => {
+            ensure!(requested == tip, "Live Cell proofs require the current height");
+            ensure!(
+                !data.is_empty()
+                    && data.len().is_multiple_of(OutPoint::TOTAL_SIZE)
+                    && data.len() / OutPoint::TOTAL_SIZE <= MAX_RPC_CELL_PROOFS,
+                "batch requires 1 to {MAX_RPC_CELL_PROOFS} complete OutPoints"
+            );
+            let points = data
+                .chunks_exact(OutPoint::TOTAL_SIZE)
+                .map(OutPoint::from_slice)
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut raw_bytes = 0;
+            let mut entries = Vec::with_capacity(points.len());
+            for (point, (cell, proof)) in points.iter().zip(store.prove_cells(&points)?) {
+                let cell = cell.as_ref().map(|cell| record::encode_cell(point, cell));
+                let proof = proof.encode()?;
+                raw_bytes += cell.as_ref().map_or(0, Vec::len) + proof.len();
+                ensure!(
+                    raw_bytes <= MAX_RPC_CELL_PROOF_BYTES,
+                    "Live Cell proof response exceeds byte limit"
+                );
+                entries.push(serde_json::json!({
+                    "cell": cell.map(hex::encode),
+                    "proof": format!("0x{}", hex::encode(proof)),
+                }));
+            }
+            serde_json::to_vec(&entries)?.into()
         }
         "/stem/cell" => {
             ensure!(

@@ -17,8 +17,9 @@ use stem_ledger::{
     block::{Header, Receipt},
     keeper::{Reservation, Retry, Trigger, decode_agenda, primary_fee},
     lineage::{Head, LineageProof, LineageRef, Outcome},
-    patricia::Proof,
+    patricia::{Namespace, Patricia, Proof},
     proof::InclusionProof,
+    record,
 };
 
 use super::{
@@ -302,7 +303,35 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
         executions.push(json!({"label": label, "height": height, "proof": evidence}));
         Ok(())
     };
-    submit("two Type Scripts", &asset.transfer(&fixture, false)?, None)?;
+    let transfer = asset.transfer(&fixture, false)?;
+    submit("two Type Scripts", &transfer, None)?;
+    let output_point = OutPoint::new(transfer.id(network), 0);
+    let points = [&asset.point, &output_point, &asset.point];
+    let requested = points
+        .iter()
+        .flat_map(|point| point.as_slice().iter().copied())
+        .collect::<Vec<_>>();
+    let batch = clients[0].query("/stem/cells", 0, &requested, true)?;
+    let header = clients[0].header(batch.height)?;
+    let rows: Vec<Value> = serde_json::from_slice(&batch.value)?;
+    assert_eq!(rows.len(), points.len());
+    assert_eq!(rows[0], rows[2]);
+    assert!(rows[0]["cell"].is_null());
+    assert!(!rows[1]["cell"].is_null());
+    let tree = Patricia::new(network.clone(), Namespace::Cells);
+    let root = header.state.cell_root.unpack();
+    for (point, row) in points.into_iter().zip(rows) {
+        let cell = if row["cell"].is_null() {
+            None
+        } else {
+            let (stored, cell) = record::decode_cell(&bytes(&row, "cell")?)?;
+            assert_eq!(&stored, point);
+            Some(cell)
+        };
+        let proof = Proof::decode(&bytes(&row, "proof")?)?;
+        assert!(record::verify_cell(&tree, &root, point, cell.as_ref(), &proof));
+    }
+    assert!(clients[0].query("/stem/cells", 0, &[0], true).is_err());
     submit(
         "independently sponsored OTX swap",
         &swap.sign(&fixture, &spec, 500)?,

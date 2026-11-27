@@ -224,6 +224,16 @@ where
         Ok((value, Proof { nodes }))
     }
 
+    /// Read each shared prefix once and return ordinary proofs in caller order.
+    /// Repeated queries produce repeated proofs against the same root.
+    pub fn prove_many(&mut self, keys: &[Key]) -> Result<Vec<(Option<Key>, Proof)>> {
+        let mut queries: Vec<_> = keys.iter().copied().zip(0..keys.len()).collect();
+        queries.sort_unstable_by_key(|&(key, _)| key);
+        let mut proofs = vec![(None, Proof { nodes: Vec::new() }); keys.len()];
+        self.nodes.prove_sorted(self.root, &queries, 0, &mut proofs)?;
+        Ok(proofs)
+    }
+
     pub fn into_writes(self) -> BTreeMap<Key, Option<Vec<u8>>> {
         self.nodes.writes
     }
@@ -235,6 +245,50 @@ where
     Value: AsRef<[u8]>,
     Writes: NodeWrites,
 {
+    fn prove_sorted(
+        &mut self,
+        id: Key,
+        queries: &[(Key, usize)],
+        depth: usize,
+        proofs: &mut [(Option<Key>, Proof)],
+    ) -> Result<()> {
+        if queries.is_empty() || id == self.tree.empty_root() {
+            return Ok(());
+        }
+        let node = self.load(&id, |node, bytes| {
+            for &(_, index) in queries {
+                proofs[index].1.nodes.push(bytes.to_vec());
+            }
+            node
+        })?;
+        match node {
+            Node::Leaf { key, value } => {
+                for &(candidate, index) in queries {
+                    if candidate == key {
+                        proofs[index].0 = Some(value);
+                    }
+                }
+            }
+            Node::Branch {
+                prefix,
+                bits,
+                children,
+            } => {
+                ensure!(usize::from(bits) >= depth, "invalid Patricia path depth");
+                let prefix_for = |&(key, _): &(Key, usize)| canonical_prefix(&key, bits);
+                let start = queries.partition_point(|query| prefix_for(query) < prefix);
+                let end = queries.partition_point(|query| prefix_for(query) <= prefix);
+                let matches = &queries[start..end];
+                let pivot = matches.partition_point(|(key, _)| side(key, bits) == 0);
+                let (left, right) = matches.split_at(pivot);
+                let child_depth = usize::from(bits) + 1;
+                self.prove_sorted(children[0], left, child_depth, proofs)?;
+                self.prove_sorted(children[1], right, child_depth, proofs)?;
+            }
+        }
+        Ok(())
+    }
+
     fn apply_batch(
         &mut self,
         root: Key,

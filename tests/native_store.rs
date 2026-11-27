@@ -558,6 +558,18 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     drop(recent);
     let mut recent = Store::open(path.path(), &fixture.spec, Retention::Recent(2))?;
     assert_eq!(*recent.tip(), committed);
+    let points = [
+        intermediate.clone(),
+        output.clone(),
+        fixture.spend.clone(),
+        output.clone(),
+    ];
+    for (point, (cell, proof)) in points.iter().zip(recent.prove_cells(&points)?) {
+        let (reference, expected) = recent.prove_cell(point)?;
+        let encode = |cell: &stem_ledger::LiveCell| record::encode_cell(point, cell);
+        assert_eq!(cell.as_ref().map(encode), reference.as_ref().map(encode));
+        assert_eq!(proof.encode()?, expected.encode()?);
+    }
     let (record, proof) = recent.prove_cell(&output)?;
     let record = record.expect("output survives restart");
     assert_eq!(
