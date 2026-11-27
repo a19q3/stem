@@ -15,6 +15,7 @@ jolteon-admission-pipeline = []
 jolteon-candidate-pipeline = []
 jolteon-commit-pipeline = ["jolteon-candidate-pipeline"]
 jolteon-proposal-pipeline = []
+jolteon-bounded-cycle-scan = []
 native-commitment-pipeline = []
 native-work-stealing = []
 

@@ -68,11 +68,26 @@ const HEADER_ID: u8 = b'i';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
 const MAX_CELL_PROOF_BATCH: usize = 1024;
+pub(crate) const JOLTEON_CYCLE_SCAN_LIMIT: Option<u64> =
+    if cfg!(feature = "jolteon-bounded-cycle-scan") {
+        Some(64)
+    } else {
+        None
+    };
 #[derive(Debug)]
 pub(crate) struct StateReadFault;
 
 #[derive(Debug)]
 struct MissingLiveCell(OutPoint);
+
+#[derive(Debug)]
+struct BlockVmBudgetExceeded;
+
+impl std::fmt::Display for BlockVmBudgetExceeded {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("remaining block VM budget exceeded")
+    }
+}
 
 impl std::fmt::Display for MissingLiveCell {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -81,13 +96,18 @@ impl std::fmt::Display for MissingLiveCell {
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
 pub struct ProposalScan {
     pub inspected: u64,
     pub selected: u64,
     /// Explicit inputs rejected because a speculative ancestor consumed them.
     pub spent_in_parent: u64,
+    pub spent_in_parent_us: u64,
     /// Explicit inputs rejected after an earlier action in this proposal consumed them.
     pub spent_in_proposal: u64,
+    pub block_cycle_rejections: u64,
+    pub block_cycle_rejection_us: u64,
+    pub cycle_scan_stops: u64,
 }
 
 impl ProposalScan {
@@ -95,7 +115,15 @@ impl ProposalScan {
         self.inspected = self.inspected.saturating_add(scan.inspected);
         self.selected = self.selected.saturating_add(scan.selected);
         self.spent_in_parent = self.spent_in_parent.saturating_add(scan.spent_in_parent);
+        self.spent_in_parent_us = self.spent_in_parent_us.saturating_add(scan.spent_in_parent_us);
         self.spent_in_proposal = self.spent_in_proposal.saturating_add(scan.spent_in_proposal);
+        self.block_cycle_rejections = self
+            .block_cycle_rejections
+            .saturating_add(scan.block_cycle_rejections);
+        self.block_cycle_rejection_us = self
+            .block_cycle_rejection_us
+            .saturating_add(scan.block_cycle_rejection_us);
+        self.cycle_scan_stops = self.cycle_scan_stops.saturating_add(scan.cycle_scan_stops);
     }
 }
 
@@ -360,7 +388,13 @@ impl PinnedView {
     ) -> Result<Option<(Vec<Transaction>, Prepared)>> {
         self.with_snapshot(|view| {
             view.on_branch(branch, |state| {
-                state.build_proposal_measured(transactions, time, max_bytes, scan)
+                state.build_proposal_measured(
+                    transactions,
+                    time,
+                    max_bytes,
+                    scan,
+                    JOLTEON_CYCLE_SCAN_LIMIT,
+                )
             })
         })
     }
@@ -1677,6 +1711,7 @@ impl Store {
                 timestamp_ms,
                 max_bytes,
                 &mut ProposalScan::default(),
+                None,
             )?
             .transactions)
     }
@@ -1694,6 +1729,7 @@ impl Store {
             timestamp_ms,
             max_bytes,
             &mut ProposalScan::default(),
+            None,
         )
     }
 
@@ -1703,6 +1739,7 @@ impl Store {
         timestamp_ms: u64,
         max_bytes: u64,
         scan: &mut ProposalScan,
+        cycle_scan_limit: Option<u64>,
     ) -> Result<(Vec<Transaction>, Prepared)> {
         let ProposalSelection {
             transactions,
@@ -1710,7 +1747,7 @@ impl Store {
             mut overlay,
             receipts,
             reusable,
-        } = self.stage_proposal(transactions, timestamp_ms, max_bytes, scan)?;
+        } = self.stage_proposal(transactions, timestamp_ms, max_bytes, scan, cycle_scan_limit)?;
         let prepared = if reusable {
             context.transaction_root =
                 Tree::transactions(self.network.clone(), &transactions)?.root();
@@ -1735,6 +1772,7 @@ impl Store {
         timestamp_ms: u64,
         max_bytes: u64,
         scan: &mut ProposalScan,
+        cycle_scan_limit: Option<u64>,
     ) -> Result<ProposalSelection> {
         let mut budget = Budget::new(self.limits);
         let mut overlay = self.overlay(self.stage_stake()?);
@@ -1751,6 +1789,7 @@ impl Store {
         let mut receipts = self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay)?;
         let mut reusable = due.commands.is_empty();
         let mut selected = Vec::new();
+        let mut cycle_rejections = 0;
         for item in transactions {
             if selected.len() + due.commands.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
@@ -1759,6 +1798,7 @@ impl Store {
                 break;
             }
             scan.inspected = scan.inspected.saturating_add(1);
+            let started = Instant::now();
             let tx = item.borrow();
             let len = tx.as_slice().len();
             if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
@@ -1794,6 +1834,18 @@ impl Store {
                 }
                 Err(error) if error.is::<StateReadFault>() => return Err(error),
                 Err(error) => {
+                    if error.is::<BlockVmBudgetExceeded>() {
+                        cycle_rejections += 1;
+                        scan.block_cycle_rejections = scan.block_cycle_rejections.saturating_add(1);
+                        scan.block_cycle_rejection_us = scan.block_cycle_rejection_us.saturating_add(
+                            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                        );
+                        if cycle_scan_limit == Some(cycle_rejections) {
+                            // Preserve ordering and leave unvisited entries eligible on the next branch.
+                            scan.cycle_scan_stops = scan.cycle_scan_stops.saturating_add(1);
+                            break;
+                        }
+                    }
                     if let Some(MissingLiveCell(point)) = error.downcast_ref()
                         && tx.inputs().any(|input| &input.previous_output == point)
                     {
@@ -1807,6 +1859,9 @@ impl Store {
                             Some(None)
                         ) {
                             scan.spent_in_parent = scan.spent_in_parent.saturating_add(1);
+                            scan.spent_in_parent_us = scan.spent_in_parent_us.saturating_add(
+                                u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                            );
                         }
                     }
                 }
@@ -2237,14 +2292,13 @@ impl Store {
             message_write_bytes,
             "block Intercell write bytes",
         )?;
-        let cycle_limit = self
+        let transaction_cycle_limit = self
             .limits
             .transaction_cycles
             .checked_sub(keeper_cycles + reference_cycles)
-            .context("authorization exceeds transaction cycles")?
-            .min(next.cycles);
-        let cycle_limit = if tx.operation().is_none() {
-            cycle_limit.min(
+            .context("authorization exceeds transaction cycles")?;
+        let transaction_cycle_limit = if tx.operation().is_none() {
+            transaction_cycle_limit.min(
                 self.fees
                     .cycle_budget(
                         &resolved,
@@ -2258,8 +2312,9 @@ impl Store {
                     .context("authorization exceeds paid VM cycles")?,
             )
         } else {
-            cycle_limit
+            transaction_cycle_limit
         };
+        let cycle_limit = transaction_cycle_limit.min(next.cycles);
         let cycles = if let Some(command) = &materialized {
             let remaining = cycle_limit
                 .checked_sub(command.cycles)
@@ -2302,7 +2357,13 @@ impl Store {
             };
             command.cycles + validation_cycles
         } else {
-            verify(Arc::new(resolved), cycle_limit)?
+            verify(Arc::new(resolved), cycle_limit).map_err(|error| {
+                if next.cycles < transaction_cycle_limit && stem_vm::is_cycle_limit(&error) {
+                    error.context(BlockVmBudgetExceeded)
+                } else {
+                    error
+                }
+            })?
         };
         charge(&mut next.cycles, cycles, "block VM cycles")?;
 
@@ -2771,7 +2832,7 @@ mod pipeline_store_tests {
 
     #[cfg(feature = "jolteon-proposal-pipeline")]
     #[test]
-    fn proposal_scan_distinguishes_parent_and_current_spends() -> Result<()> {
+    fn proposal_scan_distinguishes_spent_inputs_and_block_cycles() -> Result<()> {
         use ckb_crypto::secp::Privkey;
         use ckb_types::{
             bytes::Bytes,
@@ -2793,11 +2854,13 @@ mod pipeline_store_tests {
         let bond = Cell::minimum_capacity(&lock, &[], program.len())?;
         let code = Cell::new(bond, lock.clone(), vec![], program)?;
         let reserve = Cell::new(20_000_000_000, lock.clone(), vec![], Bytes::new())?;
-        let points = [4u8, 5, 6].map(|id| OutPoint::new([id; 32].pack(), 0));
+        let points = [4u8, 5, 6, 7, 8].map(|id| OutPoint::new([id; 32].pack(), 0));
         spec.development_cells = vec![
             (code_point.clone(), code.clone()),
             (points[0].clone(), reserve.clone()),
             (points[1].clone(), reserve.clone()),
+            (points[3].clone(), reserve.clone()),
+            (points[4].clone(), reserve.clone()),
         ];
         let signed = |point: &OutPoint| -> Result<Transaction> {
             let tx = Transaction::new(
@@ -2823,6 +2886,8 @@ mod pipeline_store_tests {
         let first = signed(&points[0])?;
         let second = signed(&points[1])?;
         let missing = signed(&points[2])?;
+        let third = signed(&points[3])?;
+        let fourth = signed(&points[4])?;
         let store = Store::open(path.path(), &spec, Retention::Archive)?;
         let parent = Arc::new(store.prepare(std::slice::from_ref(&first), 1001, false)?);
         let mut scan = ProposalScan::default();
@@ -2830,7 +2895,7 @@ mod pipeline_store_tests {
             .pinned_view()
             .build_proposal(
                 &[parent.clone()],
-                vec![first, missing, second.clone(), second.clone()],
+                vec![first.clone(), missing, second.clone(), second.clone()],
                 1002,
                 4096,
                 &mut scan,
@@ -2847,6 +2912,30 @@ mod pipeline_store_tests {
             (scan.inspected, scan.selected, scan.spent_in_parent, scan.spent_in_proposal),
             (4, 1, 1, 1)
         );
+
+        spec.limits.transaction_cycles = expected.receipts()[0].cycles + 1;
+        spec.limits.block_cycles = spec.limits.transaction_cycles;
+        let cold_path = tempfile::tempdir()?;
+        let mut limited = Store::open(cold_path.path(), &spec, Retention::Archive)?;
+        limited.check(&second)?;
+        let mut scan = ProposalScan::default();
+        let (selected, proposal) = limited.build_proposal_measured(
+            [&first, &second, &third, &fourth],
+            1001,
+            4096,
+            &mut scan,
+            Some(2),
+        )?;
+        assert_eq!(
+            (scan.inspected, scan.selected, scan.block_cycle_rejections, scan.cycle_scan_stops),
+            (3, 1, 2, 1)
+        );
+        assert_eq!(selected[0].as_slice(), first.as_slice());
+        let reference = limited.prepare(std::slice::from_ref(&first), 1001, false)?;
+        assert_eq!(proposal.header(), reference.header());
+        assert_eq!(proposal.receipts(), reference.receipts());
+        limited.commit(proposal)?;
+        assert!(limited.prepare(std::slice::from_ref(&fourth), 1002, false).is_ok());
         Ok(())
     }
 

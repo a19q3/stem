@@ -1363,6 +1363,7 @@ impl Replica {
                         at,
                         MAX_PROPOSAL_BYTES,
                         &mut scan,
+                        crate::native_store::JOLTEON_CYCLE_SCAN_LIMIT,
                     )
                 })
             });

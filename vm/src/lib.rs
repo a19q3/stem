@@ -234,7 +234,7 @@ fn verify_groups(
             .collect();
         for (index, result) in results.into_iter().enumerate() {
             let cycles = match result {
-                Err(error) if error.downcast_ref::<Error>() == Some(&Error::CyclesExceeded) => {
+                Err(error) if is_cycle_limit(&error) => {
                     run(start + index, max_cycles - total)?
                 }
                 other => other?,
@@ -352,11 +352,19 @@ impl VerificationCache {
     }
 }
 
+/// Identify a cycle-limit failure from a VM run or cached verification.
+pub fn is_cycle_limit(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<Error>() == Some(&Error::CyclesExceeded)
+}
+
 fn charge(total: u64, cycles: u64, limit: u64) -> Result<u64> {
     let total = total
         .checked_add(cycles)
         .context("transaction cycle overflow")?;
-    ensure!(total <= limit, "transaction cycle budget exceeded");
+    if total > limit {
+        return Err(anyhow::Error::new(Error::CyclesExceeded)
+            .context("transaction cycle budget exceeded"));
+    }
     Ok(total)
 }
 
