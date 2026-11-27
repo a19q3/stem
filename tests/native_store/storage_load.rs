@@ -362,7 +362,12 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         );
     }
     let (replicas, clients) = if let Some(external) = &topology {
-        (Vec::new(), external.connect(&fixture)?)
+        (
+            Vec::new(),
+            external
+                .connect(&fixture)
+                .context("preflight payment replicas")?,
+        )
     } else {
         start_network_configured(
             &mut fixture,
@@ -393,7 +398,8 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         )?;
     }
     if !funding.is_empty() {
-        let proof = finalize_funding(&fixture, &clients, &funding)?;
+        let proof = finalize_funding(&fixture, &clients, &funding)
+            .context("finalize payment funding before the offer")?;
         fs::write(
             output.join("payment-funding.json"),
             serde_json::to_vec(&proof)?,
@@ -810,7 +816,8 @@ fn finalize_funding(
     funding: &[Transaction],
 ) -> Result<Value> {
     let archive = clients.last().context("no archive replica")?;
-    let mut height = statuses(clients)?
+    let mut height = statuses(clients)
+        .context("read replica heights before submitting funding splits")?
         .iter()
         .map(|s| s.height)
         .min()
@@ -822,7 +829,13 @@ fn finalize_funding(
             .map(|tx| hex::encode(tx.id(&fixture.spec.network).as_slice()))
             .collect();
         for (i, tx) in batch.iter().enumerate() {
-            clients[i % clients.len()].submit(tx)?;
+            let replica = i % clients.len();
+            clients[replica].submit(tx).with_context(|| {
+                format!(
+                    "submit funding split {} to replica {replica}",
+                    hex::encode(tx.id(&fixture.spec.network).as_slice())
+                )
+            })?;
         }
         super::comet::poll(
             "payment funding on all replicas",
@@ -830,12 +843,16 @@ fn finalize_funding(
             || {
                 let common = statuses(clients)?.iter().map(|s| s.height).min().unwrap();
                 while height < common {
-                    height += 1;
-                    for id in transactions(archive, height)? {
+                    // A failed archive read leaves this height for the next poll.
+                    let next = height + 1;
+                    for id in transactions(archive, next)
+                        .with_context(|| format!("read archive funding block {next}"))?
+                    {
                         if pending.remove(&id) {
-                            committed.push((height, id));
+                            committed.push((next, id));
                         }
                     }
+                    height = next;
                 }
                 Ok(pending.is_empty().then_some(()))
             },
