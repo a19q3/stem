@@ -6,13 +6,13 @@ Four disk-backed Jolteon validators handled independently funded payments on one
 
 | Configuration | Writes by 180 s | Acks by 180 s | Common by 180 s | Common TPS | Common by 225 s | Write-to-common p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Stock, 2 workers](stock2/payments.json.xz) | 324,000 | 323,997 | 323,129 | 1,795.16 | 324,000 | 2.69 s |
-| [Probe, 1 worker](trace1/payments.json.xz) | 324,000 | 323,983 | 323,003 | 1,794.46 | 324,000 | 3.34 s |
-| [Probe, 2 workers](trace2/payments.json.xz) | 324,000 | 324,000 | 322,632 | 1,792.40 | 324,000 | 2.13 s |
-| [Probe, 4 workers](trace4/payments.json.xz) | 324,000 | 324,000 | 323,184 | 1,795.47 | 324,000 | 2.46 s |
-| [Overload, 2 workers](pressure2/payments.json.xz) | 645,857 | 439,442 | 343,009 | 1,905.61 | 420,833 | 196.29 s |
-| [Overload, detailed probe, 2 workers](parts2/payments.json.xz) | 627,657 | 430,186 | 333,205 | 1,851.14 | 406,933 | 197.95 s |
-| [Overload, parallel receipt experiment, 2 workers](paired2/payments.json.xz) | 642,486 | 440,338 | 343,230 | 1,906.83 | 423,102 | 196.48 s |
+| [Stock, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/stock2/payments.json.xz) | 324,000 | 323,997 | 323,129 | 1,795.16 | 324,000 | 2.69 s |
+| [Probe, 1 worker](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/trace1/payments.json.xz) | 324,000 | 323,983 | 323,003 | 1,794.46 | 324,000 | 3.34 s |
+| [Probe, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/trace2/payments.json.xz) | 324,000 | 324,000 | 322,632 | 1,792.40 | 324,000 | 2.13 s |
+| [Probe, 4 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/trace4/payments.json.xz) | 324,000 | 324,000 | 323,184 | 1,795.47 | 324,000 | 2.46 s |
+| [Overload, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/pressure2/payments.json.xz) | 645,857 | 439,442 | 343,009 | 1,905.61 | 420,833 | 196.29 s |
+| [Overload, detailed probe, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/parts2/payments.json.xz) | 627,657 | 430,186 | 333,205 | 1,851.14 | 406,933 | 197.95 s |
+| [Overload, parallel receipt experiment, 2 workers](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/paired2/payments.json.xz) | 642,486 | 440,338 | 343,230 | 1,906.83 | 423,102 | 196.48 s |
 
 The four 1,800/s trials used identical signed inputs and the same genesis. The number of socket writes in each one-second bin and the scheduling delay through the socket write show how closely the driver reproduced the offered load. These times are measured at the driver. The transport-receive timestamps come from each validator.
 
@@ -85,7 +85,7 @@ The detailed control placed roughly half of candidate verification time in block
 | Candidate block finishing, mean elapsed per validator | 33.74 s | 35.00 s |
 | Candidate block finishing, mean elapsed per validator per certified payment | 82.50 µs | 82.71 µs |
 
-The verifier regenerated the signed payment corpus and checked each archive against its committee certificate. The two live runs had independent consensus schedules and different accepted and finalized sets. The final row divides all measured follower block-finishing time by four validators and the number of payments in the certified archive. It is an aggregate cost ratio. [Detailed control](parts2/payments.json.xz) · [Candidate run](paired2/payments.json.xz)
+The verifier regenerated the signed payment corpus and checked each archive against its committee certificate. The two live runs had independent consensus schedules and different accepted and finalized sets. The final row divides all measured follower block-finishing time by four validators and the number of payments in the certified archive. It is an aggregate cost ratio. [Detailed control](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/parts2/payments.json.xz) · [Candidate run](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/queue-attribution/paired2/payments.json.xz)
 
 The experiment raised window throughput by 3.01% against the detailed control, with 2.36% more socket writes. Its throughput was within 0.07% of the earlier two-worker probe control. Block-finishing time per certified payment was 82.50 µs for the detailed control and 82.71 µs for the parallel candidate.
 

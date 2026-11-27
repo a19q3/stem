@@ -1,6 +1,6 @@
 # Proposal cadence with four RocksDB replicas on NVMe
 
-Does shortening the proposal interval still reduce payment backlog when each replica persists to disk? Four validators ran on one workstation. With the same 540,000 signed payments, 100 ms proposals delivered 26,972 more common confirmations before the three-minute deadline. The shorter interval also increased block-device writes and WAL syncs. Each interval ran once on disk. [250 ms payment archive](nvme250.json.xz) · [100 ms payment archive](nvme100.json.xz)
+Does shortening the proposal interval still reduce payment backlog when each replica persists to disk? Four validators ran on one workstation. With the same 540,000 signed payments, 100 ms proposals delivered 26,972 more common confirmations before the three-minute deadline. The shorter interval also increased block-device writes and WAL syncs. Each interval ran once on disk. [250 ms payment archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/nvme/nvme250.json.xz) · [100 ms payment archive](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/nvme/nvme100.json.xz)
 
 | Proposal interval | Socket writes, all acknowledged and finalized | Common in 180 s | Window TPS | First common during drain | Write-to-common p99 | Full / nonempty blocks in window |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -11,7 +11,7 @@ At 250 ms the driver dropped 199,611 scheduled sends before writing. At 100 ms i
 
 ## What reached the devices
 
-A Linux cgroup v2 scope contained all four validators, their driver and its child processes. A separate process sampled its cumulative block-device counters about every 250 ms. The two Linux devices below back the same Btrfs volume. Data used the single profile and metadata used DUP. Btrfs mounted the home subvolume with zstd level 1. Each table cell is the lower to upper bound in decimal GB, rounded to three decimal places. The JSON supplies the integer byte bounds and the distance of each sample from the boundary. [Raw cgroup samples](io-samples.json.xz) · [Byte bounds](device-bounds.json)
+A Linux cgroup v2 scope contained all four validators, their driver and its child processes. A separate process sampled its cumulative block-device counters about every 250 ms. The two Linux devices below back the same Btrfs volume. Data used the single profile and metadata used DUP. Btrfs mounted the home subvolume with zstd level 1. Each table cell is the lower to upper bound in decimal GB, rounded to three decimal places. The JSON supplies the integer byte bounds and the distance of each sample from the boundary. [Raw cgroup samples](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/proposal-cadence/nvme/io-samples.json.xz) · [Byte bounds](device-bounds.json)
 
 | Interval | Device | Offer, 180 s | Drain, 45 s | Full 225 s |
 | --- | --- | ---: | ---: | ---: |

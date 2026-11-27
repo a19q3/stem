@@ -4,7 +4,7 @@ A collection can keep the same Type and bytes when its owner changes. The Rust w
 
 ## A registration that changed owners on public testnet
 
-A public Spore mint at height 12,607,097 referenced output zero of the registration transfer at 12,607,093. The program had first been issued at 12,607,088. Both versions have identical code bytes and Type, and different owner Locks. The registration and mint histories verify against the same archived CKB anchor. The wallet accepted the transferred Cell as a dependency of the mint. It rejected both the superseded OutPoint and the transferred OutPoint paired with the previous owner's Lock. [Packed public mint and registration histories](../registered-policy/public.json.xz)
+A public Spore mint at height 12,607,097 referenced output zero of the registration transfer at 12,607,093. The program had first been issued at 12,607,088. Both versions have identical code bytes and Type, and different owner Locks. The registration and mint histories verify against the same archived CKB anchor. The wallet accepted the transferred Cell as a dependency of the mint. It rejected both the superseded OutPoint and the transferred OutPoint paired with the previous owner's Lock. [Packed public mint and registration histories](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/spore-permit/upstream/beta2/registered-policy/public.json.xz)
 
 ```mermaid
 flowchart LR
@@ -16,7 +16,7 @@ flowchart LR
 
 ## Two fresh four-validator settlements
 
-Each funded devnet issued an ordinary Cluster member under the SDK's immortal and transfer programs. Each registration charged its own recipient 1,000 shannons. The end-to-end workflow authenticated the collection at the member's anchor, requested its exact historical version at each member transaction, collected the witnessed history through RPC and verified it offline. The CKB-origin collection transferred to a new owner at height 70. All four earlier and all three later member transactions referenced the expected owner and OutPoint. The Stem-origin route referenced one collection version through all six CKB transitions. [Settlement receipts, requests and proofs](settlement.json.xz) · [Independent committee anchors](../committee-trust.json)
+Each funded devnet issued an ordinary Cluster member under the SDK's immortal and transfer programs. Each registration charged its own recipient 1,000 shannons. The end-to-end workflow authenticated the collection at the member's anchor, requested its exact historical version at each member transaction, collected the witnessed history through RPC and verified it offline. The CKB-origin collection transferred to a new owner at height 70. All four earlier and all three later member transactions referenced the expected owner and OutPoint. The Stem-origin route referenced one collection version through all six CKB transitions. [Settlement receipts, requests and proofs](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/spore-permit/upstream/beta2/dependency-uses/settlement.json.xz) · [Independent committee anchors](../committee-trust.json)
 
 | Origin | CKB collection heights | Member transition heights | Agreed Stem height |
 | --- | --- | --- | ---: |

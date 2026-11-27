@@ -34,10 +34,10 @@ The independent driver scheduled the same 360,000 signed payments over 120 secon
 
 | Run | Written by 120 s | Acknowledged by 120 s | Common by 120 s | Common TPS | Common by 165 s | Full-pool refusals | Write-to-common p99 | Validator CPU in offer (s) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| [Indexed A1](network/a1/payments.json.xz) | 360,000 | 335,177 | 246,532 | 2,054.43 | 330,500 | 24,758 | 141.027 s | 449.56–450.41 |
-| [Buffered B1](network/b1/payments.json.xz) | 360,000 | 347,486 | 264,169 | 2,201.41 | 347,499 | 12,501 | 138.074 s | 456.23–457.60 |
-| [Buffered B2](network/b2/payments.json.xz) | 359,994 | 341,412 | 255,238 | 2,126.98 | 341,674 | 18,326 | 136.963 s | 460.98–462.31 |
-| [Indexed A2](network/a2/payments.json.xz) | 360,000 | 339,721 | 252,831 | 2,106.93 | 339,755 | 20,245 | 140.826 s | 452.92–453.92 |
+| [Indexed A1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/patricia-finishing/network/a1/payments.json.xz) | 360,000 | 335,177 | 246,532 | 2,054.43 | 330,500 | 24,758 | 141.027 s | 449.56–450.41 |
+| [Buffered B1](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/patricia-finishing/network/b1/payments.json.xz) | 360,000 | 347,486 | 264,169 | 2,201.41 | 347,499 | 12,501 | 138.074 s | 456.23–457.60 |
+| [Buffered B2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/patricia-finishing/network/b2/payments.json.xz) | 359,994 | 341,412 | 255,238 | 2,126.98 | 341,674 | 18,326 | 136.963 s | 460.98–462.31 |
+| [Indexed A2](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/patricia-finishing/network/a2/payments.json.xz) | 360,000 | 339,721 | 252,831 | 2,106.93 | 339,755 | 20,245 | 140.826 s | 452.92–453.92 |
 
 The candidate gained 146.98 common TPS in forward order and 20.06 in reverse order. The write-to-common p99 fell by 2.952 s and 3.864 s. Across payments certified in both members of a pair, median latency fell by 1.274 s and 0.084 s respectively. Each trial was independently replayed through its certified Header. A1 ended with 4,742 acknowledged payments still outside the common height. All acknowledged payments reached common finality by the drain cutoff in the other three trials.
 
@@ -45,9 +45,9 @@ Whole-process CPU rose in both comparisons. The largest difference in cumulative
 
 ## Reopening stores across versions
 
-A four-validator weighted Jolteon network alternated implementations, stopped a leader, finalized 96 signed payments and recovered the stopped validator. All four agreed at height 16. After a full shutdown each validator reopened its own existing RocksDB store using the other implementation. The four served the original Header, then confirmed a newly signed spend of one of the original outputs at height 18. The independent WASM verifier checked the mixed-version certificate, inclusion of the old Cell before that spend, its subsequent absence, inclusion of its successor, and the new transaction and receipt. The ledger differential test separately compares exact node bytes, tombstones and previous-value callbacks for both namespaces across nine generations of mixed changes. [Signed workload, certificates and state paths](reopen.json.xz) · [WASM verification](reopen.mjs)
+A four-validator weighted Jolteon network alternated implementations, stopped a leader, finalized 96 signed payments and recovered the stopped validator. All four agreed at height 16. After a full shutdown each validator reopened its own existing RocksDB store using the other implementation. The four served the original Header, then confirmed a newly signed spend of one of the original outputs at height 18. The independent WASM verifier checked the mixed-version certificate, inclusion of the old Cell before that spend, its subsequent absence, inclusion of its successor, and the new transaction and receipt. The ledger differential test separately compares exact node bytes, tombstones and previous-value callbacks for both namespaces across nine generations of mixed changes. [Signed workload, certificates and state paths](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/patricia-finishing/reopen.json.xz) · [WASM verification](reopen.mjs)
 
-The locked release workspace passed 510 tests with 25 marked ignored. Two snapshot tests in the first invocation exhausted the shared temporary filesystem. Running the full suite again with a disk-backed temporary directory passed both tests. [Full test output and toolchain](workspace-checks.json.xz)
+The locked release workspace passed 510 tests with 25 marked ignored. Two snapshot tests in the first invocation exhausted the shared temporary filesystem. Running the full suite again with a disk-backed temporary directory passed both tests. [Full test output and toolchain](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/patricia-finishing/workspace-checks.json.xz)
 
 ## Reproduction
 

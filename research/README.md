@@ -1,5 +1,9 @@
 # Stem research experiments, issues 1–14
 
+Research reports and smaller result files are in the current tree. Replay commands that use relocated raw inputs can obtain them from the pinned [archive inventory and retrieval guide](../benchmarks/README.md).
+
+The fixed-delay execution experiment is retained as a [results report](delayed-execution/README.md).
+
 The experiments use Stem at `fefb8cc01771d59e228c72755ddd1242291f7f22` as the starting point. The studies below include separately selectable candidates, raw outputs and replay instructions. Measurements range from exhaustive finite checks to simulations, loopback TCP, native multi-replica processes and a funded CKB development chain. The evidence column states where each decision applies.
 
 | Issue | Evidence | Decision from this round |

@@ -44,7 +44,7 @@ The baseline recorded 24,447 mempool-full replies, 1,624 RPC deadlines and 3,104
 
 The first replica recorded 77 proposal timeouts and 39 nonempty commits in the baseline. The cached run recorded one proposal timeout and 629 nonempty commits. An eight-second sample of user-space CPU cycles on that replica near the end attributed about 89% of baseline sampled cycles to Snappy decompression. CKB-VM execution and decoding appeared among the largest sampled costs after the change. Total CPU time over load and drain fell from 1,902 to 621 CPU-seconds. Peak sampled RSS stayed near 407 MiB per replica. The four replicas sent 380 MB and 398 MB of CometBFT P2P traffic respectively.
 
-Observed process writes rose from 948 MB to 3,325 MB as the run committed more transactions and many more blocks. The first replica's allocated storage rose from 118.8 MiB to 122.5 MiB, and its p99 application sync-write latency on nonempty blocks fell from 13.2 ms to 9.6 ms. The [raw comparison](benchmarks/2026-11-25-cache-sweep.json.xz) includes per-payment admissions, per-replica visibility, resource samples, CPU profiles, commit counts, public committee inputs and execution proofs.
+Observed process writes rose from 948 MB to 3,325 MB as the run committed more transactions and many more blocks. The first replica's allocated storage rose from 118.8 MiB to 122.5 MiB, and its p99 application sync-write latency on nonempty blocks fell from 13.2 ms to 9.6 ms. The [raw comparison](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-cache-sweep.json.xz) includes per-payment admissions, per-replica visibility, resource samples, CPU profiles, commit counts, public committee inputs and execution proofs.
 
 ```sh
 python3 tools/localnet.py \
@@ -66,7 +66,7 @@ python3 tools/localnet.py \
 
 The bounded client queue dropped 16,776 and 14,848 requests at the two 768-TPS schedules. Raising client concurrency increased actual offered throughput slightly and raised p99. All offered requests reached all replicas after drain. The measurements bound the complete single-host submission and execution path at these settings. They leave the isolated consensus and execution limit undetermined.
 
-The delayed run forwarded real P2P streams through loopback proxies while preserving TCP ordering. The eighth validator pair was killed at 8.00 s and restarted at 15.14 s with the original signing state. The first replica's p99 stayed at 3.78 s and the all-replica figure includes the recovering process. These runs share one workstation. The [higher-load and fault observations](benchmarks/2026-11-25-cache-load.json.xz) include each run's arguments, transaction records, resource readings and verifiable receipt.
+The delayed run forwarded real P2P streams through loopback proxies while preserving TCP ordering. The eighth validator pair was killed at 8.00 s and restarted at 15.14 s with the original signing state. The first replica's p99 stayed at 3.78 s and the all-replica figure includes the recovering process. These runs share one workstation. The [higher-load and fault observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-cache-load.json.xz) include each run's arguments, transaction records, resource readings and verifiable receipt.
 
 ## Cost of maintaining the wallet Cell index
 
@@ -77,7 +77,7 @@ Both runs used the same release from `1d1510195109d30abe18340e833cc76a7ddc7a34` 
 | Off | 497.1 | 493.9 | 490.2 | 30,576 / 30,576 | 0.95 / 1.43 / 1.66 s |
 | One replica | 496.5 | 493.3 | 487.0 | 30,552 / 30,552 | 0.97 / 1.43 / 1.62 s |
 
-The indexed replica held 30,840 index records and 3.26 MB of logical index data at the end of the run. Replica 0's allocated application WAL measured 18.46 MB without the index and 57.19 MB with it. Aggregate process writes measured 820.35 MB and 825.54 MB, and aggregate CPU time was 399.22 and 418.99 seconds. The client dropped 144 and 168 scheduled submissions before sending them. This single pair records the observed write and storage costs and does not establish a repeatable latency difference. The [raw index comparison](benchmarks/2026-11-25-rpc-index.json.xz) includes parameters, per-payment records, resources and execution proofs under `plain` and `indexed`.
+The indexed replica held 30,840 index records and 3.26 MB of logical index data at the end of the run. Replica 0's allocated application WAL measured 18.46 MB without the index and 57.19 MB with it. Aggregate process writes measured 820.35 MB and 825.54 MB, and aggregate CPU time was 399.22 and 418.99 seconds. The client dropped 144 and 168 scheduled submissions before sending them. This single pair records the observed write and storage costs and does not establish a repeatable latency difference. The [raw index comparison](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-rpc-index.json.xz) includes parameters, per-payment records, resources and execution proofs under `plain` and `indexed`.
 
 ```sh
 python3 tools/localnet.py \
@@ -99,7 +99,7 @@ Two runs used release `36d8a6af63a261b91b5688a5f2207a9c4164d46d` with SHA-256 `b
 | Format 1 | 492.7 | 489.5 | 486.7 | 482.8 | 30,304 / 30,304 | 0.97 / 1.55 / 1.94 s |
 | Format 2 | 511.3 | 508.1 | 499.6 | 499.6 | 30,720 / 30,720 | 0.97 / 1.49 / 1.77 s |
 
-The client dropped 416 scheduled submissions in the first run and zero in the second. Total process writes were 1,095.75 MB and 1,140.89 MB. Format 2's two retained proof indexes on replica 0 each occupied 34,824 logical bytes and 36,864 allocated bytes. The final format-2 archive on replica 0 was 22.13 MB. Across 16 captures per format, median and maximum capture times were 82.2 and 98.2 ms for format 1 and 79.2 and 133.0 ms for format 2. The capture clock covers the archive scan and root computation. This pair records two realized load levels. The [raw checkpoint comparison](benchmarks/2026-11-25-cell-checkpoints.json.xz) has timings, resource samples, retained file hashes, per-payment observations and execution proofs.
+The client dropped 416 scheduled submissions in the first run and zero in the second. Total process writes were 1,095.75 MB and 1,140.89 MB. Format 2's two retained proof indexes on replica 0 each occupied 34,824 logical bytes and 36,864 allocated bytes. The final format-2 archive on replica 0 was 22.13 MB. Across 16 captures per format, median and maximum capture times were 82.2 and 98.2 ms for format 1 and 79.2 and 133.0 ms for format 2. The capture clock covers the archive scan and root computation. This pair records two realized load levels. The [raw checkpoint comparison](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-cell-checkpoints.json.xz) has timings, resource samples, retained file hashes, per-payment observations and execution proofs.
 
 ```sh
 python3 tools/localnet.py \
@@ -124,7 +124,7 @@ The matched runs used release `1de49cef61a16baa3f1eb003ee849b8fc067e657` with SH
 
 All 40,500 offered payments completed in each run. The checkpoint covered 39,130 payments in the format-2 run and 39,024 in the format-3 run, following on-chain funding. The format-3 snapshot was 59.6% smaller. The observer received 31.46 MB and 13.37 MB of P2P traffic, including block catch-up, and its processes wrote 101.97 MB and 46.21 MB. On replica 0, preparing the height-168 checkpoint took 129.72 ms and 85.63 ms. Each archive validator retained 22.37 MB of logical witnessed transaction data, and format 3 added 2.63 MB of logical replay records. Both restored observers could find the original CKB transaction's committed header. The format-2 observer also returned the witnessed transaction bytes.
 
-In the initial runs, the format-3 observer was offered height 168 before height 170 was available. It restored height 144 and replayed 24 additional blocks to reach height 168. The matched runs use the fix that waits for both successor blocks before advertising a checkpoint. The [raw observations](benchmarks/2026-11-25-compact-snapshots.json.xz) contain both pairs under `initial` and `matched`, with per-payment receipts, observer state-sync logs, storage statistics and independently verified execution proofs.
+In the initial runs, the format-3 observer was offered height 168 before height 170 was available. It restored height 144 and replayed 24 additional blocks to reach height 168. The matched runs use the fix that waits for both successor blocks before advertising a checkpoint. The [raw observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-compact-snapshots.json.xz) contain both pairs under `initial` and `matched`, with per-payment receipts, observer state-sync logs, storage statistics and independently verified execution proofs.
 
 ```sh
 python3 tools/localnet.py \
@@ -150,7 +150,7 @@ Both runs used source commit `344f78e49c2f34fe204e1df4a2c9ba3dd54d77a4` and the 
 
 Format 4 cut the checkpoint image by 23.2%. From height 24 to 168, the images grew by 2,660,060 bytes and 35,856 bytes respectively. The format-4 Live Cell payload size stayed constant after funding, and its growth over this interval came from 144 CKB headers. The observers received 13.34 MB and 9.83 MB over P2P and wrote 46.06 MB and 33.59 MB. Startup includes peer discovery and readiness checking. The observers reported application heights 174 and 168 immediately after readiness, so the startup figures measure different amounts of block catch-up. The transfer and installation figures measure the same checkpoint height.
 
-Replica 0 held 40,520 permanent ordinary replay records occupying 2.63 MB in format 3. Format 4 held 32,693 ordinary statuses and 121 expiry buckets totaling 3.17 MB of logical local records inside its 128-block window. Both replicas held 40,503 Live Cells. The four validators wrote 1.50 GB and 1.43 GB over the respective load and drain windows. The [raw comparison](benchmarks/2026-11-25-live-replay.json.xz) contains `v3` and `v4` run parameters, per-payment records, storage, resource samples, checkpoint logs, and independently verified execution proofs.
+Replica 0 held 40,520 permanent ordinary replay records occupying 2.63 MB in format 3. Format 4 held 32,693 ordinary statuses and 121 expiry buckets totaling 3.17 MB of logical local records inside its 128-block window. Both replicas held 40,503 Live Cells. The four validators wrote 1.50 GB and 1.43 GB over the respective load and drain windows. The [raw comparison](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-live-replay.json.xz) contains `v3` and `v4` run parameters, per-payment records, storage, resource samples, checkpoint logs, and independently verified execution proofs.
 
 ```sh
 python3 tools/localnet.py \
@@ -177,7 +177,7 @@ Source commit `eb7f524870a732fe01656fb391dc27a095e25b06` ran the same format-4 r
 
 Both validator sets had pruned to base height 76 at the end of load and drain. During load, `/tx` on the `kv` replica returned the witnessed transaction from block 2 after that block body became unavailable. The `null` replica disabled the lookup and created no index database. Total process writes were 16.5% lower in the `null` run. Allocated consensus WAL on replica 0 was 49.95 MB and 39.91 MB respectively, and both WALs rotated under load. Replica 0's p99 synchronous application write time for nonempty blocks was 12.38 ms and 12.89 ms.
 
-Each fresh observer installed a 9,456,197-byte image at height 168 and applied through height 170. Startup through application replay took 8.09 s with `kv` and 8.31 s with `null`, including transfer and installation times of 1.22 s and 1.29 s. Each run verified a weighted execution proof. With `null`, the exporter reconstructed the proof from the retained block and execution results. The [raw observations](benchmarks/2026-11-25-comet-index.json.xz) include the arguments, receipts, resource samples, WAL and application sync measurements, archive lookup checks, and proofs.
+Each fresh observer installed a 9,456,197-byte image at height 168 and applied through height 170. Startup through application replay took 8.09 s with `kv` and 8.31 s with `null`, including transfer and installation times of 1.22 s and 1.29 s. Each run verified a weighted execution proof. With `null`, the exporter reconstructed the proof from the retained block and execution results. The [raw observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-comet-index.json.xz) include the arguments, receipts, resource samples, WAL and application sync measurements, archive lookup checks, and proofs.
 
 A separate `null` run offered 8,000 payments in 20 seconds and killed replica 3 at 5.00 s. It restarted against the same signing state at 11.07 s. All 8,000 payments reached all four replicas, which agreed on the application hash at height 30. Last-replica p99 was 10.80 s including the outage. This run appears under `recovery` in the same archive.
 
@@ -209,7 +209,7 @@ Both runs used format-4 checkpoints and funded the workload on chain. Each offer
 
 The four QEMU processes used 440.38 and 448.64 CPU-seconds respectively, and their combined peak sampled RSS was 2.31 GB and 2.28 GB. Their process writes were 2.21 GB and 1.87 GB, and the allocated guest images grew by 267 MB and 273 MB. CometBFT reported 164 MB and 168 MB of transmitted P2P traffic. The first replica's p99 synchronous application write latency for nonempty blocks was 18.38 ms and 21.53 ms. Samples include the guest kernels' resource use, and the raw file records the sample boundaries.
 
-The [raw network observations](benchmarks/2026-11-25-kvm-network.json.xz) include the topology, authenticated peer IDs, measured queue depths, guest settings, application storage and write timings, and signed execution proofs. The `runs` entries each contain an `execution_proof` and public `committee` for offline verification. A separate HTTPS check observed all 160 payments through a private path prefix, including eight whose batch response was lost after submission. The archive also records preflight rejections and the preservation of all transaction observations when a post-run telemetry request failed.
+The [raw network observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-kvm-network.json.xz) include the topology, authenticated peer IDs, measured queue depths, guest settings, application storage and write timings, and signed execution proofs. The `runs` entries each contain an `execution_proof` and public `committee` for offline verification. A separate HTTPS check observed all 160 payments through a private path prefix, including eight whose batch response was lost after submission. The archive also records preflight rejections and the preservation of all transaction observations when a post-run telemetry request failed.
 
 ```sh
 python3 tools/vm_localnet.py \
@@ -234,7 +234,7 @@ The client queue dropped zero transactions. Admitted payments waiting for all-re
 
 Replica 0 held 32.44 MB of logical Live Cell data and a 97.91 MB witnessed transaction archive. Its allocated application WAL was 18.46 MB and its allocated consensus WAL was 175.86 MB. Its largest retained application snapshot was 126.61 MB with a 207,624-byte proof index. The capture took 512.54 ms and application sync-write p99 across nonempty commits was 12.67 ms.
 
-Two 52-second diagnostic runs at 1,024 scheduled TPS used the earlier `36c37b832` release. The default configuration with two workers per pool finalized 515.6 TPS across all replicas and used 371.35 CPU-seconds. Four workers per pool reached 522.4 TPS and used 475.05 CPU-seconds. Both dropped roughly 25,000 client requests before submission. A 10-second CPU capture in the two-worker run attributed 96.3% of the sampled performance-core cycles across replica 0's application and CometBFT processes to the admission threads. The [raw observations](benchmarks/2026-11-25-prefunded-512.json.xz) include the profiles, per-transaction records, funding confirmations, snapshots and proofs.
+Two 52-second diagnostic runs at 1,024 scheduled TPS used the earlier `36c37b832` release. The default configuration with two workers per pool finalized 515.6 TPS across all replicas and used 371.35 CPU-seconds. Four workers per pool reached 522.4 TPS and used 475.05 CPU-seconds. Both dropped roughly 25,000 client requests before submission. A 10-second CPU capture in the two-worker run attributed 96.3% of the sampled performance-core cycles across replica 0's application and CometBFT processes to the admission threads. The [raw observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-prefunded-512.json.xz) include the profiles, per-transaction records, funding confirmations, snapshots and proofs.
 
 ```sh
 go build -o target/stem-tools/stem-loadgen tools/loadgen/main.go
@@ -281,7 +281,7 @@ python3 tools/localnet.py \
   --prefund-payments --output target/stem-runs/vm-reuse-saturation
 ```
 
-Replace the rate, duration and drain with `--rate 575 --seconds 180 --drain 30` for the fixed-rate test. Use a new output directory for each run. Rebuild from `142ae0d701429ab26b2f12cb346c85bc98f0b290` in a separate checkout for the fresh-core control. To sample replica 0, run `perf record -e cycles:u -F 99 -p "$APP_PID,$COMET_PID" -- sleep 18` during the load window. The evidence includes original admissions, resource samples, profiles, binary hashes, commit IDs, verified receipts and their public committee configurations. Each payment's inclusion record stores the common height, CKB transaction hash and cycles, with one observation time per replica in replica order. [Raw observations](benchmarks/2026-11-25-vm-reuse.json.xz)
+Replace the rate, duration and drain with `--rate 575 --seconds 180 --drain 30` for the fixed-rate test. Use a new output directory for each run. Rebuild from `142ae0d701429ab26b2f12cb346c85bc98f0b290` in a separate checkout for the fresh-core control. To sample replica 0, run `perf record -e cycles:u -F 99 -p "$APP_PID,$COMET_PID" -- sleep 18` during the load window. The evidence includes original admissions, resource samples, profiles, binary hashes, commit IDs, verified receipts and their public committee configurations. Each payment's inclusion record stores the common height, CKB transaction hash and cycles, with one observation time per replica in replica order. [Raw observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-vm-reuse.json.xz)
 
 ## Admission workers and HTTP batch size
 
@@ -294,7 +294,7 @@ The VM reuse release `d016e6fb2` ran four same-host validators for 45 seconds wi
 | 1 | 4 | 596.1 | 594.7 | 586.5 | 27,079 / 27,079 | 1,061 / 1,460 / 1,753 ms | 440.53 |
 | 8, updated driver | 3 | 612.4 | 601.1 | 592.4 | 29,600 / 29,600 | 1,368 / 2,086 / 2,424 ms | 424.31 |
 
-The driver dropped 13,176 to 17,921 of the 45,000 scheduled requests before dispatch. A fourth admission worker used more CPU and finalized fewer transactions in the single-request runs. The two eight-request controls differed by 51.5 TPS. These runs leave the sustained limit for this configuration open. The archive includes both controls, all per-replica observations, and the failed driver's original reply classifications. [Raw ingress measurements](benchmarks/2026-11-25-ingress-sweep.json.xz)
+The driver dropped 13,176 to 17,921 of the 45,000 scheduled requests before dispatch. A fourth admission worker used more CPU and finalized fewer transactions in the single-request runs. The two eight-request controls differed by 51.5 TPS. These runs leave the sustained limit for this configuration open. The archive includes both controls, all per-replica observations, and the failed driver's original reply classifications. [Raw ingress measurements](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-ingress-sweep.json.xz)
 
 Build the driver from `3b9ce4b7f` or a later revision. Reuse the VM saturation command with `--rate 1000 --seconds 45 --drain 22 --idle-seconds 5 --client-workers 64` and vary `--rpc-batch` and `--admission-workers`. Use a fresh development network for each run.
 
@@ -331,7 +331,7 @@ python3 tools/localnet.py \
   --retain-consensus-blocks 96 --prefund-payments --output target/stem-runs/abci-flush
 ```
 
-Run the commands sequentially and use a fresh output directory for each network. Use `--rate 650 --seconds 120` or `--rate 625 --seconds 120` for the fixed-rate runs. For the recovery run use `--rate 320 --seconds 30 --p2p-delay-ms 20 --outage-at 9 --outage-seconds 4`. The archive records source and binary hashes, admission replies, per-replica visibility times, commit timing, resource samples and the independently verified execution receipts. [Raw observations](benchmarks/2026-11-25-abci-flush.json.xz)
+Run the commands sequentially and use a fresh output directory for each network. Use `--rate 650 --seconds 120` or `--rate 625 --seconds 120` for the fixed-rate runs. For the recovery run use `--rate 320 --seconds 30 --p2p-delay-ms 20 --outage-at 9 --outage-seconds 4`. The archive records source and binary hashes, admission replies, per-replica visibility times, commit timing, resource samples and the independently verified execution receipts. [Raw observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-abci-flush.json.xz)
 
 ## ABCI response queue depth
 
@@ -360,7 +360,7 @@ The 32-slot run used 6.5% less node CPU than the 128-slot run with the same thre
 
 The one-slot setting delivered all 4,608 signed payments in a 192 TPS run with 20 ms one-way loopback P2P delay. The weight-1 replica was down for 4.06 seconds. Of the 781 payments offered during that interval, 203 reached replica 0 before the restart. The restarted replica displayed the last of the 781 payments 4.36 seconds after restart. All-replica p99 including the outage was 7.86 seconds. The CLI rejected depths zero and 129 before opening an application home.
 
-Use the ABCI Flush benchmark command above with `--abci-response-queue 128`, `64`, `32` or `16`, `--seconds 50` and a fresh output directory for each network. Use `--rate 625 --seconds 90` for the fixed-rate comparison and `--admission-workers 2` for the worker-count run. The archive includes workload metadata, CPU and storage samples, admission acknowledgments, visibility times and independently verified execution proofs. [Raw queue and KVM observations](benchmarks/2026-11-25-abci-response-queue.json.xz)
+Use the ABCI Flush benchmark command above with `--abci-response-queue 128`, `64`, `32` or `16`, `--seconds 50` and a fresh output directory for each network. Use `--rate 625 --seconds 90` for the fixed-rate comparison and `--admission-workers 2` for the worker-count run. The archive includes workload metadata, CPU and storage samples, admission acknowledgments, visibility times and independently verified execution proofs. [Raw queue and KVM observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-abci-response-queue.json.xz)
 
 Four KVM guests with separate kernels and ext4 images ran the same application on one physical workstation. Each guest had three vCPUs and 2 GiB RAM and added 20 ms of one-way P2P delay with `netem`. Both runs offered 450 TPS for 55 seconds with the external driver's 24 workers and eight payments per HTTP batch. Both delivered all 24,750 signed payments to all four replicas with zero client drops.
 
@@ -369,7 +369,7 @@ Four KVM guests with separate kernels and ext4 images ran the same application o
 | 128 | 449.5 | 441.4 | 1,018 / 1,432 / 1,877 ms | 400.51 |
 | 32 | 449.5 | 445.0 | 999 / 1,422 / 1,932 ms | 379.43 |
 
-Use the KVM benchmark command above with `--rate 450 --seconds 55 --p2p-delay-ms 20` and `--abci-response-queue 128` or `32`. The guest CPU samples include the Linux kernels and virtual I/O. The archive records the sample boundaries, authenticated peer addresses and queue settings from the guest logs. [Raw queue and KVM observations](benchmarks/2026-11-25-abci-response-queue.json.xz)
+Use the KVM benchmark command above with `--rate 450 --seconds 55 --p2p-delay-ms 20` and `--abci-response-queue 128` or `32`. The guest CPU samples include the Linux kernels and virtual I/O. The archive records the sample boundaries, authenticated peer addresses and queue settings from the guest logs. [Raw queue and KVM observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-abci-response-queue.json.xz)
 
 ## Admission worker CPU affinity
 
@@ -382,7 +382,7 @@ Four local validators ran application `427de2f4f` for 50 seconds at 950 schedule
 | 3 | Inherited | 692.7 | 691.5 | 678.3 | 34,893 | 12,607 | 1,058 / 1,570 / 2,103 ms | 19.30 |
 | 3 | Fixed | 677.0 | 675.7 | 664.5 | 34,102 | 13,398 | 1,002 / 1,437 / 1,838 ms | 19.94 |
 
-The fixed masks reduced all-replica throughput by 9.9% with two workers and 2.0% with three. Every offered payment completed at all four replicas. The runner read all masks back from Linux before load. The archive includes the host topology, actual masks, the affinity wrapper as `local_affinity_source` and the matched run flags as `local_reproduction`. [Raw affinity and packet impairment observations](benchmarks/2026-11-25-affinity-netem.json.xz)
+The fixed masks reduced all-replica throughput by 9.9% with two workers and 2.0% with three. Every offered payment completed at all four replicas. The runner read all masks back from Linux before load. The archive includes the host topology, actual masks, the affinity wrapper as `local_affinity_source` and the matched run flags as `local_reproduction`. [Raw affinity and packet impairment observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-affinity-netem.json.xz)
 
 ## Three-minute load with two admission workers
 
@@ -400,7 +400,7 @@ At 600 TPS the four replica pairs used 1,461.39 CPU-seconds and sent 639.3 MB of
 
 The 650 TPS run sampled replica 0 for 18 seconds at 99 Hz. The admission threads accounted for 92.3% of sampled performance-core user cycles across that application and CometBFT pair. The decoder and assembly instruction handlers were among the largest symbols. Separate CPU samples during 155 seconds of the 635 TPS run measured 84–88 °C at the CPU package and no increase in the kernel's package thermal throttle counter.
 
-Use the ABCI Flush benchmark command above with `--rate 650`, `635` or `600`, `--seconds 180`, `--admission-workers 2` and `--abci-response-queue 128`. Run each with a new output directory. The archive includes exact run manifests, per-payment acknowledgments and execution times, resource samples, profiles, the public committee configurations and independently verified proofs. [Raw three-minute observations](benchmarks/2026-11-25-steady-load.json.xz)
+Use the ABCI Flush benchmark command above with `--rate 650`, `635` or `600`, `--seconds 180`, `--admission-workers 2` and `--abci-response-queue 128`. Run each with a new output directory. The archive includes exact run manifests, per-payment acknowledgments and execution times, resource samples, profiles, the public committee configurations and independently verified proofs. [Raw three-minute observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-steady-load.json.xz)
 
 ## Cargo build profile comparison
 
@@ -419,7 +419,7 @@ Every offered transaction reached all replicas and the verifier independently ch
 
 The `prod` binary also finalized all 1,536 transactions in the mixed native CKB and xUDT workload. The native bridge scenario used the frozen CKB L1 executable and deployed the RISC-V vault and deposit contracts on a local dev chain. It completed deposit, attested mint, transfer, burn and L1 payout, then moved the vault to a disjoint signing group and completed another deposit and withdrawal. The archive includes the two offline-verified withdrawal proofs and the bridge's observed L1 transactions and rejection results.
 
-Build with `cargo build --locked --release -p stem` and `cargo build --locked --profile prod -p stem`. For each binary, use the ABCI Flush benchmark command above with `--rate 950 --seconds 55 --admission-workers 2 --abci-response-queue 128` and a fresh output directory. The archive includes the build and run commands, binary and library hashes, per-payment observations, hardware counter samples, resource and storage records, and independently verified execution proofs. [Raw build profile observations](benchmarks/2026-11-25-build-profiles.json.xz)
+Build with `cargo build --locked --release -p stem` and `cargo build --locked --profile prod -p stem`. For each binary, use the ABCI Flush benchmark command above with `--rate 950 --seconds 55 --admission-workers 2 --abci-response-queue 128` and a fresh output directory. The archive includes the build and run commands, binary and library hashes, per-payment observations, hardware counter samples, resource and storage records, and independently verified execution proofs. [Raw build profile observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-build-profiles.json.xz)
 
 ## Bounded proposal verification
 
@@ -434,11 +434,11 @@ The live control and treatment each used four same-host validators, two VM and t
 | Original | 600.0 | 599.9 | 590.8 | 789 / 1,165 / 1,578 ms | 390.42 |
 | Bounded | 600.0 | 599.7 | 590.9 | 828 / 1,205 / 1,522 ms | 410.62 |
 
-The bounded run used 5.2% more node CPU in this pair. The bounded binary also finalized all 2,048 two-asset transfers in a live run, with matching serial replay results and checkpoint files. The archive includes the exact signed diagnostic fixture, its reproduction scripts, all live-run observations, unit test output and independently verified execution proofs. [Raw proposal budget observations](benchmarks/2026-11-25-proposal-budget.json.xz)
+The bounded run used 5.2% more node CPU in this pair. The bounded binary also finalized all 2,048 two-asset transfers in a live run, with matching serial replay results and checkpoint files. The archive includes the exact signed diagnostic fixture, its reproduction scripts, all live-run observations, unit test output and independently verified execution proofs. [Raw proposal budget observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-proposal-budget.json.xz)
 
 ## Serial replay and checkpoint equivalence
 
-Four weighted validators each used four proposal VM workers and two admission workers. After the load, a newly initialized nonvoting replica replayed the same chain from genesis with one VM worker. The harness compared committed block hashes and full ABCI execution results, including VM cycles and application hashes, at every height through the comparison target. The serial app verified every committed transaction with zero script-cache hits. Checkpoint archives and metadata matched byte for byte at all participating replicas. [Reproduction and recorded execution results](benchmarks/2026-11-25-serial-replay.json.xz)
+Four weighted validators each used four proposal VM workers and two admission workers. After the load, a newly initialized nonvoting replica replayed the same chain from genesis with one VM worker. The harness compared committed block hashes and full ABCI execution results, including VM cycles and application hashes, at every height through the comparison target. The serial app verified every committed transaction with zero script-cache hits. Checkpoint archives and metadata matched byte for byte at all participating replicas. [Reproduction and recorded execution results](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-serial-replay.json.xz)
 
 | Signed workload | Offered TPS | Admitted TPS | Finalized and all-replica TPS | Committed / offered | All-replica p50 / p95 / p99 | Serial replay height / duration | Verified checkpoint |
 | --- | ---: | ---: | ---: | --- | --- | --- | ---: |
@@ -451,11 +451,11 @@ The atomic run killed the weight-one validator at 5.00 seconds and restarted it 
 
 In the post-load run, the last transaction executed at height 41. A separate observer installed the certified format-4 checkpoint at height 48 and replayed through height 50 in 7.21 seconds. All four validators, the serial replica and the snapshot observer produced or installed the same 4,269,509-byte checkpoint image. An independent verifier recomputed its archive digest, Live Cell Merkle root and checkpoint application hash from the retained image. Each workload also exported an execution proof that passed offline committee verification.
 
-Use the local committee harness with `--vm-workers 4 --admission-workers 2 --serial-replay --checkpoint-interval 8 --checkpoint-cell-proofs --checkpoint-compact-transactions --checkpoint-live-cell-replay --compact-transaction-history --no-comet-tx-index`. Add `--sync-observer --sync-checkpoint-height 48` for the post-load profile. The archive includes exact commands, build identities, per-transaction observations, per-block result digests, checkpoint images, public committee configurations and execution proofs. [Raw replay observations](benchmarks/2026-11-25-serial-replay.json.xz)
+Use the local committee harness with `--vm-workers 4 --admission-workers 2 --serial-replay --checkpoint-interval 8 --checkpoint-cell-proofs --checkpoint-compact-transactions --checkpoint-live-cell-replay --compact-transaction-history --no-comet-tx-index`. Add `--sync-observer --sync-checkpoint-height 48` for the post-load profile. The archive includes exact commands, build identities, per-transaction observations, per-block result digests, checkpoint images, public committee configurations and execution proofs. [Raw replay observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-serial-replay.json.xz)
 
 ## Seeded KVM peer packet impairments
 
-Four weighted validators with voting powers 2, 2, 1 and 1 ran the same application build in separate Linux guests on one physical host. Each guest had three vCPUs, 2 GiB RAM and a separate ext4 image. All profiles used 32 ABCI response slots, 20 ms of one-way P2P delay and per-guest seeds 4242–4245. The mixed profile added 1% loss, 1% duplication and 10% reordering at each P2P interface's egress queue. The load driver used a separate RPC interface with 24 workers and eight payments per HTTP batch. [Raw affinity and packet impairment observations](benchmarks/2026-11-25-affinity-netem.json.xz)
+Four weighted validators with voting powers 2, 2, 1 and 1 ran the same application build in separate Linux guests on one physical host. Each guest had three vCPUs, 2 GiB RAM and a separate ext4 image. All profiles used 32 ABCI response slots, 20 ms of one-way P2P delay and per-guest seeds 4242–4245. The mixed profile added 1% loss, 1% duplication and 10% reordering at each P2P interface's egress queue. The load driver used a separate RPC interface with 24 workers and eight payments per HTTP batch. [Raw affinity and packet impairment observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-affinity-netem.json.xz)
 
 | Profile | Initial proposal timeout | Offered TPS | Admitted TPS | Finalized TPS | All-replica TPS | Completed / scheduled | All-replica p50 / p95 / p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
@@ -492,7 +492,7 @@ python3 tools/l1_baseline.py \
 
 ## Raw evidence
 
-The [compressed observations](benchmarks/2026-11-25.json.xz) include transaction admission, replica visibility, receipt-verifier output, binary hashes and benchmark settings. Use `xz -dc` to inspect the JSON. The bridge, validator handoff and state-sync reports use local test keys. The archive includes executable proof bundles and their public committee configurations for the final bridge and handoff scenarios. The release performance runs precede the checkpoint and admission changes unless their run manifests identify a later commit.
+The [compressed observations](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25.json.xz) include transaction admission, replica visibility, receipt-verifier output, binary hashes and benchmark settings. Use `xz -dc` to inspect the JSON. The bridge, validator handoff and state-sync reports use local test keys. The archive includes executable proof bundles and their public committee configurations for the final bridge and handoff scenarios. The release performance runs precede the checkpoint and admission changes unless their run manifests identify a later commit.
 
 ## Native encoding and VM fixtures
 
@@ -546,7 +546,7 @@ Each payment sweep scheduled 1,024 transactions at the requested target. HTTP su
 
 The native lock's cycle cost and the configured block cycle limit constrain how many transactions each block can confirm. Similar throughput across the five workloads describes these fixtures under this budget. Measuring marginal Type Group cost requires matched fixtures and independent cycle attribution. Sustained high-rate submission and remote hosts under the native model remain unmeasured.
 
-The compressed run bundle records all nine runs, per-transaction admission and visibility samples, and executable SHA-256 fingerprints. [Raw native measurements](benchmarks/2026-11-25-native-comet.json.xz)
+The compressed run bundle records all nine runs, per-transaction admission and visibility samples, and executable SHA-256 fingerprints. [Raw native measurements](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-native-comet.json.xz)
 
 ## Transaction Script Dictionary encoding experiment
 
@@ -573,9 +573,9 @@ After extracting the Stem VM crate, two fresh four-node release runs offered the
 
 Both runs recorded zero client drops. The four-worker run used more CPU time and memory with similar confirmation throughput under this block budget. The test supports `STEM_TEST_VM_WORKERS` to repeat both profiles. The full signed RISC-V VM fixtures still charge 5,769,207, 5,760,590 and 5,835,417 cycles respectively on the vendored backend. The upstream suite passed 164 tests.
 
-The [worker measurements and CKB checkpoint evidence](benchmarks/2026-11-25-vm-and-checkpoint.json.xz) include per-transaction data, the binary fingerprints, both CKB checkpoint inclusion proofs, signed CometBFT successors, a historical Header proof, and a CKB devnet reorganization that stopped Stake Snapshot signing.
+The [worker measurements and CKB checkpoint evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-vm-and-checkpoint.json.xz) include per-transaction data, the binary fingerprints, both CKB checkpoint inclusion proofs, signed CometBFT successors, a historical Header proof, and a CKB devnet reorganization that stopped Stake Snapshot signing.
 
-The final [stake lifecycle bundle](benchmarks/2026-11-25-stake-lifecycle.json.xz) includes the confirmed guardian rotation and later snapshot from the new authority, two signed validator handoffs, the authenticated retirement marker and the CKB withdrawal proof. The final release withdrew 250 CKB after the configured delay. The separate CKB run froze and forfeited 250 CKB, closed two Registry entries, rejected re-registration and stopped issuing attestations after a real devnet reorganization.
+The final [stake lifecycle bundle](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-stake-lifecycle.json.xz) includes the confirmed guardian rotation and later snapshot from the new authority, two signed validator handoffs, the authenticated retirement marker and the CKB withdrawal proof. The final release withdrew 250 CKB after the configured delay. The separate CKB run froze and forfeited 250 CKB, closed two Registry entries, rejected re-registration and stopped issuing attestations after a real devnet reorganization.
 
 ## Matched native Type Group fixtures
 
@@ -596,7 +596,7 @@ A two-replica stake-backed CometBFT run used a three-second commit wait. A confi
 
 ABCI returned validator updates at heights 9 and 19 during the measured window. Their voting effects started at heights 11 and 21. The same run subsequently increased an active validator's verified power from 400 to 450 at height 31, and authenticated another 250 CKB withdrawal. This measures progress under modest load during committee changes. The four-replica capacity runs use separate settings.
 
-The [funded stake and bridge evidence](benchmarks/2026-11-25-funded-stake-and-bridge.json.xz) contains the actual confirmation and resource samples and the CKB proofs. The bridge test paid 1,200 xUDT units, moved 500,000 shannons between the vaults and rotated custody. Its observer stopped signing after the confirmed CKB anchor was replaced on the isolated devnet.
+The [funded stake and bridge evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-funded-stake-and-bridge.json.xz) contains the actual confirmation and resource samples and the CKB proofs. The bridge test paid 1,200 xUDT units, moved 500,000 shannons between the vaults and rotated custody. Its observer stopped signing after the confirmed CKB anchor was replaced on the isolated devnet.
 
 ## Same-host validator scale
 
@@ -615,4 +615,4 @@ The 32-replica run timed out awaiting two HTTP responses covering 16 payments. A
 
 Four same-host release replicas admitted all 4,320 signed payments at 24.00 TPS and confirmed all 4,320 at 23.88 TPS over the full observation window. Full-replica p50/p95/p99 was 1.23/1.81/1.91 s, with zero client drops. The processes used 245.41 aggregate CPU seconds, 548.5 MB peak sampled RSS, 786.19 MB of process writes, and approximately 31.19 MB in both directions of aggregate CometBFT P2P traffic. The replicas drained the offered workload during the run. The higher-rate sweep identifies backlog on this host.
 
-The [scale and steady-load evidence](benchmarks/2026-11-25-native-scale-and-steady.json.xz) preserves all five reports and per-payment RPC and replica observations. The three-minute run uses `STEM_TEST_LOAD_COUNT=4320 STEM_TEST_LOAD_RATE=24` with the four-replica test. Production hardware and WAN traffic remain separate measurements.
+The [scale and steady-load evidence](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-25-native-scale-and-steady.json.xz) preserves all five reports and per-payment RPC and replica observations. The three-minute run uses `STEM_TEST_LOAD_COUNT=4320 STEM_TEST_LOAD_RATE=24` with the four-replica test. Production hardware and WAN traffic remain separate measurements.

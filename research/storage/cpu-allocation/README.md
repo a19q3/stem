@@ -6,10 +6,10 @@ Four equal-volume runs used the order six, twelve, twelve, six. Every run confir
 
 | Physical cores | Raw run | Window TPS | p50 / p99 seconds | Validator CPU seconds |
 | ---: | --- | ---: | ---: | ---: |
-| 6 | [six1.json.xz](six1.json.xz) | 1,898.96 | 1.343 / 66.056 | 182.75 |
-| 12 | [twelve1.json.xz](twelve1.json.xz) | 1,989.93 | 1.169 / 62.022 | 174.46 |
-| 12 | [twelve2.json.xz](twelve2.json.xz) | 1,943.89 | 1.269 / 63.156 | 174.93 |
-| 6 | [six2.json.xz](six2.json.xz) | 1,884.31 | 1.293 / 66.171 | 179.39 |
+| 6 | [six1.json.xz](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/cpu-allocation/six1.json.xz) | 1,898.96 | 1.343 / 66.056 | 182.75 |
+| 12 | [twelve1.json.xz](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/cpu-allocation/twelve1.json.xz) | 1,989.93 | 1.169 / 62.022 | 174.46 |
+| 12 | [twelve2.json.xz](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/cpu-allocation/twelve2.json.xz) | 1,943.89 | 1.269 / 63.156 | 174.93 |
+| 6 | [six2.json.xz](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/cpu-allocation/six2.json.xz) | 1,884.31 | 1.293 / 66.171 | 179.39 |
 
 The six-core medians were 1,891.63 window TPS, 66.11 s p99 and 181.07 CPU seconds. The twelve-core medians were 1,966.91 window TPS, 62.59 s p99 and 174.70 CPU seconds.
 
@@ -17,8 +17,8 @@ The two 180-second trials then offered 3,000/s with the ordinary bounded client 
 
 | Physical cores | Written | Acknowledged | Confirmed | In 180 s | Window TPS | p99 seconds | Peak acknowledged backlog | Device write GB |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [6](six-pressure.json.xz) | 327,592 | 327,592 | 327,592 | 298,186 | 1,656.59 | 168.019 | 29,702 | 11.177 |
-| [12](twelve-pressure.json.xz) | 319,903 | 319,903 | 319,903 | 290,961 | 1,616.45 | 168.854 | 28,942 | 11.079 |
+| [6](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/cpu-allocation/six-pressure.json.xz) | 327,592 | 327,592 | 327,592 | 298,186 | 1,656.59 | 168.019 | 29,702 | 11.177 |
+| [12](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/storage/cpu-allocation/twelve-pressure.json.xz) | 319,903 | 319,903 | 319,903 | 290,961 | 1,616.45 | 168.854 | 28,942 | 11.079 |
 
 Widening the validator CPU set improved the matched-volume results. Under sustained pressure, the twelve-core run dispatched 7,689 fewer payments and its common-visible window throughput was 40.14 TPS lower. A single run per configuration leaves the cause of that difference unresolved. The experiment provides no sustained gain from allocating more node cores alone. The next capacity measurement needs an independent load generator and validator hosts. [Exact matched IDs and workload hashes](comparison.json) · [I/O, proposal and commit measurements](storage.json) · [Time-resolved backlog](backlog.json)
 

@@ -1,6 +1,6 @@
 # Which Cell authorized a Cluster member mint?
 
-Four confirmed CKB testnet transactions minted a Spore member and spent a Cluster Agent. The wallet can now prove which previous output a named transaction spent. A caller can also require the exact collection version listed among its CellDeps. Both predicates use the existing witnessed Type history bundle. [Public histories, requests and results](public.json.xz) · [Upstream Proxy and Agent RFC](https://github.com/sporeprotocol/spore-contract/blob/9e577ea6b5f2fb9cbf555e9e86effcc037c78039/docs/RFC_PROXY_AGENT.md)
+Four confirmed CKB testnet transactions minted a Spore member and spent a Cluster Agent. The wallet can now prove which previous output a named transaction spent. A caller can also require the exact collection version listed among its CellDeps. Both predicates use the existing witnessed Type history bundle. [Public histories, requests and results](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/spore-permit/upstream/collections/agent/public.json.xz) · [Upstream Proxy and Agent RFC](https://github.com/sporeprotocol/spore-contract/blob/9e577ea6b5f2fb9cbf555e9e86effcc037c78039/docs/RFC_PROXY_AGENT.md)
 
 | Member mint height | Cluster creation | Proxy creation | Agent creation | Member transaction |
 | ---: | ---: | ---: | ---: | --- |

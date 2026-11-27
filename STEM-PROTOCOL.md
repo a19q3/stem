@@ -2,7 +2,9 @@
 
 ## 1. 网络定位
 
-Stem 是一条以 CKB 计价、由加权 Jolteon 最终确认的 Cell 网络。Stem 使用唯一的原生 Polytype Cell 模型与交易格式。一个 Cell 可同时绑定多个 Type Scripts，内核按完整 Script 身份派生并执行所有验证组。CKB L1 的真实质押决定验证者权重，独立桥金库负责 CKB 和 xUDT 的兑付。Stem 不发行独立原生代币。可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
+Stem 是由加权 Jolteon 最终确认的原生 Polytype Cell 协议。一个 Cell 可同时绑定多个 Type Scripts，内核按完整 Script 身份派生并执行验证组。已配置的 CKB 网络以 CKB 计价，由其 Stake Registry 提供委员会权重，独立桥金库负责 CKB 和 xUDT 的兑付。这些部署不发行独立原生代币。可兑付 CKB 的唯一增量来自已经确认并可兑付的 L1 存款。
+
+独立 Stem 网络可以固定初始委员会并直接认证原生执行。投票签名绑定完整执行 Header，排序与状态共用最终性。CKB 结算适配器消费已经认证的执行 Header，并沿用现有 Checkpoint 证明格式。[原生执行认证](stake/src/jolteon.rs) · [CKB 结算适配器](stake/src/settlement/ckb.rs)
 
 [Metatype](METATYPE.md) 在 CKB 上用单一 Type Script 表示一个部署中的多项独立约束。CKB 合约从实际输入输出及 Manifest 推导完整虚拟组，保持 CKB Lock 的消费授权。当前运行路径覆盖 CKB 独立发行、转移及合并结算。定义 Cell 可按 CKB 数据哈希复用完整 Script 集合，状态仍在各自的 Cell 内。两种存储形式共享虚拟组，字节预算按展开后的逻辑视图计算。虚拟组可读取独立消息、证明和 Seal。不可变对象的审批 Seal 承诺实际 CKB 创世、完整部署和原始交易。对象夹具已与四副本原生 Polytype 对照。不可变托管路径可将同一对象及原始约束集合带到 CKB，再销毁映射、取回 Stem 原件。已接入每 Cell 数量上限与资产守恒两项独立约束的同质资产托管。CKB 按认证的增减量发行及销毁，Stem 支持部分和全额赎回并保留完整 Script 集合。可修订对象配置在两侧使用相同的单调版本规则并分别执行独立审批。导出时保留当前状态，返程使用已认证的 CKB 销毁状态，保留原始 Capacity 本金及完整 Type Script 集合。返程可通过普通授权输入补足额外状态抵押，CKB 导入时须先为信箱预留最大返程载荷容量。
 
@@ -159,7 +161,7 @@ Genesis 可配置 `keeper` 的预约窗口 `max_delay`、单高度上限 `per_he
 | 1 | 1 至 64 条定长 129 字节记录，每条依次为 33 字节压缩 secp256k1 公钥、32 字节摘要和 64 字节低 S 紧凑 ECDSA 签名 | 每条 2,200,000 |
 | 2 | 1 至 64 条定长 128 字节记录，每条依次为 32 字节 Ed25519 公钥、32 字节消息和 64 字节签名，使用严格验证 | 每条 3,200,000 |
 
-每次调用先计 25,000 cycles。长度合法的批次在读内存前按全批计费。每条签名独立验证，整批通过才返回成功。脚本可根据网络的交易或 Executor 预算使用更小的批次。计费标定、完整 ELF 验证与四副本创世重启实测见[原始记录](benchmarks/2026-11-27-crypto-v1.json.xz)。
+每次调用先计 25,000 cycles。长度合法的批次在读内存前按全批计费。每条签名独立验证，整批通过才返回成功。脚本可根据网络的交易或 Executor 预算使用更小的批次。计费标定、完整 ELF 验证与四副本创世重启实测见[原始记录](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/benchmarks/2026-11-27-crypto-v1.json.xz)。
 
 
 ### Stem Header 与时间
@@ -624,4 +626,4 @@ CKB 历史输出验证器从可信区块哈希重算 Header、交易及见证根
 
 创世参数由固定宽度的限制、费率、容量策略和链名长度开头，随后是原始链名字节及验证者条目。桥接配置的主体使用 `BridgeGenesisConfig`，包含三类控制预算、守护者、按创世顺序给出的通道及收款约束。尾部沿用既有约定，依次为可选的 32 字节邮箱代码哈希，以及可选的基金标签和代码哈希。Keeper 策略保留高度策略后的可选时间策略。单字节标识、计数和高度使用既有原始字节和小端整数。
 
-质押系统沿用长度为 40 字节的成员条目。创世快照中的声明长度、轮换人数、Registry 记录数和证明签名数均按历史 u16 读取。运行期快照继续按原签名域验证声明、轮换授权与 Registry 业务规则。提款收据保存固定原生前缀和原始 CKB 收款 Script。Intercell 信封后的业务负载保持原字节，CKB 合约和 Stem 共享消息 ID。以上布局可在 [Strand schema](ledger/schemas/strand.json) 查阅。新旧导出、C/Rust 读取器及创世夹具见[验证记录](evidence/2026-11-27-strand-system-records.json.xz)。
+质押系统沿用长度为 40 字节的成员条目。创世快照中的声明长度、轮换人数、Registry 记录数和证明签名数均按历史 u16 读取。运行期快照继续按原签名域验证声明、轮换授权与 Registry 业务规则。提款收据保存固定原生前缀和原始 CKB 收款 Script。Intercell 信封后的业务负载保持原字节，CKB 合约和 Stem 共享消息 ID。以上布局可在 [Strand schema](ledger/schemas/strand.json) 查阅。新旧导出、C/Rust 读取器及创世夹具见[验证记录](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/evidence/2026-11-27-strand-system-records.json.xz)。
