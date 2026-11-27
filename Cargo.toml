@@ -49,6 +49,9 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-th
 
 [dev-dependencies]
 blst = { version = "=0.3.17", features = ["no-threads"] }
+ckb-chain-spec.workspace = true
+ckb-script = { workspace = true, features = ["asm"] }
+ckb-traits.workspace = true
 ckb-vm = { workspace = true, features = ["asm"] }
 
 [workspace]

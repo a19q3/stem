@@ -709,6 +709,8 @@ mod storage_load;
 
 #[path = "native_store/polytype_attachment.rs"]
 mod polytype_attachment;
+#[path = "native_store/fungible_conformance.rs"]
+mod fungible_conformance;
 
 #[path = "native_store/lineage_batch.rs"]
 mod lineage_batch;

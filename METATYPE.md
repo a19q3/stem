@@ -750,6 +750,30 @@ The fixture places an unrelated valid payment before each rejected collateral tr
 
 An application promising exclusive rights must authenticate the allocation in its own Type or a shared covenant. A valid local conservation predicate can count the same asset under multiple claims. Agreements that allow overlapping claims need explicit priority and release rules. [Native fixture](tests/native_store/polytype_attachment.rs) · [Composition acceptance cases](https://github.com/a19q3/stem/issues/16)
 
+### Standalone fungible conformance
+
+The permanent corpus compares 78 transactions across 1, 2, 4, 8 and 16 Type Groups. It uses the same complete logical Scripts, absolute Cell positions and scalar state in both runtimes. The reference predicate checks positive 128-bit quantities, checked supply sums, issuer authorization for an increase, required Type membership and per-Cell ceilings. Cases cover issuance, optional attachment and removal, mandatory cap retention, split and merge, over-cap merge, unauthorized supply increase, an input-only burn group, zero, malformed length and overflow. The 16-group profile reaches the per-Cell Metatype Script limit. The oracle compares full Script bytes and the input and output index lists for each group, including untyped gaps.
+
+Stem runs signed transactions in two separate RocksDB stores, serially and with four workers, and repeats the parallel preparation warm. The accepted blocks agree on exact Headers, receipts and charged cycles. The rejected blocks preserve both committed tips and input records, including an unrelated payment earlier in each block. The CKB comparison runs the deployed Data2 dispatcher and both real adapters through the vendored CKB script verifier with resolved Cells and a dev hardfork context. It checks the Type predicate for inline and dependency-authenticated shared definitions. Full CKB Lock admission and bridge custody require the separate devnet fixtures.
+
+All four decisions matched the independent predicate for each case. There were 45 accepted cases and 33 semantic rejections. The largest successful cycle charges per tested width are shown below. Native charges include the signed asset transaction's Lock. The CKB columns cover the physical Type group. These are deterministic charges for this corpus, with a 100M transaction limit in Stem and a 100M Type verification limit in the CKB fixture.
+
+| Requested Type Groups | Native cycles | CKB inline cycles | CKB shared cycles |
+| ---: | ---: | ---: | ---: |
+| 1 | 1,942,336 | 351,627 | 367,861 |
+| 2 | 1,964,817 | 655,210 | 684,008 |
+| 4 | 1,997,607 | 1,421,663 | 1,448,787 |
+| 8 | 2,070,874 | 3,588,578 | 3,534,339 |
+| 16 | 2,217,774 | 10,190,034 | 9,681,545 |
+
+Use the same test with `STEM_TEST_EVIDENCE_ROOT` to emit the per-case decisions, cycle charges and executable fingerprints. [Conformance fixture](tests/native_store/fungible_conformance.rs)
+
+```sh
+STEM_TEST_EVIDENCE_ROOT=/tmp/stem-fungible-conformance \
+  cargo test --release --locked --test native_store \
+  fungible_conformance::native_and_metatype_fungible_groups_match -- --exact --nocapture
+```
+
 ## Threat model
 
 The protected assets are supply, object identity, custody, script

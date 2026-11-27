@@ -11,7 +11,7 @@ use super::{
     *,
 };
 
-fn build_contract(kind: &str, name: &str) -> Result<Bytes> {
+pub(super) fn build_contract(kind: &str, name: &str) -> Result<Bytes> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let target = root.join("target/stem-contracts");
     let triple = "riscv64imac-unknown-none-elf";
