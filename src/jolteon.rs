@@ -34,6 +34,8 @@ mod candidate_pipeline;
 mod certificate_experiment;
 mod client;
 mod mempool;
+#[cfg(feature = "jolteon-proposal-pipeline")]
+mod proposal_pipeline;
 mod recovery;
 pub mod snapshot;
 mod transport;
@@ -150,9 +152,15 @@ struct Replica {
     routes: Vec<Option<u16>>,
     key: SigningKey,
     net: Network,
+    #[cfg(not(all(
+        feature = "jolteon-candidate-pipeline",
+        feature = "jolteon-proposal-pipeline"
+    )))]
     workers: Arc<rayon::ThreadPool>,
     #[cfg(feature = "jolteon-candidate-pipeline")]
     candidate_pipeline: candidate_pipeline::Pipeline,
+    #[cfg(feature = "jolteon-proposal-pipeline")]
+    proposal_pipeline: proposal_pipeline::Pipeline,
     journal: wire::Journal,
     high: Quorum,
     certificate: Option<TimeoutCertificate>,
@@ -354,6 +362,11 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 candidate_pipeline::Pipeline::start(workers.clone())?;
             #[cfg(not(feature = "jolteon-candidate-pipeline"))]
             let mut candidate_done = std::future::pending::<Option<()>>();
+            #[cfg(feature = "jolteon-proposal-pipeline")]
+            let (proposal_pipeline, mut proposal_done) =
+                proposal_pipeline::Pipeline::start(workers.clone())?;
+            #[cfg(not(feature = "jolteon-proposal-pipeline"))]
+            let mut proposal_done = std::future::pending::<Option<()>>();
             let mut replica = Replica {
                 store,
                 committee,
@@ -375,9 +388,15 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 timeout: Duration::from_millis(config.view_timeout_ms),
                 proposal_interval: Duration::from_millis(config.proposal_interval_ms),
                 backoff: 0,
+                #[cfg(not(all(
+                    feature = "jolteon-candidate-pipeline",
+                    feature = "jolteon-proposal-pipeline"
+                )))]
                 workers,
                 #[cfg(feature = "jolteon-candidate-pipeline")]
                 candidate_pipeline,
+                #[cfg(feature = "jolteon-proposal-pipeline")]
+                proposal_pipeline,
                 candidates: BTreeMap::new(),
                 preferred: BTreeMap::new(),
                 votes: BTreeMap::new(),
@@ -425,6 +444,17 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                         #[cfg(feature = "jolteon-candidate-pipeline")]
                         replica.complete_preparation(result.context("candidate preparation worker stopped")?)?;
                         #[cfg(not(feature = "jolteon-candidate-pipeline"))]
+                        let _ = result;
+                    }
+                    result = async {
+                        #[cfg(feature = "jolteon-proposal-pipeline")]
+                        { proposal_done.recv().await }
+                        #[cfg(not(feature = "jolteon-proposal-pipeline"))]
+                        { (&mut proposal_done).await }
+                    } => {
+                        #[cfg(feature = "jolteon-proposal-pipeline")]
+                        replica.complete_proposal(result.context("proposal worker stopped")?)?;
+                        #[cfg(not(feature = "jolteon-proposal-pipeline"))]
                         let _ = result;
                     }
                     _ = ticker.tick() => replica.tick()?,
@@ -1209,22 +1239,26 @@ impl Replica {
         self.accept_timeout(&raw)
     }
 
-    fn propose(&mut self) -> Result<()> {
-        if Some(self.committee.leader(self.view)?) != self.member
+    fn proposal_parent(&self) -> Result<Option<(Quorum, Vec<u8>)>> {
+        if self.handoff_tip.is_some()
+            || self.recovery.active
+            || Some(self.committee.leader(self.view)?) != self.member
             || self.preferred.contains_key(&self.view)
+            || self.high.point.view >= self.view
+            || self.high.point.view < self.journal.lock
         {
-            return Ok(());
+            return Ok(None);
         }
         if !self.journal.vote.is_empty() {
             let prior = Point::decode(&self.journal.vote)?;
             if prior.view >= self.view {
-                return Ok(());
+                return Ok(None);
             }
         }
         if !self.journal.timeout.is_empty() {
             let prior: wire::Timeout = wire::canonical(&self.journal.timeout)?;
             if prior.view >= self.view {
-                return Ok(());
+                return Ok(None);
             }
         }
         let parent = self.high.clone();
@@ -1236,9 +1270,20 @@ impl Replica {
                 .as_ref()
                 .filter(|tc| tc.view.checked_add(1) == Some(self.view))
             else {
-                return Ok(());
+                return Ok(None);
             };
             tc.encode()
+        };
+        Ok(Some((parent, tc)))
+    }
+
+    fn propose(&mut self) -> Result<()> {
+        #[cfg(feature = "jolteon-proposal-pipeline")]
+        if self.proposal_pipeline.running() {
+            return Ok(());
+        }
+        let Some((parent, tc)) = self.proposal_parent()? else {
+            return Ok(());
         };
         let Some(branch) = self.branch(parent.point)? else {
             return Ok(());
@@ -1252,15 +1297,22 @@ impl Replica {
         let seal = pending.as_ref().is_some_and(|change| {
             parent_header.context.height.checked_add(1) == Some(change.activation_height)
         });
-        let (header, transactions, execution) = if seal {
-            (parent_header.clone(), Vec::new(), None)
-        } else {
-            let Ok(at) = now_ms() else {
-                return Ok(());
-            };
-            if at <= parent_header.context.timestamp_ms {
-                return Ok(());
-            }
+        if seal {
+            return self.publish_proposal(parent, tc, parent_header.clone(), Vec::new(), None);
+        }
+        let Ok(at) = now_ms() else {
+            return Ok(());
+        };
+        if at <= parent_header.context.timestamp_ms {
+            return Ok(());
+        }
+        #[cfg(feature = "jolteon-proposal-pipeline")]
+        {
+            let parent_id = parent_header.id(self.store.network()).unpack();
+            self.schedule_proposal(branch, batches, parent_id, at)
+        }
+        #[cfg(not(feature = "jolteon-proposal-pipeline"))]
+        {
             let started = Instant::now();
             let (transactions, execution) = self.workers.install(|| {
                 self.store.on_branch(&batches, |state| {
@@ -1271,12 +1323,25 @@ impl Replica {
             if !can_vote_at(at) {
                 return Ok(());
             }
-            (
+            self.publish_proposal(
+                parent,
+                tc,
                 execution.header().clone(),
                 transactions,
                 Some(Arc::new(execution)),
             )
-        };
+        }
+    }
+
+    fn publish_proposal(
+        &mut self,
+        parent: Quorum,
+        tc: Vec<u8>,
+        header: Header,
+        transactions: Vec<Transaction>,
+        execution: Option<Arc<Prepared>>,
+    ) -> Result<()> {
+        let seal = execution.is_none();
         let header_id: Hash32 = header.id(self.store.network()).unpack();
         let point = Point {
             view: self.view,
@@ -1301,7 +1366,10 @@ impl Replica {
             seal,
         };
         self.admit_proposal(proposal.clone(), self.directory.own)?;
-        self.candidates.get_mut(&point).unwrap().execution = execution;
+        self.candidates
+            .get_mut(&point)
+            .context("local proposal was not admitted")?
+            .execution = execution;
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &proposal)))?;
         self.net.broadcast(wire::PROPOSAL, proposal.encode_to_vec());

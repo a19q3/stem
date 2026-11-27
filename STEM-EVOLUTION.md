@@ -107,7 +107,7 @@ Stem V1 沿用执行绑定的加权 Jolteon。投票签名继续认证完整执�
 | 优先级 | 工作 | 验收 |
 | --- | --- | --- |
 | P0 | Follower Candidate Pipeline | 先跑独立主机的 1,800 TPS 基线和 3,000 TPS 可持续档。用至少 3,300 TPS 的实际写入验证过载，并在同负载加入分支切换、超时、重启及委员会交接。 |
-| P0 | Leader Proposal Pipeline | 将构块移出事件循环。结果提交前复核 epoch、view、父 Header、待投票内容和投票日志。 |
+| P0 | Leader Proposal Pipeline | 可选原型已移出选块和构块。主循环重新核对 epoch、view、父链和投票日志。混合版本重启、超时后丢弃迟到结果和 CKB 两次交接已验证。整网收益留待组合消融。[Leader 验收](research/execution-pipeline/README.md#leader-proposal-construction) |
 | P0 | State Commitment Pipeline | 独立对照状态根和收据根的并行计算，保持同一父状态、顺序、收据字节和 Header。 |
 | P0 | 区块资源扩容 | 用相同签名负载交叉比较 40 亿、80 亿和 160 亿 cycles 的独立创世。首轮固定 2,048 笔上限，同时记录真实写入、块满原因、排队和持久化 CPU。若先触及交易数上限，再单独提高交易数上限复测。 |
 | P1 | Commit Pipeline | 核对认证写入与投票日志的持久化边界，测试提交前后进程故障以及后继候选的恢复。 |

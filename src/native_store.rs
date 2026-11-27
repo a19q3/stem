@@ -280,13 +280,15 @@ pub struct Store {
 
 #[cfg(any(
     feature = "jolteon-admission-pipeline",
-    feature = "jolteon-candidate-pipeline"
+    feature = "jolteon-candidate-pipeline",
+    feature = "jolteon-proposal-pipeline"
 ))]
 pub(crate) struct PinnedView(Store);
 
 #[cfg(any(
     feature = "jolteon-admission-pipeline",
-    feature = "jolteon-candidate-pipeline"
+    feature = "jolteon-candidate-pipeline",
+    feature = "jolteon-proposal-pipeline"
 ))]
 impl PinnedView {
     #[cfg(feature = "jolteon-admission-pipeline")]
@@ -312,6 +314,19 @@ impl PinnedView {
                 .map(Transaction::from_bytes)
                 .collect::<Result<Vec<_>>>()?;
             view.on_branch(branch, |state| state.prepare(&transactions, time, true))
+        })
+    }
+
+    #[cfg(feature = "jolteon-proposal-pipeline")]
+    pub(crate) fn build_proposal(
+        &self,
+        branch: &[Arc<Prepared>],
+        transactions: Vec<Transaction>,
+        time: u64,
+        max_bytes: u64,
+    ) -> Result<Option<(Vec<Transaction>, Prepared)>> {
+        self.with_snapshot(|view| {
+            view.on_branch(branch, |state| state.build_proposal(transactions, time, max_bytes))
         })
     }
 
@@ -856,7 +871,8 @@ impl Store {
 
     #[cfg(any(
         feature = "jolteon-admission-pipeline",
-        feature = "jolteon-candidate-pipeline"
+        feature = "jolteon-candidate-pipeline",
+        feature = "jolteon-proposal-pipeline"
     ))]
     pub(crate) fn pinned_view(&self) -> PinnedView {
         let mut view = self.read_view(&[]);
@@ -2481,7 +2497,8 @@ fn sync_with_consensus(
     test,
     any(
         feature = "jolteon-admission-pipeline",
-        feature = "jolteon-candidate-pipeline"
+        feature = "jolteon-candidate-pipeline",
+        feature = "jolteon-proposal-pipeline"
     )
 ))]
 mod admission_snapshot_tests {
@@ -2521,6 +2538,17 @@ mod admission_snapshot_tests {
         let old = store.pinned_view();
         let expected = store.tip().clone();
         let next = store.prepare(&[], 1001, false)?;
+        #[cfg(feature = "jolteon-proposal-pipeline")]
+        {
+            let ancestor = Arc::new(store.prepare(&[], 1001, false)?);
+            let (transactions, proposal) = old
+                .build_proposal(&[ancestor.clone()], Vec::new(), 1002, 1024)?
+                .context("missing proposal snapshot")?;
+            let reference = store.on_branch(&[ancestor], |view| view.prepare(&[], 1002, false))?;
+            assert!(transactions.is_empty());
+            assert_eq!(proposal.header(), reference.header());
+            assert_eq!(proposal.receipts(), reference.receipts());
+        }
         let observed = old.with_snapshot(|read| {
             store.commit(next)?;
             let bytes = read.read(TIP)?.context("missing snapshot tip")?;
@@ -2529,6 +2557,8 @@ mod admission_snapshot_tests {
         assert_eq!(observed.as_ref(), Some(&expected));
         assert_eq!(store.tip().context.height, 1);
         assert!(old.with_snapshot(|_| Ok(()))?.is_none());
+        #[cfg(feature = "jolteon-proposal-pipeline")]
+        assert!(old.build_proposal(&[], Vec::new(), 1002, 1024)?.is_none());
         let fresh = store.pinned_view();
         assert_eq!(
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),

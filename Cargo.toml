@@ -13,6 +13,7 @@ comet-benchmark = []
 jolteon-certificate-experiment = []
 jolteon-admission-pipeline = []
 jolteon-candidate-pipeline = []
+jolteon-proposal-pipeline = []
 native-work-stealing = []
 
 [dependencies]
