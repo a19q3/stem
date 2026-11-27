@@ -110,6 +110,15 @@ pub struct ProposalScan {
     pub block_cycle_rejections: u64,
     pub block_cycle_rejection_us: u64,
     pub cycle_scan_stops: u64,
+    /// Capped age-priority prefix offered to the proposal builder.
+    pub priority_candidates: u64,
+    /// Number of proposal plans whose age-priority prefix reached the cap.
+    pub priority_at_limit: u64,
+    pub priority_inspected: u64,
+    pub priority_selected: u64,
+    pub priority_spent_in_parent: u64,
+    pub priority_spent_in_proposal: u64,
+    pub priority_cycle_rejections: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -149,6 +158,13 @@ impl ProposalScan {
             .block_cycle_rejection_us
             .saturating_add(scan.block_cycle_rejection_us);
         self.cycle_scan_stops = self.cycle_scan_stops.saturating_add(scan.cycle_scan_stops);
+        self.priority_candidates = self.priority_candidates.saturating_add(scan.priority_candidates);
+        self.priority_at_limit = self.priority_at_limit.saturating_add(scan.priority_at_limit);
+        self.priority_inspected = self.priority_inspected.saturating_add(scan.priority_inspected);
+        self.priority_selected = self.priority_selected.saturating_add(scan.priority_selected);
+        self.priority_spent_in_parent = self.priority_spent_in_parent.saturating_add(scan.priority_spent_in_parent);
+        self.priority_spent_in_proposal = self.priority_spent_in_proposal.saturating_add(scan.priority_spent_in_proposal);
+        self.priority_cycle_rejections = self.priority_cycle_rejections.saturating_add(scan.priority_cycle_rejections);
     }
 }
 
@@ -1916,7 +1932,11 @@ impl Store {
             {
                 break;
             }
+            let priority = u64::from(
+                cfg!(feature = "jolteon-aged-proposal-selection") && scan.inspected < scan.priority_candidates,
+            );
             scan.inspected = scan.inspected.saturating_add(1);
+            scan.priority_inspected = scan.priority_inspected.saturating_add(priority);
             let started = Instant::now();
             let tx = item.borrow();
             let len = tx.as_slice().len();
@@ -1947,6 +1967,7 @@ impl Store {
             ) {
                 Ok(receipt) => {
                     scan.selected = scan.selected.saturating_add(1);
+                    scan.priority_selected = scan.priority_selected.saturating_add(priority);
                     wire_bytes = next_wire;
                     receipts.push(receipt);
                     selected.push(tx.clone());
@@ -1956,6 +1977,7 @@ impl Store {
                     if error.is::<BlockVmBudgetExceeded>() {
                         cycle_rejections += 1;
                         scan.block_cycle_rejections = scan.block_cycle_rejections.saturating_add(1);
+                        scan.priority_cycle_rejections = scan.priority_cycle_rejections.saturating_add(priority);
                         scan.block_cycle_rejection_us = scan.block_cycle_rejection_us.saturating_add(
                             u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
                         );
@@ -1970,6 +1992,7 @@ impl Store {
                     {
                         if matches!(overlay.live.get(point), Some(None)) {
                             scan.spent_in_proposal = scan.spent_in_proposal.saturating_add(1);
+                            scan.priority_spent_in_proposal = scan.priority_spent_in_proposal.saturating_add(priority);
                         } else if matches!(
                             self.branch
                                 .iter()
@@ -1978,6 +2001,7 @@ impl Store {
                             Some(None)
                         ) {
                             scan.spent_in_parent = scan.spent_in_parent.saturating_add(1);
+                            scan.priority_spent_in_parent = scan.priority_spent_in_parent.saturating_add(priority);
                             scan.spent_in_parent_us = scan.spent_in_parent_us.saturating_add(
                                 u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
                             );
@@ -3016,7 +3040,7 @@ mod pipeline_store_tests {
         let fourth = signed(&points[4])?;
         let store = Store::open(path.path(), &spec, Retention::Archive)?;
         let parent = Arc::new(store.prepare(std::slice::from_ref(&first), 1001, false)?);
-        let mut scan = ProposalScan::default();
+        let mut scan = ProposalScan { priority_candidates: 3, ..ProposalScan::default() };
         let (selected, proposal) = store
             .pinned_view()
             .build_proposal(
@@ -3038,13 +3062,18 @@ mod pipeline_store_tests {
             (scan.inspected, scan.selected, scan.spent_in_parent, scan.spent_in_proposal),
             (4, 1, 1, 1)
         );
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        assert_eq!(
+            (scan.priority_inspected, scan.priority_selected, scan.priority_spent_in_parent, scan.priority_spent_in_proposal),
+            (3, 1, 1, 0)
+        );
 
         spec.limits.transaction_cycles = expected.receipts()[0].cycles + 1;
         spec.limits.block_cycles = spec.limits.transaction_cycles;
         let cold_path = tempfile::tempdir()?;
         let mut limited = Store::open(cold_path.path(), &spec, Retention::Archive)?;
         limited.check(&second)?;
-        let mut scan = ProposalScan::default();
+        let mut scan = ProposalScan { priority_candidates: 2, ..ProposalScan::default() };
         let (selected, proposal) = limited.build_proposal_measured(
             [&first, &second, &third, &fourth],
             1001,
@@ -3056,6 +3085,8 @@ mod pipeline_store_tests {
             (scan.inspected, scan.selected, scan.block_cycle_rejections, scan.cycle_scan_stops),
             (3, 1, 2, 1)
         );
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        assert_eq!((scan.priority_inspected, scan.priority_selected, scan.priority_cycle_rejections), (2, 1, 1));
         assert_eq!(selected[0].as_slice(), first.as_slice());
         let reference = limited.prepare(std::slice::from_ref(&first), 1001, false)?;
         assert_eq!(proposal.header(), reference.header());

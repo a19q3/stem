@@ -31,6 +31,7 @@ struct Job {
     state: PinnedView,
     ancestors: Vec<Arc<Prepared>>,
     transactions: Vec<Transaction>,
+    scan: ProposalScan,
 }
 
 pub(super) struct Completion {
@@ -59,7 +60,7 @@ impl Pipeline {
             .spawn(move || {
                 while let Some(job) = jobs.blocking_recv() {
                     let started = Instant::now();
-                    let mut scan = ProposalScan::default();
+                    let mut scan = job.scan;
                     let execution = workers.install(|| {
                         job.state.build_proposal(
                             &job.ancestors,
@@ -119,17 +120,22 @@ impl Replica {
             !self.proposal_pipeline.running,
             "proposal construction already running"
         );
+        let stamp = self.proposal_stamp();
+        let state = self.store.pinned_view();
+        let (transactions, scan) = self.mempool.proposal_candidates();
+        let job = Job {
+            stamp,
+            branch,
+            parent_header,
+            time,
+            state,
+            ancestors,
+            transactions: transactions.cloned().collect(),
+            scan,
+        };
         self.proposal_pipeline
             .send
-            .try_send(Job {
-                stamp: self.proposal_stamp(),
-                branch,
-                parent_header,
-                time,
-                state: self.store.pinned_view(),
-                ancestors,
-                transactions: self.mempool.transactions().cloned().collect(),
-            })
+            .try_send(job)
             .map_err(|_| anyhow::anyhow!("proposal construction worker stopped"))?;
         self.proposal_pipeline.running = true;
         let jobs = &mut self.execution.proposal_jobs;

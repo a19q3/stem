@@ -1435,8 +1435,10 @@ impl Replica {
             let mut scan = Default::default();
             let result = self.workers.install(|| {
                 self.store.on_branch(&batches, |state| {
+                    let (candidates, priority_scan) = self.mempool.proposal_candidates();
+                    scan = priority_scan;
                     state.build_proposal_measured(
-                        self.mempool.transactions(),
+                        candidates,
                         at,
                         MAX_PROPOSAL_BYTES,
                         &mut scan,

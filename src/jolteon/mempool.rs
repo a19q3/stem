@@ -9,6 +9,8 @@ use stem_ledger::{
 };
 use stem_stake::Hash32;
 
+use crate::native_store::ProposalScan;
+
 const RELAY_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(feature = "jolteon-aged-proposal-selection")]
 const PROPOSAL_PRIORITY_AGE: Duration = Duration::from_secs(5);
@@ -81,17 +83,17 @@ impl Mempool {
     }
 
     #[cfg(not(feature = "jolteon-aged-proposal-selection"))]
-    pub(super) fn transactions(&self) -> impl Iterator<Item = &Transaction> {
-        self.entries.values().map(|entry| &entry.tx)
+    pub(super) fn proposal_candidates(&self) -> (impl Iterator<Item = &Transaction>, ProposalScan) {
+        (self.entries.values().map(|entry| &entry.tx), ProposalScan::default())
     }
 
     #[cfg(feature = "jolteon-aged-proposal-selection")]
-    pub(super) fn transactions(&self) -> impl Iterator<Item = &Transaction> {
+    pub(super) fn proposal_candidates(&self) -> (impl Iterator<Item = &Transaction>, ProposalScan) {
         self.transactions_at(Instant::now())
     }
 
     #[cfg(feature = "jolteon-aged-proposal-selection")]
-    fn transactions_at(&self, now: Instant) -> impl Iterator<Item = &Transaction> {
+    fn transactions_at(&self, now: Instant) -> (impl Iterator<Item = &Transaction>, ProposalScan) {
         let aged = self
             .arrivals
             .iter()
@@ -99,13 +101,20 @@ impl Mempool {
             .take_while(move |(at, _)| now.saturating_duration_since(*at) >= PROPOSAL_PRIORITY_AGE);
         // The promoted entries form a prefix of the arrival index. Skip exactly
         // that prefix when walking the regular hash order.
-        let boundary = aged.clone().last().copied();
-        aged.map(|(_, id)| &self.entries[id].tx).chain(
+        let mut count = 0;
+        let boundary = aged.clone().inspect(|_| count += 1).last().copied();
+        let transactions = aged.map(|(_, id)| &self.entries[id].tx).chain(
             self.entries
                 .iter()
                 .filter(move |(id, entry)| boundary.is_none_or(|last| (entry.accepted, **id) > last))
                 .map(|(_, entry)| &entry.tx),
-        )
+        );
+        let scan = ProposalScan {
+            priority_candidates: count as u64,
+            priority_at_limit: u64::from(count == MAX_AGED_PROPOSAL_VISITS),
+            ..ProposalScan::default()
+        };
+        (transactions, scan)
     }
 
     pub(super) fn insert(&mut self, id: Hash32, tx: Transaction) -> anyhow::Result<()> {
@@ -246,9 +255,15 @@ mod tests {
             id[30..].copy_from_slice(&(height as u16).to_be_bytes());
             pool.insert(id, transaction.with_valid_before_height(height)?)?;
         }
-        let heights = |pool: &Mempool, at| pool.transactions_at(at).map(|tx| tx.valid_before_height().unwrap()).collect::<Vec<_>>();
+        let heights = |pool: &Mempool, at| {
+            pool.transactions_at(at).0.map(|tx| tx.valid_before_height().unwrap()).collect::<Vec<_>>()
+        };
         assert_eq!(heights(&pool, before), (1..=260).collect::<Vec<_>>());
+        assert_eq!(pool.transactions_at(before).1.priority_candidates, 0);
         let cutoff = pool.arrivals.last().unwrap().0 + PROPOSAL_PRIORITY_AGE;
+        let scan = pool.transactions_at(cutoff).1;
+        assert_eq!(scan.priority_candidates, MAX_AGED_PROPOSAL_VISITS as u64);
+        assert_eq!(scan.priority_at_limit, 1);
         let ordered = heights(&pool, cutoff);
         let priority = pool
             .arrivals
