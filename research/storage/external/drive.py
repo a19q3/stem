@@ -10,6 +10,14 @@ import shutil
 import subprocess
 import tempfile
 
+if __package__:
+    from .qualify import host_inventory
+else:
+    from qualify import host_inventory
+
+
+V1_RATES = {"baseline": 1800, "sustainable": 3000, "overload": 3300}
+
 
 def digest(path):
     with path.open("rb") as f:
@@ -37,20 +45,39 @@ def main():
     prepare.add_argument("--reuse-submissions", action="store_true")
     prepare.add_argument("--pause-on-full", action="store_true",
                          help="pause a sender for one proposal interval after a full-mempool reply")
+    v1 = phases.add_parser("prepare-v1", help="prepare a fixed V1 cross-host profile")
+    v1.add_argument("--topology", type=Path, required=True)
+    v1.add_argument("--inventory", type=Path, help="verify and pin the operator's physical placement record")
+    v1.add_argument("--profile", choices=V1_RATES, required=True)
+    v1.set_defaults(seconds=240, drain=45, senders=256, data_bytes=0,
+                    block_transactions=2048, block_cycles=4_000_000_000, complete_volume=True,
+                    reuse_submissions=True, pause_on_full=False, shard_senders=False, ready_senders=True)
     measure = phases.add_parser("measure")
     measure.add_argument("--output", type=Path, required=True, help="new directory for this measurement")
     verify = phases.add_parser("verify")
     verify.add_argument("--report", type=Path, required=True)
-    for phase in (prepare, measure, verify):
+    for phase in (prepare, v1, measure, verify):
         phase.add_argument("--trial", type=Path, required=True, help="genesis and measurement plan directory")
     args = parser.parse_args()
     trial = args.trial.resolve()
-    preparing = args.phase == "prepare"
+    v1_profile = args.phase == "prepare-v1"
+    preparing = args.phase == "prepare" or v1_profile
     harness_hash = digest(args.harness)
     lock_hash = digest(args.contracts / "stem-lock")
     if preparing:
         topology = args.topology.resolve()
         config = json.loads(topology.read_bytes())
+        if v1_profile:
+            args.rate = V1_RATES[args.profile]
+            peers = config["peers"]
+            if (len(peers), config.get("proposal_interval_ms"), config.get("vm_workers", 2)) != (4, 100, 2):
+                parser.error("V1 qualification requires four validators, a 100 ms proposal interval and two VM workers")
+            if args.inventory is not None:
+                try:
+                    inventory = args.inventory.read_bytes()
+                    host_inventory(json.loads(inventory), [peer["address"] for peer in peers], peers)
+                except (OSError, KeyError, TypeError, ValueError) as error:
+                    parser.error(f"V1 inventory: {error}")
         settings = {"RATE": args.rate, "SECONDS": args.seconds, "DRAIN": args.drain, "SENDERS": args.senders,
                     "CADENCE": config["proposal_interval_ms"], "VM_WORKERS": config.get("vm_workers", 2),
                     "PAYMENT_DATA_BYTES": args.data_bytes, "COMPLETE_VOLUME": int(args.complete_volume),
@@ -60,6 +87,10 @@ def main():
                     "BLOCK_TRANSACTIONS": args.block_transactions, "BLOCK_CYCLES": args.block_cycles}
         plan = {"storage_settings": settings, "harness_sha256": harness_hash, "lock_sha256": lock_hash,
                 "topology_sha256": digest(topology)}
+        if v1_profile:
+            plan["qualification_profile"] = args.profile
+            if args.inventory is not None:
+                plan["inventory_sha256"] = hashlib.sha256(inventory).hexdigest()
     else:
         plan = json.loads((trial / "trial.json").read_bytes())
         topology = trial / "replicas.json"

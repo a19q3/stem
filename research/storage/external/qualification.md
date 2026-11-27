@@ -19,15 +19,13 @@ The default sustainable bounds of one second of backlog growth, five seconds of 
 
 Growth is the largest increase between any earlier and later measurement minute boundaries, including the post-warmup starting boundary. Peak backlog uses every acknowledged and common-observation event during measurement so a transient buildup inside a minute still counts. A trial that admits 3,300/s and confirms 3,000/s adds 54,000 pending payments in three minutes. That exceeds the initial overload cap even if the trial drains completely in 18 seconds. The same run also fails the sustainable profile, which requires a 3,000/s schedule.
 
-Prepare fresh funded state separately for each profile.
+Prepare fresh funded state separately for each profile. `prepare-v1` fixes the workload and block settings for the 1,800, 3,000 and 3,300 TPS stages and checks the validator count, cadence and VM workers against the topology. Supply `--inventory` to validate and pin the operator's placement declaration at preparation. The general-purpose `prepare` command still accepts custom profiles.
 
 ```sh
 external=research/storage/external
-for rate in 3000 3300; do
-  python3 "$external/drive.py" --harness "$harness" --contracts "$contracts" prepare \
-    --topology replicas.json --trial "trial-$rate" --rate "$rate" --seconds 240 --drain 45 \
-    --senders 256 --ready-senders --reuse-submissions --complete-volume \
-    --block-transactions 2048 --block-cycles 4000000000
+for profile in baseline sustainable overload; do
+  python3 "$external/drive.py" --harness "$harness" --contracts "$contracts" prepare-v1 \
+    --topology replicas.json --inventory inventory.json --profile "$profile" --trial "trial-$profile"
 done
 ```
 
@@ -35,15 +33,15 @@ Launch one validator per host with its own key and a fresh database. Start the d
 
 ```sh
 python3 "$external/qualify.py" --harness "$stock_verifier" --contracts "$contracts" \
-  --mode sustainable --trial trial-3000 --report report-3000.json.xz --inventory inventory.json \
+  --mode sustainable --trial trial-sustainable --report report-3000.json.xz --inventory inventory.json \
   --target-tps 3000 --warmup-seconds 60 > qualification-3000.json
 python3 "$external/qualify.py" --harness "$stock_verifier" --contracts "$contracts" \
-  --mode overload --trial trial-3300 --report report-3300.json.xz --inventory inventory.json \
+  --mode overload --trial trial-overload --report report-3300.json.xz --inventory inventory.json \
   --target-tps 3000 --warmup-seconds 60 --max-pending 15000 --max-unacknowledged-bps 1000 \
   > qualification-3300.json
 ```
 
-In `inventory.json`, provide `driver.physical_host` and a `validators` array in measured endpoint order. Each element contains `endpoint` and `physical_host`. Include hardware, binary digests and local monitoring data with the deployment record. The qualifier matches measured endpoints to the prepared peer list and inventory, checks that the declared hosts are distinct, and rejects loopback addresses. Operator records establish physical placement.
+In `inventory.json`, provide `driver.physical_host` and a `validators` array in measured endpoint order. Each element contains `endpoint` and `physical_host`. Include hardware, binary digests and local monitoring data with the deployment record. The qualifier matches measured endpoints to the prepared peer list and inventory, checks that the declared hosts are distinct, and rejects loopback addresses. When preparation pins the inventory, supply the same file for qualification. Operator records establish physical placement.
 
 Independent replay regenerates the signed workload and validates the chain and observation record. The qualifier then scores actual writes, recorded acknowledgments and the first common observation. The unacknowledged rate uses the cohort written during measurement and includes responses that never recorded success. That cohort supplies the latency population when a payment was acknowledged and commonly visible by the drain deadline. Report per-minute confirmations, acknowledgment counts, outstanding acknowledgments, losses before socket write and payments that finalized without a successful acknowledgment.
 

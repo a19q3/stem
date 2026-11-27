@@ -183,7 +183,8 @@ def main():
         for value in (args.max_pending, args.max_pending_growth, args.max_p99_ms)
     ):
         parser.error("limits must be nonnegative and unacknowledged basis points must be below 10000")
-    inventory = json.loads(args.inventory.read_bytes())
+    inventory_bytes = args.inventory.read_bytes()
+    inventory = json.loads(inventory_bytes)
     here = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
@@ -193,7 +194,10 @@ def main():
         for filename in ("trial.json", "replicas.json", "genesis.json"):
             shutil.copyfile(args.trial / filename, trial / filename)
         shutil.copyfile(args.report, snapshot)
-        settings = json.loads((trial / "trial.json").read_bytes())["storage_settings"]
+        plan = json.loads((trial / "trial.json").read_bytes())
+        settings = plan["storage_settings"]
+        if "inventory_sha256" in plan and plan["inventory_sha256"] != hashlib.sha256(inventory_bytes).hexdigest():
+            parser.error("physical inventory differs from the prepared V1 plan")
         peers = json.loads((trial / "replicas.json").read_bytes())["peers"]
         subprocess.run([sys.executable, here / "drive.py", "--harness", args.harness, "--contracts", args.contracts,
                         "verify", "--trial", trial, "--report", snapshot], stdout=sys.stderr, check=True)
@@ -212,6 +216,8 @@ def main():
         result["reasons"].append(f"inventory: {error}")
         result["passed"] = False
     result["report_sha256"] = digest
+    if "qualification_profile" in plan:
+        result["qualification_profile"] = plan["qualification_profile"]
     result["physical_hosts_recorded_by_operator"] = inventory
     print(json.dumps(result, indent=2))
     sys.exit(0 if result["passed"] else 1)
