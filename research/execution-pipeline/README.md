@@ -121,6 +121,52 @@ Reproduce with `drive.py prepare --rate 3000 --seconds 30 --drain 25 --senders 2
 
 The node SHA-256 fingerprints were `85105ccc1f4bb862e9347aa7fb9adf0ad275d311666f1c86999497beb0504e31` and `76d08219df1b8a914e8e8d03376478e7fe01c3cbc54cee7c1c19dfb020de67a8`. The shared driver and verifier SHA-256 was `20c7588d97674a79e5c14a45d9c67ac4190780ea6f0ea2bfa946be3a754ad7c2`, genesis SHA-256 was `5cb75903f55eb47dbbabe87a9c11f8769136085ce29cb35b542d4eab1a57d9b7`, and the signed corpus BLAKE2b digest was `40f951bb7266fbf694ecaa42c32956818cc3dd76f39f5c3f5d3352e2161b812a`.
 
+### Lineage materialization across conflicts
+
+The candidate `native-lineage-ready-prefix` checks up to one worker-sized window of consecutive Lineage commands. It materializes the leading independent commands against the same immutable view, then stages their effects in transaction order before inspecting the next window. It tracks each fee input, current Head OutPoint, possible output, and direct Cell Dep in both read/write directions. A conflicting command or a Dep Group ends that window. The serial path handles the first command when no prefix is available. Planning still requires full transaction cycle budgets for the inspected window.
+
+Replica status records `execution.candidate_lineage` for successfully prepared follower artifacts. The counters distinguish access-analysis time, concurrent materialization time, parallel waves and commands on each path. They include successful background preparations later discarded. These counters measure preparation work, which can include the same transaction on more than one replica or branch. [Lineage runtime and proof acceptance](https://github.com/a19q3/stem/issues/27)
+
+The dependency regression signs a fixed nine-command block. A repeated Head uses the next Exact version, a command reads a fee output created earlier in the block, another reads a later fee input, and a Dep Group reads a member consumed by a later command. The fee-only rejection of a two-Head command leaves both Head versions intact. A stale Exact command and an exhausted read budget reject as in serial preparation. The committed serial and parallel Cell and System proof paths, Live Cell records, execution receipts and Headers match byte for byte.
+
+The fixed Store comparison alternated reference and candidate in ABBA order with 2, 4 and 8 workers. Each fixture prepares and commits 31 blocks and checks each Header and receipt against a separately committed serial Store. The four workloads are eight independent commands, eight single-Head hotspot commands, one atomic eight-Head command and eight commands mixing shared and independent Heads. Times below are the median of the two run medians for each scheduler.
+
+| Workers | Mixed fixed waves | Mixed independent prefixes | Hot Head fixed waves | Hot Head independent prefixes |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 3.105 ms | 3.200 ms | 3.302 ms | 3.541 ms |
+| 4 | 3.583 ms | 3.204 ms | 3.334 ms | 3.368 ms |
+| 8 | 3.552 ms | 3.081 ms | 3.348 ms | 3.507 ms |
+
+The one-command atomic workload has no concurrent materialization and still showed run-to-run timing changes. The local result supports a choice of workload and worker counts for further comparisons. The 8-worker mixed p99 of the prepared blocks increased in this sample.
+
+```sh
+cargo test --release --locked --features native-lineage-ready-prefix \
+  lineage_prefix_keeps_live_dependencies_versions_and_fee_only_rollback
+STEM_LINEAGE_BENCH_WORKERS=4 cargo test --release --locked --test native_store \
+  lineage::measure_dynamic_lineage_updates -- --exact --ignored --nocapture
+```
+
+#### Four-replica Lineage comparison
+
+Four loopback replicas with four VM workers wrote the same signed corpus in each matched pair. The mixed counter workload offered 480/s for 20 seconds, using 64 registered Heads. The hotspot AMM offered 240/s for 20 seconds, with one shared market. Both had a 25-second drain, 64 persistent senders, a 100 ms proposal cadence, and block limits of 4B cycles and 2,048 transactions. The mixed pair ran fixed waves then prefixes. The AMM pair reversed the order. Each run acknowledged and confirmed the entire workload, and all 1,204 committed heights replayed serially across the four runs. The audit checked receipts, Head versions, authenticated state and AMM conservation.
+
+| Workload and metric | Fixed waves | Independent prefixes |
+| --- | ---: | ---: |
+| Mixed common TPS in offer | 468.80 | 469.95 |
+| Mixed p99 | 1.658 s | 1.200 s |
+| Mixed follower commands materialized concurrently | 56.8% | 91.3% |
+| Mixed validator CPU | 34.61 s | 36.42 s |
+| Hotspot common TPS in offer | 235.10 | 235.80 |
+| Hotspot p99 | 0.469 s | 0.912 s |
+| Hotspot follower commands materialized concurrently | 0% | 0% |
+| Hotspot validator CPU | 24.90 s | 25.11 s |
+
+Each mixed run replayed 9,600 commands and 12,800 Head updates, charging 37,197,123,200 cycles and 19,200,000 shannons. Each hotspot run replayed 4,800 swaps and 9,600 Head updates, charging 18,826,613,250 cycles and 9,600,000 shannons. The mixed candidate used more CPU and completed more materializations concurrently. Whole-window throughput stayed within 0.3% in each pair. The opposite tail-latency directions and the single pair per workload leave the feature opt-in. To test whether the scheduling gain reproduces, raise active Head cardinality and measure concurrent work, contention and tail latency together.
+
+Use `storage_load::sustained_lineage_load` with `STEM_LINEAGE_WORKLOAD=mixed` or `hotspot_amm`, a fresh evidence directory, and the selected `STEM_TEST_REPLICA_BIN`. Set `REPLICAS=4`, `VM_WORKERS=4`, `SECONDS=20`, `DRAIN=25`, `SENDERS=64`, `CADENCE=100`, the offered rate and the block budgets above under the `STEM_STORAGE_` prefix. Set `COMPLETE_VOLUME`, `READY_SENDERS` and `REUSE_SUBMISSIONS` to `1`. Subtract the per-node status counters in `before` from `after` and sum across replicas. The archive audit is written as `lineage-audit.json`.
+
+The fixed and prefix node SHA-256 values were `e6d63fa384de8befc0b0cd537510895815cc8ae276b8f5fa32a4774a6b8648a8` and `360c8f614d3968895a66815308079613be66ac22b1e9d8146fcd87f1f00cb244`. Both used the harness with SHA-256 `8f557998a86df1bb74f1e1916b59793ee39603c5b57181d06a1965433c57ba95`. The mixed and hotspot corpus BLAKE2b digests were `ab3d7ce88ffe6e5243db02a5b7e9e397c3bbe182899969edcdeb039b1f2cb9c9` and `8e8a6e264c6b092804d5a6265a48d80acf0cb6135c4f03257b759395de186576`.
+
 ## Certified Commit Pipeline
 
 `jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.
