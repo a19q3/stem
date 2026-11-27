@@ -135,3 +135,104 @@ index 09a3c73..16e1803 100644
 ```
 
 </details>
+
+## Round 2 · Dense RV64 compressed-instruction tables
+
+Discarded. A read-only table for each supported VM version covered the entire 16-bit compressed instruction space. The assembly decoder used one directly indexed load on compressed factory misses. ISA extensions still used their existing wide-instruction factories. Public generic decoders, memory permissions, macro-op fusion and guest metering used the original rules.
+
+The same four-replica mixed fixture ran uninstrumented in A–B–B–A order. Every run acknowledged and confirmed 55,000 transactions. The independent verifier replayed 1,043 blocks and 220,000 signed transactions. Actual in-window offers were 2,193–2,200/s.
+
+| Order | Common TPS | Write-to-common p99 | Validator CPU | Mean admission check | Mean Follower prepare |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Exact `main` A1 | 2,116.84 | 1.409 s | 95.90 s | 309.20 μs | 87.81 ms |
+| Compressed table B1 | 2,080.80 | 1.731 s | 99.88 s | 323.86 μs | 100.78 ms |
+| Compressed table B2 | 2,109.72 | 1.681 s | 98.00 s | 317.32 μs | 96.41 ms |
+| Exact `main` A2 | 2,131.16 | 1.435 s | 95.35 s | 308.31 μs | 87.87 ms |
+
+Average CPU rose 3.5%. p99 rose 22.9% and 17.1%, and Follower preparation slowed in both pairings. Throughput was lower in both directions. Table footprint, cache locality and the added lookup path are possible causes. This experiment did not collect CPU cache events, and one isolated process could behave differently from four validators. Keeping this table would add memory without a demonstrated benefit.
+
+The vendored assembly suite passed 168 tests. The focused comparison checked all 65,536 words for each of the three supported VM versions, including reserved encodings. The locked release workspace passed 529 tests with 29 ignored. The candidate SHA-256 was `fd3f1694beeb1c0daf56f05dc1daa1a7deb0c572376722f8d8b9bb6132b44ea8`. Apply the patch to the same pinned `main` revision and repeat the four mixed profiles to reproduce.
+
+<details>
+<summary>Rejected compressed-instruction table patch</summary>
+
+```diff
+diff --git a/vendor/ckb-vm/src/decoder.rs b/vendor/ckb-vm/src/decoder.rs
+index 4b0a49b..6529422 100644
+--- a/vendor/ckb-vm/src/decoder.rs
++++ b/vendor/ckb-vm/src/decoder.rs
+@@ -2,0 +3,2 @@ use ckb_vm_definitions::registers::{RA, ZERO};
++#[cfg(has_asm)]
++use std::sync::OnceLock;
+@@ -868,0 +871,13 @@ pub fn build_decoder<R: Register>(isa: u8, version: u32) -> Decoder {
++    build_standard_decoder::<R, false>(isa, version)
++}
++
++#[cfg(has_asm)]
++pub(crate) fn build_asm_decoder(isa: u8, version: u32) -> Decoder {
++    if version <= VERSION2 {
++        build_standard_decoder::<u64, true>(isa, version)
++    } else {
++        build_decoder::<u64>(isa, version)
++    }
++}
++
++fn build_standard_decoder<R: Register, const RVC_TABLE: bool>(isa: u8, version: u32) -> Decoder {
+@@ -871,4 +886,4 @@ pub fn build_decoder<R: Register>(isa: u8, version: u32) -> Decoder {
+-        (false, false) => standard_factory::<R, false, false>,
+-        (true, false) => standard_factory::<R, true, false>,
+-        (false, true) => standard_factory::<R, false, true>,
+-        (true, true) => standard_factory::<R, true, true>,
++        (false, false) => standard_factory::<R, false, false, RVC_TABLE>,
++        (true, false) => standard_factory::<R, true, false, RVC_TABLE>,
++        (false, true) => standard_factory::<R, false, true, RVC_TABLE>,
++        (true, true) => standard_factory::<R, true, true, RVC_TABLE>,
+@@ -879 +894 @@ pub fn build_decoder<R: Register>(isa: u8, version: u32) -> Decoder {
+-fn standard_factory<R: Register, const B: bool, const A: bool>(
++fn standard_factory<R: Register, const B: bool, const A: bool, const RVC_TABLE: bool>(
+@@ -885,0 +901,4 @@ fn standard_factory<R: Register, const B: bool, const A: bool>(
++        #[cfg(has_asm)]
++        if RVC_TABLE {
++            return asm_compressed_instruction(bits as u16, version);
++        }
+@@ -904,0 +924,27 @@ fn standard_factory<R: Register, const B: bool, const A: bool>(
++
++#[cfg(has_asm)]
++fn asm_compressed_instruction(bits: u16, version: u32) -> Option<Instruction> {
++    static DECODED: [OnceLock<Box<[Instruction]>>; VERSION2 as usize + 1] =
++        [const { OnceLock::new() }; VERSION2 as usize + 1];
++    let table = DECODED[version as usize].get_or_init(|| {
++        (0..=u32::from(u16::MAX))
++            .map(|word| rvc::factory::<u64>(word, version).unwrap_or(0))
++            .collect()
++    });
++    // Valid results encode the instruction length and are therefore nonzero.
++    let instruction = table[usize::from(bits)];
++    (instruction != 0).then_some(instruction)
++}
++
++#[cfg(all(test, has_asm))]
++#[test]
++fn compressed_assembly_tables_match_the_factory() {
++    for version in 0..=VERSION2 {
++        for bits in 0..=u16::MAX {
++            assert_eq!(
++                asm_compressed_instruction(bits, version),
++                rvc::factory::<u64>(u32::from(bits), version),
++            );
++        }
++    }
++}
+diff --git a/vendor/ckb-vm/src/machine/asm/mod.rs b/vendor/ckb-vm/src/machine/asm/mod.rs
+index 09a3c73..16e1803 100644
+--- a/vendor/ckb-vm/src/machine/asm/mod.rs
++++ b/vendor/ckb-vm/src/machine/asm/mod.rs
+@@ -21 +21 @@ use crate::{
+-    decoder::{Decoder, build_decoder},
++    decoder::{Decoder, build_asm_decoder},
+@@ -564 +564 @@ where
+-        let mut decoder = build_decoder::<u64>(self.machine.isa(), self.machine.version());
++        let mut decoder = build_asm_decoder(self.machine.isa(), self.machine.version());
+```
+
+</details>
