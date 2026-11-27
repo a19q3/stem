@@ -111,7 +111,10 @@ def check_handoffs(record):
     for handoff in changes:
         pos = next(j for j, tx in enumerate(verified) if tx["transaction"] == handoff["ckb"]["hash"])
         raw_tx = field(binary(record["proof"]["steps"][pos]["transaction"]), 0)
-        mailbox_data = field(field(raw_tx, 5), 0)
+        outputs = field(raw_tx, 4)
+        count = int.from_bytes(outputs[4:8], "little") // 4 - 1
+        mailbox_index, = [i for i in range(count) if ckb_hash(field(field(outputs, i), 2)) == script_hash(mailbox)]
+        mailbox_data = field(field(raw_tx, 5), mailbox_index)
         assert int.from_bytes(mailbox_data[:4], "little") == len(mailbox_data) - 4
         message = mailbox_data[44:]
         assert message == binary(handoff["message"]["record"])
@@ -174,7 +177,7 @@ def main():
                      "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
                      "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz",
                      "registered-policy/settlement.json.xz", "registered-policy/separate-payees.json.xz",
-                     "registered-policy/compact-payees.json.xz"):
+                     "registered-policy/compact-payees.json.xz", "sdk-policies/settlement.json.xz"):
         with lzma.open(HERE / filename, "rt") as source:
             records.update(json.load(source))
     with tempfile.TemporaryDirectory() as scratch:

@@ -194,20 +194,23 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         permit_index = len(codes) + len(funds)
         funds += [(1000 * CKB, fixture.standard), (150 * CKB, fixture.owner_lock),
                   (600 * CKB, fixture.standard), (150 * CKB, fixture.friend_lock)]
-    registration_owner = fixture.owner_lock
-    if args.spore_mutant_separate_payee:
-        payee_key = write_key(args.output, "registration-payee", secrets.token_bytes(32))
-        registration_owner = {**fixture.standard, "args": fixture.key(payee_key)["blake160"]}
+    payments = []
+    if args.spore_mutant_separate_payee or args.spore_mutant_payee_per_program:
         payment_total = args.spore_mutant_payment * len(programs)
-        payment_index = len(codes) + len(funds)
         # Preload the price onto the faucet input the mint already spends.
         # A native export uses the relay fee Cell. A CKB mint uses its issuance input.
         payer_index = 2 if native_origin else 0
         amount, lock = funds[payer_index]
         funds[payer_index] = (amount + payment_total, lock)
-        funds.append((100 * CKB, registration_owner))
+        prices = [args.spore_mutant_payment] * len(programs) if args.spore_mutant_payee_per_program else [payment_total]
+        for i, price in enumerate(prices):
+            name = f"registration-payee-{i}" if args.spore_mutant_payee_per_program else "registration-payee"
+            key = write_key(args.output, name, secrets.token_bytes(32))
+            payee = {**fixture.standard, "args": fixture.key(key)["blake160"]}
+            payments.append((len(codes) + len(funds), payee, key, price))
+            funds.append((100 * CKB, payee))
     change = available - sum(capacities) - sum(amount for amount, _ in funds) - FEE
-    if args.spore_mutant_separate_payee and change < 61 * CKB:
+    if payments and change < 61 * CKB:
         raise ValueError("insufficient fixture capacity for the payments and standard change Cell")
     fund = transaction([fund_input],
         [output(amount, fixture.standard) for amount in capacities] +
@@ -219,10 +222,10 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
 
     def sign_mint(label, tx, group):
         groups = [group]
-        if args.spore_mutant_separate_payee:
+        for payment_index, payee, payee_key, price in payments:
             payee_input = len(tx["inputs"])
             tx["inputs"].append({"previous_output": point(funded, payment_index), "since": "0x0"})
-            tx["outputs"].append(output(100 * CKB + payment_total, registration_owner))
+            tx["outputs"].append(output(100 * CKB + price, payee))
             tx["outputs_data"].append("0x")
             tx["witnesses"].insert(payee_input, "0x")
             groups.append(wallet_group(payee_input, [payee_key]))
@@ -255,6 +258,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         payment = b"" if args.spore_mutant_payment is None else le(args.spore_mutant_payment, 8)
         mutant_ids = []
         for offset, program in enumerate(programs):
+            owner_index = offset if args.spore_mutant_payee_per_program else 0
+            registration_owner = payments[owner_index][1] if payments else fixture.owner_lock
             index = registration_index + offset
             mutant_id = type_id(index)
             mutant_ids.append(mutant_id.hex().encode())

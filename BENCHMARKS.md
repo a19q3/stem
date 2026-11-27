@@ -16,6 +16,8 @@ A published testnet Lua program with a 1,000-shannon mint payment completed both
 
 Four further mints paid a registration owner whose Lock was separate from the Spore recipient. Each route credited exactly 1,000 shannons for one registration or 2,000 for two registrations. Four matched mints then funded the same payments from an existing input, saving 153 body bytes apiece. Offline replay checked 52 CKB asset states and 44 certified native executions across both sets. [Independent beneficiary payments](research/spore-permit/upstream/beta2/registered-policy/README.md#paying-a-separate-beneficiary)
 
+Two different SDK Lua programs settled together on ordinary Cluster members in four devnets. Splitting their two mint charges between separate wallets credited exactly 1,000 shannons to each. An additional output-position policy minted on two devnets. Both deposit estimates returned code 89, including the transaction with the Spore at output zero. [SDK policy combinations and measured CKB costs](research/spore-permit/upstream/beta2/sdk-policies/README.md)
+
 ## Encoding comparison
 
 Each column encodes the same inputs, outputs, scope and 65-byte seal. The two
