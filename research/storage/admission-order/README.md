@@ -209,6 +209,22 @@ The 2,700/s and 2,850/s runs kept the five-second priority threshold, 256-visit 
 
 The 2,700/s run passed every check. The 2,850/s run passed both backlog checks and each minute's floor. It was 1,510 confirmations short of the 513,000 total and missed the 5 s p99 gate. The p99 populations included all 486,000 and 513,000 measurement writes. Independent replay verified all 648,000 and 684,000 payments, 935 and 866 observed blocks, and the terminal proofs at heights 1,248 and 1,216. The workload identifiers were `79150db215f1c5fa4d982a6b80cbf7d6371c1153de46596e687f401be4caf266` and `ded41954e6a5798d3c6a105af2a164c063f21bd11f7f36153e579233bf83c6c6`.
 
+#### Actual priority visits at 3,000/s
+
+The instrumented build at `6ca1583` used the original 720,000-payment corpus, five-second threshold, 256-visit cap, 131,072 cache entries and parallel Cell commitments. Replica status deltas cover warmup, the 180-second measurement window and drain. All assigned priority visits reached the proposal scanner. Of 762 built proposals, 57 reached the priority cap, or 7.5%.
+
+| Candidate outcomes | Age-priority visits | All visits |
+| --- | ---: | ---: |
+| Inspected | 26,427 | 1,150,398 |
+| Selected | 14,832 | 720,000 |
+| Input spent in a speculative parent | 11,595 | 430,398 |
+| Input spent earlier in the same proposal | 0 | 0 |
+| Block cycle rejections | 0 | 0 |
+
+Speculative parent spends accounted for 43.9% of age-priority visits and 37.4% of all visits. Every unsuccessful priority visit in this workload was a parent spend. The 256-visit cap was therefore reached in a minority of builds, and a substantial share of the priority budget went to entries that could not be included on the selected branch. This measures candidate work. A larger cap or a different branch-aware policy still needs a paired performance test.
+
+The 180-second window averaged 2,992.80 common TPS, with 173,352 / 183,095 / 182,257 confirmations by minute, 8.196 s p99, 14,062 peak backlog and 6,653 growth. It passed the peak limit and missed throughput, p99 and growth. All payments confirmed by drain. The original uninstrumented verifier reproduced the signed volume and authenticated 762 observed blocks and the terminal proof at height 1,125. The instrumented node and measuring harness SHA-256 values were `3677f6224539678eee1600a6805b4cf7ceaa88c8aa577ce070b12e1a5a7c8e5f` and `c1bb209a7a96e5fb2f77134113e272d8633a2ed78e78a5112d6c1d75c304a345`.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)
