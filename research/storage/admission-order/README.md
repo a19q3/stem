@@ -191,6 +191,24 @@ The five-second run exceeded 540,000 common confirmations over 180 seconds. Its 
 
 The earlier five-second run with the same cache had 7.274 s p99. The variation across five-second runs and the single run order limit attribution. Retain the five-second threshold in the opt-in feature. Measure headroom at a lower offer and record priority visits and accepted transactions before tuning the visit budget. The signed workload identifier was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`.
 
+#### Lower-offer headroom
+
+The 2,700/s and 2,850/s runs kept the five-second priority threshold, 256-visit cap, 131,072-entry cache, parallel Cell commitments and two VM workers per validator. The same four loopback validator roles and CPU placement used fresh ports and a deterministically prefunded workload sized for each offer. The driver kept the 60/180/45-second warmup, measurement and drain settings. Each run was scored at its configured offer with the same latency and backlog limits.
+
+| Post-warmup metric | 2,700/s offer | 2,850/s offer |
+| --- | ---: | ---: |
+| Common TPS | 2,711.78 | 2,841.61 |
+| Common confirmations by minute | 165,612 / 159,794 / 162,714 | 168,422 / 170,988 / 172,080 |
+| Write-to-common p99 | 4.337 s | 5.550 s |
+| Peak acknowledged backlog | 12,393 | 13,711 |
+| Backlog growth | 2,146 | 2,608 |
+| Pending at drain | 0 | 0 |
+| Measurement writes without ACK | 0 | 0 |
+| Total validator CPU | 1,164.68 s | 1,232.85 s |
+| Per-validator peak RSS | 287.7–301.9 MiB | 303.7–319.2 MiB |
+
+The 2,700/s run passed every check. The 2,850/s run passed both backlog checks and each minute's floor. It was 1,510 confirmations short of the 513,000 total and missed the 5 s p99 gate. The p99 populations included all 486,000 and 513,000 measurement writes. Independent replay verified all 648,000 and 684,000 payments, 935 and 866 observed blocks, and the terminal proofs at heights 1,248 and 1,216. The workload identifiers were `79150db215f1c5fa4d982a6b80cbf7d6371c1153de46596e687f401be4caf266` and `ded41954e6a5798d3c6a105af2a164c063f21bd11f7f36153e579233bf83c6c6`.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)
