@@ -12,6 +12,7 @@ publish = false
 comet-benchmark = []
 jolteon-certificate-experiment = []
 jolteon-admission-pipeline = []
+jolteon-candidate-pipeline = []
 
 [dependencies]
 anyhow.workspace = true

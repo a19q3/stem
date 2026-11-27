@@ -40,6 +40,14 @@ impl Recovery {
         self.progressed = false;
     }
 
+    #[cfg(feature = "jolteon-candidate-pipeline")]
+    pub(super) fn preparation_target(&self) -> Option<Point> {
+        self.target
+            .as_ref()
+            .filter(|(_, received)| received.elapsed() < PROOF_DEADLINE)
+            .map(|(quorum, _)| quorum.point)
+    }
+
     pub(super) fn record_commit(&mut self, point: Point, blocks: usize) {
         if self
             .target

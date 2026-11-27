@@ -77,7 +77,22 @@ pub struct AdmissionMetrics {
 pub struct ExecutionMetrics {
     pub proposal: LatencyHistogram,
     pub candidate_verify: LatencyHistogram,
+    #[serde(default)]
+    pub control_queue: LatencyHistogram,
+    #[serde(default)]
+    pub local_timeouts: u64,
+    #[serde(default)]
+    pub candidate_jobs: CandidateMetrics,
     pub commit: LatencyHistogram,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct CandidateMetrics {
+    pub started: u64,
+    pub applied: u64,
+    pub stale: u64,
+    pub invalid: u64,
+    pub already_running: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]

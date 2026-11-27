@@ -28,6 +28,7 @@ pub struct Incoming {
     pub frame: Frame,
     pub reply: Option<oneshot::Sender<Vec<u8>>>,
     pub submit_received_at: Option<Instant>,
+    pub control_received_at: Option<Instant>,
 }
 
 pub(super) struct Inbox {
@@ -143,7 +144,12 @@ impl Network {
         ))
     }
 
-    pub(super) fn frame(&self, epoch: u64, kind: u32, body: impl Into<bytes::Bytes>) -> Arc<Vec<u8>> {
+    pub(super) fn frame(
+        &self,
+        epoch: u64,
+        kind: u32,
+        body: impl Into<bytes::Bytes>,
+    ) -> Arc<Vec<u8>> {
         Arc::new(
             Frame {
                 sender: u32::from(self.own),
@@ -255,6 +261,7 @@ async fn receive(
                     frame,
                     reply: Some(sender),
                     submit_received_at,
+                    control_received_at: None,
                 })
                 .await?;
             let response = timeout(IO_TIMEOUT, receiver).await??;
@@ -273,11 +280,13 @@ async fn receive(
         } else {
             &incoming.control
         };
+        let control_received_at = (frame.kind != wire::RELAY_TX).then(Instant::now);
         queue
             .send(Incoming {
                 frame,
                 reply: None,
                 submit_received_at: None,
+                control_received_at,
             })
             .await?;
     }
@@ -352,6 +361,7 @@ mod tests {
             },
             reply: None,
             submit_received_at: None,
+            control_received_at: None,
         };
         app_tx.try_send(event(wire::RELAY_TX))?;
         for _ in 0..=CONTROL_BURST {

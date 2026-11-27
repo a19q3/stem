@@ -28,6 +28,8 @@ use crate::native_store::{Prepared, Store};
 
 #[cfg(feature = "jolteon-admission-pipeline")]
 mod admission_pipeline;
+#[cfg(feature = "jolteon-candidate-pipeline")]
+mod candidate_pipeline;
 #[cfg(feature = "jolteon-certificate-experiment")]
 mod certificate_experiment;
 mod client;
@@ -43,8 +45,8 @@ use transport::{Incoming, Network};
 
 pub use client::LatencyHistogram as AdmissionLatency;
 pub use client::{
-    AdmissionMetrics, AdmissionPipelineMetrics, Certificate, Client, ExecutionMetrics, LatencyHistogram,
-    QueryResult, Status, SubmissionProgress,
+    AdmissionMetrics, AdmissionPipelineMetrics, Certificate, Client, ExecutionMetrics,
+    LatencyHistogram, QueryResult, Status, SubmissionProgress,
 };
 
 const STATE: &[u8] = b"state";
@@ -119,6 +121,8 @@ struct Checked {
 struct Candidate {
     proposal: Checked,
     execution: Option<Arc<Prepared>>,
+    #[cfg(feature = "jolteon-candidate-pipeline")]
+    execution_error: Option<String>,
     source: u16,
 }
 
@@ -146,7 +150,9 @@ struct Replica {
     routes: Vec<Option<u16>>,
     key: SigningKey,
     net: Network,
-    workers: rayon::ThreadPool,
+    workers: Arc<rayon::ThreadPool>,
+    #[cfg(feature = "jolteon-candidate-pipeline")]
+    candidate_pipeline: candidate_pipeline::Pipeline,
     journal: wire::Journal,
     high: Quorum,
     certificate: Option<TimeoutCertificate>,
@@ -340,6 +346,14 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 Network::listen(directory.own, &addresses, committee.epoch()).await?;
             #[cfg(feature = "jolteon-admission-pipeline")]
             let (pipeline, mut admission_done) = admission_pipeline::Pipeline::start()?;
+            let workers = Arc::new(rayon::ThreadPoolBuilder::new()
+                .num_threads(config.vm_workers)
+                .build()?);
+            #[cfg(feature = "jolteon-candidate-pipeline")]
+            let (candidate_pipeline, mut candidate_done) =
+                candidate_pipeline::Pipeline::start(workers.clone())?;
+            #[cfg(not(feature = "jolteon-candidate-pipeline"))]
+            let mut candidate_done = std::future::pending::<Option<()>>();
             let mut replica = Replica {
                 store,
                 committee,
@@ -361,9 +375,9 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 timeout: Duration::from_millis(config.view_timeout_ms),
                 proposal_interval: Duration::from_millis(config.proposal_interval_ms),
                 backoff: 0,
-                workers: rayon::ThreadPoolBuilder::new()
-                    .num_threads(config.vm_workers)
-                    .build()?,
+                workers,
+                #[cfg(feature = "jolteon-candidate-pipeline")]
+                candidate_pipeline,
                 candidates: BTreeMap::new(),
                 preferred: BTreeMap::new(),
                 votes: BTreeMap::new(),
@@ -400,6 +414,17 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                         #[cfg(feature = "jolteon-admission-pipeline")]
                         replica.complete_client_admission(result.context("admission worker stopped")?)?;
                         #[cfg(not(feature = "jolteon-admission-pipeline"))]
+                        let _ = result;
+                    }
+                    result = async {
+                        #[cfg(feature = "jolteon-candidate-pipeline")]
+                        { candidate_done.recv().await }
+                        #[cfg(not(feature = "jolteon-candidate-pipeline"))]
+                        { (&mut candidate_done).await }
+                    } => {
+                        #[cfg(feature = "jolteon-candidate-pipeline")]
+                        replica.complete_preparation(result.context("candidate preparation worker stopped")?)?;
+                        #[cfg(not(feature = "jolteon-candidate-pipeline"))]
                         let _ = result;
                     }
                     _ = ticker.tick() => replica.tick()?,
@@ -597,6 +622,8 @@ impl Replica {
                 Candidate {
                     proposal: checked,
                     execution: None,
+                    #[cfg(feature = "jolteon-candidate-pipeline")]
+                    execution_error: None,
                     source: peer,
                 },
             );
@@ -648,6 +675,8 @@ impl Replica {
                         Candidate {
                             proposal: checked,
                             execution: None,
+                            #[cfg(feature = "jolteon-candidate-pipeline")]
+                            execution_error: None,
                             source: self.directory.own,
                         },
                     );
@@ -665,10 +694,12 @@ impl Replica {
         Ok(Some(branch))
     }
 
-    fn execute(&mut self, branch: &[Point]) -> Result<BranchExecution> {
+    fn execute(&mut self, branch: &[Point]) -> Result<Option<BranchExecution>> {
         let mut batches: Vec<Arc<Prepared>> = Vec::with_capacity(branch.len());
         let mut pending = self.pending.clone();
-        for point in branch {
+        for (prefix_end, point) in branch.iter().enumerate() {
+            #[cfg(not(feature = "jolteon-candidate-pipeline"))]
+            let _ = prefix_end;
             let candidate = self
                 .candidates
                 .get_mut(point)
@@ -701,6 +732,28 @@ impl Replica {
                 proposal.header.context.timestamp_ms > parent.context.timestamp_ms,
                 "execution timestamp must advance"
             );
+            #[cfg(feature = "jolteon-candidate-pipeline")]
+            if candidate.execution.is_none() {
+                if let Some(error) = &candidate.execution_error {
+                    anyhow::bail!("{error}");
+                }
+                let started = self.candidate_pipeline.schedule(
+                    &self.store,
+                    self.committee.epoch(),
+                    self.finalized,
+                    &branch[..=prefix_end],
+                    proposal,
+                    batches,
+                )?;
+                let counter = if started {
+                    &mut self.execution.candidate_jobs.started
+                } else {
+                    &mut self.execution.candidate_jobs.already_running
+                };
+                *counter = counter.saturating_add(1);
+                return Ok(None);
+            }
+            #[cfg(not(feature = "jolteon-candidate-pipeline"))]
             if candidate.execution.is_none() {
                 let started = Instant::now();
                 let transactions = proposal
@@ -731,7 +784,7 @@ impl Replica {
             }
             batches.push(prepared);
         }
-        Ok(BranchExecution { batches, pending })
+        Ok(Some(BranchExecution { batches, pending }))
     }
 
     fn finalize(&mut self) -> Result<()> {
@@ -759,7 +812,9 @@ impl Replica {
             branch.len() >= 2 && branch[branch.len() - 2] == parent,
             "invalid two-chain certificate"
         );
-        let BranchExecution { batches, pending } = self.execute(&branch)?;
+        let Some(BranchExecution { batches, pending }) = self.execute(&branch)? else {
+            return Ok(());
+        };
         let child = &self.candidates[&high.point].proposal;
         let old_epoch = self.committee.epoch();
         let mut successor = None;
@@ -983,7 +1038,9 @@ impl Replica {
         if !seal && !self.observe_time(point.view, time) {
             return Ok(());
         }
-        self.execute(&branch)?;
+        if self.execute(&branch)?.is_none() {
+            return Ok(());
+        }
         if !seal && !self.observe_time(point.view, time) {
             return Ok(());
         }
@@ -1147,6 +1204,7 @@ impl Replica {
         .encode_to_vec();
         self.journal.timeout = raw.clone();
         self.save(None)?;
+        self.execution.local_timeouts = self.execution.local_timeouts.saturating_add(1);
         self.net.broadcast(wire::TIMEOUT, raw.clone());
         self.accept_timeout(&raw)
     }
@@ -1185,7 +1243,9 @@ impl Replica {
         let Some(branch) = self.branch(parent.point)? else {
             return Ok(());
         };
-        let BranchExecution { batches, pending } = self.execute(&branch)?;
+        let Some(BranchExecution { batches, pending }) = self.execute(&branch)? else {
+            return Ok(());
+        };
         let parent_header = batches
             .last()
             .map_or(self.store.tip(), |batch| batch.header());
@@ -1345,6 +1405,9 @@ impl Replica {
     }
 
     fn handle(&mut self, event: Incoming) -> Result<()> {
+        if let Some(received) = event.control_received_at {
+            self.execution.control_queue.observe(received.elapsed());
+        }
         let frame = event.frame;
         if let Some(reply) = event.reply {
             #[cfg(feature = "jolteon-admission-pipeline")]

@@ -65,7 +65,7 @@ const HEADER_ID: u8 = b'i';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
 #[derive(Debug)]
-struct StateReadFault;
+pub(crate) struct StateReadFault;
 
 impl std::fmt::Display for StateReadFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -278,11 +278,18 @@ pub struct Store {
     live_cache: Arc<Mutex<LiveCache>>,
 }
 
-#[cfg(feature = "jolteon-admission-pipeline")]
-pub(crate) struct AdmissionView(Store);
+#[cfg(any(
+    feature = "jolteon-admission-pipeline",
+    feature = "jolteon-candidate-pipeline"
+))]
+pub(crate) struct PinnedView(Store);
 
-#[cfg(feature = "jolteon-admission-pipeline")]
-impl AdmissionView {
+#[cfg(any(
+    feature = "jolteon-admission-pipeline",
+    feature = "jolteon-candidate-pipeline"
+))]
+impl PinnedView {
+    #[cfg(feature = "jolteon-admission-pipeline")]
     pub(crate) fn check(&self, raw: bytes::Bytes) -> Result<Option<Transaction>> {
         self.with_snapshot(|view| {
             let tx = Transaction::from_bytes(raw)?;
@@ -291,11 +298,26 @@ impl AdmissionView {
         })
     }
 
+    #[cfg(feature = "jolteon-candidate-pipeline")]
+    pub(crate) fn prepare_candidate(
+        &self,
+        branch: &[Arc<Prepared>],
+        raw: &[bytes::Bytes],
+        time: u64,
+    ) -> Result<Option<Prepared>> {
+        self.with_snapshot(|view| {
+            let transactions = raw
+                .iter()
+                .cloned()
+                .map(Transaction::from_bytes)
+                .collect::<Result<Vec<_>>>()?;
+            view.on_branch(branch, |state| state.prepare(&transactions, time, true))
+        })
+    }
+
     fn with_snapshot<T>(&self, task: impl FnOnce(&Store) -> Result<T>) -> Result<Option<T>> {
         let snapshot = self.0.db.snapshot();
-        let tip = snapshot
-            .get(TIP)?
-            .context("missing admission snapshot tip")?;
+        let tip = snapshot.get(TIP)?.context("missing pinned snapshot tip")?;
         if tip.as_ref() != self.0.tip.encode() {
             return Ok(None);
         }
@@ -303,7 +325,7 @@ impl AdmissionView {
         options.set_snapshot(&snapshot);
         let mut view = self.0.read_view(&[]);
         // The private view and its options are dropped before the snapshot.
-        // Its Live Cell and stake caches are private to this committed Header.
+        // Its Live Cell cache and committed stake inputs are private to this view.
         view.read_options = Arc::new(options);
         task(&view).map(Some)
     }
@@ -832,12 +854,15 @@ impl Store {
         }
     }
 
-    #[cfg(feature = "jolteon-admission-pipeline")]
-    pub(crate) fn admission_view(&self) -> AdmissionView {
+    #[cfg(any(
+        feature = "jolteon-admission-pipeline",
+        feature = "jolteon-candidate-pipeline"
+    ))]
+    pub(crate) fn pinned_view(&self) -> PinnedView {
         let mut view = self.read_view(&[]);
         view.live_cache = Arc::default();
         view.stake_inputs = Arc::default();
-        AdmissionView(view)
+        PinnedView(view)
     }
 
     fn read(&self, key: impl AsRef<[u8]>) -> Result<Option<ReadValue<'_>>> {
@@ -2424,7 +2449,13 @@ fn sync_with_consensus(
     Ok(())
 }
 
-#[cfg(all(test, feature = "jolteon-admission-pipeline"))]
+#[cfg(all(
+    test,
+    any(
+        feature = "jolteon-admission-pipeline",
+        feature = "jolteon-candidate-pipeline"
+    )
+))]
 mod admission_snapshot_tests {
     use super::*;
 
@@ -2459,7 +2490,7 @@ mod admission_snapshot_tests {
             development_cells: Vec::new(),
         };
         let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
-        let old = store.admission_view();
+        let old = store.pinned_view();
         let expected = store.tip().clone();
         let next = store.prepare(&[], 1001, false)?;
         let observed = old.with_snapshot(|read| {
@@ -2470,7 +2501,7 @@ mod admission_snapshot_tests {
         assert_eq!(observed.as_ref(), Some(&expected));
         assert_eq!(store.tip().context.height, 1);
         assert!(old.with_snapshot(|_| Ok(()))?.is_none());
-        let fresh = store.admission_view();
+        let fresh = store.pinned_view();
         assert_eq!(
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())

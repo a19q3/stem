@@ -9,7 +9,7 @@ use stem_stake::Hash32;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{AdmissionPipelineMetrics, Replica};
-use crate::native_store::{AdmissionView, Store};
+use crate::native_store::{PinnedView, Store};
 
 const MAX_SUBMISSIONS: usize = 128;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -24,7 +24,7 @@ struct Pending {
 struct Job {
     id: Hash32,
     tip: Hash32,
-    view: Arc<AdmissionView>,
+    view: Arc<PinnedView>,
     raw: Bytes,
 }
 
@@ -38,7 +38,7 @@ pub(super) struct Completed {
 pub(super) struct Pipeline {
     jobs: mpsc::Sender<Job>,
     pending: HashMap<Hash32, Pending>,
-    view: Option<(Hash32, Arc<AdmissionView>)>,
+    view: Option<(Hash32, Arc<PinnedView>)>,
     bytes: usize,
     replies: usize,
     metrics: AdmissionPipelineMetrics,
@@ -104,7 +104,7 @@ impl Pipeline {
         }
         let tip = store.tip().id(store.network()).unpack();
         if self.view.as_ref().is_none_or(|(old, _)| *old != tip) {
-            self.view = Some((tip, Arc::new(store.admission_view())));
+            self.view = Some((tip, Arc::new(store.pinned_view())));
         }
         let view = Arc::clone(&self.view.as_ref().expect("current admission view").1);
         if self
