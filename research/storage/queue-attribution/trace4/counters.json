@@ -1,0 +1,489 @@
+{
+  "source_sha256": "e9802474396cc8ec54b52d4922461b5cc9d179ad4a10b94a8a476aea33137134",
+  "node_sha256": "8c36c05d83bdca097cf1ce6dae0ead5e9d1d75780140f62615d7f3772189bf25",
+  "preparation": {
+    "storage_settings": {
+      "RATE": 1800,
+      "SECONDS": 180,
+      "DRAIN": 45,
+      "SENDERS": 128,
+      "CADENCE": 100,
+      "VM_WORKERS": 4,
+      "PAYMENT_DATA_BYTES": 0,
+      "COMPLETE_VOLUME": 1,
+      "REPLICAS": 4,
+      "PREFUND_PAYMENTS": 1,
+      "REUSE_SUBMISSIONS": 1,
+      "PAUSE_ON_FULL": 0,
+      "SHARD_SENDERS": 0,
+      "READY_SENDERS": 1,
+      "BLOCK_TRANSACTIONS": 2048,
+      "BLOCK_CYCLES": 4000000000
+    },
+    "harness_sha256": "4f2ae78acd78ce6b35cbdde9bab8c620c8f69c9cfaaf03baa2214d43d60a87f6",
+    "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+    "topology_sha256": "a19e471c02cf744967ffc0710ae2f44884133ef903bd8e96c26624412080b8df",
+    "genesis_sha256": "18700851379ec48cacdb9820e28f13beea18823243da0178f927780fd3326b58"
+  },
+  "genesis": {
+    "genesis_id": "fdba1fc7be2fb08466b13cbef02dedd9eb4fa6a7a44ef43655f03268832a6bd5",
+    "network": "8989898989898989898989898989898989898989898989898989898989898989"
+  },
+  "driver": {
+    "harness_sha256": "4f2ae78acd78ce6b35cbdde9bab8c620c8f69c9cfaaf03baa2214d43d60a87f6"
+  },
+  "before": [
+    {
+      "member": 0,
+      "queue": {
+        "buckets": [
+          141,
+          155,
+          7,
+          14,
+          0,
+          0
+        ],
+        "elapsed_us": 3700932
+      },
+      "checks": 949,
+      "verification_us": 1583703,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            72,
+            16,
+            15,
+            24,
+            0,
+            0
+          ],
+          "elapsed_us": 5407858
+        },
+        "commit": {
+          "buckets": [
+            0,
+            116,
+            53,
+            0,
+            0,
+            0
+          ],
+          "elapsed_us": 2698814
+        },
+        "proposal": {
+          "buckets": [
+            24,
+            2,
+            6,
+            11,
+            0,
+            0
+          ],
+          "elapsed_us": 2100401
+        }
+      }
+    },
+    {
+      "member": 1,
+      "queue": {
+        "buckets": [
+          205,
+          94,
+          10,
+          8,
+          0,
+          0
+        ],
+        "elapsed_us": 2325206
+      },
+      "checks": 740,
+      "verification_us": 1297938,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            73,
+            8,
+            14,
+            32,
+            0,
+            0
+          ],
+          "elapsed_us": 6737777
+        },
+        "commit": {
+          "buckets": [
+            0,
+            115,
+            54,
+            0,
+            0,
+            0
+          ],
+          "elapsed_us": 2632551
+        },
+        "proposal": {
+          "buckets": [
+            23,
+            10,
+            6,
+            4,
+            0,
+            0
+          ],
+          "elapsed_us": 1075572
+        }
+      }
+    },
+    {
+      "member": 2,
+      "queue": {
+        "buckets": [
+          242,
+          53,
+          9,
+          12,
+          0,
+          0
+        ],
+        "elapsed_us": 2737355
+      },
+      "checks": 632,
+      "verification_us": 1159793,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            70,
+            14,
+            13,
+            31,
+            0,
+            0
+          ],
+          "elapsed_us": 6631901
+        },
+        "commit": {
+          "buckets": [
+            0,
+            116,
+            53,
+            0,
+            0,
+            0
+          ],
+          "elapsed_us": 2711045
+        },
+        "proposal": {
+          "buckets": [
+            26,
+            4,
+            6,
+            6,
+            0,
+            0
+          ],
+          "elapsed_us": 1131693
+        }
+      }
+    },
+    {
+      "member": 3,
+      "queue": {
+        "buckets": [
+          181,
+          112,
+          7,
+          15,
+          1,
+          0
+        ],
+        "elapsed_us": 4148615
+      },
+      "checks": 841,
+      "verification_us": 1445997,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            90,
+            0,
+            15,
+            23,
+            0,
+            0
+          ],
+          "elapsed_us": 4905417
+        },
+        "commit": {
+          "buckets": [
+            0,
+            115,
+            54,
+            0,
+            0,
+            0
+          ],
+          "elapsed_us": 2664205
+        },
+        "proposal": {
+          "buckets": [
+            25,
+            1,
+            3,
+            13,
+            0,
+            0
+          ],
+          "elapsed_us": 2402900
+        }
+      }
+    }
+  ],
+  "after": [
+    {
+      "member": 0,
+      "queue": {
+        "buckets": [
+          46978,
+          5411,
+          22785,
+          5454,
+          123,
+          0
+        ],
+        "elapsed_us": 1891470555
+      },
+      "checks": 200694,
+      "verification_us": 37732994,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            348,
+            17,
+            335,
+            171,
+            0,
+            0
+          ],
+          "elapsed_us": 48727887
+        },
+        "commit": {
+          "buckets": [
+            0,
+            497,
+            663,
+            1,
+            0,
+            0
+          ],
+          "elapsed_us": 15855163
+        },
+        "proposal": {
+          "buckets": [
+            116,
+            2,
+            161,
+            12,
+            0,
+            0
+          ],
+          "elapsed_us": 10560719
+        }
+      }
+    },
+    {
+      "member": 1,
+      "queue": {
+        "buckets": [
+          46814,
+          5310,
+          22878,
+          5320,
+          96,
+          0
+        ],
+        "elapsed_us": 1890779755
+      },
+      "checks": 195882,
+      "verification_us": 37068305,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            349,
+            8,
+            333,
+            181,
+            0,
+            0
+          ],
+          "elapsed_us": 50359988
+        },
+        "commit": {
+          "buckets": [
+            0,
+            498,
+            662,
+            0,
+            1,
+            0
+          ],
+          "elapsed_us": 16326092
+        },
+        "proposal": {
+          "buckets": [
+            115,
+            11,
+            158,
+            7,
+            0,
+            0
+          ],
+          "elapsed_us": 9447088
+        }
+      }
+    },
+    {
+      "member": 2,
+      "queue": {
+        "buckets": [
+          46046,
+          5101,
+          22833,
+          5418,
+          160,
+          0
+        ],
+        "elapsed_us": 1955413831
+      },
+      "checks": 201506,
+      "verification_us": 37535093,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            346,
+            15,
+            334,
+            177,
+            0,
+            0
+          ],
+          "elapsed_us": 49980436
+        },
+        "commit": {
+          "buckets": [
+            0,
+            497,
+            663,
+            0,
+            1,
+            0
+          ],
+          "elapsed_us": 16656157
+        },
+        "proposal": {
+          "buckets": [
+            118,
+            4,
+            159,
+            9,
+            0,
+            0
+          ],
+          "elapsed_us": 9780389
+        }
+      }
+    },
+    {
+      "member": 3,
+      "queue": {
+        "buckets": [
+          51265,
+          5075,
+          22746,
+          5452,
+          1,
+          0
+        ],
+        "elapsed_us": 1770466515
+      },
+      "checks": 204688,
+      "verification_us": 38729489,
+      "execution": {
+        "candidate_verify": {
+          "buckets": [
+            367,
+            0,
+            339,
+            166,
+            0,
+            0
+          ],
+          "elapsed_us": 46585380
+        },
+        "commit": {
+          "buckets": [
+            0,
+            497,
+            664,
+            0,
+            0,
+            0
+          ],
+          "elapsed_us": 15596738
+        },
+        "proposal": {
+          "buckets": [
+            117,
+            1,
+            148,
+            24,
+            0,
+            0
+          ],
+          "elapsed_us": 11644246
+        }
+      }
+    }
+  ],
+  "trace_hashes": {
+    "node-0.trace": "c754c92792e3a4d9ac81bea90d471b5667431af561b205a431e7cc2a02c2a7f7",
+    "node-1.trace": "d5800b213b096af28600b30fa73e5d95627b7f32407c911da311f094a5a6c2e9",
+    "node-2.trace": "6d5a67199b405dc9330c5251e101b0ef5c5ae6850e00c59fb27f52fada3d4097",
+    "node-3.trace": "04be7e0da92155ea6144e30b9c9d354ca9e89965b073b11aa1129e65eda65a48"
+  },
+  "payment_sha256": "8880adc7f92196ef714af96d359ab2c622251c574d8d5ed4a9ebbc270b3352d2",
+  "driver_errors": {},
+  "storage_deltas": [
+    {
+      "wal_bytes": 1030425617,
+      "wal_syncs": 2923,
+      "journal_writes": 1931,
+      "journal_sync_microseconds": 12221983,
+      "finality_writes": 992,
+      "finality_sync_microseconds": 11395341
+    },
+    {
+      "wal_bytes": 1030447598,
+      "wal_syncs": 2974,
+      "journal_writes": 1982,
+      "journal_sync_microseconds": 11433868,
+      "finality_writes": 992,
+      "finality_sync_microseconds": 11951275
+    },
+    {
+      "wal_bytes": 1030447756,
+      "wal_syncs": 2973,
+      "journal_writes": 1981,
+      "journal_sync_microseconds": 13581797,
+      "finality_writes": 992,
+      "finality_sync_microseconds": 12200144
+    },
+    {
+      "wal_bytes": 1030240144,
+      "wal_syncs": 2977,
+      "journal_writes": 1985,
+      "journal_sync_microseconds": 9515489,
+      "finality_writes": 992,
+      "finality_sync_microseconds": 11162136
+    }
+  ]
+}

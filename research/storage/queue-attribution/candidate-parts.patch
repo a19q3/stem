@@ -1,0 +1,59 @@
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -690,13 +690,27 @@
+                     .iter()
+                     .map(|bytes| Transaction::from_bytes(bytes.clone()))
+                     .collect::<Result<Vec<_>>>()?;
+-                let prepared = self.workers.install(|| {
++                let decoded = Instant::now();
++                let (prepared, ready, finishing, finished) = self.workers.install(|| {
+                     self.store.on_branch(&batches, |state| {
+-                        state.prepare(&transactions, proposal.header.context.timestamp_ms, true)
++                        let ready = Instant::now();
++                        let mut finishing = ready;
++                        let prepared = state.prepare_measured(
++                            &transactions,
++                            proposal.header.context.timestamp_ms,
++                            true,
++                            || finishing = Instant::now(),
++                        )?;
++                        Ok((prepared, ready, finishing, Instant::now()))
+                     })
+                 })?;
+                 let ended = Instant::now();
+                 self.execution.candidate_verify.observe(ended - started);
++                self.queue_probe.span(b'd', started, decoded)?;
++                self.queue_probe.span(b'b', decoded, ready)?;
++                self.queue_probe.span(b'e', ready, finishing)?;
++                self.queue_probe.span(b'f', finishing, finished)?;
++                self.queue_probe.span(b'w', finished, ended)?;
+                 self.queue_probe.span(b'V', started, ended)?;
+                 ensure!(
+                     prepared.header() == &proposal.header,
+--- a/src/native_store.rs
++++ b/src/native_store.rs
+@@ -1159,6 +1159,16 @@
+         timestamp_ms: u64,
+         parallel: bool,
+     ) -> Result<Prepared> {
++        self.prepare_measured(transactions, timestamp_ms, parallel, || {})
++    }
++
++    pub(crate) fn prepare_measured(
++        &self,
++        transactions: &[Transaction],
++        timestamp_ms: u64,
++        parallel: bool,
++        before_finish: impl FnOnce(),
++    ) -> Result<Prepared> {
+         let height = self
+             .tip
+             .context
+@@ -1270,6 +1280,7 @@
+                 }
+             }
+         }
++        before_finish();
+         self.finish_block(
+             block.into_candidate(),
+             overlay,

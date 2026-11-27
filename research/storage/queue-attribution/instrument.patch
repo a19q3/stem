@@ -1,0 +1,103 @@
+diff --git a/src/jolteon.rs b/src/jolteon.rs
+index ec292e5..f588274 100644
+--- a/src/jolteon.rs
++++ b/src/jolteon.rs
+@@ -37,6 +37,9 @@ mod wire;
+
+ use mempool::Mempool;
+ use recovery::{BranchHorizon, Recovery};
++#[path = "../research/storage/queue-attribution/probe.rs"]
++mod queue_probe;
++
+ use transport::{Incoming, Network};
+
+ pub use client::LatencyHistogram as AdmissionLatency;
+@@ -170,6 +173,7 @@ struct Replica {
+     mempool: Mempool,
+     admission: AdmissionMetrics,
+     execution: ExecutionMetrics,
++    queue_probe: queue_probe::Probe,
+     rejected: u64,
+     timeout_views: VecDeque<u64>,
+     last_untimely_view: u64,
+@@ -177,6 +181,7 @@ struct Replica {
+ }
+
+ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
++    let queue_probe = queue_probe::Probe::open()?;
+     let genesis_members = members(&store)?;
+     let genesis_committee = Committee::new(
+         store.network().unpack(),
+@@ -370,6 +375,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
+                 mempool: Mempool::default(),
+                 admission: AdmissionMetrics::default(),
+                 execution: ExecutionMetrics::default(),
++                queue_probe,
+                 rejected: 0,
+                 timeout_views: VecDeque::new(),
+                 last_untimely_view: 0,
+@@ -689,7 +695,9 @@ impl Replica {
+                         state.prepare(&transactions, proposal.header.context.timestamp_ms, true)
+                     })
+                 })?;
+-                self.execution.candidate_verify.observe(started.elapsed());
++                let ended = Instant::now();
++                self.execution.candidate_verify.observe(ended - started);
++                self.queue_probe.span(b'V', started, ended)?;
+                 ensure!(
+                     prepared.header() == &proposal.header,
+                     "candidate execution differs from the signed Header"
+@@ -839,7 +847,9 @@ impl Replica {
+             self.store
+                 .commit_certified(&prepared, &records, &retired)
+                 .context(StorageFault)?;
+-            self.execution.commit.observe(started.elapsed());
++            let ended = Instant::now();
++            self.execution.commit.observe(ended - started);
++            self.queue_probe.span(b'C', started, ended)?;
+             self.finalized = *point;
+             if let Some(change) = prepared.committee_change() {
+                 self.pending = Some(change.clone());
+@@ -1182,7 +1192,9 @@ impl Replica {
+                     state.build_proposal(self.mempool.transactions(), at, MAX_PROPOSAL_BYTES)
+                 })
+             })?;
+-            self.execution.proposal.observe(started.elapsed());
++            let ended = Instant::now();
++            self.execution.proposal.observe(ended - started);
++            self.queue_probe.span(b'P', started, ended)?;
+             if !can_vote_at(at) {
+                 return Ok(());
+             }
+@@ -1325,6 +1337,9 @@ impl Replica {
+                     .observe(started.duration_since(received));
+                 started
+             });
++            if let (Some(received), Some(began)) = (event.submit_received_at, started) {
++                self.queue_probe.span(b'Q', received, began)?;
++            }
+             let result = self
+                 .client(frame.kind, frame.body)
+                 .unwrap_or_else(|error| json!({"error": format!("{error:#}")}));
+@@ -1444,10 +1459,12 @@ impl Replica {
+         let started = Instant::now();
+         // Admission is serial. The VM pool is used for parallel block work.
+         let checked = self.store.check(&tx);
++        let ended = Instant::now();
+         self.admission.verification_us = self
+             .admission
+             .verification_us
+-            .saturating_add(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX));
++            .saturating_add((ended - started).as_micros().try_into().unwrap_or(u64::MAX));
++        self.queue_probe.span(if client { b'A' } else { b'R' }, started, ended)?;
+         checked?;
+         self.mempool.insert(id, tx)?;
+         Ok(id)
+@@ -1457,6 +1474,7 @@ impl Replica {
+         let tip = self.store.tip();
+         match kind {
+             wire::STATUS => {
++                self.queue_probe.flush()?;
+                 let status = json!({
+                     "height": tip.context.height, "epoch": self.committee.epoch(), "view": self.view,
+                     "high_view": self.high.point.view, "member": self.member,

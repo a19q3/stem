@@ -1,0 +1,22 @@
+--- a/src/native_store.rs
++++ b/src/native_store.rs
+@@ -1162,7 +1162,7 @@
+         self.prepare_measured(transactions, timestamp_ms, parallel, || {})
+     }
+
+-    pub(crate) fn prepare_measured(
++    pub fn prepare_measured(
+         &self,
+         transactions: &[Transaction],
+         timestamp_ms: u64,
+--- a/tests/native_store.rs
++++ b/tests/native_store.rs
+@@ -24,6 +24,8 @@
+
+ #[path = "../research/storage/queue-attribution/receipt-equivalence.rs"]
+ mod receipt_equivalence;
++#[path = "../research/storage/queue-attribution/fixed-blocks.rs"]
++mod fixed_blocks;
+
+ struct Fixture {
+     spec: Spec,

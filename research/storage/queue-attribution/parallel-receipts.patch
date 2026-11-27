@@ -1,0 +1,50 @@
+--- a/src/native_store.rs
++++ b/src/native_store.rs
+@@ -1305,15 +1305,28 @@
+         let mut cells = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
+             self.node(Namespace::Cells, id)
+         });
+-        let mut cell_changes = Vec::with_capacity(overlay.live.len());
+-        for (point, record) in &overlay.live {
+-            let id = record::cell_key(&self.cells, point);
+-            let value = record
+-                .as_ref()
+-                .map(|record| record::cell_value(&self.cells, point, record));
+-            cell_changes.push((id, value));
+-        }
+-        cell_changes.sort_unstable_by_key(|(id, _)| *id);
++        let cell_changes = || {
++            let mut changes = Vec::with_capacity(overlay.live.len());
++            for (point, record) in &overlay.live {
++                let id = record::cell_key(&self.cells, point);
++                let value = record
++                    .as_ref()
++                    .map(|record| record::cell_value(&self.cells, point, record));
++                changes.push((id, value));
++            }
++            changes.sort_unstable_by_key(|(id, _)| *id);
++            changes
++        };
++        let encode = || encode_execution(&self.network, execution, &receipts);
++        let (cell_changes, encoded) = if execution.len() >= 256
++            && rayon::current_thread_index().is_some()
++            && rayon::current_num_threads() > 1
++        {
++            let (changes, encoded) = rayon::join(cell_changes, encode);
++            (changes, Some(encoded))
++        } else {
++            (cell_changes(), None)
++        };
+         cells.set_batch(&cell_changes, |id, _, value| {
+             if value.is_none() {
+                 batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
+@@ -1400,8 +1413,7 @@
+         })?;
+         let system_root = system.root().pack();
+         put_nodes(&mut batch, Namespace::System, system.into_writes());
+-        let (execution_bytes, receipt_root) =
+-            encode_execution(&self.network, execution, &receipts)?;
++        let (execution_bytes, receipt_root) = encoded.unwrap_or_else(encode)?;
+         let mut history = self.history.clone();
+         let next = Header::next(
+             &self.network,
