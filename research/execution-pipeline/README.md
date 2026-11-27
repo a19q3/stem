@@ -53,6 +53,23 @@ Leader construction remains selectable. The fault run demonstrates the deadline 
 
 A signed regression spends one input in the parent and spends a second input during the child, then attempts both again along with a third input absent from committed state. The selected transaction, executed Header and receipts match serial execution. The scan reports four inspected attempts, one selected transaction and one rejection in each spent-input category.
 
+### Leader-only payment comparison
+
+Two `61aef4e5f3bddbcb990a3c9c96822b00e0f159d6` builds both enabled Admission, Follower via Commit and concurrent commitments. Only the background build enabled `jolteon-proposal-pipeline`. Four same-host validators used four VM workers and shared logical CPUs `2-7,10-15,18-23,26-31` with the driver. The offer was 49,500 independent signed payments through 128 persistent senders at 3,300/s for 15 seconds with 20 seconds of drain. The cadence was 100 ms with four billion cycles and 2,048 transactions per block and 256 retained heights. Run order was synchronous, background, background, synchronous.
+
+| Run | Leader | Common TPS during offer | Write-to-common p99 | Mean control wait | Mean proposal time | Validator CPU | Parent-spent / inspected |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | Synchronous | 3,134.20 | 0.817 s | 2.216 ms | 11.808 ms | 61.86 s | 28,740 / 78,240 |
+| B1 | Background | 3,029.73 | 1.643 s | 1.507 ms | 11.993 ms | 61.59 s | 27,193 / 76,693 |
+| B2 | Background | 3,123.53 | 0.973 s | 2.807 ms | 12.971 ms | 61.20 s | 27,210 / 76,710 |
+| A2 | Synchronous | 3,155.07 | 0.934 s | 1.824 ms | 11.643 ms | 62.35 s | 27,738 / 77,238 |
+
+Each run wrote and acknowledged all 49,500 payments during the offer and confirmed every payment by drain. Common finality and history-index checks passed. A read-only archive audit authenticated transaction and receipt roots for 774 observed blocks. No run recorded a local timeout. Both background runs published every dispatched job, 205 and 184 respectively. One reached the 2,048 count cap.
+
+Window TPS and p99 favored synchronous construction in both pairs, and mean control wait moved in opposite directions. Keep the Leader worker opt-in. Across the four runs, 35.5–36.7% of visits were rejected because the parent branch had already consumed an input. No visited transaction was rejected on the in-proposal spent path. The frequency shows repeated selection work with both Leader implementations. Time attributable to these visits and their prevalence under cross-host load remain to be measured.
+
+Both binary hashes are pinned. The synchronous build was `b6b753d81fb87bb21f08ddbde55d3b4e393ebaf735e2ba78e6ac4089fd06be89` and the background build was `8e39cfc23e11446f8ece06785c00dec169b2813a21f9071660bbb0387d5aeab5`. The genesis and signed workload SHA-256 values were `5c5f49c6e78e9d8add2ba38c51c3fa327d72719f5f63c7874dbab4252c341cbc` and `56a708be1d261e414f316980d3e11965da8b602b403840ea6eaa297fe514a6c9`.
+
 ## Concurrent state commitments
 
 `native-commitment-pipeline` prepares the Cell tree, System tree and execution/receipt record concurrently after ordered execution. It uses the existing pool for blocks with at least 256 execution items when the pool has at least two workers. It joins the results in the existing Cell, System, Header and execution-write order. The durable certified write remains a single batch.
