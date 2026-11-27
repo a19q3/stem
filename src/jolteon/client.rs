@@ -16,7 +16,7 @@ use stem_ledger::{Transaction, block::Header};
 use stem_stake::Hash32;
 
 use super::wire;
-use crate::native_store::ProposalScan;
+use crate::native_store::{CommitmentTiming, ProposalScan};
 
 const IDLE_SUBMISSION_CONNECTIONS: usize = 4;
 
@@ -81,7 +81,11 @@ pub struct ExecutionMetrics {
     pub proposal_jobs: ProposalMetrics,
     #[serde(default)]
     pub proposal_scan: ProposalScan,
+    #[serde(default)]
+    pub proposal_commitments: CommitmentMetrics,
     pub candidate_verify: LatencyHistogram,
+    #[serde(default)]
+    pub candidate_commitments: CommitmentMetrics,
     #[serde(default)]
     pub control_queue: LatencyHistogram,
     #[serde(default)]
@@ -91,6 +95,23 @@ pub struct ExecutionMetrics {
     pub commit: LatencyHistogram,
     #[serde(default)]
     pub commit_jobs: CommitMetrics,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct CommitmentMetrics {
+    pub total: LatencyHistogram,
+    pub cells: LatencyHistogram,
+    pub system: LatencyHistogram,
+    pub execution: LatencyHistogram,
+}
+
+impl CommitmentMetrics {
+    pub(super) fn record(&mut self, timing: &CommitmentTiming) {
+        self.total.observe(timing.total);
+        self.cells.observe(timing.cells);
+        self.system.observe(timing.system);
+        self.execution.observe(timing.execution);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]

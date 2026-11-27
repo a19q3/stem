@@ -97,6 +97,30 @@ Both candidate runs exercised the 256-item threshold. The candidate reduced mean
 
 The serial and concurrent binary SHA-256 values were `75a3899438c82994594f51235f9b15048efd5da76557c6344eb7496ad863d1ad` and `b6b753d81fb87bb21f08ddbde55d3b4e393ebaf735e2ba78e6ac4089fd06be89`. The genesis was `d16c1038a4f652341ae3b9b162e5c6beec3876d782330928ddeced7f7b847803` and the signed workload was `cc6ac4f00fdf9d79bb5dca848d3181c08a6df90028f1c0f9ad9854dceff60240`.
 
+### Cost of selecting and committing ordinary payments
+
+The `execution` status reports `proposal_scan.selection_us`, `proposal_commitments` and `candidate_commitments`. Selection time covers the provisional block scan, including input resolution, budget checks and VM invocation. The commitment histograms cover successfully constructed batches, including completed background work that is later discarded. Total commitment time includes the Cell and System state updates, execution record encoding and receipt root, Header and history construction, and batch and pruning preparation. Component elapsed times can overlap. The separate `execution.commit` histogram measures application and publication of the certified batch.
+
+The serial build and the build with only `native-commitment-pipeline` ran on the [single-host profile placement](../storage/external/README.md#single-host-v1-profile-rehearsal). Each run used two VM workers per replica, fresh stores, a 4B cycle and 2,048-transaction limit, and the 4,096-entry success cache. Both wrote and acknowledged the same 90,000 signed payments. All became common by the end of the 25-second drain. Independent finality and workload replay verified 498 archived blocks across the pair. No classified block-cycle rejections or local timeout votes occurred.
+
+| Timing or outcome | Serial commitments | Concurrent commitments |
+| --- | ---: | ---: |
+| Common window TPS | 2,628.97 | 2,635.07 |
+| Write-to-common p99 | 10.104 s | 8.926 s |
+| Mean complete proposal | 38.169 ms | 33.857 ms |
+| Selection share of proposal wall time | 62.0% | 56.9% |
+| Mean total proposal commitments | 14.219 ms | 14.280 ms |
+| Mean Cell portion of proposal commitments | 13.912 ms | 14.206 ms |
+| Mean complete Follower preparation | 51.419 ms | 49.186 ms |
+| Mean total Follower commitments | 15.359 ms | 15.267 ms |
+| Mean Cell portion of Follower commitments | 15.106 ms | 15.201 ms |
+
+Commitments used 37–42% of total Leader time and 30–31% of total Follower time. The Cell path alone accounted for about 98% of the serial commitment elapsed time for both roles. System and receipt work accounted for only a small fraction of serial commitment time. Their elapsed times under concurrency can include scheduling and shared-resource delays. Concurrent namespaces changed common throughput by 0.23% in this 30-second pair. Partitioning the Cell tree itself is the useful next commitment experiment. Keep proposal selection and VM reuse in the cost comparison. Preserve exact roots and write ordering across any Cell subtrees and run the full 180-second profile before adopting performance defaults.
+
+Reproduce with `drive.py prepare --rate 3000 --seconds 30 --drain 25 --senders 256 --block-transactions 2048 --block-cycles 4000000000 --reuse-submissions --ready-senders --complete-volume` and the same topology and trial for both binaries. Toggle only `native-commitment-pipeline`. Use the standard `measure` and `verify` commands. Subtract `before.statuses` from `after.statuses` for each counter and sum over all validators. Divide histogram elapsed microseconds by the sum of its bucket counts for the reported means. [Driver and replay procedure](../storage/external/README.md#measure-and-replay)
+
+The node SHA-256 fingerprints were `85105ccc1f4bb862e9347aa7fb9adf0ad275d311666f1c86999497beb0504e31` and `76d08219df1b8a914e8e8d03376478e7fe01c3cbc54cee7c1c19dfb020de67a8`. The shared driver and verifier SHA-256 was `20c7588d97674a79e5c14a45d9c67ac4190780ea6f0ea2bfa946be3a754ad7c2`, genesis SHA-256 was `5cb75903f55eb47dbbabe87a9c11f8769136085ce29cb35b542d4eab1a57d9b7`, and the signed corpus BLAKE2b digest was `40f951bb7266fbf694ecaa42c32956818cc3dd76f39f5c3f5d3352e2161b812a`.
+
 ## Certified Commit Pipeline
 
 `jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.

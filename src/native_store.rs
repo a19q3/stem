@@ -7,7 +7,7 @@ use std::{
     ops::Range,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, ensure};
@@ -100,6 +100,8 @@ impl std::fmt::Display for MissingLiveCell {
 pub struct ProposalScan {
     pub inspected: u64,
     pub selected: u64,
+    /// Time spent selecting and staging the provisional proposal.
+    pub selection_us: u64,
     /// Explicit inputs rejected because a speculative ancestor consumed them.
     pub spent_in_parent: u64,
     pub spent_in_parent_us: u64,
@@ -114,6 +116,7 @@ impl ProposalScan {
     pub(crate) fn record(&mut self, scan: Self) {
         self.inspected = self.inspected.saturating_add(scan.inspected);
         self.selected = self.selected.saturating_add(scan.selected);
+        self.selection_us = self.selection_us.saturating_add(scan.selection_us);
         self.spent_in_parent = self.spent_in_parent.saturating_add(scan.spent_in_parent);
         self.spent_in_parent_us = self.spent_in_parent_us.saturating_add(scan.spent_in_parent_us);
         self.spent_in_proposal = self.spent_in_proposal.saturating_add(scan.spent_in_proposal);
@@ -467,6 +470,14 @@ pub struct Prepared {
     stake_inputs: Arc<OnceLock<StakeInputs>>,
     live: LiveChanges,
     batch: Batch,
+    commitments: CommitmentTiming,
+}
+
+pub(crate) struct CommitmentTiming {
+    pub(crate) total: Duration,
+    pub(crate) cells: Duration,
+    pub(crate) system: Duration,
+    pub(crate) execution: Duration,
 }
 
 struct Overlay {
@@ -542,6 +553,11 @@ impl Prepared {
     pub fn receipts(&self) -> &[Receipt] {
         &self.receipts
     }
+
+    pub(crate) fn commitment_timing(&self) -> &CommitmentTiming {
+        &self.commitments
+    }
+
     /// CometBFT expects results only for transactions submitted with the proposal.
     pub fn submitted_receipts(&self) -> &[Receipt] {
         &self.receipts[self.keeper_receipts..]
@@ -1520,11 +1536,12 @@ impl Store {
         fees: u64,
         parallel: bool,
     ) -> Result<Prepared> {
+        let started = Instant::now();
         let height = context.height;
         let live = std::mem::take(&mut overlay.live);
         let mut batch = Batch::default();
-        let build_execution = || encode_execution(&self.network, execution, &receipts);
-        let (cell_root, system, (execution_bytes, receipt_root)) =
+        let build_execution = || timed(|| encode_execution(&self.network, execution, &receipts));
+        let (cells, system, execution) =
             if cfg!(feature = "native-commitment-pipeline")
                 && parallel
                 && execution.len() >= 256
@@ -1534,10 +1551,10 @@ impl Store {
                 // original order before producing the single atomic batch.
                 let mut system_batch = Batch::default();
                 let (cell, (system, execution)) = rayon::join(
-                    || self.finish_cells(&mut batch, &live),
+                    || timed(|| self.finish_cells(&mut batch, &live)),
                     || {
                         rayon::join(
-                            || self.finish_system(&mut system_batch, overlay, height, fees),
+                            || timed(|| self.finish_system(&mut system_batch, overlay, height, fees)),
                             build_execution,
                         )
                     },
@@ -1547,11 +1564,14 @@ impl Store {
                 result
             } else {
                 (
-                    self.finish_cells(&mut batch, &live)?,
-                    self.finish_system(&mut batch, overlay, height, fees)?,
+                    timed(|| self.finish_cells(&mut batch, &live))?,
+                    timed(|| self.finish_system(&mut batch, overlay, height, fees))?,
                     build_execution()?,
                 )
             };
+        let (cell_root, cells_time) = cells;
+        let (system, system_time) = system;
+        let ((execution_bytes, receipt_root), execution_time) = execution;
         let mut history = self.history.clone();
         let next = Header::next(
             &self.network,
@@ -1584,6 +1604,12 @@ impl Store {
             stake_inputs: system.stake_inputs,
             live,
             batch,
+            commitments: CommitmentTiming {
+                total: started.elapsed(),
+                cells: cells_time,
+                system: system_time,
+                execution: execution_time,
+            },
         })
     }
 
@@ -1749,13 +1775,17 @@ impl Store {
         scan: &mut ProposalScan,
         cycle_scan_limit: Option<u64>,
     ) -> Result<(Vec<Transaction>, Prepared)> {
+        let started = Instant::now();
+        let selection =
+            self.stage_proposal(transactions, timestamp_ms, max_bytes, scan, cycle_scan_limit);
+        scan.selection_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let ProposalSelection {
             transactions,
             mut context,
             mut overlay,
             receipts,
             reusable,
-        } = self.stage_proposal(transactions, timestamp_ms, max_bytes, scan, cycle_scan_limit)?;
+        } = selection?;
         let prepared = if reusable {
             context.transaction_root =
                 Tree::transactions(self.network.clone(), &transactions)?.root();
@@ -2579,6 +2609,12 @@ fn put_tip(batch: &mut Batch, network: &Byte32, header: &Header, history: &Histo
     batch.put(HISTORY, history.encode());
     batch.put(index_key(HEADER, &height), &data);
     batch.put(index_key(HEADER_ID, header.id(network).as_slice()), height);
+}
+
+fn timed<T>(run: impl FnOnce() -> Result<T>) -> Result<(T, Duration)> {
+    let started = Instant::now();
+    let result = run()?;
+    Ok((result, started.elapsed()))
 }
 
 fn encode_execution(

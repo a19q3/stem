@@ -878,6 +878,9 @@ impl Replica {
                     })
                 })?;
                 self.execution.candidate_verify.observe(started.elapsed());
+                self.execution
+                    .candidate_commitments
+                    .record(prepared.commitment_timing());
                 ensure!(
                     prepared.header() == &proposal.header,
                     "candidate execution differs from the signed Header"
@@ -1441,6 +1444,9 @@ impl Replica {
             self.execution.proposal_scan.record(scan);
             let (transactions, execution) = result?;
             self.execution.proposal.observe(started.elapsed());
+            self.execution
+                .proposal_commitments
+                .record(execution.commitment_timing());
             if !can_vote_at(at) {
                 return Ok(());
             }

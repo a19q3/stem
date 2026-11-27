@@ -142,6 +142,11 @@ impl Replica {
         self.proposal_pipeline.running = false;
         self.execution.proposal.observe(done.elapsed);
         self.execution.proposal_scan.record(done.scan);
+        if let Ok(Some((_, execution))) = &done.execution {
+            self.execution
+                .proposal_commitments
+                .record(execution.commitment_timing());
+        }
         let parent = if done.stamp == self.proposal_stamp()
             && !matches!(done.execution, Ok(None))
         {

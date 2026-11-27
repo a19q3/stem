@@ -171,6 +171,11 @@ impl Replica {
         let Completion {
             binding, prepared, ..
         } = completion;
+        if let Ok(Some(execution)) = &prepared {
+            self.execution
+                .candidate_commitments
+                .record(execution.commitment_timing());
+        }
         if !self.preparation_is_current(&binding) || matches!(prepared, Ok(None)) {
             self.execution.candidate_jobs.stale =
                 self.execution.candidate_jobs.stale.saturating_add(1);
