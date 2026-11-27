@@ -140,6 +140,21 @@ The writer's mean service times were 12.254 ms in B1 and 11.213 ms in B2. Those 
 
 The workload file SHA-256 was `f0233229ebdf9d1c8a3ac1f54611a332eb9726898ff5498a27cd5b9d82a0ba6a`. The synchronous and writer binary SHA-256 values were `5abbc86b8e6fab184563c6767f112c2a71a93a19f91b16d569ae63fbbb17be5d` and `c58a4948046822b091f23f129d99571edd9b2da4c1bc0dbd41c89705160510d1`.
 
+### Sixty-second Commit comparison
+
+Two `46ca72a3081f949420ac1cd473256f85cf47d3ee` builds used Admission, Follower and concurrent commitments. The writer build added `jolteon-commit-pipeline`. Both used synchronous Leader construction, fixed VM waves and exhaustive proposal scanning. Four replicas and the driver shared logical CPUs `2-7,10-15,18-23,26-31`; each replica used four workers, a 100 ms cadence and the 4B-cycle/2,048-transaction envelope. The driver used 128 persistent senders to offer the same 156,000 prefunded payments at 2,600/s for 60 seconds, followed by 30 seconds of drain.
+
+| Run | Commit | Common TPS during offer | Write-to-common p99 | Peak acknowledged backlog | Mean commit | Validator CPU |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| A1 | Synchronous | 2,569.07 | 1.428 s | 4,437 | 11.660 ms | 232.14 s |
+| B1 | Writer | 2,540.62 | 1.409 s | 4,430 | 15.848 ms | 237.97 s |
+| B2 | Writer | 2,560.30 | 2.291 s | 6,410 | 14.207 ms | 242.13 s |
+| A2 | Synchronous | 2,572.55 | 9.363 s | 10,059 | 15.416 ms | 236.89 s |
+
+All runs acknowledged and finalized every payment by drain, with zero local timeout votes. Verified common finality and the archive history-index checks passed. Receipt and transaction roots matched in 1,481 observed blocks. The writer runs served 248 and 268 status replies during commits and recorded no overlapping descendant jobs. The writer traded 0.5–1.1% window throughput and additional CPU for a smaller measured backlog in both pairs. The forward p99 difference was 19 ms. The reverse p99 difference was 7.072 seconds, and the synchronous run reached the count cap in 25 blocks versus one in its writer pair. Mean control wait moved in opposite directions. Keep the writer opt-in pending independent-host time, load and durability evidence.
+
+The synchronous and writer binary SHA-256 values were `9295919d6ff5ec9191236d0873f447b86bca338d7293bb8539cb7dd267dd78e8` and `fbc1fed2954a01fbce9b042684cbb34707fa22f1792699d77b0bae045b686892`. The genesis and workload SHA-256 values were `d553c99b984de34dbea6d1656528fc35b8700138b517db32868ba18bf0f4e001` and `c1f1a310b8669c8eb248956ef2c09d93b0a1f607058b364b34f2e385d30d561e`.
+
 ## Admission and Follower interaction
 
 Four builds of `d227375` ran with both features disabled, Admission only, Follower only and both enabled. The run order was baseline, Admission, both, Follower, Follower, both, Admission, baseline. No other research feature was enabled. The four replicas and driver shared 24 logical CPUs on one host, with four VM workers per replica, a 100 ms cadence and limits of 4 billion cycles and 2,048 transactions per block. The driver used 128 senders, persistent connections and the same genesis and 45,000 signed payments in each run. It wrote 3,000/s for 15 seconds and allowed 12 seconds to drain. All eight runs confirmed every payment, verified the common finality and passed the history index check. No run recorded a local view timeout.
