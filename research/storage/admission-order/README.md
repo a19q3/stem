@@ -211,7 +211,7 @@ The 2,700/s run passed every check. The 2,850/s run passed both backlog checks a
 
 #### Actual priority visits at 3,000/s
 
-The instrumented build at `6ca1583` used the original 720,000-payment corpus, five-second threshold, 256-visit cap, 131,072 cache entries and parallel Cell commitments. Replica status deltas cover warmup, the 180-second measurement window and drain. All assigned priority visits reached the proposal scanner. Of 762 built proposals, 57 reached the priority cap, or 7.5%.
+The instrumented build with the proposal counters from `ba23a22` used the original 720,000-payment corpus, five-second threshold, 256-visit cap, 131,072 cache entries and parallel Cell commitments. Replica status deltas cover warmup, the 180-second measurement window and drain. All assigned priority visits reached the proposal scanner. Of 762 built proposals, 57 reached the priority cap, or 7.5%.
 
 | Candidate outcomes | Age-priority visits | All visits |
 | --- | ---: | ---: |
@@ -224,6 +224,26 @@ The instrumented build at `6ca1583` used the original 720,000-payment corpus, fi
 Speculative parent spends accounted for 43.9% of age-priority visits and 37.4% of all visits. Every unsuccessful priority visit in this workload was a parent spend. The 256-visit cap was therefore reached in a minority of builds, and a substantial share of the priority budget went to entries that could not be included on the selected branch. This measures candidate work. A larger cap or a different branch-aware policy still needs a paired performance test.
 
 The 180-second window averaged 2,992.80 common TPS, with 173,352 / 183,095 / 182,257 confirmations by minute, 8.196 s p99, 14,062 peak backlog and 6,653 growth. It passed the peak limit and missed throughput, p99 and growth. All payments confirmed by drain. The original uninstrumented verifier reproduced the signed volume and authenticated 762 observed blocks and the terminal proof at height 1,125. The instrumented node and measuring harness SHA-256 values were `3677f6224539678eee1600a6805b4cf7ceaa88c8aa577ce070b12e1a5a7c8e5f` and `c1bb209a7a96e5fb2f77134113e272d8633a2ed78e78a5112d6c1d75c304a345`.
+
+#### Branch-aware priority lookahead
+
+The matched run used the original corpus above, four loopback validators, parallel Cell commitments, 131,072 cache entries, two VM workers, a five-second age threshold, a 2,048-item block limit and 4 billion cycles. The fixed 256-visit age policy ran first. The candidate examined up to 512 aged arrivals and promoted up to 256 with no spent explicit input in the selected speculative branch. For each input, it used the newest matching overlay entry from the prepared ancestors. The rest of the mempool kept its existing hash order. The filter acted only on the examined prefix for the current parent and retained all entries in the pool. Tests exercised the lookahead ceiling, a competing prepared parent and eligibility after a branch switch. The candidate's locked library suite passed 24 tests.
+
+| Metric | Fixed age lane | Branch-aware lookahead |
+| --- | ---: | ---: |
+| Common confirmations/s, 180-second window | 2,970.17 | 2,972.71 |
+| Common confirmations by minute | 177,389 / 181,118 / 176,123 | 174,865 / 182,315 / 177,907 |
+| Write-to-common p99 | 7.338 s | 9.227 s |
+| Peak acknowledged backlog | 13,620 | 15,687 |
+| Backlog growth | 5,154 | 5,093 |
+| Priority inclusions | 7,348 | 21,537 |
+| Parent spends filtered before selection | 0 | 16,177 |
+| Parent-spent visits in the proposal scanner | 434,625 | 421,505 |
+| Total validator CPU | 1,304.81 s | 1,309.17 s |
+
+The candidate reached its 512-entry lookahead limit in five proposals. Its priority inclusions almost tripled, while throughput rose by 0.09%. On the 539,968 matched measurement payments, p99 rose from 7.338 to 9.227 seconds. The candidate introduced a peak-backlog failure, and both runs missed the throughput, p99 and growth gates. Both acknowledged and confirmed all 720,000 payments by drain. Independent replay checked 771 and 760 observed blocks and the terminal proofs at height 1,137.
+
+Retain the existing priority policy. This run order supports rejecting the tested lookahead candidate for integration. The size of its latency regression remains specific to this pair. The branch outcome counts help identify stale work, while the higher priority inclusion count alone gives no adoption case. The control, candidate and measuring harness SHA-256 values were `3677f6224539678eee1600a6805b4cf7ceaa88c8aa577ce070b12e1a5a7c8e5f`, `100c9768080ebd2ec85f281b38ebc23e376e62383d0dc7d6b724cb61d4cfdffc` and `e05cd92b6c5b7d57244cebdb9d3e29b4377957c00c4209bcc334977158da75ea`.
 
 ## Reproduction
 
