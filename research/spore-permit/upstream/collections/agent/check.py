@@ -48,6 +48,7 @@ def replay(stem, root, case):
     assert verified["member"]["matched_dependency_uses"] == [agent_use, collection_use]
     agent_mint = verified["agent"]["transitions"][0]["transaction"]
     assert verified["agent"]["matched_dependency_uses"] == [claim(agent_mint, cells["proxy"])]
+    check_proxy_payment(case["histories"]["agent"], cells["proxy"])
     proxy_mint = verified["proxy"]["transitions"][0]["transaction"]
     for source, result_key in [("inputs", "matched_input_uses"), ("deps", "matched_dependency_uses")]:
         refs = cells["proxy_birth_collection_" + source]
@@ -85,26 +86,52 @@ def replay(stem, root, case):
     return mint
 
 
-def owner_inputs(record, collection_use):
+def mint_cells(record):
     proof = record["proof"]
     mint = field(binary(proof["steps"][0]["transaction"]), 0)
-    tx_hash = hex_bytes(ckb_hash(mint))
-    assert tx_hash == collection_use["transaction"]
     parents = {ckb_hash(raw): raw for raw in map(binary, proof["references"])}
     packed = field(mint, 3)
     assert len(packed) == 4 + 44 * int.from_bytes(packed[:4], "little")
-    owners = []
+    inputs = []
     for i in range(4, len(packed), 44):
         point = packed[i+8:i+44]
         parent, index = parents[point[:32]], int.from_bytes(point[32:], "little")
-        cell = field(field(parent, 4), index)
-        lock = hex_bytes(ckb_hash(field(cell, 1)))
-        if lock == collection_use["lock_hash"]:
-            data = field(field(parent, 5), index)
-            assert int.from_bytes(data[:4], "little") == len(data) - 4
-            owners.append({"transaction": tx_hash, "out_point": {"tx_hash": hex_bytes(point[:32]), "index": hex(index)},
-                           "lock_hash": lock, "data_hash": hex_bytes(ckb_hash(data[4:]))})
-    return owners
+        out_point = {"tx_hash": hex_bytes(point[:32]), "index": hex(index)}
+        data = field(field(parent, 5), index)
+        assert int.from_bytes(data[:4], "little") == len(data) - 4
+        inputs.append((out_point, field(field(parent, 4), index), data[4:]))
+    outputs = field(mint, 4)
+    count = int.from_bytes(outputs[4:8], "little") // 4 - 1
+    return hex_bytes(ckb_hash(mint)), inputs, [field(outputs, i) for i in range(count)]
+
+
+def owner_inputs(record, collection_use):
+    tx_hash, inputs, _ = mint_cells(record)
+    assert tx_hash == collection_use["transaction"]
+    return [{"transaction": tx_hash, "out_point": point,
+             "lock_hash": collection_use["lock_hash"], "data_hash": hex_bytes(ckb_hash(data))}
+            for point, cell, data in inputs if hex_bytes(ckb_hash(field(cell, 1))) == collection_use["lock_hash"]]
+
+
+def check_proxy_payment(record, proxy):
+    mint, inputs, outputs = mint_cells(record)
+    proxy_hash = script_hash(proxy["output"]["type"])
+    lock_hash = script_hash(proxy["output"]["lock"])
+    args = binary(proxy["output"]["type"]["args"])
+    assert len(args) == 40
+    minimum = int.from_bytes(args[32:], "little")
+    assert record["verified"]["matched_dependency_uses"] == [claim(mint, proxy)]
+
+    def credit(cells):
+        return sum(int.from_bytes(field(cell, 0), "little") for cell in cells if ckb_hash(field(cell, 1)) == lock_hash)
+
+    consumed = [cell for _, cell, _ in inputs]
+    carried = [any(field(cell, 2) and ckb_hash(field(cell, 2)) == proxy_hash for cell in cells)
+               for cells in (consumed, outputs)]
+    before, after = credit(consumed), credit(outputs)
+    assert carried == [False, False] and minimum == 10
+    assert before == 0 and after == 6_100_000_000 and after - before >= minimum
+    print("Agent creation", mint, "minimum and net shannons credited to Proxy owner:", minimum, after - before)
 
 
 def local_mint(stem, work, filename, case):
