@@ -154,6 +154,24 @@ One further run retained the aged binary, identical genesis, 720,000-payment cor
 
 The p99 population included 539,894 measurement payments. All four caches reached capacity. The observed cache hit fraction was 39.44%, with zero wrong-parent misses in this payment corpus. Compared with the prior two aged runs at 65,536 entries, this run had the lowest tail and peak backlog, and throughput fell between them. It missed the sustained throughput, backlog peak, backlog growth and 5 s p99 gates. One run warrants a matched repeat while preserving the existing cache default.
 
+#### Matched capacity comparison
+
+One pair ran the 131,072-entry cache first and the 65,536-entry cache second. Both used the same node and harness builds, parallel Cell commitments, age-priority selection, two VM workers per node and the same 720,000 signed payments. Four loopback validators ran on one physical host. The driver offered 3,000 payments/s with 60 seconds of warmup, 180 seconds of measurement and 45 seconds of drain. Both runs acknowledged and commonly confirmed all payments by drain. Independent replay authenticated 768 and 531 observed blocks and both terminal proofs.
+
+| Post-warmup metric | 131,072 entries | 65,536 entries |
+| --- | ---: | ---: |
+| Common TPS | 2,979.33 | 2,756.89 |
+| Common confirmations by minute | 172,551 / 187,252 / 176,476 | 156,272 / 167,936 / 172,032 |
+| Write-to-common p99 | 7.274 s | 99.213 s |
+| Peak acknowledged backlog | 13,845 | 57,575 |
+| Backlog growth | 7,616 | 44,000 |
+| Pending at drain | 0 | 0 |
+| Cache hit rate | 39.72% | 33.49% |
+| Wrong-parent cache misses | 0 | 0 |
+| Total validator CPU | 1,278.65 s | 1,357.51 s |
+
+The larger cache raised common throughput by 8.1% in this pair. Among the 539,990 measurement payments acknowledged and confirmed in both runs, p99 fell from 99.215 to 7.274 seconds. The larger cache passed the 15,000 peak limit and missed the 3,000 TPS, 5 s p99 and 3,000 backlog growth gates. The earlier larger-cache probe reached 2,973.43 TPS with 6.554 s p99. Earlier 65,536-entry runs performed better than this control. The single matched run order and variation across controls limit attribution, so the cache default stays in place.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)
