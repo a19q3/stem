@@ -15,7 +15,9 @@ use ckb_types::{
     packed::{self, Byte32, CellOutput},
 };
 use serde_json::json;
-use stem_bridge_wire::metatype::{ManifestCell, ManifestDefinition, ManifestReference, MetatypeManifest, project};
+use stem_bridge_wire::metatype::{
+    ManifestCell, ManifestDefinition, ManifestReference, MetatypeManifest, fungible::Amounts, project,
+};
 use stem_ledger::{ScriptGroupKind, derive_script_groups};
 
 use super::{polytype_attachment::build_contract, *};
@@ -299,12 +301,12 @@ impl Ckb {
         &self,
         inputs: &[Cell],
         outputs: &[Cell],
-        asset: &Script,
+        state_for: impl Fn(&Cell, &Script) -> Result<Bytes>,
         expected: &Membership,
         encoding: Encoding,
     ) -> Result<Result<u64, ScriptError>> {
         let mut definitions = BTreeMap::new();
-        let mut encode = |cells: &[Cell]| -> Vec<EncodedCell> {
+        let mut encode = |cells: &[Cell]| -> Result<Vec<EncodedCell>> {
             cells
                 .iter()
                 .map(|cell| {
@@ -318,7 +320,7 @@ impl Ckb {
                         let mut scripts = vec![types.len() as u8];
                         let mut states = Vec::new();
                         for script in types {
-                            let state = if &script == asset { cell.data() } else { Bytes::new() };
+                            let state = state_for(cell, &script)?;
                             let script_bytes = script.as_slice();
                             scripts.extend((script_bytes.len() as u16).to_le_bytes());
                             scripts.extend_from_slice(script_bytes);
@@ -341,12 +343,12 @@ impl Ckb {
                             }
                         }
                     };
-                    EncodedCell { output: output.build(), data }
+                    Ok(EncodedCell { output: output.build(), data })
                 })
                 .collect()
         };
-        let inputs = encode(inputs);
-        let outputs = encode(outputs);
+        let inputs = encode(inputs)?;
+        let outputs = encode(outputs)?;
         let decoded = definitions
             .iter()
             .map(|(hash, raw)| Ok((*hash, ManifestDefinition::decode(raw.to_vec()).context("encoded definition")?)))
@@ -397,8 +399,7 @@ impl Ckb {
     }
 }
 
-#[test]
-fn native_and_metatype_fungible_groups_match() -> Result<()> {
+fn fungible_runtime() -> Result<(Fixture, Ckb, [u8; 32], [u8; 32])> {
     let mut fixture = Fixture::new()?;
     let asset_code = build_contract("--bin", "stem-native-udt")?;
     let cap_code = build_contract("--bin", "stem-amount-cap")?;
@@ -412,6 +413,12 @@ fn native_and_metatype_fungible_groups_match() -> Result<()> {
         fixture.deps.push(CellDep::new_builder().out_point(outpoint.clone()).build());
         fixture.spec.development_cells.push((outpoint, cell));
     }
+    Ok((fixture, ckb, asset_hash, cap_hash))
+}
+
+#[test]
+fn native_and_metatype_fungible_groups_match() -> Result<()> {
+    let (mut fixture, ckb, asset_hash, cap_hash) = fungible_runtime()?;
     let mut prepared_cases = Vec::new();
     for count in [1, 2, 4, 8, 16] {
         for case in corpus() {
@@ -470,7 +477,10 @@ fn native_and_metatype_fungible_groups_match() -> Result<()> {
             .collect::<Membership>();
         assert_eq!(actual_groups, expected, "native group membership in {label}");
         let check = |encoding| -> Result<Option<u64>> {
-            match ckb.run(&inputs, &outputs, &asset, &expected, encoding).with_context(|| label.clone())? {
+            let state_for = |cell: &Cell, script: &Script| {
+                Ok(if script == &asset { cell.data() } else { Bytes::new() })
+            };
+            match ckb.run(&inputs, &outputs, state_for, &expected, encoding).with_context(|| label.clone())? {
                 Ok(cycles) => Ok(Some(cycles)),
                 Err(ScriptError::ValidationFailure(_, 46)) => Ok(None),
                 Err(error) => anyhow::bail!("unexpected CKB outcome for {label} {encoding:?}: {error}"),
@@ -555,6 +565,202 @@ fn native_and_metatype_fungible_groups_match() -> Result<()> {
                 "native_guest_hashes":[hex::encode(asset_hash),hex::encode(cap_hash)], "cases":report,
             }))?,
         )?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct VectorRow {
+    quantities: [u128; 2],
+    policies: u8,
+}
+
+#[test]
+fn native_and_metatype_validate_each_asset_in_a_composed_cell() -> Result<()> {
+    let (mut fixture, ckb, asset_code, cap_code) = fungible_runtime()?;
+    let issuer: [[u8; 32]; 2] = [fixture.lock.calc_script_hash().unpack(), [86; 32]];
+    let ceilings = [100u128, 120u128];
+    let assets = std::array::from_fn::<_, 2, _>(|i| {
+        let args =
+            [issuer[i].as_slice(), &[(i + 1) as u8; 32], cap_code.as_slice(), &ceilings[i].to_le_bytes()]
+                .concat();
+        data_script(asset_code, ScriptHashType::Data, &args)
+    });
+    let ids: [[u8; 32]; 2] = std::array::from_fn(|i| assets[i].calc_script_hash().unpack());
+    let caps = std::array::from_fn::<_, 2, _>(|i| {
+        let args = [ids[i].as_slice(), &ceilings[i].to_le_bytes()].concat();
+        data_script(cap_code, ScriptHashType::Data, &args)
+    });
+    let row = |a, b| VectorRow { quantities: [a, b], policies: 3 };
+    let ordinary = row(60, 80);
+    let cases = [
+        ("keep-both", vec![ordinary], vec![ordinary]),
+        ("split-both", vec![ordinary], vec![row(15, 55), row(45, 25)]),
+        ("merge-at-both-caps", vec![row(48, 92), row(52, 28)], vec![row(100, 120)]),
+        ("transfer-a-by-inflating-b", vec![ordinary], vec![row(59, 81)]),
+        ("transfer-b-by-inflating-a", vec![ordinary], vec![row(61, 79)]),
+        ("issuer-a-only", vec![ordinary], vec![row(61, 80)]),
+        ("issuer-b-missing", vec![ordinary], vec![row(60, 81)]),
+        ("cap-a-independent", vec![row(80, 35), row(21, 25)], vec![row(101, 60)]),
+        ("cap-b-independent", vec![row(35, 85), row(25, 36)], vec![row(60, 121)]),
+        ("strip-a-policy", vec![ordinary], vec![VectorRow { policies: 2, ..ordinary }]),
+        ("strip-b-policy", vec![ordinary], vec![VectorRow { policies: 1, ..ordinary }]),
+        ("retained-zero-component", vec![ordinary], vec![row(60, 50), row(0, 30)]),
+        ("zero-component-input", vec![row(0, 30)], vec![row(5, 30)]),
+    ];
+    let make_cells = |rows: &[VectorRow], total: u64| -> Result<Vec<Cell>> {
+        rows.iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let mut entries = [(ids[0], row.quantities[0]), (ids[1], row.quantities[1])];
+                entries.sort_unstable_by_key(|(id, _)| *id);
+                let mut data = vec![2];
+                for (id, units) in entries {
+                    data.extend_from_slice(&id);
+                    data.extend_from_slice(&units.to_le_bytes());
+                }
+                let mut types = assets.to_vec();
+                types.extend((0..2).filter(|i| row.policies & (1 << i) != 0).map(|i| caps[i].clone()));
+                let capacity =
+                    total / rows.len() as u64 + if index == 0 { total % rows.len() as u64 } else { 0 };
+                Cell::new(capacity, fixture.lock.clone(), types, data.into())
+            })
+            .collect()
+    };
+    let mut prepared = Vec::new();
+    for (index, (name, inputs, outputs)) in cases.into_iter().enumerate() {
+        let capacity = CELL_CAPACITY * inputs.len() as u64;
+        let input_cells = make_cells(&inputs, capacity)?;
+        let output_cells = make_cells(&outputs, capacity - FEE)?;
+        let points = input_cells
+            .iter()
+            .enumerate()
+            .map(|(row, cell)| {
+                let point = OutPoint::new([85; 32].pack(), 4 * index as u32 + row as u32);
+                fixture.spec.development_cells.push((point.clone(), cell.clone()));
+                point
+            })
+            .collect::<Vec<_>>();
+        prepared.push((name, inputs, outputs, input_cells, output_cells, points));
+    }
+
+    let home = tempfile::tempdir()?;
+    let mut serial = Store::open(&home.path().join("serial"), &fixture.spec, Retention::Archive)?;
+    let mut parallel = Store::open(&home.path().join("parallel"), &fixture.spec, Retention::Archive)?;
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let mut report = Vec::new();
+    for (index, (name, inputs, outputs, input_cells, output_cells, points)) in prepared.into_iter().enumerate()
+    {
+        let positions = |rows: &[VectorRow], required| {
+            rows.iter()
+                .enumerate()
+                .filter_map(|(i, row)| (row.policies & required == required).then_some(i))
+                .collect::<Vec<_>>()
+        };
+        let mut groups = Membership::new();
+        for i in 0..2 {
+            for (script, mask) in [(&assets[i], 0), (&caps[i], 1 << i)] {
+                let (from, to) = (positions(&inputs, mask), positions(&outputs, mask));
+                if !from.is_empty() || !to.is_empty() {
+                    groups.insert(script.as_slice().to_vec(), (from, to));
+                }
+            }
+        }
+        let native_groups = derive_script_groups(&input_cells, &output_cells)?
+            .into_iter()
+            .filter(|group| group.kind == ScriptGroupKind::Type)
+            .map(|group| (group.script.as_slice().to_vec(), (group.inputs, group.outputs)))
+            .collect::<Membership>();
+        assert_eq!(native_groups, groups, "{name}");
+
+        let rows = inputs.iter().chain(&outputs);
+        let component_zero = rows.clone().any(|row| row.quantities.contains(&0));
+        let total = |rows: &[VectorRow], i| rows.iter().map(|row| row.quantities[i]).sum::<u128>();
+        // Fixture ownership permits A issuance. B requires exact conservation.
+        let native_expected = rows.clone().all(|row| {
+            row.policies == 3 && row.quantities.iter().zip(ceilings).all(|(amount, limit)| *amount <= limit)
+        }) && total(&outputs, 0) >= total(&inputs, 0)
+            && total(&outputs, 1) == total(&inputs, 1);
+        let ckb_expected = native_expected && !component_zero;
+        let state_for = |cell: &Cell, script: &Script| -> Result<Bytes> {
+            if let Some(index) = assets.iter().position(|asset| asset == script) {
+                let amounts = Amounts::decode(&cell.data()).context("invalid native amount vector")?;
+                let state = amounts.amount(&ids[index]).context("missing logical asset amount")?;
+                Ok(Bytes::copy_from_slice(&state.to_le_bytes()))
+            } else {
+                Ok(Bytes::new())
+            }
+        };
+        let ckb_cycles = |encoding| -> Result<Option<u64>> {
+            match ckb.run(&input_cells, &output_cells, state_for, &groups, encoding)? {
+                Ok(cycles) => Ok(Some(cycles)),
+                Err(ScriptError::ValidationFailure(_, 46)) => Ok(None),
+                Err(error) => anyhow::bail!("unexpected CKB outcome for {name} {encoding:?}: {error}"),
+            }
+        };
+        let (inline, shared) = (ckb_cycles(Encoding::Inline)?, ckb_cycles(Encoding::Shared)?);
+        assert_eq!(inline.is_some(), ckb_expected, "Inline {name}");
+        assert_eq!(shared.is_some(), ckb_expected, "Shared {name}");
+
+        let spend = fixture.seal(Transaction::new(
+            fixture.deps.clone(),
+            vec![],
+            points.iter().cloned().map(|point| CellInput::new(point, None)).collect(),
+            output_cells.clone(),
+            vec![],
+        )?)?;
+        let id = spend.id(&fixture.spec.network);
+        let time = TIME + index as u64 + 1;
+        let txs = [spend];
+        let before = serial.tip().clone();
+        let cold = serial.prepare(&txs, time, false);
+        let threaded = workers.install(|| parallel.prepare(&txs, time, true));
+        let cycles = if native_expected {
+            let cold = cold.with_context(|| format!("serial {name}"))?;
+            let threaded = threaded.with_context(|| format!("parallel {name}"))?;
+            let warm = workers.install(|| parallel.prepare(&txs, time, true))?;
+            assert_eq!(cold.header(), threaded.header(), "{name}");
+            assert_eq!(cold.header(), warm.header(), "{name}");
+            assert_eq!(cold.receipts(), threaded.receipts(), "{name}");
+            assert_eq!(cold.receipts(), warm.receipts(), "{name}");
+            let cycles = cold.receipts()[0].cycles;
+            serial.commit(cold)?;
+            parallel.commit(threaded)?;
+            Some(cycles)
+        } else {
+            for result in [cold, threaded] {
+                let error = result.err().with_context(|| format!("unexpected native acceptance of {name}"))?;
+                let reason = format!("{error:#}");
+                ensure!(
+                    [55, 92, 93, 94].iter().any(|code| reason.contains(&format!("exited with {code}"))),
+                    "unexpected native error for {name}: {reason}"
+                );
+            }
+            assert_eq!(serial.tip(), &before);
+            assert_eq!(parallel.tip(), &before);
+            None
+        };
+        for store in [&serial, &parallel] {
+            for point in &points {
+                assert_eq!(store.prove_cell(point)?.0.is_none(), native_expected, "{name}");
+            }
+            for (index, cell) in output_cells.iter().enumerate() {
+                let point = OutPoint::new(id.clone(), index as u32);
+                let state = store.prove_cell(&point)?.0;
+                assert_eq!(state.is_some(), native_expected, "{name}");
+                if let Some(actual) = state {
+                    assert_eq!(actual.cell.as_slice(), cell.as_slice(), "{name}");
+                }
+            }
+        }
+        report.push(json!({"case":name, "groups":groups.len(), "zero_component":component_zero,
+            "native_accepted":native_expected, "ckb_accepted":ckb_expected,
+            "native_cycles":cycles, "ckb_inline_cycles":inline, "ckb_shared_cycles":shared}));
+    }
+    if let Some(root) = std::env::var_os("STEM_TEST_EVIDENCE_ROOT") {
+        let root = std::path::Path::new(&root);
+        std::fs::create_dir_all(root)?;
+        std::fs::write(root.join("fungible-vector-conformance.json"), serde_json::to_vec_pretty(&report)?)?;
     }
     Ok(())
 }

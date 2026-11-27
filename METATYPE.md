@@ -774,6 +774,20 @@ STEM_TEST_EVIDENCE_ROOT=/tmp/stem-fungible-conformance \
   fungible_conformance::native_and_metatype_fungible_groups_match -- --exact --nocapture
 ```
 
+### Standalone dual-asset conformance
+
+The dual-asset corpus puts two independent UDTs and their two mandatory amount caps in the same Cell. Native Cell Data stores the canonical sorted amount vector. The CKB dispatcher projects the same full Script identities and absolute positions, with the matching quantity in each UDT's state. Both Manifest encodings run the real Data2 Type group. Stem runs the same signed workload through serial, four-worker and warm-cache validation, then verifies the resulting Live Cell records. Rejected preparations leave the tips and inputs intact.
+
+Eleven of the thirteen cases match between runtimes, with four acceptances and seven rejections. They cover split, merge exactly at both caps, attempts to offset inflation by burning another asset, an issuer authorized only for asset A, and omission or breach of either independent cap. Accepted Stem transactions charge up to 2,069,755 cycles including the Lock. The accepted CKB Type groups peak at 1,458,268 cycles in Inline and 1,486,933 in Shared.
+
+Two cases establish the zero-quantity policy boundary. Stem's canonical amount vector permits a zero entry alongside a positive entry. The CKB Standalone profile requires a positive quantity for every UDT state, so it rejects both a split retaining a zero A entry and an issuance consuming such a vector. Shared and Inline agree on those rejections. The CKB MultiAsset custody profile has its own zero-component rules and has live selective-redemption evidence. [Selective custody and return](#multiple-assets-in-one-cell)
+
+```sh
+STEM_TEST_EVIDENCE_ROOT=/tmp/stem-fungible-conformance \
+  cargo test --release --locked --test native_store \
+  fungible_conformance::native_and_metatype_validate_each_asset_in_a_composed_cell -- --exact --nocapture
+```
+
 ### Replace an adapter through settlement
 
 An asset ID identifies the complete logical asset Script. A Manifest ID identifies its complete ordered Script set, including every mandatory cap. The physical CKB Type identifies the deployment, with its CKB genesis, namespace and immutable adapter table hash. Replacing an adapter keeps the first two identities when the logical Scripts stay the same. The new table and mailbox give the replacement a distinct physical Type and message namespace.
