@@ -27,11 +27,11 @@ Run `cargo test --release --locked --test primary_coordination signed_registrati
 
 Three four-validator loopback networks on one physical host use distinct network IDs, genesis Headers and weighted committees. The Primary nodes execute an experimental RISC-V registry Type using the native Cell rules. The Type verifies two signatures over the configured Primary network and genesis, foreign network, deployment, foreign genesis, manager, initial checkpoint and weighted roster. The actual native network must match the Type's network argument. The test pins the Primary genesis and Type identity using the real deployment configuration. The contract verifies the foreign committee's native two-chain certificate and requires the initial checkpoint at height one with the exact registered genesis parent.
 
-The registry Type permits one initialization from a seeded OutPoint and one appended record per transition. It preserves the existing records and the registry Lock across updates, rejects duplicate networks, and limits registry data to 32 KiB and eight entries. The run submits a signed registration from each independent network. Every Primary validator rejects the negative controls for a changed Primary genesis or network, a foreign chain proof substituted for the requested chain, a forged manager signature, duplicate registration, state replacement and removal of the registry Type.
+The registry Type permits one initialization from a seeded OutPoint and one appended record per transition. It preserves the existing records and the registry Lock across updates, rejects duplicate registrations, and limits registry data to 32 KiB and eight records across both entry kinds. The run submits a signed registration from each independent network. Every Primary validator rejects the negative controls for a changed Primary genesis or network, a foreign chain proof substituted for the requested chain, a forged manager signature, duplicate registration, state replacement and removal of the registry Type.
 
-After both entries finalize, the fixture stops and restarts the Primary archive. The four validators agree on a later certified Header. The restarted archive returns the exact two-entry Cell and its authenticated Patricia proof. The test also verifies the original native transaction and receipt proof from each Cell's certified creation Header. This exercises active consensus validation and registry recovery. Live committee updates, Intercell routing, workflow and Keeper execution, and CKB remain separate gates. [Registry Type](../../contracts/examples/primary-register.rs) · [Live fixture](../../tests/native_store/primary_registration.rs)
+After both entries finalize, the fixture stops and restarts the Primary archive. The four validators agree on a later certified Header. The restarted archive returns the exact two-entry Cell and its authenticated Patricia proof. The test also verifies the original native transaction and receipt proof from each Cell's certified creation Header. This exercises active consensus validation and registry recovery. Concurrent source committee updates, Intercell routing, workflow and Keeper execution, and Primary's CKB adapter paths remain separate gates. [Registry Type](../../contracts/examples/primary-register.rs) · [Live fixture](../../tests/native_store/primary_registration.rs)
 
-In the recorded run both entries finalized at Primary heights 5 and 7, and the archive returned the same Cell at certified height 8 after restart. The foreign certificates were 910 and 782 bytes. The two-entry Cell data was 2,594 bytes and its Patricia path was 175 bytes. The two authenticated receipts charged 18,618,213 and 14,701,828 cycles within the ordinary fixture's 100-million-cycle transaction limit. The RISC-V executable SHA-256 was `be920259b4d4d111b287a4d465e28ac4192afaf149a695b8db726ed390fec6ed`.
+In the registration-only run both entries finalized at Primary heights 5 and 7, and the archive returned the same Cell at certified height 8 after restart. The foreign certificates were 910 and 782 bytes. The two-entry Cell data was 2,594 bytes and its Patricia path was 175 bytes. The two authenticated receipts charged 18,618,213 and 14,701,828 cycles within the ordinary fixture's 100-million-cycle transaction limit. The RISC-V executable SHA-256 was `be920259b4d4d111b287a4d465e28ac4192afaf149a695b8db726ed390fec6ed`. The registration regression also passed against the executable that supports handoff entries.
 
 ```sh
 RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' cargo build \
@@ -41,6 +41,24 @@ RUSTFLAGS='-C passes=lower-atomic -C target-feature=-c' cargo build \
 STEM_PRIMARY_REGISTRATION_CONTRACT="$PWD/target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/primary-register" \
   cargo test --release --locked --test native_store \
   primary_registration::native_primary_executes_signed_registrations_from_two_live_chains \
+  -- --exact --ignored --nocapture
+```
+
+## Execute archived source handoffs on a live Primary
+
+The registry log also supports a committee handoff entry. The Type loads the latest accepted checkpoint and roster for the named source. It authenticates the outgoing committee's terminal proof, checks that its boundary extends the previously accepted Header using the native MMR frontier and suffix, and verifies the successor committee's first finalized execution Header. The first successor Header must directly follow the certified boundary. The registry commits the new epoch, roster, anchor and checkpoint together while preserving the previous entries.
+
+The fixture runs four live Primary validators and reads native certificates from a stopped CKB-funded source devnet archive. It registers the archived source's height-one checkpoint, then submits two native Jolteon handoffs and their first successor certificates. All four validators reject a missing first handoff, a corrupted history suffix, an execution proof from the old committee and a replayed handoff. The fixture restarts the Primary archive after each rotation and checks the exact registry Cell and matching receipt against a newer committed Primary Header. The Primary path reads native proofs and has no CKB RPC or settlement dependency. The source generated the recorded proofs with its own CKB stake policy. [Source discovery and stake runner](../../OPERATIONS.md#discovery-mode)
+
+The source advanced to epochs 1 and 2 at heights 11 and 21. The Primary executed the two updates at heights 7 and 10, charging 14,738,172 and 14,747,075 cycles. After the second restart, the archive proved the 5,904-byte registry Cell at Primary height 12. The RISC-V executable SHA-256 was `8520d8c37d5368a05f73ecb6badba0da7d94cbdba9e67cb563097dc5b20796f1`.
+
+Reuse the RISC-V build above and keep the archive from a completed `tools/jolteon_stake_localnet.py --open-admission --publish-checkpoint --retire` run. The output must retain `stem-genesis.json`, `genesis-committee.json`, `handoff-0.json`, `handoff-1.json` and a source replica database with exact finality certificates for height one and both first successor Heights. Use a replica that followed the chain from genesis and retained these certificates. The fixture creates a separate history index without changing the source archive.
+
+```sh
+STEM_PRIMARY_REGISTRATION_CONTRACT="$PWD/target/stem-contracts/riscv64imac-unknown-none-elf/release/examples/primary-register" \
+STEM_PRIMARY_ARCHIVE_RUN="$source_run" STEM_PRIMARY_ARCHIVE_DB="$source_archive_db" \
+  cargo test --release --locked --test native_store \
+  primary_registration::native_primary_executes_two_certified_source_rotations \
   -- --exact --ignored --nocapture
 ```
 
@@ -78,4 +96,4 @@ For Case B1 Primary must re-execute a candidate against the registered code, acc
 | C4 recovery or exit | A new exit policy needs availability of current owner proofs, a valid activation condition and replay and reconciliation rules across Primary resumption. |
 | C5 publication | The data actually published adds a retrieval path. Commitments continue to authenticate the bytes provided by retrieval. |
 
-Extend the live registry with authenticated handoffs, then verify the workflow at the actual Outbox, execution and restart boundaries. C1 and C3 are follow-up comparisons with the existing CKB devnet adapter. [Full acceptance matrix](https://github.com/a19q3/stem/issues/31) · [CKB freshness and reorganisation results](../../METATYPE.md#reorganize-a-burn-and-an-adopted-anchor)
+Relay source updates during a concurrent live run and verify the workflow at the actual Outbox, execution and restart boundaries. C1 and C3 are follow-up comparisons with the existing CKB devnet adapter. [Full acceptance matrix](https://github.com/a19q3/stem/issues/31) · [CKB freshness and reorganisation results](../../METATYPE.md#reorganize-a-burn-and-an-adopted-anchor)
