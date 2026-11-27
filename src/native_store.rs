@@ -1551,7 +1551,7 @@ impl Store {
                 // original order before producing the single atomic batch.
                 let mut system_batch = Batch::default();
                 let (cell, (system, execution)) = rayon::join(
-                    || timed(|| self.finish_cells(&mut batch, &live)),
+                    || timed(|| self.finish_cells(&mut batch, &live, parallel)),
                     || {
                         rayon::join(
                             || timed(|| self.finish_system(&mut system_batch, overlay, height, fees)),
@@ -1564,7 +1564,7 @@ impl Store {
                 result
             } else {
                 (
-                    timed(|| self.finish_cells(&mut batch, &live))?,
+                    timed(|| self.finish_cells(&mut batch, &live, parallel))?,
                     timed(|| self.finish_system(&mut batch, overlay, height, fees))?,
                     build_execution()?,
                 )
@@ -1613,7 +1613,7 @@ impl Store {
         })
     }
 
-    fn finish_cells(&self, batch: &mut Batch, live: &LiveChanges) -> Result<Byte32> {
+    fn finish_cells(&self, batch: &mut Batch, live: &LiveChanges, parallel: bool) -> Result<Byte32> {
         let mut cell_changes = Vec::with_capacity(live.len());
         for (point, record) in live {
             let id = record::cell_key(&self.cells, point);
@@ -1623,16 +1623,25 @@ impl Store {
             cell_changes.push((id, value));
         }
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
-        let (cell_root, nodes) = self.cells.batch_update(
-            as_key(&self.tip.state.cell_root),
-            |id| self.node(Namespace::Cells, id),
-            &cell_changes,
-            |id, _, value| {
-                if value.is_none() {
-                    batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
-                }
-            },
-        )?;
+        let root = as_key(&self.tip.state.cell_root);
+        let reader = |id: &Key| self.node(Namespace::Cells, id);
+        let previous = |id: Key, _, replacement: Option<Key>| {
+            if replacement.is_none() {
+                batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
+            }
+        };
+        #[cfg(feature = "native-cell-subtree-parallel")]
+        let updated = if parallel {
+            self.cells.batch_update_parallel(root, reader, &cell_changes, previous)
+        } else {
+            self.cells.batch_update(root, reader, &cell_changes, previous)
+        };
+        #[cfg(not(feature = "native-cell-subtree-parallel"))]
+        let updated = {
+            let _ = parallel;
+            self.cells.batch_update(root, reader, &cell_changes, previous)
+        };
+        let (cell_root, nodes) = updated?;
         put_nodes(batch, Namespace::Cells, nodes);
         Ok(cell_root.pack())
     }
@@ -2788,7 +2797,8 @@ fn sync_with_consensus(
         feature = "jolteon-admission-pipeline",
         feature = "jolteon-candidate-pipeline",
         feature = "jolteon-proposal-pipeline",
-        feature = "native-commitment-pipeline"
+        feature = "native-commitment-pipeline",
+        feature = "native-cell-subtree-parallel"
     )
 ))]
 mod pipeline_store_tests {
@@ -3092,7 +3102,7 @@ mod pipeline_store_tests {
         Ok(())
     }
 
-    #[cfg(feature = "native-commitment-pipeline")]
+    #[cfg(any(feature = "native-commitment-pipeline", feature = "native-cell-subtree-parallel"))]
     #[test]
     fn namespace_commitments_keep_the_ordered_write_batch() -> Result<()> {
         use bytes::Bytes;
@@ -3101,12 +3111,14 @@ mod pipeline_store_tests {
 
         let home = tempfile::tempdir()?;
         let mut spec = spec();
-        let spent = OutPoint::new([41; 32].pack(), 0);
-        let created = OutPoint::new([42; 32].pack(), 0);
         let lock = Script::default();
         let capacity = Cell::minimum_capacity(&lock, &[], 0)? + 1_000_000_000;
         let cell = Cell::new(capacity, lock, vec![], Bytes::new())?;
-        spec.development_cells.push((spent.clone(), cell.clone()));
+        let spent = (0..400)
+            .map(|index| OutPoint::new([41; 32].pack(), index))
+            .collect::<Vec<_>>();
+        spec.development_cells
+            .extend(spent.iter().cloned().map(|point| (point, cell.clone())));
         let store = Store::open(home.path(), &spec, Retention::Archive)?;
         let execution = (0..256)
             .map(|index| {
@@ -3125,18 +3137,19 @@ mod pipeline_store_tests {
             1001,
             Tree::transactions(store.network().clone(), &execution)?.root(),
         )?;
-        let build = |parallel| {
-            // This fixture supplies an already staged overlay. The integration
-            // test covers real signed execution on both sides of the cutoff.
-            let mut overlay = store.overlay(None);
-            overlay.live.insert(spent.clone(), None);
-            overlay.live.insert(
-                created.clone(),
-                Some(LiveCell {
-                    cell: cell.clone(),
-                    origin: Origin::new(store.network(), &context),
-                }),
-            );
+        let build = |view: &Store, parallel| {
+            let mut overlay = view.overlay(None);
+            let origin = Origin::new(view.network(), &context);
+            for (index, point) in spent.iter().enumerate() {
+                overlay.live.insert(point.clone(), None);
+                overlay.live.insert(
+                    OutPoint::new([42; 32].pack(), index as u32),
+                    Some(LiveCell {
+                        cell: cell.clone(),
+                        origin: origin.clone(),
+                    }),
+                );
+            }
             let receipts = vec![
                 Receipt {
                     fee: 100,
@@ -3145,7 +3158,7 @@ mod pipeline_store_tests {
                 };
                 execution.len()
             ];
-            store.finish_block(
+            view.finish_block(
                 context.clone(),
                 overlay,
                 &execution,
@@ -3155,12 +3168,28 @@ mod pipeline_store_tests {
                 parallel,
             )
         };
-        let serial = build(false)?;
+        let serial = build(&store, false)?;
         let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build()?;
-        let parallel = pool.install(|| build(true))?;
+        let parallel = pool.install(|| build(&store, true))?;
         assert!(!serial.batch.writes.is_empty());
         assert_eq!(serial.batch.writes, parallel.batch.writes);
         assert_eq!(serial.header().encode(), parallel.header().encode());
+        #[cfg(all(feature = "native-cell-subtree-parallel", feature = "jolteon-commit-pipeline"))]
+        {
+            let pinned = store.pinned_view();
+            let write = store.certified_write(Arc::new(parallel), Vec::new(), Vec::new())?;
+            let from_snapshot = pinned
+                .with_snapshot(|old| {
+                    std::thread::spawn(write)
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("certified write panicked"))??;
+                    pool.install(|| build(old, true))
+                })?
+                .context("missing snapshot for the old parent")?;
+            assert_eq!(from_snapshot.batch.writes, serial.batch.writes);
+            assert_eq!(from_snapshot.header(), serial.header());
+            assert!(pinned.with_snapshot(|_| Ok(()))?.is_none());
+        }
         Ok(())
     }
 }

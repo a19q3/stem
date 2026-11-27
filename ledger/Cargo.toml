@@ -6,11 +6,15 @@ rust-version = "1.95.0"
 license = "MIT"
 publish = false
 
+[features]
+parallel-patricia = ["dep:rayon"]
+
 [dependencies]
 anyhow.workspace = true
 ckb-hash.workspace = true
 ckb-types.workspace = true
 lru.workspace = true
+rayon = { workspace = true, optional = true }
 stem-stake = { path = "../stake", default-features = false }
 stem-bridge-wire = { path = "../bridge-wire" }
 stem-intent = { path = "../intent" }

@@ -426,7 +426,7 @@ fn verification_schedules_preserve_receipts_conflicts_and_block_cycles() -> Resu
     Ok(())
 }
 
-#[cfg(feature = "native-commitment-pipeline")]
+#[cfg(any(feature = "native-commitment-pipeline", feature = "native-cell-subtree-parallel"))]
 #[test]
 fn parallel_commitments_match_serial_roots_and_reopened_proofs() -> Result<()> {
     let mut fixture = Fixture::new()?;
@@ -468,6 +468,23 @@ fn parallel_commitments_match_serial_roots_and_reopened_proofs() -> Result<()> {
         for candidate in [&leader, &follower] {
             assert_eq!(candidate.header().encode(), reference.header().encode());
             assert_eq!(candidate.receipts(), reference.receipts());
+        }
+        if height == 1 {
+            let serial_parent = std::sync::Arc::new(serial.prepare(block, time, false)?);
+            let parallel_parent = std::sync::Arc::new(
+                workers.install(|| parallel.prepare(block, time, true))?,
+            );
+            let child = &remaining[..256];
+            let serial_child = serial.on_branch(std::slice::from_ref(&serial_parent), |view| {
+                view.prepare(child, time + 1, false)
+            })?;
+            let parallel_child = workers.install(|| {
+                parallel.on_branch(std::slice::from_ref(&parallel_parent), |view| {
+                    view.prepare(child, time + 1, true)
+                })
+            })?;
+            assert_eq!(serial_child.header(), parallel_child.header());
+            assert_eq!(serial_child.receipts(), parallel_child.receipts());
         }
         serial.commit(reference)?;
         parallel.commit(follower)?;

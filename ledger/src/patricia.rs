@@ -85,6 +85,34 @@ impl Patricia {
         Ok((root, nodes.writes.into_iter().collect()))
     }
 
+    /// Update from a single immutable view. Parallel branches buffer their
+    /// writes and replay previous values in serial traversal order.
+    #[cfg(feature = "parallel-patricia")]
+    pub fn batch_update_parallel<Read, Value>(
+        &self,
+        root: Key,
+        read: Read,
+        changes: &[(Key, Option<Key>)],
+        mut previous: impl FnMut(Key, Key, Option<Key>),
+    ) -> Result<(Key, BTreeMap<Key, Option<Vec<u8>>>)>
+    where
+        Read: Fn(&Key) -> Result<Option<Value>> + Sync,
+        Value: AsRef<[u8]>,
+    {
+        let workers = rayon::current_num_threads();
+        if workers < 2 || changes.len() < 2 * MIN_PARALLEL_CHANGES {
+            return self.batch_update(root, read, changes, previous);
+        }
+        check_change_order(changes)?;
+        let mut nodes = Nodes { tree: self, read: &read, writes: Vec::new() };
+        let mut prior = Vec::new();
+        let next = nodes.update_parallel(root, changes, 0, workers, &mut prior)?;
+        for (key, value, replacement) in prior {
+            previous(key, value, replacement);
+        }
+        Ok((next, nodes.writes.into_iter().collect()))
+    }
+
     pub fn verify(&self, root: &Key, query: &Key, expected: Option<&Key>, proof: &Proof) -> bool {
         self.commitment
             .verify(root, query, expected, proof.nodes.iter().map(Vec::as_slice))
@@ -141,6 +169,65 @@ trait NodeWrites {
         None
     }
     fn record(&mut self, id: Key, value: Option<Vec<u8>>);
+}
+
+#[cfg(feature = "parallel-patricia")]
+const MIN_PARALLEL_CHANGES: usize = 128;
+
+#[cfg(feature = "parallel-patricia")]
+type PreviousValue = (Key, Key, Option<Key>);
+
+#[cfg(feature = "parallel-patricia")]
+impl<Read, Value> Nodes<'_, &Read, Vec<(Key, Option<Vec<u8>>)>>
+where
+    Read: Fn(&Key) -> Result<Option<Value>> + Sync,
+    Value: AsRef<[u8]>,
+{
+    fn update_parallel(
+        &mut self,
+        root: Key,
+        changes: &[(Key, Option<Key>)],
+        depth: usize,
+        workers: usize,
+        previous: &mut Vec<PreviousValue>,
+    ) -> Result<Key> {
+        let old = self.load_optional(root)?;
+        if workers >= 2
+            && let Some((id, Node::Branch { prefix, bits, children })) = &old
+            && usize::from(*bits) >= depth
+            && canonical_prefix(&changes[0].0, *bits) == *prefix
+            && canonical_prefix(&changes.last().expect("nonempty partition").0, *bits) == *prefix
+        {
+            let (left, right) = split_changes(changes, *bits);
+            if left.len().min(right.len()) >= MIN_PARALLEL_CHANGES {
+                let child_depth = usize::from(*bits) + 1;
+                let left_workers = workers / 2;
+                let (tree, read) = (self.tree, self.read);
+                let update_child = |root, edits: &[_], budget, prior: &mut Vec<PreviousValue>| {
+                    let mut child = Nodes { tree, read, writes: Vec::new() };
+                    let next = child.update_parallel(root, edits, child_depth, budget, prior)?;
+                    Ok::<_, anyhow::Error>((next, child.writes))
+                };
+                let mut right_previous = Vec::new();
+                let (left, right) = rayon::join(
+                    || update_child(children[0], left, left_workers, previous),
+                    || update_child(children[1], right, workers - left_workers, &mut right_previous),
+                );
+                let (left, left_writes) = left?;
+                let (right, right_writes) = right?;
+                previous.append(&mut right_previous);
+                // Valid child prefixes are disjoint, including content IDs.
+                // Preserve the serial journal ordering before adding the parent.
+                self.writes = left_writes;
+                self.writes.extend(right_writes);
+                return Ok(self.finish_branch(*id, prefix, *bits, *children, [left, right]));
+            }
+        }
+        self.writes.reserve(changes.len());
+        self.update(old, changes, depth, &mut |key, value, next| {
+            previous.push((key, value, next));
+        })
+    }
 }
 
 impl NodeWrites for BTreeMap<Key, Option<Vec<u8>>> {
@@ -298,10 +385,7 @@ where
         if changes.is_empty() {
             return Ok(root);
         }
-        ensure!(
-            changes.windows(2).all(|pair| pair[0].0 < pair[1].0),
-            "unordered or duplicate Patricia changes"
-        );
+        check_change_order(changes)?;
         let old = self.load_optional(root)?;
         self.update(old, changes, 0, &mut previous)
     }
@@ -353,6 +437,14 @@ where
         }
     }
 
+    fn finish_branch(&mut self, id: Key, prefix: &Key, bits: u8, children: [Key; 2], updated: [Key; 2]) -> Key {
+        if updated == children {
+            return id;
+        }
+        self.writes.record(id, None);
+        self.branch(prefix, bits, updated)
+    }
+
     fn update(
         &mut self,
         old: Option<(Key, Node)>,
@@ -368,8 +460,7 @@ where
         let Some((id, node)) = old else {
             if let Some(bit) = difference(first, last) {
                 ensure!(usize::from(bit) >= depth, "invalid Patricia update depth");
-                let (left, right) =
-                    changes.split_at(changes.partition_point(|(key, _)| side(key, bit) == 0));
+                let (left, right) = split_changes(changes, bit);
                 let children = [
                     self.update(None, left, usize::from(bit) + 1, previous)?,
                     self.update(None, right, usize::from(bit) + 1, previous)?,
@@ -393,8 +484,7 @@ where
             );
             let mut children = [empty; 2];
             let old_side = side(prefix, bit);
-            let offset = changes.partition_point(|(key, _)| side(key, bit) == 0);
-            let (left, right) = changes.split_at(offset);
+            let (left, right) = split_changes(changes, bit);
             let halves = [left, right];
             let depth = usize::from(bit) + 1;
             children[1 - old_side] = self.update(None, halves[1 - old_side], depth, previous)?;
@@ -418,8 +508,7 @@ where
                 bits,
                 children,
             } => {
-                let offset = changes.partition_point(|(key, _)| side(key, bits) == 0);
-                let (left, right) = changes.split_at(offset);
+                let (left, right) = split_changes(changes, bits);
                 let mut updated = children;
                 for (index, edits) in [left, right].into_iter().enumerate() {
                     if !edits.is_empty() {
@@ -428,14 +517,19 @@ where
                             self.update(child, edits, usize::from(bits) + 1, previous)?;
                     }
                 }
-                if updated == children {
-                    return Ok(id);
-                }
-                self.writes.record(id, None);
-                self.branch(&prefix, bits, updated)
+                self.finish_branch(id, &prefix, bits, children, updated)
             }
         })
     }
+}
+
+fn check_change_order(changes: &[(Key, Option<Key>)]) -> Result<()> {
+    ensure!(changes.windows(2).all(|pair| pair[0].0 < pair[1].0), "unordered or duplicate Patricia changes");
+    Ok(())
+}
+
+fn split_changes(changes: &[(Key, Option<Key>)], bit: u8) -> (&[(Key, Option<Key>)], &[(Key, Option<Key>)]) {
+    changes.split_at(changes.partition_point(|(key, _)| side(key, bit) == 0))
 }
 
 fn key(bytes: &[u8]) -> Key {
@@ -597,6 +691,199 @@ mod tests {
                     } else {
                         stored.remove(&id);
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "parallel-patricia")]
+    #[test]
+    fn parallel_mutations_preserve_reclamation_and_proofs() -> Result<()> {
+        let tree = Patricia::new(Byte32::default(), Namespace::Cells);
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+        let keys: Vec<Key> = (0..4)
+            .flat_map(|prefix| {
+                (0..512u16).map(move |suffix| {
+                    let mut key = [0; 32];
+                    key[0] = prefix << 6;
+                    key[30..].copy_from_slice(&suffix.to_be_bytes());
+                    key
+                })
+            })
+            .collect();
+        let mut root = tree.empty_root();
+        let mut storage = BTreeMap::<Key, Vec<u8>>::new();
+        let mut values = BTreeMap::<Key, Key>::new();
+        for generation in 0..6 {
+            let value = tree.value_hash(&[generation]);
+            let changes = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(i, key)| {
+                    let prefix = key[0] >> 6;
+                    let suffix = i % 512;
+                    let next = match generation {
+                        0 if prefix < 2 && suffix < 320 => Some(value),
+                        0 => return None,
+                        1 if suffix < 256 => Some(value),
+                        1 => None,
+                        2 if prefix >= 2 => None,
+                        2 if suffix % 2 == 0 => values.get(key).copied(),
+                        2 => Some(value),
+                        3 if prefix == 0 && suffix < 300 => Some(value),
+                        3 => return None,
+                        4 => None,
+                        _ if suffix % 3 == 0 => Some(value),
+                        _ => None,
+                    };
+                    Some((*key, next))
+                })
+                .collect::<Vec<_>>();
+            let read = |id: &Key| Ok(storage.get(id).map(Vec::as_slice));
+            let mut serial_prior = Vec::new();
+            let (serial, writes) = tree.batch_update(root, read, &changes, |key, before, after| {
+                serial_prior.push((key, before, after));
+            })?;
+            let mut parallel_prior = Vec::new();
+            let (parallel, parallel_writes) = pool.install(|| {
+                tree.batch_update_parallel(root, read, &changes, |key, before, after| {
+                    parallel_prior.push((key, before, after));
+                })
+            })?;
+            assert_eq!(parallel, serial);
+            assert_eq!(parallel_writes, writes);
+            assert_eq!(parallel_prior, serial_prior);
+
+            // Read both resulting views from the pinned parent and independent journals.
+            let mut expected =
+                tree.edit(serial, |id| Ok(writes.get(id).map_or_else(|| storage.get(id).map(Vec::as_slice), |data| data.as_deref())));
+            let mut actual = tree.edit(parallel, |id| {
+                Ok(parallel_writes.get(id).map_or_else(|| storage.get(id).map(Vec::as_slice), |data| data.as_deref()))
+            });
+            for (key, value) in changes {
+                match value {
+                    Some(value) => {
+                        values.insert(key, value);
+                    }
+                    None => {
+                        values.remove(&key);
+                    }
+                }
+            }
+            for key in keys.iter().step_by(11) {
+                let (expected_value, expected_proof) = expected.prove(key)?;
+                let (actual_value, actual_proof) = actual.prove(key)?;
+                assert_eq!(actual_value, values.get(key).copied());
+                assert_eq!(expected_value, actual_value);
+                assert_eq!(expected_proof.encode()?, actual_proof.encode()?);
+                assert!(tree.verify(&parallel, key, actual_value.as_ref(), &actual_proof));
+            }
+            root = parallel;
+            for (id, value) in parallel_writes {
+                match value {
+                    Some(data) => {
+                        storage.insert(id, data);
+                    }
+                    None => {
+                        storage.remove(&id);
+                    }
+                }
+            }
+            assert_eq!(storage.len(), (2 * values.len()).saturating_sub(1));
+        }
+        let duplicated = vec![(keys[0], None); 2 * MIN_PARALLEL_CHANGES];
+        assert!(
+            pool.install(|| tree.batch_update_parallel(root, |id| Ok(storage.get(id).map(Vec::as_slice)), &duplicated, |_, _, _| {},))
+                .is_err()
+        );
+        let updates = keys.iter().copied().map(|key| (key, None)).collect::<Vec<_>>();
+        let mut events = Vec::new();
+        let missing = pool.install(|| {
+            tree.batch_update_parallel(
+                root,
+                |id| Ok((id == &root).then(|| storage[id].as_slice())),
+                &updates,
+                |key, _, _| events.push(key),
+            )
+        });
+        assert!(missing.is_err());
+        assert!(events.is_empty());
+        Ok(())
+    }
+
+    #[cfg(feature = "parallel-patricia")]
+    #[test]
+    #[ignore = "large immutable Patricia mutation timing matrix"]
+    fn measure_immutable_mutations_by_size_and_workers() -> Result<()> {
+        use std::{
+            sync::atomic::{AtomicUsize, Ordering},
+            time::Instant,
+        };
+
+        let tree = Patricia::new(Byte32::default(), Namespace::Cells);
+        let key = |i: u32| tree.record_key(&i.to_le_bytes());
+        let value = Some(tree.value_hash(b"payment cell"));
+        let pools = [1, 2, 4, 8, 16, 32]
+            .map(|workers| rayon::ThreadPoolBuilder::new().num_threads(workers).build())
+            .into_iter().collect::<Result<Vec<_>, _>>()?;
+        println!("live_keys,changes,workers,median_us,logical_read_nodes,logical_read_bytes");
+        for live in [1_024u32, 65_536, 1_000_000] {
+            let mut initial = (0..live).map(|i| (key(i), value)).collect::<Vec<_>>();
+            initial.sort_unstable_by_key(|entry| entry.0);
+            let (root, nodes) = tree.batch_update(
+                tree.empty_root(), |_| Ok(None::<Vec<u8>>), &initial, |_, _, _| {},
+            )?;
+            drop(initial);
+            let read = |id: &Key| Ok(nodes.get(id).and_then(|data| data.as_deref()));
+            for changes in [64u32, 512, 2_048] {
+                let half = changes / 2;
+                let mut edits = (0..half).map(|i| (key(i * (live / half)), None))
+                    .chain((live..live + half).map(|i| (key(i), value)))
+                    .collect::<Vec<_>>();
+                edits.sort_unstable_by_key(|entry| entry.0);
+                let mut expected_reads = 0;
+                let mut expected_bytes = 0;
+                let expected = tree.batch_update(root, |id| {
+                    let data = read(id)?;
+                    expected_reads += 1;
+                    expected_bytes += data.map_or(0, <[u8]>::len);
+                    Ok(data)
+                }, &edits, |_, _, _| {})?;
+                let mut samples = vec![Vec::new(); pools.len()];
+                for round in 0..7 {
+                    for offset in 0..pools.len() {
+                        let index = (round + offset) % pools.len();
+                        let pool = &pools[index];
+                        let (elapsed, actual) = pool.install(|| {
+                            let started = Instant::now();
+                            let actual = tree.batch_update_parallel(root, read, &edits, |_, _, _| {});
+                            (started.elapsed().as_micros(), actual)
+                        });
+                        assert_eq!(actual?, expected);
+                        if round > 0 {
+                            samples[index].push(elapsed);
+                        }
+                    }
+                }
+                for (pool, mut times) in pools.iter().zip(samples) {
+                    times.sort_unstable();
+                    let reads = AtomicUsize::new(0);
+                    let bytes = AtomicUsize::new(0);
+                    let counted = pool.install(|| tree.batch_update_parallel(root, |id| {
+                        let data = read(id)?;
+                        reads.fetch_add(1, Ordering::Relaxed);
+                        bytes.fetch_add(data.map_or(0, <[u8]>::len), Ordering::Relaxed);
+                        Ok(data)
+                    }, &edits, |_, _, _| {}))?;
+                    assert_eq!(counted, expected);
+                    assert_eq!(reads.into_inner(), expected_reads);
+                    assert_eq!(bytes.into_inner(), expected_bytes);
+                    let median = (times[2] + times[3]) / 2;
+                    println!(
+                        "{live},{changes},{},{median},{expected_reads},{expected_bytes}",
+                        pool.current_num_threads(),
+                    );
                 }
             }
         }

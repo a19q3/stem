@@ -3704,6 +3704,7 @@ dependencies = [
  "lru",
  "molecule",
  "molecule-codegen",
+ "rayon",
  "stem-bridge-wire",
  "stem-intent",
  "stem-stake",
