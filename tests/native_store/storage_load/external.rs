@@ -303,6 +303,8 @@ struct DispatchSettings {
     shard_senders: bool,
     #[serde(default)]
     pause_on_full: bool,
+    #[serde(default)]
+    payment_type_groups: usize,
 }
 
 #[derive(Deserialize)]
@@ -341,7 +343,8 @@ pub(super) fn verify_report(
             && settings.reuse_submissions == load.reuse_submissions
             && settings.ready_senders == load.ready_senders
             && settings.shard_senders == load.shard_senders
-            && settings.pause_on_full == load.pause_on_full,
+            && settings.pause_on_full == load.pause_on_full
+            && settings.payment_type_groups == load.payment_type_groups,
         "report dispatch settings differ from prepared trial"
     );
     let network = &fixture.spec.network;

@@ -278,18 +278,22 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let topology_path = std::env::var_os("STEM_STORAGE_TOPOLOGY").map(PathBuf::from);
     let topology = if let Some(path) = &topology_path {
         ensure!(
-            mode.is_none() && load.prefund_payments,
-            "external trials require funded payments"
+            mode.is_none() && (load.prefund_payments || polytype),
+            "external trials require prefunded payments or the genesis-funded mixed Type Group fixture"
         );
         Some(external::Topology::load(path, &mut fixture, load)?)
     } else {
         None
     };
     if let Some(path) = std::env::var_os("STEM_STORAGE_GENESIS_OUTPUT") {
-        return topology
+        let topology = topology
             .as_ref()
-            .context("preparing genesis requires a validator topology")?
-            .prepare(&fixture, path.into());
+            .context("preparing genesis requires a validator topology")?;
+        if polytype {
+            let programs = tempfile::tempdir()?;
+            polytype_payments(&mut fixture, programs.path(), work, load.payment_type_groups)?;
+        }
+        return topology.prepare(&fixture, path.into());
     }
 
     let root =

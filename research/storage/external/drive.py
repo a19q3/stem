@@ -39,6 +39,8 @@ def main():
     routing.add_argument("--ready-senders", action="store_true", help="reserve equal senders per endpoint pulling from one shared queue")
     prepare.add_argument("--drain", type=int, default=15)
     prepare.add_argument("--data-bytes", type=int, default=0)
+    prepare.add_argument("--payment-type-groups", type=int, choices=range(13), default=0,
+                         help="cycle through zero to this many Type Groups on independent payments")
     prepare.add_argument("--block-transactions", type=int, default=1024)
     prepare.add_argument("--block-cycles", type=int, default=2_000_000_000)
     prepare.add_argument("--complete-volume", action="store_true")
@@ -85,6 +87,10 @@ def main():
                     "REUSE_SUBMISSIONS": int(args.reuse_submissions), "PAUSE_ON_FULL": int(args.pause_on_full),
                     "SHARD_SENDERS": int(args.shard_senders), "READY_SENDERS": int(args.ready_senders),
                     "BLOCK_TRANSACTIONS": args.block_transactions, "BLOCK_CYCLES": args.block_cycles}
+        if not v1_profile and args.payment_type_groups:
+            if args.data_bytes:
+                parser.error("mixed Type Groups use the fixture's canonical application data")
+            settings.update(PREFUND_PAYMENTS=0, PAYMENT_TYPE_GROUPS=args.payment_type_groups)
         plan = {"storage_settings": settings, "harness_sha256": harness_hash, "lock_sha256": lock_hash,
                 "topology_sha256": digest(topology)}
         if v1_profile:
