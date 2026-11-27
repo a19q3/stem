@@ -48,6 +48,30 @@ cargo test --release --locked --features native-cell-subtree-parallel \
 
 Two serial and two subtree-feature replicas confirmed all 1,024 signed payments through a restart and authenticated common heights 8 and 9. Using only the subtree feature, the CKB 0.210.0 stake fixture accepted the same Checkpoint format at heights 10, 20 and 24. The joining key voted at height 11 and retired at height 21. These are compatibility and recovery controls. [Mixed runner](../../tools/jolteon_localnet.py) · [CKB reproduction](../../OPERATIONS.md#discovery-mode)
 
+### Single-host sustained payment comparison
+
+Use `drive.py prepare-v1 --profile sustainable` and the same signed 720,000-payment corpus for each run. Toggle only `native-cell-subtree-parallel`. Both runs use two VM workers per validator, the 4,096-entry verification cache, fresh databases, and the established four-loopback-replica placement on the 7950X3D. The offer is 3,000/s with 60 seconds of warmup, 180 seconds of measurement and 45 seconds of drain. The full score, process resources, and `proposal_commitments.cells` and `candidate_commitments.cells` deltas distinguish throughput, queueing, and Cell work. [Measurement and replay](../storage/external/README.md#measure-and-replay) · [Profile acceptance](../storage/external/qualification.md#sustainable-load-and-overload)
+
+| Metric | Serial | Parallel Cell subtrees |
+| --- | ---: | ---: |
+| Common measurement TPS | 1,911.47 | 2,218.67 |
+| Measurement writes without ACK | 175,390 | 106,216 |
+| Peak acknowledged backlog | 96,302 | 89,406 |
+| Backlog growth from a measurement boundary | 24,394 | 35,510 |
+| Acknowledged payments pending at drain | 15,284 | 0 |
+| Conditional p99 | 197.051 s | 192.313 s |
+| Mean Leader Cell commitment | 198.95 ms | 102.94 ms |
+| Mean Follower Cell commitment | 211.90 ms | 120.55 ms |
+| Mean full proposal | 433.73 ms | 307.33 ms |
+| Mean full Follower preparation | 465.62 ms | 349.59 ms |
+| Total validator process CPU | 1,157.04 s | 1,321.91 s |
+
+Both runs wrote the entire corpus and independently replayed a total of 615 archived blocks. The p99 populations were 354,090 and 433,784 acknowledged measurement writes commonly visible by the cutoff. The candidate drained all 613,784 acknowledged payments. It commonly confirmed 16.1% more payments in the measurement window and used 14.2% more validator process CPU. Peak RSS was 323.6–333.7 MiB per validator in the reference and 332.1–338.9 MiB in the candidate. The candidate recorded four local timeout votes versus zero in the reference. Both recorded zero block-cycle rejections.
+
+Both configurations missed the sustained rate, acknowledgment, backlog and tail-latency gates. The candidate's mean Cell commitment fell on both Leader and Follower paths. Selection then accounted for 65.6% of Leader proposal wall time in the candidate, compared with 53.4% in the reference. The single run order establishes a candidate for repeat testing with the larger verification cache and other stages. Keep the feature selectable while checking reverse order, tail latency and worker contention.
+
+SHA-256 values were `b55d73ce78c3ba11fd7ed74174e84edb338695c5acb46479ca989677c2bebc18` for the reference, `9247273b15680b172ae43dc4764670915adc116c525eff53984a2c5111776732` for the candidate, `8769948cc9ffcf7cbd96997e75bcfd3a6794442c01ea6770792be786451a3846` for the driver and replay harness, and `2fb0207c35b3416b36fde01361966c2bc09dbbdfb3806061fd1e7004558d4cbe` for genesis. The signed workload BLAKE2b digest was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`.
+
 ## Original in-memory experiment
 
 ```sh
