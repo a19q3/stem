@@ -87,6 +87,33 @@ Independent offline replay checked the signed workload and each certified chain 
 
 The signed workload BLAKE2b digest was `2648f0dfe05df043f10076522515bf8f43f3af940f5898d9c33a9bf883bba9c2`. SHA-256 fingerprints were `10a5e17c581d99dd0b24531973e955ee5fa362845eb936ec3a93cd6e053a3515` for genesis, `51db5b584f3dc310ef3b7af7fb8f6dfa488b181fa00b6ee5ecc08881884baa13` for the fixed binary, `43b3b8f59f8b7acd028ff84898e31a4aa33c650b2b651a191ed5262c57bfcd86` for the aged binary and `19b9d5aef2f17d5391a2a3e1e2eec3ab429d26b93bf11bffdea0eee3ef806479` for the independent replay harness.
 
+### Age priority with Cell subtrees and the larger cache
+
+Build both nodes from `4c50f7a` with `native-cell-subtree-parallel`. Enable `jolteon-aged-proposal-selection` only in the aged build. Both runs used 65,536 verification entries per validator and the [same single-host payment profile](../../patricia/README.md#cell-subtree-and-verification-cache-matrix). The aged build ran first. Each run started with fresh stores, the same genesis and the same 720,000 signed payments. The software offered 3,000/s with 60 seconds of warmup, 180 seconds of measurement and 45 seconds of drain.
+
+Regenerate the workload with `drive.py prepare-v1 --profile sustainable`. Keep the topology pinned and set `verification_cache_entries` in each local node configuration. Replay both archives with `drive.py verify` and score the post-warmup observations with the unchanged sustained-profile bounds. For each signed-hash band, include only measurement writes that were acknowledged. Compute latencies on the subset that commonly confirmed by drain and retain the pending count separately. [Driver and replay](../external/README.md#measure-and-replay)
+
+| Post-warmup metric | Fixed hash order | Bounded age priority |
+| --- | ---: | ---: |
+| Common TPS | 2,742.77 | 2,935.47 |
+| Common confirmations by minute | 168,067 / 155,648 / 169,984 | 178,176 / 176,128 / 174,080 |
+| Measurement writes without ACK | 0 | 0 |
+| Peak acknowledged backlog | 58,723 | 28,465 |
+| Backlog growth | 46,534 | 11,873 |
+| Pending at drain | 0 | 0 |
+| Write-to-common p99 | 152.772 s | 38.729 s |
+| Lowest signed-hash band p99 | 7.142 s | 5.865 s |
+| Highest signed-hash band p99 | 186.043 s | 43.847 s |
+| Total validator CPU | 1,363.06 s | 1,354.96 s |
+
+Each run wrote, acknowledged and commonly confirmed all 720,000 payments. Independent replay authenticated 1,226 observed blocks and both terminal proofs. All 377 fixed-order blocks with multiple payments strictly followed signed-hash order. In the aged build, 290 of 375 multi-payment blocks deviated from full hash order. Every suffix after position 256 retained strict hash order. The archive authenticates the committed sequence. Local arrival times determine eligibility and are outside this replay.
+
+The aged build confirmed 7.0% more payments in the measurement window. In the exact cohort of 540,074 measurement writes acknowledged and confirmed in both, p99 fell by 74.6% from 152.772 to 38.729 seconds. The highest hash band contributed 40,753 acknowledged measurement payments confirmed by the end of the offer, compared with 7,471 under fixed order. Both runs missed the 3,000 TPS floor, 5 s p99, and the backlog peak and growth bounds. The pair ran in only one order, so repeat with fixed order first before selecting a default.
+
+In the new Cell-phase histograms Patricia traversal, reads, node hashing and journal assembly accounted for 93.7–94.1% of the measured mean Cell commitment across the two roles and two builds. The fixed and aged Leader tree phases averaged 70.70 and 58.29 ms. The respective Follower means were 79.79 and 65.45 ms. These distributions include different block counts and sizes across runs. [Cell-phase counter definitions](../../execution-pipeline/README.md#cost-of-selecting-and-committing-ordinary-payments)
+
+SHA-256 values were `f3070213b430826a1dbf89daa0d4c1eade7e2bf553682842595537a1c79331d4` for fixed, `bbb8f3cbd95e0672457894dcfd0bf076579a01f103e156070eb4d44c36bdccc0` for aged, `5da8acad0f553e78143b3d30f86c81749bbcf57d78fa92a1db59d19f04a9903c` for the driver and independent replay harness, and `2fb0207c35b3416b36fde01361966c2bc09dbbdfb3806061fd1e7004558d4cbe` for genesis. The signed workload BLAKE2b digest was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`.
+
 ## Reproduction
 
 These four RocksDB validators shared twelve physical cores and their SMT siblings on a Ryzen 9 7950X3D. Two separate cores ran the driver. Three validators retained 64 heights and the fourth archived the full chain. All stores shared the same two-device Btrfs volume. The CPU observer, archive repacking and other work on remaining cores shared the same memory and storage. The performance comparisons cover one machine. [Machine and storage layout](../proposal-cadence/nvme/README.md) · [Validator and driver commands](../external/README.md)
