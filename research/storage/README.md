@@ -28,3 +28,20 @@ python3 research/storage/summarize.py research/storage/*.json.xz
 ```
 
 Repeat with the other binary and a fresh output file. Omit `--complete-volume` and use 750 TPS for 120 seconds or 200 TPS for 90 seconds with a 16-second drain to reproduce the other pairs. The runner archives the public reports and checks that the archive can be read before its disposable database directory is released.
+
+## Script and TypeSet reuse across native archives
+
+This read-only survey at `69a4fed` used the stopped archive replica from four earlier runs. The [2,048-item payment control](admission-order/README.md#transaction-count-limit-under-a-fixed-cycle-budget) and the [serial mixed Type Group control](../patricia/README.md#mixed-type-group-ablation-and-default) supplied ordinary and repeated-script cases. The [fixed-scheduler Lineage and hotspot AMM controls](../execution-pipeline/README.md#lineage-materialization-across-conflicts) supplied object-specific arguments. The heights below are the exact persisted archive tips after drain and shutdown.
+
+| Workload | Tip | Live Cells | Canonical record bytes | Distinct Locks | Distinct Types / occurrences | Distinct TypeSets / occurrences | Distinct Type code identities |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ordinary payment | 1,182 | 720,002 | 110,906,876 | 1 | 0 / 0 | 0 / 0 | 0 |
+| Mixed Type Groups | 245 | 55,005 | 22,731,967 | 1 | 12 / 329,985 | 12 / 50,769 | 3 |
+| Mixed Lineage | 297 | 9,671 | 1,596,767 | 3 | 65 / 65 | 65 / 65 | 2 |
+| Hotspot AMM | 290 | 4,873 | 883,778 | 3 | 68 / 196 | 66 / 66 | 3 |
+
+To reproduce, walk keys starting with `b's'` followed by the Cell namespace tag in each stopped archive's default RocksDB column family. Decode and re-encode each value with `record::decode_cell` and `record::encode_cell_into`, check its key against `record::cell_key`, and count exact Lock and Type descriptors separately from exact nonempty TypeSet bytes. Count code identities as the complete code hash and hash-type byte. Rebuild the Cell Patricia root from all key and canonical value-hash pairs starting at the empty root. Every value round-tripped byte for byte, all rebuilt roots matched, and the archive's two-chain proof at each tip independently authenticated the exact Header against the development roster and the genesis ID recomputed from its spec.
+
+For an optimistic logical estimate, let `n` be the frequency of one descriptor and `b` its canonical size in bytes. Count `max(0, n × (b − 4) − b)` for repeated descriptors, allowing four bytes per reference and one dictionary copy. Ordinary payments could save 38,160,049 bytes from the one recurring Lock, or 34.4% of canonical record bytes. In the mixed fixture, whole TypeSets plus full Locks could save 16,441,347 bytes (72.3%). Individual full Types plus full Locks could save 15,124,161 bytes (66.5%). These alternatives overlap. The mixed generator deliberately repeats its twelve sets. Every TypeSet in both object workloads was unique. Interning only Type code identities has a small logical upside there, 1,823 bytes for mixed Lineage and 5,589 bytes for hotspot AMM. Two recurring complete Type descriptors accounted for all 4,344 bytes of the alternative full-Type estimate in hotspot AMM.
+
+The estimates cover canonical Live Cell values only. RocksDB block compression, dictionary keys, indexes, reference updates, extra lookups and write amplification can substantially change the result. Compare compressed inline records, code identity interning, full Script interning and whole TypeSet interning on fresh stores with the same Cell records and a matched churn trace. Measure SST and WAL bytes separately and verify exact reconstruction after reopen before considering a writer change.
