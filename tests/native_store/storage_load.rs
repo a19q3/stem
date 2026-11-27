@@ -4,7 +4,7 @@ mod external;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::{Mutex, mpsc},
     thread,
@@ -12,7 +12,11 @@ use std::{
 };
 
 use anyhow::ensure;
-use ckb_types::prelude::*;
+use ckb_types::{
+    core::ScriptHashType,
+    packed::{CellDep, Script},
+    prelude::*,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 use stem::jolteon::{Client, Status, SubmissionProgress};
@@ -50,6 +54,7 @@ struct Load {
     payment_data_bytes: usize,
     payment_chains: usize,
     prefund_payments: bool,
+    payment_type_groups: usize,
 }
 
 impl Load {
@@ -81,6 +86,7 @@ impl Load {
             payment_chains: read("STEM_STORAGE_PAYMENT_CHAINS", 0)?.try_into()?,
             prefund_payments: read("STEM_STORAGE_PREFUND_PAYMENTS", 0)? != 0,
             payment_data_bytes: read("STEM_STORAGE_PAYMENT_DATA_BYTES", 0)?.try_into()?,
+            payment_type_groups: read("STEM_STORAGE_PAYMENT_TYPE_GROUPS", 0)?.try_into()?,
         };
         ensure!(
             (4..=16).contains(&load.replicas)
@@ -107,7 +113,8 @@ impl Load {
                 && !(load.prefund_payments && load.payment_chains != 0)
                 && load.block_transactions > 0
                 && load.block_cycles >= 20_000_000
-                && load.payment_data_bytes <= 16_384,
+                && load.payment_data_bytes <= 16_384
+                && load.payment_type_groups <= 12,
             "invalid sustained storage experiment settings"
         );
         Ok(load)
@@ -233,7 +240,18 @@ fn sustained_lineage_load() -> Result<()> {
 fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     let load = Load::load()?;
     let mut fixture = Fixture::new()?;
-    (fixture.spec.chain_id, fixture.spec.network) = if mode.is_some() {
+    let polytype = load.payment_type_groups != 0;
+    ensure!(
+        !polytype
+            || (mode.is_none()
+                && !load.prefund_payments
+                && load.payment_chains == 0
+                && load.payment_data_bytes == 0),
+        "mixed Type Groups require independent payments funded directly at genesis"
+    );
+    (fixture.spec.chain_id, fixture.spec.network) = if polytype {
+        ("stem-polytype-load".into(), [142; 32].pack())
+    } else if mode.is_some() {
         ("stem-lineage-load".into(), [139; 32].pack())
     } else {
         ("stem-storage-load".into(), [137; 32].pack())
@@ -243,7 +261,7 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
     limits.transaction_bytes = 2 * 1024 * 1024;
     limits.transaction_cycles = 20_000_000;
     limits.block_cycles = load.block_cycles;
-    limits.cell_reads = 8192;
+    limits.cell_reads = if polytype { 32_768 } else { 8_192 };
     limits.cell_read_bytes = 128 * 1024 * 1024;
     limits.cell_write_bytes = 4 * 1024 * 1024;
     limits.header_dep_age = 32;
@@ -289,6 +307,11 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         );
         let (workload, commands) = lineage_load::Workload::fund(&mut fixture, mode, work)?;
         (Some(workload), commands)
+    } else if polytype {
+        (
+            None,
+            polytype_payments(&mut fixture, &output, work, load.payment_type_groups)?,
+        )
     } else {
         (
             None,
@@ -905,6 +928,101 @@ fn payments(
         payments.push(tx);
     }
     Ok(payments)
+}
+
+fn polytype_payments(
+    fixture: &mut Fixture,
+    directory: &Path,
+    work: usize,
+    type_groups: usize,
+) -> Result<Vec<Transaction>> {
+    let mut programs = vec![fixture.spec.development_cells[0].clone()];
+    let mut deps = fixture.deps.clone();
+    let mut type_hashes = Vec::new();
+    for rule in [1, 2, 3] {
+        super::comet::compile_type(directory, rule)?;
+        let code = Bytes::from(fs::read(directory.join(format!("rule-{rule}")))?);
+        let point = OutPoint::new([19; 32].pack(), rule);
+        let bond = Cell::minimum_capacity(&fixture.lock, &[], code.len())?;
+        type_hashes.push(ckb_hash::blake2b_256(&code));
+        let cell = Cell::new(bond, fixture.lock.clone(), vec![], code)?;
+        programs.push((point.clone(), cell.clone()));
+        fixture.spec.development_cells.push((point.clone(), cell));
+        deps.push(CellDep::new_builder().out_point(point).build());
+    }
+    let forms = (0..=type_groups)
+        .map(|count| {
+            let types: Vec<_> = (0..count)
+                .map(|index| {
+                    Script::new_builder()
+                        .hash_type(ScriptHashType::Data)
+                        .code_hash(type_hashes[index % type_hashes.len()])
+                        .args(Bytes::copy_from_slice(&(index as u32).to_le_bytes()))
+                        .build()
+                })
+                .collect();
+            let data = Bytes::from_static(&[25, 0, 0, 0, 0, 0, 0, 0, 1]);
+            let input = Cell::new(FUND, fixture.lock.clone(), types.clone(), data.clone())?;
+            let output = Cell::new(FUND - FEE, fixture.lock.clone(), types, data)?;
+            Ok((input, output))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    (0..work)
+        .map(|index| {
+            let (input, output) = &forms[index % forms.len()];
+            let point = OutPoint::new([138; 32].pack(), index as u32);
+            fixture
+                .spec
+                .development_cells
+                .push((point.clone(), input.clone()));
+            let tx = Transaction::new(
+                deps.clone(),
+                vec![],
+                vec![stem_ledger::CellInput::new(point.clone(), None)],
+                vec![output.clone()],
+                vec![],
+            )?;
+            fixture.seal_with(tx, |input_point| {
+                if input_point == &point {
+                    Ok(input.clone())
+                } else {
+                    programs
+                        .iter()
+                        .find(|(point, _)| point == input_point)
+                        .map(|(_, cell)| cell.clone())
+                        .context("unexpected signing dependency")
+                }
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn mixed_type_groups_match_serial_execution() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 260;
+    fixture.spec.limits.transaction_cycles = 20_000_000;
+    fixture.spec.limits.block_cycles = 4_000_000_000;
+    fixture.spec.limits.cell_reads = 32_768;
+    fixture.spec.limits.cell_read_bytes = 128 * 1024 * 1024;
+    fixture.spec.limits.cell_write_bytes = 4 * 1024 * 1024;
+    let home = tempfile::tempdir()?;
+    let transactions = polytype_payments(&mut fixture, home.path(), 260, 12)?;
+    let open = |name| {
+        super::Store::open(&home.path().join(name), &fixture.spec, super::Retention::Archive)
+    };
+    let serial = open("serial")?.prepare(&transactions, super::TIME, false)?;
+    let parallel = open("parallel")?;
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let prepared = workers.install(|| parallel.prepare(&transactions, super::TIME, true))?;
+    assert_eq!(prepared.header().encode(), serial.header().encode());
+    assert_eq!(prepared.receipts(), serial.receipts());
+    assert!(
+        serial.receipts()[..13]
+            .windows(2)
+            .all(|pair| pair[0].cycles < pair[1].cycles)
+    );
+    Ok(())
 }
 
 #[test]

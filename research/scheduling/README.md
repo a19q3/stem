@@ -33,7 +33,28 @@ Four same-host runs used the same 18,000 signed payments, with both builds enabl
 | B2 | Work stealing | 11.45 ms | 1,729.8 | 1.260 s |
 | A2 | Fixed waves | 15.51 ms | 1,570.8 | 1.844 s |
 
-Mean preparation time, pooled across follower samples within each run, fell by 18% and 26% in the two pairs. Block sizes varied across runs. Window throughput and p99 moved in opposite directions across the pairs. Keep the feature opt-in pending sustained runs on independent hosts and an end-to-end workload with varied script costs.
+Mean preparation time, pooled across follower samples within each run, fell by 18% and 26% in the two pairs. Block sizes varied across runs. Window throughput and p99 moved in opposite directions across the pairs.
+
+### Mixed Type Groups with the native pipeline
+
+The native payment driver now accepts `STEM_STORAGE_PAYMENT_TYPE_GROUPS=12`. Each independent genesis Cell spends to a successor with the same amount, classification and TypeSet. The corpus cycles through 0–12 Type Groups. They use distinct Script identities built from the existing RISC-V amount, collateral and classification rules. All transactions use the same Lock and four code dependencies. This isolates variation in Type Groups alongside an ordinary secp256k1 check. Both the Cell read limit (32,768) and the genesis funding approach are fixed for all mixed runs. [Fixture](../../tests/native_store/storage_load.rs)
+
+A four-replica smoke test confirmed 390 transfers. Offline receipt replay recovered 30 transfers at each tier and charged between 1,920,507 cycles at zero groups and 2,137,685 cycles at twelve groups. The serial and four-worker test uses one ordered 260-transfer block with the same fixture and compares the complete Header and receipts.
+
+For the load comparison, both `17d41160ed5e2d89ecec40b92f62711dee3e52d8` builds enabled Admission, Follower via Commit, Leader, concurrent commitments and Commit. The candidate additionally enabled `native-work-stealing`. Four same-host validators and the driver shared logical CPUs `2-7,10-15,18-23,26-31`. Each node used four VM workers, a 100 ms cadence, a four-billion-cycle limit, and a 2,048-transaction limit. The driver scheduled 52,000 signed transfers at 2,600/s for 20 seconds with 30 seconds of drain and 64 persistent senders. The run order was fixed waves, Work Stealing, Work Stealing, fixed waves. [Earlier resource-envelope checks](../execution-pipeline/README.md#block-resource-limits-under-a-payment-burst)
+
+| Run | VM schedule | Common TPS during offer | Write-to-common p99 | Peak acknowledged backlog | Mean proposal | Mean Follower preparation | Validator CPU |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | Fixed waves | 2,471.10 | 1.279 s | 3,438 | 12.012 ms | 32.372 ms | 105.65 s |
+| B1 | Work Stealing | 1,731.75 | 24.338 s | 17,365 | 94.832 ms | 42.786 ms | 148.06 s |
+| B2 | Work Stealing | 2,507.85 | 0.898 s | 2,509 | 12.269 ms | 24.651 ms | 102.77 s |
+| A2 | Fixed waves | 1,548.40 | 27.149 s | 21,030 | 143.974 ms | 71.782 ms | 162.73 s |
+
+All four runs wrote and acknowledged all 52,000 transfers inside the offer and confirmed them by drain. The common proof and history index passed. A separate read-only replay authenticated the transactions and receipts for 851 observed blocks. The cycle charge for each Type Group tier matched across runs. B1 and A2 each persisted four local timeout votes. Their highest charged blocks used 3,999,981,320 and 3,999,825,353 cycles, respectively. A1 and B2 stayed below 2.61 billion and had zero local timeouts. Severe queuing and near-full VM budgets occurred once with each scheduler. Throughput and p99 reversed direction between pairs. Keep Work Stealing opt-in, and use this fixture to compare resource budgets under a genuinely cycle-limited load. The mix uses one Lock and a maximum per-transfer cycle difference of about 11%. It does not represent heavier proof validation or mutable Head conflicts.
+
+The binaries hashed to `b8953afa511f2b75a5b90e667a449ee9d152e7a661d051f8ab0575575566f4ea` (fixed waves) and `b3153856d62e08baffc6304ae22bdb8c2d46b91d0a7b7a54e55628776587426b` (Work Stealing). The signed workload and genesis SHA-256 values were `5a1ed47acd8565640e86dba8965c54d5949617977b413a6429dc145e2b4d37ca` and `8f43fa48be3b92af25a6c8460ace8706da03453591f65a38f53521c0c2b65116`. The fixture compiled the Type Scripts with Clang 23.1.5 and LLD.
+
+Run `storage_load::sustained_payment_storage` with `STEM_TEST_REPLICA_BIN` and `STEM_STORAGE_PAYMENT_TYPE_GROUPS=12`. Under the `STEM_STORAGE_` prefix set `REPLICAS=4`, `RATE=2600`, `SECONDS=20`, `DRAIN=30`, `SENDERS=64`, `VM_WORKERS=4`, `RETENTION=256`, `CADENCE=100`, `BLOCK_CYCLES=4000000000`, `BLOCK_TRANSACTIONS=2048` and enable `READY_SENDERS`, `COMPLETE_VOLUME` and `REUSE_SUBMISSIONS`. The mixed fixture allocates independent input Cells at genesis and requires `PREFUND_PAYMENTS=0`, `PAYMENT_CHAINS=0` and `PAYMENT_DATA_BYTES=0`.
 
 ## Reproduce the resolved-job experiment
 
