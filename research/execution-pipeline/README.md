@@ -47,6 +47,12 @@ The release workspace passed 517 tests with the Leader, Follower, Admission, cer
 
 Leader construction remains selectable. The fault run demonstrates the deadline and journal boundary. Shared worker contention and throughput belong to the combined ablation after State Commitment, with stage timings, stale work and tail latency measured separately.
 
+### Proposal scan counters
+
+`execution.proposal_scan` reports cumulative `inspected`, `selected`, `spent_in_parent` and `spent_in_proposal` counts from both Leader paths. The denominator counts transactions actually visited by selection. It includes transactions filtered by a resource limit. The two spent-input fields count the first missing resolved OutPoint when it is an explicit input of the transaction. A matching deletion in the speculative branch is separate from one caused by earlier work in the current proposal. Missing committed records, dependencies and other validation errors contribute to the inspected count only. These are selection attempts, so a transaction can contribute in more than one proposal. The background path records completed work even when the Replica discards a stale result.
+
+A signed regression spends one input in the parent and spends a second input during the child, then attempts both again along with a third input absent from committed state. The selected transaction, executed Header and receipts match serial execution. The scan reports four inspected attempts, one selected transaction and one rejection in each spent-input category.
+
 ## Concurrent state commitments
 
 `native-commitment-pipeline` prepares the Cell tree, System tree and execution/receipt record concurrently after ordered execution. It uses the existing pool for blocks with at least 256 execution items when the pool has at least two workers. It joins the results in the existing Cell, System, Header and execution-write order. The durable certified write remains a single batch.

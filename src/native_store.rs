@@ -44,6 +44,9 @@ mod state_snapshot;
 mod storage_metrics;
 pub use storage_metrics::StorageSample;
 use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
+#[cfg(all(test, feature = "jolteon-proposal-pipeline"))]
+#[path = "../contracts/test_support.rs"]
+mod test_contract;
 
 use bridge::{Bridge, BridgeChanges, StagedBridge};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
@@ -67,6 +70,34 @@ const STATE_RECORD: u8 = b's';
 const MAX_CELL_PROOF_BATCH: usize = 1024;
 #[derive(Debug)]
 pub(crate) struct StateReadFault;
+
+#[derive(Debug)]
+struct MissingLiveCell(OutPoint);
+
+impl std::fmt::Display for MissingLiveCell {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("input or dependency is not a Live Cell")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+pub struct ProposalScan {
+    pub inspected: u64,
+    pub selected: u64,
+    /// Explicit inputs rejected because a speculative ancestor consumed them.
+    pub spent_in_parent: u64,
+    /// Explicit inputs rejected after an earlier action in this proposal consumed them.
+    pub spent_in_proposal: u64,
+}
+
+impl ProposalScan {
+    pub(crate) fn record(&mut self, scan: Self) {
+        self.inspected = self.inspected.saturating_add(scan.inspected);
+        self.selected = self.selected.saturating_add(scan.selected);
+        self.spent_in_parent = self.spent_in_parent.saturating_add(scan.spent_in_parent);
+        self.spent_in_proposal = self.spent_in_proposal.saturating_add(scan.spent_in_proposal);
+    }
+}
 
 impl std::fmt::Display for StateReadFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -325,9 +356,12 @@ impl PinnedView {
         transactions: Vec<Transaction>,
         time: u64,
         max_bytes: u64,
+        scan: &mut ProposalScan,
     ) -> Result<Option<(Vec<Transaction>, Prepared)>> {
         self.with_snapshot(|view| {
-            view.on_branch(branch, |state| state.build_proposal(transactions, time, max_bytes))
+            view.on_branch(branch, |state| {
+                state.build_proposal_measured(transactions, time, max_bytes, scan)
+            })
         })
     }
 
@@ -1638,7 +1672,12 @@ impl Store {
         max_bytes: u64,
     ) -> Result<Vec<Transaction>> {
         Ok(self
-            .stage_proposal(transactions, timestamp_ms, max_bytes)?
+            .stage_proposal(
+                transactions,
+                timestamp_ms,
+                max_bytes,
+                &mut ProposalScan::default(),
+            )?
             .transactions)
     }
 
@@ -1650,13 +1689,28 @@ impl Store {
         timestamp_ms: u64,
         max_bytes: u64,
     ) -> Result<(Vec<Transaction>, Prepared)> {
+        self.build_proposal_measured(
+            transactions,
+            timestamp_ms,
+            max_bytes,
+            &mut ProposalScan::default(),
+        )
+    }
+
+    pub(crate) fn build_proposal_measured<T: Borrow<Transaction>>(
+        &self,
+        transactions: impl IntoIterator<Item = T>,
+        timestamp_ms: u64,
+        max_bytes: u64,
+        scan: &mut ProposalScan,
+    ) -> Result<(Vec<Transaction>, Prepared)> {
         let ProposalSelection {
             transactions,
             mut context,
             mut overlay,
             receipts,
             reusable,
-        } = self.stage_proposal(transactions, timestamp_ms, max_bytes)?;
+        } = self.stage_proposal(transactions, timestamp_ms, max_bytes, scan)?;
         let prepared = if reusable {
             context.transaction_root =
                 Tree::transactions(self.network.clone(), &transactions)?.root();
@@ -1680,6 +1734,7 @@ impl Store {
         transactions: impl IntoIterator<Item = T>,
         timestamp_ms: u64,
         max_bytes: u64,
+        scan: &mut ProposalScan,
     ) -> Result<ProposalSelection> {
         let mut budget = Budget::new(self.limits);
         let mut overlay = self.overlay(self.stage_stake()?);
@@ -1703,6 +1758,7 @@ impl Store {
             {
                 break;
             }
+            scan.inspected = scan.inspected.saturating_add(1);
             let tx = item.borrow();
             let len = tx.as_slice().len();
             if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
@@ -1731,12 +1787,29 @@ impl Store {
                 |resolved, limit| self.cache.verify(resolved, limit, true),
             ) {
                 Ok(receipt) => {
+                    scan.selected = scan.selected.saturating_add(1);
                     wire_bytes = next_wire;
                     receipts.push(receipt);
                     selected.push(tx.clone());
                 }
                 Err(error) if error.is::<StateReadFault>() => return Err(error),
-                Err(_) => {}
+                Err(error) => {
+                    if let Some(MissingLiveCell(point)) = error.downcast_ref()
+                        && tx.inputs().any(|input| &input.previous_output == point)
+                    {
+                        if matches!(overlay.live.get(point), Some(None)) {
+                            scan.spent_in_proposal = scan.spent_in_proposal.saturating_add(1);
+                        } else if matches!(
+                            self.branch
+                                .iter()
+                                .rev()
+                                .find_map(|block| block.live.get(point)),
+                            Some(None)
+                        ) {
+                            scan.spent_in_parent = scan.spent_in_parent.saturating_add(1);
+                        }
+                    }
+                }
             }
         }
         Ok(ProposalSelection {
@@ -1786,7 +1859,7 @@ impl Store {
             Some(staged) => staged.clone(),
             None => self.live_cell(point)?,
         }
-        .context("input or dependency is not a Live Cell")
+        .with_context(|| MissingLiveCell(point.clone()))
     }
 
     fn materialize_lineage(
@@ -2662,7 +2735,13 @@ mod pipeline_store_tests {
         {
             let ancestor = Arc::new(store.prepare(&[], 1001, false)?);
             let (transactions, proposal) = old
-                .build_proposal(&[ancestor.clone()], Vec::new(), 1002, 1024)?
+                .build_proposal(
+                    &[ancestor.clone()],
+                    Vec::new(),
+                    1002,
+                    1024,
+                    &mut ProposalScan::default(),
+                )?
                 .context("missing proposal snapshot")?;
             let reference = store.on_branch(&[ancestor], |view| view.prepare(&[], 1002, false))?;
             assert!(transactions.is_empty());
@@ -2678,11 +2757,95 @@ mod pipeline_store_tests {
         assert_eq!(store.tip().context.height, 1);
         assert!(old.with_snapshot(|_| Ok(()))?.is_none());
         #[cfg(feature = "jolteon-proposal-pipeline")]
-        assert!(old.build_proposal(&[], Vec::new(), 1002, 1024)?.is_none());
+        assert!(
+            old.build_proposal(&[], Vec::new(), 1002, 1024, &mut ProposalScan::default())?
+                .is_none()
+        );
         let fresh = store.pinned_view();
         assert_eq!(
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-proposal-pipeline")]
+    #[test]
+    fn proposal_scan_distinguishes_parent_and_current_spends() -> Result<()> {
+        use ckb_crypto::secp::Privkey;
+        use ckb_types::{
+            bytes::Bytes,
+            packed::{CellDep, Script},
+        };
+        use stem_ledger::{CellInput, GroupWitness};
+
+        let path = tempfile::tempdir()?;
+        let mut spec = spec();
+        let program = test_contract::native_lock(Path::new(env!("CARGO_MANIFEST_DIR")))?;
+        let key = Privkey::from_slice(&[18; 32]);
+        let signer = ckb_hash::blake2b_256(key.pubkey()?.serialize());
+        let lock = Script::new_builder()
+            .code_hash(ckb_hash::blake2b_256(&program))
+            .hash_type(ckb_types::core::ScriptHashType::Data)
+            .args(Bytes::copy_from_slice(&signer[..20]))
+            .build();
+        let code_point = OutPoint::new([3; 32].pack(), 0);
+        let bond = Cell::minimum_capacity(&lock, &[], program.len())?;
+        let code = Cell::new(bond, lock.clone(), vec![], program)?;
+        let reserve = Cell::new(20_000_000_000, lock.clone(), vec![], Bytes::new())?;
+        let points = [4u8, 5, 6].map(|id| OutPoint::new([id; 32].pack(), 0));
+        spec.development_cells = vec![
+            (code_point.clone(), code.clone()),
+            (points[0].clone(), reserve.clone()),
+            (points[1].clone(), reserve.clone()),
+        ];
+        let signed = |point: &OutPoint| -> Result<Transaction> {
+            let tx = Transaction::new(
+                vec![CellDep::new_builder().out_point(code_point.clone()).build()],
+                vec![],
+                vec![CellInput::new(point.clone(), None)],
+                vec![reserve.clone()],
+                vec![],
+            )?;
+            let digest = tx.signing_digest(
+                &spec.network,
+                0,
+                &lock,
+                |wanted| Ok(if wanted == &code_point { code.clone() } else { reserve.clone() }),
+                |_| anyhow::bail!("unexpected Header Dep"),
+            )?;
+            tx.with_witnesses(vec![GroupWitness {
+                group_index: 0,
+                proof_data: Bytes::new(),
+                seal: Bytes::copy_from_slice(&key.sign_recoverable(&digest.unpack())?.serialize()),
+            }])
+        };
+        let first = signed(&points[0])?;
+        let second = signed(&points[1])?;
+        let missing = signed(&points[2])?;
+        let store = Store::open(path.path(), &spec, Retention::Archive)?;
+        let parent = Arc::new(store.prepare(std::slice::from_ref(&first), 1001, false)?);
+        let mut scan = ProposalScan::default();
+        let (selected, proposal) = store
+            .pinned_view()
+            .build_proposal(
+                &[parent.clone()],
+                vec![first, missing, second.clone(), second.clone()],
+                1002,
+                4096,
+                &mut scan,
+            )?
+            .context("missing proposal snapshot")?;
+        let expected = store.on_branch(&[parent], |view| {
+            view.prepare(std::slice::from_ref(&second), 1002, false)
+        })?;
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].as_slice(), second.as_slice());
+        assert_eq!(proposal.header(), expected.header());
+        assert_eq!(proposal.receipts(), expected.receipts());
+        assert_eq!(
+            (scan.inspected, scan.selected, scan.spent_in_parent, scan.spent_in_proposal),
+            (4, 1, 1, 1)
         );
         Ok(())
     }

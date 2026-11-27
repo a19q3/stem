@@ -12,7 +12,7 @@ use stem_stake::{Hash32, jolteon::Point};
 use tokio::sync::mpsc;
 
 use super::{MAX_PROPOSAL_BYTES, Replica, can_vote_at};
-use crate::native_store::{PinnedView, Prepared, StateReadFault};
+use crate::native_store::{PinnedView, Prepared, ProposalScan, StateReadFault};
 
 #[derive(Debug, PartialEq, Eq)]
 struct Stamp {
@@ -39,6 +39,7 @@ pub(super) struct Completion {
     parent_header: Hash32,
     time: u64,
     execution: Result<Option<(Vec<Transaction>, Prepared)>>,
+    scan: ProposalScan,
     elapsed: Duration,
 }
 
@@ -58,12 +59,14 @@ impl Pipeline {
             .spawn(move || {
                 while let Some(job) = jobs.blocking_recv() {
                     let started = Instant::now();
+                    let mut scan = ProposalScan::default();
                     let execution = workers.install(|| {
                         job.state.build_proposal(
                             &job.ancestors,
                             job.transactions,
                             job.time,
                             MAX_PROPOSAL_BYTES,
+                            &mut scan,
                         )
                     });
                     let result = Completion {
@@ -72,6 +75,7 @@ impl Pipeline {
                         parent_header: job.parent_header,
                         time: job.time,
                         execution,
+                        scan,
                         elapsed: started.elapsed(),
                     };
                     if done.blocking_send(result).is_err() {
@@ -137,6 +141,7 @@ impl Replica {
         ensure!(self.proposal_pipeline.running, "unexpected proposal completion");
         self.proposal_pipeline.running = false;
         self.execution.proposal.observe(done.elapsed);
+        self.execution.proposal_scan.record(done.scan);
         let parent = if done.stamp == self.proposal_stamp()
             && !matches!(done.execution, Ok(None))
         {

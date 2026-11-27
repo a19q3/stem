@@ -1355,11 +1355,19 @@ impl Replica {
         #[cfg(not(feature = "jolteon-proposal-pipeline"))]
         {
             let started = Instant::now();
-            let (transactions, execution) = self.workers.install(|| {
+            let mut scan = Default::default();
+            let result = self.workers.install(|| {
                 self.store.on_branch(&batches, |state| {
-                    state.build_proposal(self.mempool.transactions(), at, MAX_PROPOSAL_BYTES)
+                    state.build_proposal_measured(
+                        self.mempool.transactions(),
+                        at,
+                        MAX_PROPOSAL_BYTES,
+                        &mut scan,
+                    )
                 })
-            })?;
+            });
+            self.execution.proposal_scan.record(scan);
+            let (transactions, execution) = result?;
             self.execution.proposal.observe(started.elapsed());
             if !can_vote_at(at) {
                 return Ok(());

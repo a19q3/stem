@@ -16,6 +16,7 @@ use stem_ledger::{Transaction, block::Header};
 use stem_stake::Hash32;
 
 use super::wire;
+use crate::native_store::ProposalScan;
 
 const IDLE_SUBMISSION_CONNECTIONS: usize = 4;
 
@@ -78,6 +79,8 @@ pub struct ExecutionMetrics {
     pub proposal: LatencyHistogram,
     #[serde(default)]
     pub proposal_jobs: ProposalMetrics,
+    #[serde(default)]
+    pub proposal_scan: ProposalScan,
     pub candidate_verify: LatencyHistogram,
     #[serde(default)]
     pub control_queue: LatencyHistogram,
