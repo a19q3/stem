@@ -112,3 +112,18 @@ Every unacknowledged write received a full-mempool response. The p99 populations
 The worker run reduced mean control wait from 39.84 to 23.52 ms and recorded seven local timeout votes against zero in the reference. Its 816 Follower jobs produced 807 applications, six stale results and zero invalid results. Both runs recorded zero block-cycle VM rejections. The two archives contained 271 and 263 blocks at the transaction count cap. Throughput fell 8.2% in this single pair. The prior short-window throughput gains did not persist in this trial. Keep the worker opt-in and retain control-wait, commit and drain data in the integrated comparison. [Short-window comparisons](../../execution-pipeline/README.md#four-validator-comparison)
 
 The workload BLAKE2b digest was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`. SHA-256 fingerprints were `2fb0207c35b3416b36fde01361966c2bc09dbbdfb3806061fd1e7004558d4cbe` for genesis, `51db5b584f3dc310ef3b7af7fb8f6dfa488b181fa00b6ee5ecc08881884baa13` for the synchronous binary, `52f00e53740031aa4c9f2e432d6959bd01db2d0f9c32dac9737f868149143939` for the Follower binary and `041211030f7bd4a1ea643bb01b4dcccd72e24a9a02160dea4a389c2c028a30df` for the driver and replay harness.
+
+### Integrated pipeline sustainable-profile pair
+
+The `45d9d76` runtime ran on the same physical host with fresh stores and the same signed 720,000-payment corpus. The reference used the default build. The candidate enabled `jolteon-commit-pipeline` (which enables Follower), `jolteon-proposal-pipeline`, `jolteon-admission-pipeline`, `native-commitment-pipeline`, `native-work-stealing` and `jolteon-certificate-experiment`. Both used static peer configuration and the default selection policy. Each wrote exactly 180,000 transactions in every measured minute. The 60-second warmup, 180-second measurement and 45-second drain were unchanged.
+
+| Configuration | Common TPS | Measurement writes without ACK | Peak acknowledged backlog | Backlog growth | Pending at drain | Conditional p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Default | 2,070.76 | 142,211 | 92,585 | 32,514 | 6,768 | 195.693 s |
+| Six features | 1,877.33 | 192,567 | 84,053 | 9,804 | 8,480 | 194.642 s |
+
+Both builds failed the same six performance gates. Unacknowledged writes all received a full-mempool response. The conditional p99 covers 392,866 and 341,676 acknowledged measurement writes observed commonly by cutoff. Common confirmations fell from 120,832, 131,072 and 120,832 by minute in the default run to 114,688, 112,640 and 110,592 in the integrated run. All 544 archived blocks and both finality proofs passed independent replay. There were four local timeout votes in each run and zero block-cycle VM rejections.
+
+Mean peer control wait fell from 41.17 to 5.09 ms. Mean proposal time rose from 397.69 to 484.99 ms and mean Follower preparation from 437.54 to 453.94 ms. The writer acknowledged 1,028 commits, and its overlap mechanism reused zero descendants. The integrated configuration improved control responsiveness and confirmed 9.3% fewer payments during measurement in this pair. The two runs do not isolate an individual stage or a repeatable gain. Keep the default as the payment reference for long-window work.
+
+The genesis and signed workload digests match the Follower-only pair. SHA-256 fingerprints for the default and integrated binaries were `082dc44fff7baa23ca94ec9c6feb564f75637395c4ab86af3f35a3111d7f53b5` and `1e5fa01ac0b9130a80ab8c21a474230cf47b7db40a5dc027680e8027071700c6`. The driver and verifier shared SHA-256 `041211030f7bd4a1ea643bb01b4dcccd72e24a9a02160dea4a389c2c028a30df`.
