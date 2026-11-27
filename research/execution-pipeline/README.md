@@ -85,6 +85,21 @@ PYTHONPATH=tools python3 research/execution-pipeline/probe_commit.py \
 
 Repeat with `before`, `before-sync` and `after-sync`, using fresh outputs. The fault probes establish publication and recovery boundaries. They supply no throughput estimate. The integrated comparison should compare the end-to-end commit histogram with the writer's service histogram and count how often a descendant preparation survives the commit.
 
+### Commit-only ablation
+
+The four same-host trials used one build of `7e06beb` with Admission, Follower, Leader, concurrent commitments and Work Stealing enabled, and a matched build additionally enabling Commit. The order was synchronous, writer, writer, synchronous. Four replicas used four VM workers each and a 100 ms cadence. The 4 billion cycle and 2,048 item limits held for every run. The driver wrote the same 45,000 signed payments at 3,000/s for 15 seconds and allowed 12 seconds to drain. Each trial confirmed every payment and passed the common finality and history-index checks.
+
+| Run | Commit | Common TPS during offer | Write-to-common p99 | Mean control wait | Mean end-to-end commit | Validator CPU |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| A1 | Synchronous | 2,487.3 | 3.617 s | 7.676 ms | 12.042 ms | 54.83 s |
+| B1 | Writer | 2,888.3 | 0.786 s | 3.903 ms | 12.454 ms | 53.21 s |
+| B2 | Writer | 2,880.8 | 1.400 s | 4.932 ms | 11.411 ms | 51.93 s |
+| A2 | Synchronous | 2,833.5 | 4.519 s | 30.527 ms | 12.239 ms | 54.61 s |
+
+The writer's mean service times were 12.254 ms in B1 and 11.213 ms in B2. Those runs served 124 and 112 status requests during writes and reported no overlapping descendant jobs or rebases. Both pairs favored the writer on window TPS and p99, with a much larger throughput difference in the first pair. The gains occurred without descendant reuse in these runs. Keep Commit opt-in while testing longer windows and independent hosts. This comparison isolates Commit within one integrated feature set.
+
+The workload file SHA-256 was `f0233229ebdf9d1c8a3ac1f54611a332eb9726898ff5498a27cd5b9d82a0ba6a`. The synchronous and writer binary SHA-256 values were `5abbc86b8e6fab184563c6767f112c2a71a93a19f91b16d569ae63fbbb17be5d` and `c58a4948046822b091f23f129d99571edd9b2da4c1bc0dbd41c89705160510d1`.
+
 ## Four-validator comparison
 
 Four consecutive runs used the same 90,000 signed payments over 30 seconds at 3,000 scheduled writes per second, with 20 seconds of drain. The order was synchronous, background, background, synchronous. All runs wrote every payment inside the offer and commonly confirmed every payment by the drain deadline. The largest paired difference in cumulative writes at any one-second boundary was 31 and 66 payments. Four RocksDB validators shared twelve physical cores and their SMT siblings on one Ryzen 9 7950X3D. The load generator used two other cores. Both implementations used two VM workers per node and the same CPU affinity. [Raw results](results.json) · [Independent certificate replay](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/execution-pipeline/replays.json.xz)
