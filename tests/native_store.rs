@@ -426,6 +426,86 @@ fn verification_schedules_preserve_receipts_conflicts_and_block_cycles() -> Resu
     Ok(())
 }
 
+#[cfg(feature = "native-commitment-pipeline")]
+#[test]
+fn parallel_commitments_match_serial_roots_and_reopened_proofs() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 512;
+    fixture.spec.limits.block_cycles = 4_000_000_000;
+    fixture.spec.limits.cell_reads = 8192;
+    fixture.spec.limits.cell_read_bytes = 128 * 1024 * 1024;
+    fixture.spec.limits.cell_write_bytes = 4 * 1024 * 1024;
+    let mut transactions = Vec::new();
+    for index in 0..768 {
+        let point = OutPoint::new([41; 32].pack(), index);
+        fixture.spec.development_cells.push((
+            point.clone(),
+            Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?,
+        ));
+        transactions.push(fixture.signed(point, None, FUND - FEE, None)?);
+    }
+
+    let home = tempfile::tempdir()?;
+    let open = |name| Store::open(&home.path().join(name), &fixture.spec, Retention::Archive);
+    let mut serial = open("serial")?;
+    let mut parallel = open("parallel")?;
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(3).build()?;
+    let mut rest = transactions.as_slice();
+    for (height, count) in (1..).zip([255, 256, 257]) {
+        let (block, remaining) = rest.split_at(count);
+        rest = remaining;
+        let time = TIME + height;
+        let reference = serial.prepare(block, time, false)?;
+        let follower = workers.install(|| parallel.prepare(block, time, true))?;
+        let (selected, leader) =
+            workers.install(|| parallel.build_proposal(block, time, u64::MAX))?;
+        assert!(
+            selected
+                .iter()
+                .map(Transaction::as_slice)
+                .eq(block.iter().map(Transaction::as_slice))
+        );
+        for candidate in [&leader, &follower] {
+            assert_eq!(candidate.header().encode(), reference.header().encode());
+            assert_eq!(candidate.receipts(), reference.receipts());
+        }
+        serial.commit(reference)?;
+        parallel.commit(follower)?;
+    }
+    assert!(rest.is_empty());
+    drop(parallel);
+    let reopened = open("parallel")?;
+    assert_eq!(serial.tip(), reopened.tip());
+    assert_eq!(
+        serial.prove_extinguished_fees()?,
+        reopened.prove_extinguished_fees()?
+    );
+    assert_eq!(reopened.fee_surplus()?, 768 * FEE);
+    let spent = OutPoint::new([41; 32].pack(), 767);
+    let output = OutPoint::new(transactions[767].id(serial.network()), 0);
+    for point in [spent, output] {
+        let (_, expected) = serial.prove_cell(&point)?;
+        let (_, actual) = reopened.prove_cell(&point)?;
+        assert_eq!(expected.encode()?, actual.encode()?);
+    }
+    for height in 1..=3 {
+        let (expected, receipts) = serial
+            .execution(height)?
+            .context("missing serial execution")?;
+        let (actual, other) = reopened
+            .execution(height)?
+            .context("missing parallel execution")?;
+        assert_eq!(receipts, other);
+        assert!(
+            expected
+                .iter()
+                .map(Transaction::as_slice)
+                .eq(actual.iter().map(Transaction::as_slice))
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     let fixture = Fixture::new()?;

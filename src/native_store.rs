@@ -408,6 +408,13 @@ struct Overlay {
     keeper: keeper::Stage,
 }
 
+struct SystemCommitment {
+    root: Byte32,
+    validator_updates: Vec<stem_stake::Member>,
+    committee_change: Option<CommitteeChange>,
+    stake_inputs: Arc<OnceLock<StakeInputs>>,
+}
+
 struct ProposalSelection {
     transactions: Vec<Transaction>,
     context: HeaderContext,
@@ -1399,22 +1406,90 @@ impl Store {
             receipts,
             due.commands.len(),
             fees,
+            parallel,
         )
     }
 
     fn finish_block(
         &self,
         context: HeaderContext,
-        overlay: Overlay,
+        mut overlay: Overlay,
         execution: &[Transaction],
         receipts: Vec<Receipt>,
         keeper_receipts: usize,
         fees: u64,
+        parallel: bool,
     ) -> Result<Prepared> {
         let height = context.height;
+        let live = std::mem::take(&mut overlay.live);
         let mut batch = Batch::default();
-        let mut cell_changes = Vec::with_capacity(overlay.live.len());
-        for (point, record) in &overlay.live {
+        let build_execution = || encode_execution(&self.network, execution, &receipts);
+        let (cell_root, system, (execution_bytes, receipt_root)) =
+            if cfg!(feature = "native-commitment-pipeline")
+                && parallel
+                && execution.len() >= 256
+                && rayon::current_num_threads() > 1
+            {
+                // Isolate each namespace's writes and append them in the
+                // original order before producing the single atomic batch.
+                let mut system_batch = Batch::default();
+                let (cell, (system, execution)) = rayon::join(
+                    || self.finish_cells(&mut batch, &live),
+                    || {
+                        rayon::join(
+                            || self.finish_system(&mut system_batch, overlay, height, fees),
+                            build_execution,
+                        )
+                    },
+                );
+                let result = (cell?, system?, execution?);
+                batch.writes.append(&mut system_batch.writes);
+                result
+            } else {
+                (
+                    self.finish_cells(&mut batch, &live)?,
+                    self.finish_system(&mut batch, overlay, height, fees)?,
+                    build_execution()?,
+                )
+            };
+        let mut history = self.history.clone();
+        let next = Header::next(
+            &self.network,
+            &self.tip,
+            &mut history,
+            context,
+            cell_root,
+            system.root,
+            receipt_root,
+        )?;
+        put_tip(&mut batch, &self.network, &next, &history);
+        batch.put_owned(index_key(EXECUTION, &height.to_be_bytes()), execution_bytes);
+        if let Retention::Recent(window) = self.retention
+            && let Some(pruned) = height.checked_sub(window)
+        {
+            if let Some(header) = self.header(pruned)? {
+                batch.delete(index_key(HEADER_ID, header.id(&self.network).as_slice()));
+                batch.delete(index_key(HEADER, &pruned.to_be_bytes()));
+            }
+            batch.delete(index_key(EXECUTION, &pruned.to_be_bytes()));
+        }
+        Ok(Prepared {
+            parent: self.tip.id(&self.network),
+            next,
+            history,
+            receipts,
+            keeper_receipts,
+            validator_updates: system.validator_updates,
+            committee_change: system.committee_change,
+            stake_inputs: system.stake_inputs,
+            live,
+            batch,
+        })
+    }
+
+    fn finish_cells(&self, batch: &mut Batch, live: &LiveChanges) -> Result<Byte32> {
+        let mut cell_changes = Vec::with_capacity(live.len());
+        for (point, record) in live {
             let id = record::cell_key(&self.cells, point);
             let value = record
                 .as_ref()
@@ -1432,8 +1507,17 @@ impl Store {
                 }
             },
         )?;
-        let cell_root = cell_root.pack();
-        put_nodes(&mut batch, Namespace::Cells, nodes);
+        put_nodes(batch, Namespace::Cells, nodes);
+        Ok(cell_root.pack())
+    }
+
+    fn finish_system(
+        &self,
+        batch: &mut Batch,
+        overlay: Overlay,
+        height: u64,
+        fees: u64,
+    ) -> Result<SystemCommitment> {
         let mut system = self.system.edit(as_key(&self.tip.state.system_root), |id| {
             self.node(Namespace::System, id)
         });
@@ -1511,42 +1595,13 @@ impl Store {
                 batch.delete(state_key(STATE_RECORD, Namespace::System, &id));
             }
         })?;
-        let system_root = system.root().pack();
-        put_nodes(&mut batch, Namespace::System, system.into_writes());
-        let (execution_bytes, receipt_root) =
-            encode_execution(&self.network, execution, &receipts)?;
-        let mut history = self.history.clone();
-        let next = Header::next(
-            &self.network,
-            &self.tip,
-            &mut history,
-            context,
-            cell_root,
-            system_root,
-            receipt_root,
-        )?;
-        put_tip(&mut batch, &self.network, &next, &history);
-        batch.put_owned(index_key(EXECUTION, &height.to_be_bytes()), execution_bytes);
-        if let Retention::Recent(window) = self.retention
-            && let Some(pruned) = height.checked_sub(window)
-        {
-            if let Some(header) = self.header(pruned)? {
-                batch.delete(index_key(HEADER_ID, header.id(&self.network).as_slice()));
-                batch.delete(index_key(HEADER, &pruned.to_be_bytes()));
-            }
-            batch.delete(index_key(EXECUTION, &pruned.to_be_bytes()));
-        }
-        Ok(Prepared {
-            parent: self.tip.id(&self.network),
-            next,
-            history,
-            receipts,
-            keeper_receipts,
+        let root = system.root().pack();
+        put_nodes(batch, Namespace::System, system.into_writes());
+        Ok(SystemCommitment {
+            root,
             validator_updates,
             committee_change,
             stake_inputs,
-            live: overlay.live,
-            batch,
         })
     }
 
@@ -1589,7 +1644,7 @@ impl Store {
                 .iter()
                 .try_fold(0u64, |sum, receipt| sum.checked_add(receipt.fee))
                 .context("block fee overflow")?;
-            self.finish_block(context, overlay, &transactions, receipts, 0, fees)?
+            self.finish_block(context, overlay, &transactions, receipts, 0, fees, true)?
         } else {
             self.prepare(&transactions, timestamp_ms, true)?
         };
@@ -2498,16 +2553,15 @@ fn sync_with_consensus(
     any(
         feature = "jolteon-admission-pipeline",
         feature = "jolteon-candidate-pipeline",
-        feature = "jolteon-proposal-pipeline"
+        feature = "jolteon-proposal-pipeline",
+        feature = "native-commitment-pipeline"
     )
 ))]
-mod admission_snapshot_tests {
+mod pipeline_store_tests {
     use super::*;
 
-    #[test]
-    fn snapshot_reads_old_tip_during_commit_and_rejects_stale_acquisition() -> Result<()> {
-        let home = tempfile::tempdir()?;
-        let spec = Spec {
+    fn spec() -> Spec {
+        Spec {
             vm_crypto_v1: false,
             chain_id: "admission-snapshot-test".into(),
             development_validators: vec![],
@@ -2533,8 +2587,18 @@ mod admission_snapshot_tests {
                 header_dep_age: 2,
             },
             development_cells: Vec::new(),
-        };
-        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        }
+    }
+
+    #[cfg(any(
+        feature = "jolteon-admission-pipeline",
+        feature = "jolteon-candidate-pipeline",
+        feature = "jolteon-proposal-pipeline"
+    ))]
+    #[test]
+    fn snapshot_reads_old_tip_during_commit_and_rejects_stale_acquisition() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut store = Store::open(home.path(), &spec(), Retention::Archive)?;
         let old = store.pinned_view();
         let expected = store.tip().clone();
         let next = store.prepare(&[], 1001, false)?;
@@ -2564,6 +2628,78 @@ mod admission_snapshot_tests {
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "native-commitment-pipeline")]
+    #[test]
+    fn namespace_commitments_keep_the_ordered_write_batch() -> Result<()> {
+        use bytes::Bytes;
+        use ckb_types::packed::Script;
+        use stem_ledger::CellInput;
+
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let spent = OutPoint::new([41; 32].pack(), 0);
+        let created = OutPoint::new([42; 32].pack(), 0);
+        let lock = Script::default();
+        let capacity = Cell::minimum_capacity(&lock, &[], 0)? + 1_000_000_000;
+        let cell = Cell::new(capacity, lock, vec![], Bytes::new())?;
+        spec.development_cells.push((spent.clone(), cell.clone()));
+        let store = Store::open(home.path(), &spec, Retention::Archive)?;
+        let execution = (0..256)
+            .map(|index| {
+                Transaction::new(
+                    vec![],
+                    vec![],
+                    vec![CellInput::new(OutPoint::new([43; 32].pack(), index), None)],
+                    vec![cell.clone()],
+                    vec![],
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let context = HeaderContext::after(
+            store.network(),
+            store.tip(),
+            1001,
+            Tree::transactions(store.network().clone(), &execution)?.root(),
+        )?;
+        let build = |parallel| {
+            // This fixture supplies an already staged overlay. The integration
+            // test covers real signed execution on both sides of the cutoff.
+            let mut overlay = store.overlay(None);
+            overlay.live.insert(spent.clone(), None);
+            overlay.live.insert(
+                created.clone(),
+                Some(LiveCell {
+                    cell: cell.clone(),
+                    origin: Origin::new(store.network(), &context),
+                }),
+            );
+            let receipts = vec![
+                Receipt {
+                    fee: 100,
+                    cycles: 200,
+                    protocol_result: Bytes::new(),
+                };
+                execution.len()
+            ];
+            store.finish_block(
+                context.clone(),
+                overlay,
+                &execution,
+                receipts,
+                0,
+                25_600,
+                parallel,
+            )
+        };
+        let serial = build(false)?;
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build()?;
+        let parallel = pool.install(|| build(true))?;
+        assert!(!serial.batch.writes.is_empty());
+        assert_eq!(serial.batch.writes, parallel.batch.writes);
+        assert_eq!(serial.header().encode(), parallel.header().encode());
         Ok(())
     }
 }

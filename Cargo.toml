@@ -14,6 +14,7 @@ jolteon-certificate-experiment = []
 jolteon-admission-pipeline = []
 jolteon-candidate-pipeline = []
 jolteon-proposal-pipeline = []
+native-commitment-pipeline = []
 native-work-stealing = []
 
 [dependencies]
