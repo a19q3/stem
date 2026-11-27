@@ -37,7 +37,9 @@ struct Request {
     #[serde(default)]
     required_dependencies: Vec<RequiredDependency>,
     #[serde(default)]
-    required_dependency_uses: Vec<DependencyUse>,
+    required_dependency_uses: Vec<CellUse>,
+    #[serde(default)]
+    required_input_uses: Vec<CellUse>,
 }
 
 #[derive(Deserialize)]
@@ -55,10 +57,10 @@ struct RequiredDependency {
     data_hash: H256,
 }
 
-/// An exact resolved dependency expected in one transaction of the authenticated path.
+/// A specific previous output expected in a named transaction of the authenticated path.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct DependencyUse {
+struct CellUse {
     transaction: H256,
     out_point: JsonPoint,
     data_hash: H256,
@@ -68,7 +70,35 @@ struct DependencyUse {
     lock_hash: Option<H256>,
 }
 
-type Uses<'a> = HashMap<OutPoint, &'a DependencyUse>;
+impl CellUse {
+    fn matches(&self, cell: &CellOutput, data_hash: &H256, type_hash: Option<&H256>) -> bool {
+        &self.data_hash == data_hash
+            && self.type_hash.as_ref().is_none_or(|h| Some(h) == type_hash)
+            && self
+                .lock_hash
+                .as_ref()
+                .is_none_or(|h| h.as_bytes() == cell.lock().calc_script_hash().as_slice())
+    }
+}
+
+type Uses<'a> = HashMap<OutPoint, &'a CellUse>;
+
+fn index_uses<'a>(
+    requirements: &'a [CellUse],
+    role: &str,
+    limit: Option<usize>,
+) -> Result<HashMap<H256, Uses<'a>>> {
+    let mut by_tx = HashMap::<H256, Uses<'a>>::new();
+    for usage in requirements {
+        let uses = by_tx.entry(usage.transaction.clone()).or_default();
+        ensure!(
+            limit.is_none_or(|max| uses.len() < max)
+                && uses.insert(usage.out_point.clone().into(), usage).is_none(),
+            "duplicate or excessive required {role} uses"
+        );
+    }
+    Ok(by_tx)
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,9 +130,14 @@ pub(super) fn prove(path: &Path, url: &str) -> Result<()> {
             "repeated Type history transaction"
         );
         let (tx, height, proof) = history.witnessed(&next)?;
-        let (parent, _) = transition(&tx, &request.type_hash, &[], Uses::new(), |point| {
-            history.referenced(point)
-        })?;
+        let (parent, _) = transition(
+            &tx,
+            &request.type_hash,
+            &[],
+            Uses::new(),
+            Uses::new(),
+            |point| history.referenced(point),
+        )?;
         steps.push(Step {
             height,
             transaction: JsonBytes::from_bytes(tx.data().as_bytes()),
@@ -148,6 +183,7 @@ fn transition(
     expected: &H256,
     required: &[RequiredDependency],
     mut uses: Uses<'_>,
+    mut input_uses: Uses<'_>,
     mut resolve: impl FnMut(&OutPoint) -> Result<(CellOutput, Bytes)>,
 ) -> Result<(Option<OutPoint>, Option<OutPoint>)> {
     let matches = |cell: CellOutput| {
@@ -161,13 +197,29 @@ fn transition(
         if point.is_null() && tx.is_cellbase() {
             continue;
         }
-        if matches(resolve(&point)?.0) {
+        let (cell, data) = resolve(&point)?;
+        if let Some(usage) = input_uses.remove(&point) {
+            let data_hash = H256::from(ckb_hash::blake2b_256(&data));
+            let type_hash = cell
+                .type_()
+                .to_opt()
+                .map(|script| script.calc_script_hash().unpack());
+            ensure!(
+                usage.matches(&cell, &data_hash, type_hash.as_ref()),
+                "resolved CKB input differs from the required Cell"
+            );
+        }
+        if matches(cell) {
             ensure!(
                 previous.replace(point).is_none(),
                 "multiple inputs carry the pinned Type"
             );
         }
     }
+    ensure!(
+        input_uses.is_empty(),
+        "required OutPoint absent from the transaction's inputs"
+    );
     ensure!(
         tx.outputs().len() == tx.outputs_data().len(),
         "CKB output data count differs"
@@ -195,14 +247,7 @@ fn transition(
             let type_hash = cell.type_().to_opt().map(|s| s.calc_script_hash().unpack());
             if let Some(usage) = exact {
                 ensure!(
-                    usage.data_hash == data_hash
-                        && usage
-                            .type_hash
-                            .as_ref()
-                            .is_none_or(|h| Some(h) == type_hash.as_ref())
-                        && usage.lock_hash.as_ref().is_none_or(
-                            |h| h.as_bytes() == cell.lock().calc_script_hash().as_slice()
-                        ),
+                    usage.matches(&cell, &data_hash, type_hash.as_ref()),
                     "resolved CKB dependency differs from the required Cell"
                 );
             }
@@ -302,15 +347,12 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
                 == request.required_dependencies.len(),
         "invalid Type history dependency requirements"
     );
-    let mut uses_by_tx = HashMap::<H256, Uses<'_>>::new();
-    for usage in &request.required_dependency_uses {
-        let uses = uses_by_tx.entry(usage.transaction.clone()).or_default();
-        ensure!(
-            uses.len() < super::metatype_history::MAX_DEPS
-                && uses.insert(usage.out_point.clone().into(), usage).is_none(),
-            "duplicate or excessive required dependency uses"
-        );
-    }
+    let mut uses_by_tx = index_uses(
+        &request.required_dependency_uses,
+        "dependency",
+        Some(super::metatype_history::MAX_DEPS),
+    )?;
+    let mut inputs_by_tx = index_uses(&request.required_input_uses, "input", None)?;
     let mut visits = Vec::new();
     let mut head = None;
     let mut trace = Vec::new();
@@ -337,6 +379,7 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
             &request.type_hash,
             &request.required_dependencies,
             uses_by_tx.remove(&tx_hash).unwrap_or_default(),
+            inputs_by_tx.remove(&tx_hash).unwrap_or_default(),
             |point| {
                 let hash = point.tx_hash();
                 let raw = sources
@@ -409,6 +452,10 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
         uses_by_tx.is_empty(),
         "required dependency transaction absent from Type history"
     );
+    ensure!(
+        inputs_by_tx.is_empty(),
+        "required input transaction absent from Type history"
+    );
     ensure!(unused.is_empty(), "unused CKB Type history references");
     let mut result = json!({"anchor":request.anchor, "type_hash":request.type_hash, "origin":request.origin,
         "end_transaction":request.end_transaction, "ended_in_burn":head.is_none(), "matched_states":visits, "transitions":trace});
@@ -418,5 +465,56 @@ fn validate(request: &Request, bundle: &Bundle) -> Result<Value> {
     if !request.required_dependency_uses.is_empty() {
         result["matched_dependency_uses"] = json!(request.required_dependency_uses);
     }
+    if !request.required_input_uses.is_empty() {
+        result["matched_input_uses"] = json!(request.required_input_uses);
+    }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ckb_types::{
+        core::TransactionBuilder,
+        packed::{CellDep, CellInput, Script},
+    };
+
+    #[test]
+    fn exact_input_uses_distinguish_an_identical_dependency() -> Result<()> {
+        let input = OutPoint::new([1; 32].pack(), 0);
+        let dependency = OutPoint::new([2; 32].pack(), 0);
+        let asset = Script::default();
+        let asset_hash = asset.calc_script_hash().unpack();
+        let output = CellOutput::new_builder().type_(Some(asset).pack()).build();
+        let tx = TransactionBuilder::default()
+            .input(CellInput::new(input.clone(), 0))
+            .cell_dep(CellDep::new_builder().out_point(dependency.clone()).build())
+            .output(output)
+            .output_data(Bytes::new().pack())
+            .build();
+        let resolve = |_: &OutPoint| Ok((CellOutput::default(), Bytes::from_static(b"same")));
+        let claim = |point: &OutPoint| CellUse {
+            transaction: tx.hash().unpack(),
+            out_point: point.clone().into(),
+            data_hash: H256::from(ckb_hash::blake2b_256(b"same")),
+            lock_hash: None,
+            type_hash: None,
+        };
+        let spent = claim(&input);
+        let cited = claim(&dependency);
+        let dependencies = Uses::from([(dependency, &cited)]);
+        let inputs = Uses::from([(input, &spent)]);
+        let (_, next) = transition(
+            &tx,
+            &asset_hash,
+            &[],
+            dependencies.clone(),
+            inputs.clone(),
+            resolve,
+        )?;
+        assert_eq!(next, Some(OutPoint::new(tx.hash(), 0)));
+        assert!(transition(&tx, &asset_hash, &[], Uses::new(), dependencies, resolve).is_err());
+        assert!(transition(&tx, &asset_hash, &[], inputs, Uses::new(), resolve).is_err());
+        Ok(())
+    }
 }

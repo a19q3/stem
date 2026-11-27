@@ -29,6 +29,8 @@ flowchart LR
     X -->|authenticated melt receipt| F["Retire native title and refund"]
 ```
 
+Four public testnet member mints also consumed and renewed a Cluster Agent. The wallet resolves the previous Agent as a spent input and checks the referenced version of the collection at that same mint. [Proxy, Agent and member histories](agent/README.md)
+
 ## Settlement and compatibility
 
 Six independent CKB devnets used four local Jolteon replicas apiece. Native-origin ordinary members used tag 6 on both the native identity and the custody endpoints. At first export the original CKB contract accepted the collection owner's authorization. Registered beta.2 members retained their identity tag 4 and gate tag 3. On the import run the ordinary collection transferred to a second CKB owner between deposit and release. The referenced collection version at issuance and its later owner were verified at the same anchor as the member history. [Settlements and witnessed CKB transactions](settlements.json.xz) · [Public native trust roots](committee-trust.json)
