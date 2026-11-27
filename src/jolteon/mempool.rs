@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry as MapEntry},
     time::{Duration, Instant},
 };
 
@@ -10,6 +10,10 @@ use stem_ledger::{
 use stem_stake::Hash32;
 
 const RELAY_INTERVAL: Duration = Duration::from_secs(2);
+#[cfg(feature = "jolteon-aged-proposal-selection")]
+const PROPOSAL_PRIORITY_AGE: Duration = Duration::from_secs(5);
+#[cfg(feature = "jolteon-aged-proposal-selection")]
+const MAX_AGED_PROPOSAL_VISITS: usize = 256;
 
 #[derive(Default)]
 struct Deadline {
@@ -44,6 +48,8 @@ pub(super) struct Mempool {
     heights: BTreeSet<(u64, Hash32)>,
     parent_times: BTreeSet<(u64, Hash32)>,
     relays: BTreeSet<(Instant, Hash32)>,
+    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    arrivals: BTreeSet<(Instant, Hash32)>,
     bytes: usize,
 }
 
@@ -51,6 +57,8 @@ struct Entry {
     tx: Transaction,
     deadline: Deadline,
     relay: Option<PendingRelay>,
+    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    accepted: Instant,
 }
 
 struct PendingRelay {
@@ -72,11 +80,38 @@ impl Mempool {
         self.bytes
     }
 
+    #[cfg(not(feature = "jolteon-aged-proposal-selection"))]
     pub(super) fn transactions(&self) -> impl Iterator<Item = &Transaction> {
         self.entries.values().map(|entry| &entry.tx)
     }
 
+    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    pub(super) fn transactions(&self) -> impl Iterator<Item = &Transaction> {
+        self.transactions_at(Instant::now())
+    }
+
+    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    fn transactions_at(&self, now: Instant) -> impl Iterator<Item = &Transaction> {
+        let aged = self
+            .arrivals
+            .iter()
+            .take(MAX_AGED_PROPOSAL_VISITS)
+            .take_while(move |(at, _)| now.saturating_duration_since(*at) >= PROPOSAL_PRIORITY_AGE);
+        // The promoted entries form a prefix of the arrival index. Skip exactly
+        // that prefix when walking the regular hash order.
+        let boundary = aged.clone().last().copied();
+        aged.map(|(_, id)| &self.entries[id].tx).chain(
+            self.entries
+                .iter()
+                .filter(move |(id, entry)| boundary.is_none_or(|last| (entry.accepted, **id) > last))
+                .map(|(_, entry)| &entry.tx),
+        )
+    }
+
     pub(super) fn insert(&mut self, id: Hash32, tx: Transaction) -> anyhow::Result<()> {
+        let MapEntry::Vacant(entry) = self.entries.entry(id) else {
+            return Ok(());
+        };
         let deadline = Deadline::for_transaction(&tx)?;
         if let Some(height) = deadline.height {
             self.heights.insert((height, id));
@@ -85,14 +120,17 @@ impl Mempool {
             self.parent_times.insert((time, id));
         }
         self.bytes += tx.as_slice().len();
-        self.entries.insert(
-            id,
-            Entry {
-                tx,
-                deadline,
-                relay: None,
-            },
-        );
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        let accepted = Instant::now();
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        self.arrivals.insert((accepted, id));
+        entry.insert(Entry {
+            tx,
+            deadline,
+            relay: None,
+            #[cfg(feature = "jolteon-aged-proposal-selection")]
+            accepted,
+        });
         Ok(())
     }
 
@@ -151,6 +189,8 @@ impl Mempool {
             tx,
             deadline,
             relay,
+            #[cfg(feature = "jolteon-aged-proposal-selection")]
+            accepted,
         }) = self.entries.remove(id)
         {
             if let Some(height) = deadline.height {
@@ -162,6 +202,8 @@ impl Mempool {
             if let Some(relay) = relay {
                 self.relays.remove(&(relay.at, *id));
             }
+            #[cfg(feature = "jolteon-aged-proposal-selection")]
+            self.arrivals.remove(&(accepted, *id));
             self.bytes -= tx.as_slice().len();
         }
     }
@@ -191,6 +233,45 @@ mod tests {
     use stem_ledger::CellInput;
 
     use super::*;
+
+    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    #[test]
+    fn aged_proposal_order_is_bounded_and_entries_are_visited_once() -> anyhow::Result<()> {
+        let before = Instant::now();
+        let mut pool = Mempool::default();
+        let input = CellInput::new(OutPoint::default(), None);
+        let transaction = Transaction::new(vec![], vec![], vec![input], vec![], vec![])?;
+        for height in (1..=260_u64).rev() {
+            let mut id = [0; 32];
+            id[30..].copy_from_slice(&(height as u16).to_be_bytes());
+            pool.insert(id, transaction.with_valid_before_height(height)?)?;
+        }
+        let heights = |pool: &Mempool, at| pool.transactions_at(at).map(|tx| tx.valid_before_height().unwrap()).collect::<Vec<_>>();
+        assert_eq!(heights(&pool, before), (1..=260).collect::<Vec<_>>());
+        let cutoff = pool.arrivals.last().unwrap().0 + PROPOSAL_PRIORITY_AGE;
+        let ordered = heights(&pool, cutoff);
+        let priority = pool
+            .arrivals
+            .iter()
+            .take(MAX_AGED_PROPOSAL_VISITS)
+            .map(|(_, id)| pool.entries[id].tx.valid_before_height().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(&ordered[..MAX_AGED_PROPOSAL_VISITS], priority.as_slice());
+        assert!(ordered[MAX_AGED_PROPOSAL_VISITS..].is_sorted());
+        assert_eq!(ordered.iter().copied().collect::<BTreeSet<_>>().len(), 260);
+
+        let (_, oldest) = *pool.arrivals.first().unwrap();
+        let bytes = pool.bytes();
+        pool.insert(oldest, transaction.with_valid_before_height(300)?)?;
+        assert_eq!(pool.bytes(), bytes);
+        assert_eq!(heights(&pool, cutoff), ordered);
+        pool.remove(&oldest);
+        pool.expire(4, 0);
+        assert_eq!(pool.arrivals.len(), pool.len());
+        assert!(!pool.arrivals.iter().any(|(_, id)| *id == oldest));
+        assert!(heights(&pool, cutoff).iter().all(|height| *height > 5));
+        Ok(())
+    }
 
     #[test]
     fn relay_retries_are_local_bounded_and_removed_with_the_entry() -> anyhow::Result<()> {
