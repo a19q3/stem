@@ -21,11 +21,36 @@ The candidate also completed **two CKB-backed committee handoffs** with full rep
 
 **Decision.** Retain the opt-in research feature for comparison. Announcement reuse recurred across every committee size. Parent-view memoization benefited only some live schedules. Whole-process allocations and independent WAN control latency remain unmeasured.
 
+## Matched sixteen-replica payment bursts
+
+Both release builds used `d227375aaeed47d15390196831de8b59a5da3ec0`, Admission and Follower. The candidate enabled only the additional `jolteon-certificate-experiment` feature. A separate driver build retained the optional cache counters when reading native RPC status. The first 100 ms comparison used a driver that dropped those counters and returned mixed CPU and latency results. The comparison below repeats the four-run order with the repaired driver and the same two validator binaries.
+
+Each cadence used the order reference, reuse, reuse, reference. Sixteen validators and the driver shared logical CPUs `2-7,10-15,18-23,26-31` on one host. Each node used two VM workers, a 256-block retention window, and limits of four billion cycles and 2,048 transactions per block. Each trial wrote the same 9,000 signed payments at 600/s for 15 seconds through 128 persistent senders, followed by 12 seconds of drain. All payments reached common finality in all trials. The native driver authenticated the common finality proof and verified indexed transaction history. CPU and wire counters are before-to-after deltas through drain. RSS is the highest sampled resident memory of a single validator.
+
+| Cadence | Run | Common TPS during offer | Write-to-common p99 | Validator CPU | Mean control wait | Peak sampled RSS | QC hits / encodes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 ms | Reference A1 | 584.87 | 0.511 s | 62.66 s | 1.320 ms | 92.18 MiB | — |
+| 100 ms | Reuse B1 | 589.60 | 0.427 s | 61.35 s | 0.885 ms | 90.66 MiB | 0 / 1,205 |
+| 100 ms | Reuse B2 | 588.80 | 0.404 s | 62.56 s | 1.179 ms | 91.82 MiB | 0 / 1,216 |
+| 100 ms | Reference A2 | 586.07 | 0.457 s | 62.09 s | 0.813 ms | 92.35 MiB | — |
+| 550 ms | Reference A1 | 561.27 | 2.586 s | 51.35 s | 1.605 ms | 87.22 MiB | — |
+| 550 ms | Reuse B1 | 493.93 | 2.578 s | 51.68 s | 2.583 ms | 86.07 MiB | 542 / 625 |
+| 550 ms | Reuse B2 | 525.27 | 2.608 s | 51.42 s | 4.866 ms | 87.68 MiB | 567 / 608 |
+| 550 ms | Reference A2 | 549.53 | 1.597 s | 52.28 s | 0.790 ms | 85.22 MiB | — |
+
+At 100 ms the QC advanced frequently enough that the announcement cache never reused a frame. The p99 differences from those runs cannot establish a benefit from reuse. At 550 ms the cache reused 46–48% of observed QC announcements. The reuse builds had lower window throughput and higher control-message wait in both order-balanced pairs, with CPU changing by +0.6% and −1.6%. Aggregate validator transmit totals were 65.97, 56.15, 78.06 and 61.83 MB in run order at 550 ms. No trial at either cadence recorded a local timeout or a parent TC check. This exercises QC frame reuse. The timeout-related part of the feature is covered by the separate fault fixtures. The sixteen-replica mixed restart replay also recorded 64 QC hits and 64 encodes across the eight opted-in processes at the resumed snapshot. [Signed restart regression](../finality/README.md)
+
+Keep the feature opt-in. A repeatable process-level CPU benefit would justify broader measurement. These short trials share hardware, sample RSS and do not measure whole-process allocation counts or WAN tail latency.
+
+The reference binary SHA-256 was `1cedbf66faddde2f6bfdab9b5732c2213f5494d7cec33ec745418cc42f7fef42`. The candidate was `25c6910754ba33733e621d031b4c73dea97e539267ee91074fbd0e9085b2fa46`. The genesis SHA-256 in all eight trials was `a039e672ff2a1f5b28bab34b4eca688fe134db797fc7e9a3b957e7ecf2bad80b`. The signed workload SHA-256 was `78d3058b74fd50377715ba256b5c771a02e479414b1b720e2868529d4496813c`.
+
+For the paired burst, point `STEM_TEST_REPLICA_BIN` at each build and invoke `storage_load::sustained_payment_storage` from the native integration suite. Set `STEM_STORAGE_REPLICAS=16`, `RATE=600`, `SECONDS=15`, `DRAIN=12`, `SENDERS=128`, `VM_WORKERS=2`, `RETENTION=256`, `BLOCK_CYCLES=4000000000` and `BLOCK_TRANSACTIONS=2048`, all under the `STEM_STORAGE_` prefix. Use the indicated `CADENCE` and set `PREFUND_PAYMENTS`, `COMPLETE_VOLUME`, `READY_SENDERS` and `REUSE_SUBMISSIONS` to `1`. Use the same driver with the optional status field in both conditions.
+
 ## Unsuccessful runs
 
-The first large run used listener ports inside the host's ephemeral range; some 128-member listeners failed to bind. Subsequent runs used lower ports. The optional request for two *consecutive exact-height* proofs also failed in some runs: for example, a request at 64 returned a proof that verified at 65. These failures are retained in initial-runs.json.xz. The matrix uses the fixture's normal common-header and two-chain checks. This leaves a distinct limitation for consumers requiring an exact proof at every height.
+The first large run used listener ports inside the host's ephemeral range and some 128-member listeners failed to bind. Subsequent runs used lower ports. Some requests for two exact-height proofs received a later anchor. One request at 64 returned a proof that verified at 65. The matrix uses the fixture's normal common-header and two-chain checks. The historical coverage mode now checks ancestry to a later signed anchor. The exact-height mode remains available for CKB checkpoint fixtures. [Initial failures](https://github.com/a19q3/stem/blob/12338f2fea73c8df437694da473d08e950a0938b/research/certificates/initial-runs.json.xz) · [Proof coverage and replay](../finality/README.md)
 
-With the original fixed 75-second observer timeout, 126 serving nodes in the 128-member candidates confirmed all 64 payments before the two stopped leaders appeared again in the schedule. The reference and mixed run hit the same observation deadline. The harness now accounts for a full weighted rotation when computing its observation deadline. Certificate criteria and protocol timing are unchanged. The three retried configurations passed. paired.json.xz and rotation.json.xz preserve both series.
+With the original fixed 75-second observer timeout, 126 serving nodes in the 128-member candidates confirmed all 64 payments before the two stopped leaders appeared again in the schedule. The reference and mixed run hit the same observation deadline. The harness now accounts for a full weighted rotation when computing its observation deadline. Certificate criteria and protocol timing are unchanged. The three retried configurations passed. [Paired and rotation archives](https://github.com/a19q3/stem/tree/12338f2fea73c8df437694da473d08e950a0938b/research/certificates)
 
 ## Replay
 

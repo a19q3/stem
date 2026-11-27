@@ -277,7 +277,11 @@ fn native_default_preserves_polytype_intent_lineage_and_keeper() -> Result<()> {
     assert!(clients.iter().all(|client| {
         client
             .status()
-            .is_ok_and(|status| status.history_window == Some(256))
+            .is_ok_and(|status| {
+                status.history_window == Some(256)
+                    && status.certificate_experiment.is_some()
+                        == cfg!(feature = "jolteon-certificate-experiment")
+            })
     }));
 
     let mut executions = Vec::new();

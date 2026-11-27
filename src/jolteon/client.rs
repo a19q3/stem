@@ -129,6 +129,20 @@ pub struct AdmissionPipelineMetrics {
     pub pending_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct FrameReuseMetrics {
+    pub hits: u64,
+    pub encodes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
+pub struct CertificateExperimentMetrics {
+    pub parent_hits: u64,
+    pub parent_tc_checks: u64,
+    pub quorum_frame: FrameReuseMetrics,
+    pub timeout_frame: FrameReuseMetrics,
+}
+
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct Status {
     pub height: u64,
@@ -153,6 +167,8 @@ pub struct Status {
     pub admission: Option<AdmissionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_pipeline: Option<AdmissionPipelineMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate_experiment: Option<CertificateExperimentMetrics>,
     #[serde(default)]
     pub execution: ExecutionMetrics,
 }

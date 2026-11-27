@@ -49,8 +49,8 @@ use transport::{Incoming, Network};
 
 pub use client::LatencyHistogram as AdmissionLatency;
 pub use client::{
-    AdmissionMetrics, AdmissionPipelineMetrics, Certificate, Client, ExecutionMetrics,
-    LatencyHistogram, QueryResult, Status, SubmissionProgress,
+    AdmissionMetrics, AdmissionPipelineMetrics, Certificate, CertificateExperimentMetrics, Client,
+    ExecutionMetrics, FrameReuseMetrics, LatencyHistogram, QueryResult, Status, SubmissionProgress,
 };
 
 const STATE: &[u8] = b"state";
