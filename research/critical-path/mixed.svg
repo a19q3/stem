@@ -1,0 +1,532 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="512" viewBox="0 0 1200 512">
+<style>text{font:11px monospace;fill:#172030;pointer-events:none}g:hover rect{stroke:#172030;stroke-width:1.1}</style>
+<rect width="1200" height="512" fill="#fff"/>
+<text x="7" y="17" style="font-size:14px">Stem mixed · symbolised frame-pointer probe</text>
+<text x="7" y="33">Width represents sampled on-CPU time. Hover for the symbol and weight.</text>
+<g><title>Four validators · user CPU · 92.629 sampled CPU s (100.00%)</title><rect x="0.00" y="495" width="1200.00" height="16" rx="1" fill="hsl(27,74%,68%)"/><text x="3.00" y="507">Four validators · user CPU</text></g>
+<g><title>Admission · local + relay · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="478" width="405.61" height="16" rx="1" fill="hsl(23,74%,68%)"/><text x="3.00" y="490">Admission · local + relay</text></g>
+<g><title>main · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="461" width="405.61" height="16" rx="1" fill="hsl(23,74%,68%)"/><text x="3.00" y="473">main</text></g>
+<g><title>std::rt::lang_start_internal · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="444" width="405.61" height="16" rx="1" fill="hsl(28,74%,68%)"/><text x="3.00" y="456">std::rt::lang_start_internal</text></g>
+<g><title>std::rt::lang_start::{{closure}} · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="427" width="405.61" height="16" rx="1" fill="hsl(29,74%,68%)"/><text x="3.00" y="439">std::rt::lang_start::{{closure}}</text></g>
+<g><title>std::sys::backtrace::__rust_begin_short_backtrace · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="410" width="405.61" height="16" rx="1" fill="hsl(50,74%,68%)"/><text x="3.00" y="422">std::sys::backtrace::__rust_begin_short_backtrace</text></g>
+<g><title>stem::main · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="393" width="405.61" height="16" rx="1" fill="hsl(34,74%,68%)"/><text x="3.00" y="405">stem::main</text></g>
+<g><title>stem::jolteon::run · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="376" width="405.61" height="16" rx="1" fill="hsl(35,74%,68%)"/><text x="3.00" y="388">stem::jolteon::run</text></g>
+<g><title>tokio::runtime::runtime::Runtime::block_on · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="359" width="405.61" height="16" rx="1" fill="hsl(43,74%,68%)"/><text x="3.00" y="371">tokio::runtime::runtime::Runtime::block_on</text></g>
+<g><title>tokio::runtime::context::runtime::enter_runtime · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="342" width="405.61" height="16" rx="1" fill="hsl(58,74%,68%)"/><text x="3.00" y="354">tokio::runtime::context::runtime::enter_runtime</text></g>
+<g><title>tokio::runtime::park::CachedParkThread::block_on · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="325" width="405.61" height="16" rx="1" fill="hsl(23,74%,68%)"/><text x="3.00" y="337">tokio::runtime::park::CachedParkThread::block_on</text></g>
+<g><title>stem::jolteon::run::{{closure}} · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="308" width="405.61" height="16" rx="1" fill="hsl(26,74%,68%)"/><text x="3.00" y="320">stem::jolteon::run::{{closure}}</text></g>
+<g><title>stem::jolteon::Replica::handle · 31.309 sampled CPU s (33.80%)</title><rect x="0.00" y="291" width="405.61" height="16" rx="1" fill="hsl(42,74%,68%)"/><text x="3.00" y="303">stem::jolteon::Replica::handle</text></g>
+<g><title>stem::jolteon::Replica::client · 11.794 sampled CPU s (12.73%)</title><rect x="0.00" y="274" width="152.79" height="16" rx="1" fill="hsl(61,74%,68%)"/><text x="3.00" y="286">stem::jolteon::Replic…</text></g>
+<g><title>stem::jolteon::Replica::insert_tx · 11.794 sampled CPU s (12.73%)</title><rect x="0.00" y="257" width="152.79" height="16" rx="1" fill="hsl(36,74%,68%)"/><text x="3.00" y="269">stem::jolteon::Replic…</text></g>
+<g><title>stem::native_store::Store::check · 11.680 sampled CPU s (12.61%)</title><rect x="0.27" y="240" width="151.32" height="16" rx="1" fill="hsl(37,74%,68%)"/><text x="3.27" y="252">stem::native_store::S…</text></g>
+<g><title>stem::native_store::Store::stage_transaction · 11.546 sampled CPU s (12.47%)</title><rect x="0.53" y="223" width="149.58" height="16" rx="1" fill="hsl(42,74%,68%)"/><text x="3.53" y="235">stem::native_store::S…</text></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve · 0.340 sampled CPU s (0.37%)</title><rect x="1.07" y="206" width="4.41" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve_with_capacity · 0.320 sampled CPU s (0.35%)</title><rect x="1.07" y="189" width="4.14" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>stem_ledger::authorization::resolve_cells · 0.144 sampled CPU s (0.16%)</title><rect x="2.00" y="172" width="1.87" height="16" rx="1" fill="hsl(36,74%,68%)"/></g>
+<g><title>stem_ledger::ResolutionBudget::load · 0.072 sampled CPU s (0.08%)</title><rect x="2.40" y="155" width="0.93" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::native_store::Store::resolve_live · 0.072 sampled CPU s (0.08%)</title><rect x="2.40" y="138" width="0.93" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>stem::native_store::Store::live_cell · 0.062 sampled CPU s (0.07%)</title><rect x="2.40" y="121" width="0.80" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem_ledger::derive_script_groups · 0.093 sampled CPU s (0.10%)</title><rect x="3.87" y="172" width="1.20" height="16" rx="1" fill="hsl(61,74%,68%)"/></g>
+<g><title>stem_vm::VerificationCache::verify · 11.155 sampled CPU s (12.04%)</title><rect x="5.61" y="206" width="144.51" height="16" rx="1" fill="hsl(37,74%,68%)"/><text x="8.61" y="218">stem_vm::Verificatio…</text></g>
+<g><title>stem_vm::execute_group · 10.990 sampled CPU s (11.86%)</title><rect x="7.08" y="189" width="142.37" height="16" rx="1" fill="hsl(40,74%,68%)"/><text x="10.08" y="201">stem_vm::execute_gro…</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::run · 10.814 sampled CPU s (11.68%)</title><rect x="7.48" y="172" width="140.10" height="16" rx="1" fill="hsl(23,74%,68%)"/><text x="10.48" y="184">ckb_script::schedul…</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::boot_vm · 1.866 sampled CPU s (2.01%)</title><rect x="7.88" y="155" width="24.17" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::create_dummy_vm · 0.278 sampled CPU s (0.30%)</title><rect x="8.28" y="138" width="3.61" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>&lt;alloc::vec::into_iter::IntoIter&lt;T,A&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.124 sampled CPU s (0.13%)</title><rect x="8.28" y="121" width="1.60" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one · 0.062 sampled CPU s (0.07%)</title><rect x="8.28" y="104" width="0.80" height="16" rx="1" fill="hsl(39,74%,68%)"/></g>
+<g><title>ckb_vm_definitions::asm::AsmCoreMachine::clear_traces · 0.082 sampled CPU s (0.09%)</title><rect x="10.15" y="121" width="1.07" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::load_vm_program · 1.546 sampled CPU s (1.67%)</title><rect x="11.89" y="138" width="20.03" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::machine::DefaultMachineRunner::load_program_with_metadata · 1.423 sampled CPU s (1.54%)</title><rect x="12.55" y="121" width="18.43" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>ckb_vm::machine::SupportMachine::load_binary · 1.412 sampled CPU s (1.52%)</title><rect x="12.55" y="104" width="18.30" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::&lt;impl ckb_vm::memory::Memory for R&gt;::init_pages · 1.371 sampled CPU s (1.48%)</title><rect x="12.95" y="87" width="17.76" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::iterate_inner · 8.897 sampled CPU s (9.60%)</title><rect x="32.19" y="155" width="115.26" height="16" rx="1" fill="hsl(59,74%,68%)"/><text x="35.19" y="167">ckb_script::sche…</text></g>
+<g><title>&lt;ckb_script::reusable_asm::ReusableMachine as ckb_vm::machine::DefaultMachineRunner&gt;::run · 8.866 sampled CPU s (9.57%)</title><rect x="32.19" y="138" width="114.86" height="16" rx="1" fill="hsl(41,74%,68%)"/><text x="35.19" y="150">&lt;ckb_script::reu…</text></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_ADDI · 0.113 sampled CPU s (0.12%)</title><rect x="32.32" y="121" width="1.47" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_CUSTOM_TRACE_END · 0.495 sampled CPU s (0.53%)</title><rect x="34.86" y="121" width="6.41" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LBU_VERSION1 · 0.155 sampled CPU s (0.17%)</title><rect x="41.54" y="121" width="2.00" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>.prepare_trace · 0.124 sampled CPU s (0.13%)</title><rect x="45.94" y="121" width="1.60" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>&lt;ckb_vm::machine::asm::AsmMachine&lt;R&gt; as ckb_vm::machine::DefaultMachineRunner&gt;::run · 6.567 sampled CPU s (7.09%)</title><rect x="47.55" y="121" width="85.08" height="16" rx="1" fill="hsl(58,74%,68%)"/><text x="50.55" y="133">&lt;ckb_vm::ma…</text></g>
+<g><title>&lt;ckb_script::syscalls::load_cell_data::LoadCellData&lt;C&gt; as ckb_vm::syscalls::Syscalls&lt;Mac&gt;&gt;::ecall · 0.072 sampled CPU s (0.08%)</title><rect x="47.55" y="104" width="0.93" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>&lt;stem_vm::LoadContext as ckb_vm::syscalls::Syscalls&lt;M&gt;&gt;::ecall · 1.010 sampled CPU s (1.09%)</title><rect x="48.61" y="104" width="13.09" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice_ref · 0.082 sampled CPU s (0.09%)</title><rect x="49.02" y="87" width="1.07" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>stem_ledger::Cell::type_script · 0.443 sampled CPU s (0.48%)</title><rect x="51.82" y="87" width="5.74" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice_ref · 0.082 sampled CPU s (0.09%)</title><rect x="52.35" y="70" width="1.07" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>stem_ledger::decode_script · 0.144 sampled CPU s (0.16%)</title><rect x="54.36" y="70" width="1.87" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem_ledger::wire::Cell::type_scripts · 0.062 sampled CPU s (0.07%)</title><rect x="56.23" y="70" width="0.80" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>&lt;stem_ledger::wire::CellReader as stem_ledger::strand::Reader&gt;::new_unchecked · 0.062 sampled CPU s (0.07%)</title><rect x="56.23" y="53" width="0.80" height="16" rx="1" fill="hsl(46,74%,68%)"/></g>
+<g><title>stem_ledger::Cell::type_scripts_bytes · 0.062 sampled CPU s (0.07%)</title><rect x="57.96" y="87" width="0.80" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem_ledger::decode_script · 0.062 sampled CPU s (0.07%)</title><rect x="58.90" y="87" width="0.80" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>&lt;stem_vm::crypto::Recover as ckb_vm::syscalls::Syscalls&lt;M&gt;&gt;::ecall · 0.062 sampled CPU s (0.07%)</title><rect x="61.70" y="104" width="0.80" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>std::thread::local::LocalKey&lt;T&gt;::with · 0.062 sampled CPU s (0.07%)</title><rect x="61.70" y="87" width="0.80" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode · 4.381 sampled CPU s (4.73%)</title><rect x="64.11" y="104" width="56.76" height="16" rx="1" fill="hsl(46,74%,68%)"/><text x="67.11" y="116">ckb_vm…</text></g>
+<g><title>ckb_vm::decoder::Decoder::decode_raw · 2.887 sampled CPU s (3.12%)</title><rect x="64.11" y="87" width="37.40" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::standard_factory · 0.763 sampled CPU s (0.82%)</title><rect x="64.11" y="70" width="9.88" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::i::factory · 0.732 sampled CPU s (0.79%)</title><rect x="64.11" y="53" width="9.48" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::rvc::factory · 0.381 sampled CPU s (0.41%)</title><rect x="74.26" y="70" width="4.94" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::check_memory_executable · 0.412 sampled CPU s (0.45%)</title><rect x="79.87" y="70" width="5.34" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::standard_factory · 0.124 sampled CPU s (0.13%)</title><rect x="101.50" y="87" width="1.60" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode_raw · 0.113 sampled CPU s (0.12%)</title><rect x="120.87" y="104" width="1.47" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::cost_model::estimate_cycles · 0.124 sampled CPU s (0.13%)</title><rect x="132.75" y="121" width="1.60" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::is_basic_block_end_instruction · 0.227 sampled CPU s (0.24%)</title><rect x="134.62" y="121" width="2.94" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>core::ops::function::Fn::call · 0.278 sampled CPU s (0.30%)</title><rect x="137.70" y="121" width="3.61" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>core::ptr::drop_in_place&lt;ckb_script::scheduler::Scheduler&lt;stem_vm::GroupContext,bool,ckb_script::reusable_asm::ReusableMachine&gt;&gt; · 0.113 sampled CPU s (0.12%)</title><rect x="147.58" y="172" width="1.47" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>&lt;alloc::collections::btree::map::BTreeMap&lt;K,V,A&gt; as core::ops::drop::Drop&gt;::drop · 0.113 sampled CPU s (0.12%)</title><rect x="147.58" y="155" width="1.47" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>core::ptr::drop_in_place&lt;(ckb_script::types::VmContext&lt;stem_vm::GroupContext&gt;,ckb_script::reusable_asm::ReusableMachine)&gt; · 0.082 sampled CPU s (0.09%)</title><rect x="147.71" y="138" width="1.07" height="16" rx="1" fill="hsl(40,74%,68%)"/></g>
+<g><title>&lt;ckb_script::reusable_asm::ReusableMachine as core::ops::drop::Drop&gt;::drop · 0.082 sampled CPU s (0.09%)</title><rect x="147.71" y="121" width="1.07" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>ckb_vm::machine::DefaultMachine&lt;Inner&gt;::take_inner · 0.072 sampled CPU s (0.08%)</title><rect x="147.85" y="104" width="0.93" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>stem_ledger::time::BlockContext::after · 0.062 sampled CPU s (0.07%)</title><rect x="150.38" y="223" width="0.80" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem_ledger::block::HeaderContext::after · 0.062 sampled CPU s (0.07%)</title><rect x="150.38" y="206" width="0.80" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>stem_ledger::Transaction::from_bytes · 0.062 sampled CPU s (0.07%)</title><rect x="151.59" y="240" width="0.80" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::insert_tx · 19.515 sampled CPU s (21.07%)</title><rect x="152.79" y="274" width="252.82" height="16" rx="1" fill="hsl(36,74%,68%)"/><text x="155.79" y="286">stem::jolteon::Replica::insert_tx</text></g>
+<g><title>stem::native_store::Store::check · 19.278 sampled CPU s (20.81%)</title><rect x="153.46" y="257" width="249.75" height="16" rx="1" fill="hsl(37,74%,68%)"/><text x="156.46" y="269">stem::native_store::Store::check</text></g>
+<g><title>stem::native_store::Store::stage_transaction · 19.155 sampled CPU s (20.68%)</title><rect x="153.99" y="240" width="248.15" height="16" rx="1" fill="hsl(42,74%,68%)"/><text x="156.99" y="252">stem::native_store::Store::stage_tra…</text></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve · 0.598 sampled CPU s (0.65%)</title><rect x="155.73" y="223" width="7.75" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve_with_capacity · 0.577 sampled CPU s (0.62%)</title><rect x="155.86" y="206" width="7.48" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>stem_ledger::authorization::resolve_cells · 0.237 sampled CPU s (0.26%)</title><rect x="158.13" y="189" width="3.07" height="16" rx="1" fill="hsl(36,74%,68%)"/></g>
+<g><title>stem_ledger::ResolutionBudget::load · 0.144 sampled CPU s (0.16%)</title><rect x="159.20" y="172" width="1.87" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::native_store::Store::resolve_live · 0.134 sampled CPU s (0.14%)</title><rect x="159.20" y="155" width="1.74" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>stem::native_store::Store::live_cell · 0.113 sampled CPU s (0.12%)</title><rect x="159.47" y="138" width="1.47" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem_ledger::derive_script_groups · 0.144 sampled CPU s (0.16%)</title><rect x="161.20" y="189" width="1.87" height="16" rx="1" fill="hsl(61,74%,68%)"/></g>
+<g><title>stem_vm::VerificationCache::verify · 18.402 sampled CPU s (19.87%)</title><rect x="163.74" y="223" width="238.40" height="16" rx="1" fill="hsl(37,74%,68%)"/><text x="166.74" y="235">stem_vm::VerificationCache::verify</text></g>
+<g><title>stem_vm::execute_group · 18.155 sampled CPU s (19.60%)</title><rect x="165.48" y="206" width="235.19" height="16" rx="1" fill="hsl(40,74%,68%)"/><text x="168.48" y="218">stem_vm::execute_group</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::run · 17.938 sampled CPU s (19.37%)</title><rect x="165.74" y="189" width="232.39" height="16" rx="1" fill="hsl(23,74%,68%)"/><text x="168.74" y="201">ckb_script::scheduler::Scheduler&lt;C…</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::boot_vm · 2.619 sampled CPU s (2.83%)</title><rect x="166.14" y="172" width="33.92" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::create_dummy_vm · 0.206 sampled CPU s (0.22%)</title><rect x="166.68" y="155" width="2.67" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>&lt;alloc::vec::into_iter::IntoIter&lt;T,A&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.082 sampled CPU s (0.09%)</title><rect x="166.68" y="138" width="1.07" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>ckb_vm_definitions::asm::AsmCoreMachine::clear_traces · 0.062 sampled CPU s (0.07%)</title><rect x="168.01" y="138" width="0.80" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::load_vm_program · 2.340 sampled CPU s (2.53%)</title><rect x="169.35" y="155" width="30.32" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::machine::DefaultMachineRunner::load_program_with_metadata · 2.216 sampled CPU s (2.39%)</title><rect x="170.02" y="138" width="28.71" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>ckb_vm::machine::SupportMachine::load_binary · 2.216 sampled CPU s (2.39%)</title><rect x="170.02" y="121" width="28.71" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::&lt;impl ckb_vm::memory::Memory for R&gt;::init_pages · 2.196 sampled CPU s (2.37%)</title><rect x="170.15" y="104" width="28.45" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::iterate_inner · 15.196 sampled CPU s (16.41%)</title><rect x="200.33" y="172" width="196.86" height="16" rx="1" fill="hsl(59,74%,68%)"/><text x="203.33" y="184">ckb_script::scheduler::Sched…</text></g>
+<g><title>&lt;ckb_script::reusable_asm::ReusableMachine as ckb_vm::machine::DefaultMachineRunner&gt;::run · 15.093 sampled CPU s (16.29%)</title><rect x="200.47" y="155" width="195.53" height="16" rx="1" fill="hsl(41,74%,68%)"/><text x="203.47" y="167">&lt;ckb_script::reusable_asm::R…</text></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_ADDI · 0.196 sampled CPU s (0.21%)</title><rect x="200.60" y="138" width="2.54" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_BNE · 0.268 sampled CPU s (0.29%)</title><rect x="203.41" y="138" width="3.47" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_CUSTOM_TRACE_END · 0.691 sampled CPU s (0.75%)</title><rect x="207.15" y="138" width="8.95" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LBU_VERSION1 · 0.412 sampled CPU s (0.45%)</title><rect x="216.09" y="138" width="5.34" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LD_VERSION1 · 0.113 sampled CPU s (0.12%)</title><rect x="221.44" y="138" width="1.47" height="16" rx="1" fill="hsl(52,74%,68%)"/></g>
+<g><title>.i_branch_success · 0.082 sampled CPU s (0.09%)</title><rect x="225.04" y="138" width="1.07" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>.prepare_trace · 0.289 sampled CPU s (0.31%)</title><rect x="226.11" y="138" width="3.74" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>&lt;ckb_vm::machine::asm::AsmMachine&lt;R&gt; as ckb_vm::machine::DefaultMachineRunner&gt;::run · 10.845 sampled CPU s (11.71%)</title><rect x="229.85" y="138" width="140.50" height="16" rx="1" fill="hsl(58,74%,68%)"/><text x="232.85" y="150">&lt;ckb_vm::machine::as…</text></g>
+<g><title>&lt;ckb_script::syscalls::load_cell_data::LoadCellData&lt;C&gt; as ckb_vm::syscalls::Syscalls&lt;Mac&gt;&gt;::ecall · 0.186 sampled CPU s (0.20%)</title><rect x="229.85" y="121" width="2.40" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>ckb_vm::snapshot2::Snapshot2Context&lt;I,D&gt;::store_bytes · 0.113 sampled CPU s (0.12%)</title><rect x="230.78" y="104" width="1.47" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>&lt;stem_vm::GroupContext as ckb_vm::snapshot2::DataSource&lt;ckb_script::types::DataPieceId&gt;&gt;::load_data · 0.062 sampled CPU s (0.07%)</title><rect x="230.78" y="87" width="0.80" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>&lt;stem_vm::LoadContext as ckb_vm::syscalls::Syscalls&lt;M&gt;&gt;::ecall · 1.711 sampled CPU s (1.85%)</title><rect x="232.25" y="121" width="22.17" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice_ref · 0.186 sampled CPU s (0.20%)</title><rect x="232.92" y="104" width="2.40" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>bytes::bytes::shared_clone · 0.093 sampled CPU s (0.10%)</title><rect x="235.33" y="104" width="1.20" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>ckb_script::syscalls::utils::store_data · 0.082 sampled CPU s (0.09%)</title><rect x="237.06" y="104" width="1.07" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>stem_ledger::Cell::type_script · 0.680 sampled CPU s (0.73%)</title><rect x="238.53" y="104" width="8.81" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice_ref · 0.103 sampled CPU s (0.11%)</title><rect x="239.07" y="87" width="1.34" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>bytes::bytes::shared_clone · 0.124 sampled CPU s (0.13%)</title><rect x="240.53" y="87" width="1.60" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>bytes::bytes::shared_drop · 0.062 sampled CPU s (0.07%)</title><rect x="242.14" y="87" width="0.80" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>stem_ledger::decode_script · 0.237 sampled CPU s (0.26%)</title><rect x="242.94" y="87" width="3.07" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem_ledger::decode_script · 0.113 sampled CPU s (0.12%)</title><rect x="248.41" y="104" width="1.47" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem_vm::GroupContext::cell · 0.072 sampled CPU s (0.08%)</title><rect x="250.15" y="104" width="0.93" height="16" rx="1" fill="hsl(53,74%,68%)"/></g>
+<g><title>&lt;stem_vm::crypto::Recover as ckb_vm::syscalls::Syscalls&lt;M&gt;&gt;::ecall · 0.082 sampled CPU s (0.09%)</title><rect x="254.42" y="121" width="1.07" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>std::thread::local::LocalKey&lt;T&gt;::with · 0.082 sampled CPU s (0.09%)</title><rect x="254.42" y="104" width="1.07" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>lru::LruCache&lt;K,V,S&gt;::put · 0.072 sampled CPU s (0.08%)</title><rect x="254.56" y="87" width="0.93" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>cfree · 0.103 sampled CPU s (0.11%)</title><rect x="257.50" y="121" width="1.34" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>ckb_gen_types::extension::calc_hash::&lt;impl ckb_gen_types::generated::blockchain::Transaction&gt;::calc_witness_hash · 0.062 sampled CPU s (0.07%)</title><rect x="258.83" y="121" width="0.80" height="16" rx="1" fill="hsl(46,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode · 7.144 sampled CPU s (7.71%)</title><rect x="259.77" y="121" width="92.55" height="16" rx="1" fill="hsl(46,74%,68%)"/><text x="262.77" y="133">ckb_vm::deco…</text></g>
+<g><title>ckb_vm::decoder::Decoder::decode_raw · 4.680 sampled CPU s (5.05%)</title><rect x="259.77" y="104" width="60.63" height="16" rx="1" fill="hsl(51,74%,68%)"/><text x="262.77" y="116">ckb_vm:…</text></g>
+<g><title>ckb_vm::decoder::standard_factory · 1.175 sampled CPU s (1.27%)</title><rect x="259.77" y="87" width="15.23" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::i::factory · 1.134 sampled CPU s (1.22%)</title><rect x="259.77" y="70" width="14.69" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::i::factory · 0.113 sampled CPU s (0.12%)</title><rect x="274.99" y="87" width="1.47" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::rvc::factory · 0.557 sampled CPU s (0.60%)</title><rect x="276.46" y="87" width="7.21" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::check_memory_executable · 0.557 sampled CPU s (0.60%)</title><rect x="285.01" y="87" width="7.21" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::standard_factory · 0.175 sampled CPU s (0.19%)</title><rect x="320.40" y="104" width="2.27" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::rvc::factory · 0.062 sampled CPU s (0.07%)</title><rect x="322.67" y="104" width="0.80" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode_raw · 0.113 sampled CPU s (0.12%)</title><rect x="352.32" y="121" width="1.47" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::cost_model::estimate_cycles · 0.175 sampled CPU s (0.19%)</title><rect x="370.48" y="138" width="2.27" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::is_basic_block_end_instruction · 0.495 sampled CPU s (0.53%)</title><rect x="373.42" y="138" width="6.41" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>core::ops::function::Fn::call · 0.320 sampled CPU s (0.35%)</title><rect x="380.37" y="138" width="4.14" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>core::ptr::drop_in_place&lt;ckb_script::scheduler::Scheduler&lt;stem_vm::GroupContext,bool,ckb_script::reusable_asm::ReusableMachine&gt;&gt; · 0.124 sampled CPU s (0.13%)</title><rect x="398.13" y="189" width="1.60" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>&lt;alloc::collections::btree::map::BTreeMap&lt;K,V,A&gt; as core::ops::drop::Drop&gt;::drop · 0.124 sampled CPU s (0.13%)</title><rect x="398.13" y="172" width="1.60" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>core::ptr::drop_in_place&lt;(ckb_script::types::VmContext&lt;stem_vm::GroupContext&gt;,ckb_script::reusable_asm::ReusableMachine)&gt; · 0.093 sampled CPU s (0.10%)</title><rect x="398.26" y="155" width="1.20" height="16" rx="1" fill="hsl(40,74%,68%)"/></g>
+<g><title>&lt;ckb_script::reusable_asm::ReusableMachine as core::ops::drop::Drop&gt;::drop · 0.093 sampled CPU s (0.10%)</title><rect x="398.26" y="138" width="1.20" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>ckb_vm::machine::DefaultMachine&lt;Inner&gt;::take_inner · 0.082 sampled CPU s (0.09%)</title><rect x="398.26" y="121" width="1.07" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>stem_ledger::ResolvedTransaction::program_index · 0.062 sampled CPU s (0.07%)</title><rect x="399.87" y="189" width="0.80" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>stem_ledger::Transaction::from_bytes · 0.134 sampled CPU s (0.14%)</title><rect x="403.21" y="257" width="1.74" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>stem_ledger::Transaction::from_entity · 0.103 sampled CPU s (0.11%)</title><rect x="403.61" y="240" width="1.34" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>Consensus transport/authentication · 0.402 sampled CPU s (0.43%)</title><rect x="405.61" y="478" width="5.21" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>main · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="461" width="1.07" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>std::rt::lang_start_internal · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="444" width="1.07" height="16" rx="1" fill="hsl(28,74%,68%)"/></g>
+<g><title>std::rt::lang_start::{{closure}} · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="427" width="1.07" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>std::sys::backtrace::__rust_begin_short_backtrace · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="410" width="1.07" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem::main · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="393" width="1.07" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>stem::jolteon::run · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="376" width="1.07" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>tokio::runtime::runtime::Runtime::block_on · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="359" width="1.07" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>tokio::runtime::context::runtime::enter_runtime · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="342" width="1.07" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>tokio::runtime::park::CachedParkThread::block_on · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="325" width="1.07" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem::jolteon::run::{{closure}} · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="308" width="1.07" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::handle · 0.082 sampled CPU s (0.09%)</title><rect x="405.61" y="291" width="1.07" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>tokio::runtime::scheduler::multi_thread::worker::Context::run_task · 0.320 sampled CPU s (0.35%)</title><rect x="406.68" y="461" width="4.14" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>tokio::runtime::task::raw::poll · 0.320 sampled CPU s (0.35%)</title><rect x="406.68" y="444" width="4.14" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem::jolteon::transport::Network::listen::{{closure}}::{{closure}}::{{closure}} · 0.247 sampled CPU s (0.27%)</title><rect x="406.81" y="427" width="3.21" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>&lt;tokio::time::timeout::Timeout&lt;T&gt; as core::future::future::Future&gt;::poll · 0.082 sampled CPU s (0.09%)</title><rect x="407.08" y="410" width="1.07" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem::jolteon::wire::canonical_bytes · 0.082 sampled CPU s (0.09%)</title><rect x="408.41" y="410" width="1.07" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>stem::jolteon::transport::send::{{closure}} · 0.062 sampled CPU s (0.07%)</title><rect x="410.02" y="427" width="0.80" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>Other or truncated stack · 18.670 sampled CPU s (20.16%)</title><rect x="410.82" y="478" width="241.87" height="16" rx="1" fill="hsl(51,74%,68%)"/><text x="413.82" y="490">Other or truncated stack</text></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_ADD · 0.227 sampled CPU s (0.24%)</title><rect x="410.82" y="461" width="2.94" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_ADDI · 0.144 sampled CPU s (0.16%)</title><rect x="413.76" y="461" width="1.87" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_CUSTOM_TRACE_END · 0.392 sampled CPU s (0.42%)</title><rect x="416.56" y="461" width="5.08" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LBU_VERSION1 · 0.082 sampled CPU s (0.09%)</title><rect x="422.30" y="461" width="1.07" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LD_VERSION1 · 0.134 sampled CPU s (0.14%)</title><rect x="423.37" y="461" width="1.74" height="16" rx="1" fill="hsl(52,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_OR · 0.155 sampled CPU s (0.17%)</title><rect x="425.24" y="461" width="2.00" height="16" rx="1" fill="hsl(47,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_SD · 0.289 sampled CPU s (0.31%)</title><rect x="427.65" y="461" width="3.74" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_SLLI · 0.144 sampled CPU s (0.16%)</title><rect x="431.52" y="461" width="1.87" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_SRLI · 0.134 sampled CPU s (0.14%)</title><rect x="433.52" y="461" width="1.74" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_XOR · 0.144 sampled CPU s (0.16%)</title><rect x="435.39" y="461" width="1.87" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>.i_branch_success · 0.072 sampled CPU s (0.08%)</title><rect x="437.80" y="461" width="0.93" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>.prepare_trace · 0.289 sampled CPU s (0.31%)</title><rect x="438.73" y="461" width="3.74" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>&lt;&amp;mio::net::tcp::stream::TcpStream as std::io::Read&gt;::read · 0.082 sampled CPU s (0.09%)</title><rect x="442.47" y="461" width="1.07" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>&lt;&amp;mio::net::tcp::stream::TcpStream as std::io::Write&gt;::write_vectored · 0.093 sampled CPU s (0.10%)</title><rect x="443.54" y="461" width="1.20" height="16" rx="1" fill="hsl(54,74%,68%)"/></g>
+<g><title>[unresolved] · 3.546 sampled CPU s (3.83%)</title><rect x="446.48" y="461" width="45.94" height="16" rx="1" fill="hsl(41,74%,68%)"/><text x="449.48" y="473">[unre…</text></g>
+<g><title>__rustc::__rust_dealloc · 0.062 sampled CPU s (0.07%)</title><rect x="492.55" y="461" width="0.80" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>blake2b_compress · 3.351 sampled CPU s (3.62%)</title><rect x="493.36" y="461" width="43.41" height="16" rx="1" fill="hsl(56,74%,68%)"/><text x="496.36" y="473">blak…</text></g>
+<g><title>bool rocksdb::BlockIter&lt;rocksdb::Slice&gt;::BinarySeek&lt;rocksdb::DecodeKey&gt;(rocksdb::Slice const&amp;, unsigned int*, bool*) · 0.093 sampled CPU s (0.10%)</title><rect x="537.70" y="461" width="1.20" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>bool rocksdb::BlockIter&lt;rocksdb::Slice&gt;::ParseNextKey&lt;rocksdb::DecodeEntry&gt;(bool*) · 0.175 sampled CPU s (0.19%)</title><rect x="538.90" y="461" width="2.27" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>cfree · 0.113 sampled CPU s (0.12%)</title><rect x="541.17" y="461" width="1.47" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>ckb_gen_types::core::std_mod::&lt;impl core::convert::TryFrom&lt;u8&gt; for ckb_gen_types::core::ScriptHashType&gt;::try_from · 0.124 sampled CPU s (0.13%)</title><rect x="542.64" y="461" width="1.60" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>alloc::fmt::format::format_inner · 0.072 sampled CPU s (0.08%)</title><rect x="542.64" y="444" width="0.93" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::new · 0.412 sampled CPU s (0.45%)</title><rect x="544.24" y="461" width="5.34" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>main · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="461" width="12.82" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>std::rt::lang_start_internal · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="444" width="12.82" height="16" rx="1" fill="hsl(28,74%,68%)"/></g>
+<g><title>std::rt::lang_start::{{closure}} · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="427" width="12.82" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>std::sys::backtrace::__rust_begin_short_backtrace · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="410" width="12.82" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem::main · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="393" width="12.82" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>stem::jolteon::run · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="376" width="12.82" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>tokio::runtime::runtime::Runtime::block_on · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="359" width="12.82" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>tokio::runtime::context::runtime::enter_runtime · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="342" width="12.82" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>tokio::runtime::park::CachedParkThread::block_on · 0.990 sampled CPU s (1.07%)</title><rect x="550.25" y="325" width="12.82" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem::jolteon::run::{{closure}} · 0.979 sampled CPU s (1.06%)</title><rect x="550.25" y="308" width="12.69" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::handle · 0.196 sampled CPU s (0.21%)</title><rect x="550.25" y="291" width="2.54" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::tick::{{closure}} · 0.660 sampled CPU s (0.71%)</title><rect x="552.79" y="291" width="8.55" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>core::ptr::drop_in_place&lt;alloc::vec::Vec&lt;alloc::sync::Arc&lt;stem::native_store::Prepared&gt;&gt;&gt; · 0.289 sampled CPU s (0.31%)</title><rect x="553.19" y="274" width="3.74" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>alloc::sync::Arc&lt;T,A&gt;::drop_slow · 0.289 sampled CPU s (0.31%)</title><rect x="553.19" y="257" width="3.74" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>cfree · 0.175 sampled CPU s (0.19%)</title><rect x="553.19" y="240" width="2.27" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>stem::jolteon::mempool::Mempool::remove · 0.082 sampled CPU s (0.09%)</title><rect x="557.33" y="274" width="1.07" height="16" rx="1" fill="hsl(54,74%,68%)"/></g>
+<g><title>stem::native_store::Store::commit_certified · 0.216 sampled CPU s (0.23%)</title><rect x="558.40" y="274" width="2.80" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::Get(rocksdb::ReadOptions const&amp;, rocksdb::ColumnFamilyHandle*, rocksdb::Slice const&amp;, rocksdb::PinnableSlice*) · 0.464 sampled CPU s (0.50%)</title><rect x="565.61" y="461" width="6.01" height="16" rx="1" fill="hsl(54,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::GetImpl(rocksdb::ReadOptions const&amp;, rocksdb::Slice const&amp;, rocksdb::DBImpl::GetImplOptions&amp;) · 0.433 sampled CPU s (0.47%)</title><rect x="565.74" y="444" width="5.61" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>rocksdb::Version::Get(rocksdb::ReadOptions const&amp;, rocksdb::LookupKey const&amp;, rocksdb::PinnableSlice*, rocksdb::PinnableWideColumns*, std::__cxx11::basic_string&lt;char, std::char_trait… · 0.392 sampled CPU s (0.42%)</title><rect x="566.01" y="427" width="5.08" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>rocksdb::TableCache::Get(rocksdb::ReadOptions const&amp;, rocksdb::InternalKeyComparator const&amp;, rocksdb::FileMetaData const&amp;, rocksdb::Slice const&amp;, rocksdb::GetContext*, unsigned char,… · 0.320 sampled CPU s (0.35%)</title><rect x="566.28" y="410" width="4.14" height="16" rx="1" fill="hsl(59,74%,68%)"/></g>
+<g><title>rocksdb::BlockBasedTable::Get(rocksdb::ReadOptions const&amp;, rocksdb::Slice const&amp;, rocksdb::GetContext*, rocksdb::SliceTransform const*, bool) · 0.268 sampled CPU s (0.29%)</title><rect x="566.28" y="393" width="3.47" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>rocksdb::DataBlockIter* rocksdb::BlockBasedTable::NewDataBlockIterator&lt;rocksdb::DataBlockIter&gt;(rocksdb::ReadOptions const&amp;, rocksdb::BlockHandle const&amp;, rocksdb::DataBlockIter*, rock… · 0.165 sampled CPU s (0.18%)</title><rect x="567.48" y="376" width="2.14" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>std::enable_if&lt;(rocksdb::Block_kData::kCacheEntryRole==((rocksdb::CacheEntryRole)13))||(true), rocksdb::Status&gt;::type rocksdb::BlockBasedTable::RetrieveBlock&lt;rocksdb::Block_kData&gt;(ro… · 0.155 sampled CPU s (0.17%)</title><rect x="567.61" y="359" width="2.00" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>std::enable_if&lt;(rocksdb::Block_kData::kCacheEntryRole==((rocksdb::CacheEntryRole)13))||(true), rocksdb::Status&gt;::type rocksdb::BlockBasedTable::MaybeReadBlockAndLoadToCache&lt;rocksdb::… · 0.144 sampled CPU s (0.16%)</title><rect x="567.61" y="342" width="1.87" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>rocksdb::BlockFetcher::ReadBlockContents() · 0.082 sampled CPU s (0.09%)</title><rect x="567.61" y="325" width="1.07" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>rocksdb::IndexBlockIter::SeekImpl(rocksdb::Slice const&amp;) · 0.093 sampled CPU s (0.10%)</title><rect x="571.89" y="461" width="1.20" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>rocksdb::InlineSkipList&lt;rocksdb::MemTableRep::KeyComparator const&amp;&gt;::FindGreaterOrEqual(char const*) const · 0.660 sampled CPU s (0.71%)</title><rect x="573.09" y="461" width="8.55" height="16" rx="1" fill="hsl(61,74%,68%)"/></g>
+<g><title>rocksdb::lru_cache::LRUCacheShard::LRU_Remove(rocksdb::lru_cache::LRUHandle*) · 0.093 sampled CPU s (0.10%)</title><rect x="583.91" y="461" width="1.20" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>rocksdb::lru_cache::LRUHandleTable::FindPointer(rocksdb::Slice const&amp;, unsigned int) · 0.206 sampled CPU s (0.22%)</title><rect x="585.38" y="461" width="2.67" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_ecmult_strauss_wnaf.constprop.2 · 0.814 sampled CPU s (0.88%)</title><rect x="588.71" y="461" width="10.55" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_fe_mul_inner · 1.763 sampled CPU s (1.90%)</title><rect x="600.73" y="461" width="22.84" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_fe_sqr_inner · 0.825 sampled CPU s (0.89%)</title><rect x="623.57" y="461" width="10.68" height="16" rx="1" fill="hsl(40,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_fe_sqrt · 0.330 sampled CPU s (0.36%)</title><rect x="634.26" y="461" width="4.27" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_ge_table_set_globalz.part.0 · 0.072 sampled CPU s (0.08%)</title><rect x="638.53" y="461" width="0.93" height="16" rx="1" fill="hsl(46,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_gej_add_ge_var.constprop.0 · 0.186 sampled CPU s (0.20%)</title><rect x="639.87" y="461" width="2.40" height="16" rx="1" fill="hsl(28,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_gej_add_zinv_var · 0.113 sampled CPU s (0.12%)</title><rect x="642.27" y="461" width="1.47" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_modinv64_divsteps_62_var · 0.165 sampled CPU s (0.18%)</title><rect x="643.74" y="461" width="2.14" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>std::pair&lt;unsigned char const*, long&gt; snappy::DecompressBranchless&lt;char*&gt;(unsigned char const*, unsigned char const*, long, char*, long) · 0.206 sampled CPU s (0.22%)</title><rect x="648.01" y="461" width="2.67" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>RocksDB background · 0.619 sampled CPU s (0.67%)</title><rect x="652.69" y="478" width="8.01" height="16" rx="1" fill="hsl(36,74%,68%)"/></g>
+<g><title>rocksdb::BlockBuilder::AddWithLastKey(rocksdb::Slice const&amp;, rocksdb::Slice const&amp;, rocksdb::Slice const&amp;, rocksdb::Slice const*) · 0.113 sampled CPU s (0.12%)</title><rect x="653.76" y="461" width="1.47" height="16" rx="1" fill="hsl(39,74%,68%)"/></g>
+<g><title>rocksdb::ThreadPoolImpl::Impl::BGThread(unsigned long) · 0.186 sampled CPU s (0.20%)</title><rect x="655.49" y="461" width="2.40" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::BackgroundCallFlush(rocksdb::Env::Priority) · 0.186 sampled CPU s (0.20%)</title><rect x="655.49" y="444" width="2.40" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::BackgroundFlush(bool*, rocksdb::JobContext*, rocksdb::LogBuffer*, rocksdb::FlushReason*, rocksdb::Env::Priority) · 0.186 sampled CPU s (0.20%)</title><rect x="655.49" y="427" width="2.40" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::FlushMemTablesToOutputFiles(rocksdb::autovector&lt;rocksdb::DBImpl::BGFlushArg, 8ul&gt; const&amp;, bool*, rocksdb::JobContext*, rocksdb::LogBuffer*, rocksdb::Env::Priority) · 0.186 sampled CPU s (0.20%)</title><rect x="655.49" y="410" width="2.40" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::FlushMemTableToOutputFile(rocksdb::ColumnFamilyData*, rocksdb::MutableCFOptions const&amp;, bool*, rocksdb::JobContext*, rocksdb::FlushReason, rocksdb::SuperVersionConte… · 0.186 sampled CPU s (0.20%)</title><rect x="655.49" y="393" width="2.40" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>rocksdb::FlushJob::Run(rocksdb::LogsWithPrepTracker*, rocksdb::FileMetaData*, bool*) · 0.186 sampled CPU s (0.20%)</title><rect x="655.49" y="376" width="2.40" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>rocksdb::FlushJob::WriteLevel0Table() · 0.186 sampled CPU s (0.20%)</title><rect x="655.49" y="359" width="2.40" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>rocksdb::CompactionIterator::Next() · 0.155 sampled CPU s (0.17%)</title><rect x="655.89" y="342" width="2.00" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>rocksdb::MemTableIterator::key() const · 0.072 sampled CPU s (0.08%)</title><rect x="656.29" y="325" width="0.93" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>snappy::internal::CompressFragment(char const*, unsigned long, char*, unsigned short*, int) · 0.175 sampled CPU s (0.19%)</title><rect x="658.03" y="461" width="2.27" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>durable_batch · 0.773 sampled CPU s (0.83%)</title><rect x="660.70" y="478" width="10.02" height="16" rx="1" fill="hsl(22,74%,68%)"/></g>
+<g><title>[unresolved] · 0.474 sampled CPU s (0.51%)</title><rect x="660.70" y="461" width="6.14" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>main · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="461" width="1.60" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>std::rt::lang_start_internal · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="444" width="1.60" height="16" rx="1" fill="hsl(28,74%,68%)"/></g>
+<g><title>std::rt::lang_start::{{closure}} · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="427" width="1.60" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>std::sys::backtrace::__rust_begin_short_backtrace · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="410" width="1.60" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem::main · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="393" width="1.60" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>stem::jolteon::run · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="376" width="1.60" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>tokio::runtime::runtime::Runtime::block_on · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="359" width="1.60" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>tokio::runtime::context::runtime::enter_runtime · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="342" width="1.60" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>tokio::runtime::park::CachedParkThread::block_on · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="325" width="1.60" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem::jolteon::run::{{closure}} · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="308" width="1.60" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::tick::{{closure}} · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="291" width="1.60" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem::native_store::Store::commit_certified · 0.124 sampled CPU s (0.13%)</title><rect x="666.98" y="274" width="1.60" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>stem::native_store::sync_with_consensus · 0.103 sampled CPU s (0.11%)</title><rect x="667.25" y="257" width="1.34" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>follower_store · 34.052 sampled CPU s (36.76%)</title><rect x="670.72" y="478" width="441.14" height="16" rx="1" fill="hsl(36,74%,68%)"/><text x="673.72" y="490">follower_store</text></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_ADD · 0.134 sampled CPU s (0.14%)</title><rect x="670.72" y="461" width="1.74" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_CUSTOM_TRACE_END · 0.165 sampled CPU s (0.18%)</title><rect x="674.06" y="461" width="2.14" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LBU_VERSION1 · 0.072 sampled CPU s (0.08%)</title><rect x="676.46" y="461" width="0.93" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_OR · 0.113 sampled CPU s (0.12%)</title><rect x="678.06" y="461" width="1.47" height="16" rx="1" fill="hsl(47,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_SD · 0.113 sampled CPU s (0.12%)</title><rect x="679.67" y="461" width="1.47" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_SRLI · 0.062 sampled CPU s (0.07%)</title><rect x="681.94" y="461" width="0.80" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>.prepare_trace · 0.072 sampled CPU s (0.08%)</title><rect x="684.21" y="461" width="0.93" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>[unresolved] · 2.753 sampled CPU s (2.97%)</title><rect x="685.41" y="461" width="35.66" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>__sched_yield · 0.825 sampled CPU s (0.89%)</title><rect x="721.20" y="461" width="10.68" height="16" rx="1" fill="hsl(59,74%,68%)"/></g>
+<g><title>blake2b_compress · 1.557 sampled CPU s (1.68%)</title><rect x="731.89" y="461" width="20.17" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>blake2b_ref::blake2b_ref::blake2b_compress · 0.794 sampled CPU s (0.86%)</title><rect x="752.19" y="461" width="10.28" height="16" rx="1" fill="hsl(36,74%,68%)"/></g>
+<g><title>bool rocksdb::BlockIter&lt;rocksdb::Slice&gt;::BinarySeek&lt;rocksdb::DecodeKey&gt;(rocksdb::Slice const&amp;, unsigned int*, bool*) · 0.196 sampled CPU s (0.21%)</title><rect x="762.47" y="461" width="2.54" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>bool rocksdb::BlockIter&lt;rocksdb::Slice&gt;::ParseNextKey&lt;rocksdb::DecodeEntry&gt;(bool*) · 0.155 sampled CPU s (0.17%)</title><rect x="765.01" y="461" width="2.00" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>cfree · 0.062 sampled CPU s (0.07%)</title><rect x="767.28" y="461" width="0.80" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::new · 0.247 sampled CPU s (0.27%)</title><rect x="768.61" y="461" width="3.21" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>crossbeam_epoch::default::with_handle · 0.072 sampled CPU s (0.08%)</title><rect x="773.02" y="461" width="0.93" height="16" rx="1" fill="hsl(39,74%,68%)"/></g>
+<g><title>non-virtual thunk to rocksdb::(anonymous namespace)::BytewiseComparatorImpl::Compare(rocksdb::Slice const&amp;, rocksdb::Slice const&amp;) const · 0.062 sampled CPU s (0.07%)</title><rect x="774.89" y="461" width="0.80" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>rayon_core::registry::WorkerThread::wait_until_cold · 19.629 sampled CPU s (21.19%)</title><rect x="776.09" y="461" width="254.29" height="16" rx="1" fill="hsl(43,74%,68%)"/><text x="779.09" y="473">rayon_core::registry::WorkerThread::w…</text></g>
+<g><title>&lt;rayon_core::job::StackJob&lt;L,F,R&gt; as rayon_core::job::Job&gt;::execute · 19.557 sampled CPU s (21.11%)</title><rect x="776.09" y="444" width="253.36" height="16" rx="1" fill="hsl(31,74%,68%)"/><text x="779.09" y="456">&lt;rayon_core::job::StackJob&lt;L,F,R&gt; as …</text></g>
+<g><title>rayon::iter::plumbing::bridge_producer_consumer::helper · 6.062 sampled CPU s (6.54%)</title><rect x="776.09" y="427" width="78.53" height="16" rx="1" fill="hsl(30,74%,68%)"/><text x="779.09" y="439">rayon::ite…</text></g>
+<g><title>&lt;rayon::iter::map::MapFolder&lt;C,F&gt; as rayon::iter::plumbing::Folder&lt;T&gt;&gt;::consume_iter · 6.062 sampled CPU s (6.54%)</title><rect x="776.09" y="410" width="78.53" height="16" rx="1" fill="hsl(42,74%,68%)"/><text x="779.09" y="422">&lt;rayon::it…</text></g>
+<g><title>stem_vm::VerificationCache::verify · 6.041 sampled CPU s (6.52%)</title><rect x="776.23" y="393" width="78.26" height="16" rx="1" fill="hsl(37,74%,68%)"/><text x="779.23" y="405">stem_vm::V…</text></g>
+<g><title>stem_vm::execute_group · 5.979 sampled CPU s (6.46%)</title><rect x="776.89" y="376" width="77.46" height="16" rx="1" fill="hsl(40,74%,68%)"/><text x="779.89" y="388">stem_vm::e…</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::run · 5.938 sampled CPU s (6.41%)</title><rect x="777.16" y="359" width="76.93" height="16" rx="1" fill="hsl(23,74%,68%)"/><text x="780.16" y="371">ckb_script…</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::boot_vm · 1.258 sampled CPU s (1.36%)</title><rect x="777.16" y="342" width="16.29" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::create_dummy_vm · 0.196 sampled CPU s (0.21%)</title><rect x="777.43" y="325" width="2.54" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>&lt;alloc::vec::into_iter::IntoIter&lt;T,A&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.103 sampled CPU s (0.11%)</title><rect x="777.43" y="308" width="1.34" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::load_vm_program · 1.041 sampled CPU s (1.12%)</title><rect x="779.97" y="325" width="13.49" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::machine::DefaultMachineRunner::load_program_with_metadata · 1.021 sampled CPU s (1.10%)</title><rect x="780.23" y="308" width="13.22" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>ckb_vm::machine::SupportMachine::load_binary · 1.021 sampled CPU s (1.10%)</title><rect x="780.23" y="291" width="13.22" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::&lt;impl ckb_vm::memory::Memory for R&gt;::init_pages · 1.010 sampled CPU s (1.09%)</title><rect x="780.37" y="274" width="13.09" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::iterate_inner · 4.680 sampled CPU s (5.05%)</title><rect x="793.46" y="342" width="60.63" height="16" rx="1" fill="hsl(59,74%,68%)"/><text x="796.46" y="354">ckb_scr…</text></g>
+<g><title>&lt;ckb_script::reusable_asm::ReusableMachine as ckb_vm::machine::DefaultMachineRunner&gt;::run · 4.680 sampled CPU s (5.05%)</title><rect x="793.46" y="325" width="60.63" height="16" rx="1" fill="hsl(41,74%,68%)"/><text x="796.46" y="337">&lt;ckb_sc…</text></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_ADDI · 0.062 sampled CPU s (0.07%)</title><rect x="793.46" y="308" width="0.80" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_CUSTOM_TRACE_END · 0.309 sampled CPU s (0.33%)</title><rect x="795.46" y="308" width="4.01" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LBU_VERSION1 · 0.103 sampled CPU s (0.11%)</title><rect x="799.47" y="308" width="1.34" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>&lt;ckb_vm::machine::asm::AsmMachine&lt;R&gt; as ckb_vm::machine::DefaultMachineRunner&gt;::run · 3.320 sampled CPU s (3.58%)</title><rect x="803.21" y="308" width="43.01" height="16" rx="1" fill="hsl(58,74%,68%)"/><text x="806.21" y="320">&lt;ckb…</text></g>
+<g><title>&lt;stem_vm::LoadContext as ckb_vm::syscalls::Syscalls&lt;M&gt;&gt;::ecall · 0.546 sampled CPU s (0.59%)</title><rect x="804.01" y="291" width="7.08" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>stem_ledger::Cell::type_script · 0.278 sampled CPU s (0.30%)</title><rect x="805.74" y="274" width="3.61" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice_ref · 0.072 sampled CPU s (0.08%)</title><rect x="806.01" y="257" width="0.93" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode · 2.124 sampled CPU s (2.29%)</title><rect x="812.29" y="291" width="27.51" height="16" rx="1" fill="hsl(46,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode_raw · 1.485 sampled CPU s (1.60%)</title><rect x="812.29" y="274" width="19.23" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::standard_factory · 0.371 sampled CPU s (0.40%)</title><rect x="812.29" y="257" width="4.81" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::i::factory · 0.351 sampled CPU s (0.38%)</title><rect x="812.29" y="240" width="4.54" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::rvc::factory · 0.093 sampled CPU s (0.10%)</title><rect x="817.23" y="257" width="1.20" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::check_memory_executable · 0.237 sampled CPU s (0.26%)</title><rect x="818.70" y="257" width="3.07" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>ckb_vm::cost_model::estimate_cycles · 0.062 sampled CPU s (0.07%)</title><rect x="846.34" y="308" width="0.80" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::is_basic_block_end_instruction · 0.165 sampled CPU s (0.18%)</title><rect x="847.15" y="308" width="2.14" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>core::ops::function::Fn::call · 0.186 sampled CPU s (0.20%)</title><rect x="849.28" y="308" width="2.40" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem::native_store::Store::on_branch · 12.990 sampled CPU s (14.02%)</title><rect x="854.62" y="427" width="168.28" height="16" rx="1" fill="hsl(45,74%,68%)"/><text x="857.62" y="439">stem::native_store::Stor…</text></g>
+<g><title>stem::native_store::Store::prepare · 12.979 sampled CPU s (14.01%)</title><rect x="854.76" y="410" width="168.15" height="16" rx="1" fill="hsl(26,74%,68%)"/><text x="857.76" y="422">stem::native_store::Stor…</text></g>
+<g><title>rayon::iter::from_par_iter::collect_extended · 9.134 sampled CPU s (9.86%)</title><rect x="855.03" y="393" width="118.33" height="16" rx="1" fill="hsl(62,74%,68%)"/><text x="858.03" y="405">rayon::iter::fro…</text></g>
+<g><title>rayon::iter::collect::collect_with_consumer · 9.103 sampled CPU s (9.83%)</title><rect x="855.43" y="376" width="117.93" height="16" rx="1" fill="hsl(27,74%,68%)"/><text x="858.43" y="388">rayon::iter::col…</text></g>
+<g><title>&lt;rayon::vec::IntoIter&lt;T&gt; as rayon::iter::IndexedParallelIterator&gt;::with_producer · 9.093 sampled CPU s (9.82%)</title><rect x="855.43" y="359" width="117.80" height="16" rx="1" fill="hsl(45,74%,68%)"/><text x="858.43" y="371">&lt;rayon::vec::Int…</text></g>
+<g><title>rayon_core::registry::in_worker · 9.082 sampled CPU s (9.81%)</title><rect x="855.56" y="342" width="117.66" height="16" rx="1" fill="hsl(42,74%,68%)"/><text x="858.56" y="354">rayon_core::regi…</text></g>
+<g><title>rayon_core::join::join_context::{{closure}} · 9.082 sampled CPU s (9.81%)</title><rect x="855.56" y="325" width="117.66" height="16" rx="1" fill="hsl(26,74%,68%)"/><text x="858.56" y="337">rayon_core::join…</text></g>
+<g><title>rayon::iter::plumbing::bridge_producer_consumer::helper · 7.588 sampled CPU s (8.19%)</title><rect x="855.56" y="308" width="98.30" height="16" rx="1" fill="hsl(30,74%,68%)"/><text x="858.56" y="320">rayon::iter::…</text></g>
+<g><title>&lt;rayon::iter::map::MapFolder&lt;C,F&gt; as rayon::iter::plumbing::Folder&lt;T&gt;&gt;::consume_iter · 7.588 sampled CPU s (8.19%)</title><rect x="855.56" y="291" width="98.30" height="16" rx="1" fill="hsl(42,74%,68%)"/><text x="858.56" y="303">&lt;rayon::iter:…</text></g>
+<g><title>stem_vm::VerificationCache::verify · 7.567 sampled CPU s (8.17%)</title><rect x="855.69" y="274" width="98.03" height="16" rx="1" fill="hsl(37,74%,68%)"/><text x="858.69" y="286">stem_vm::Veri…</text></g>
+<g><title>stem_vm::execute_group · 7.443 sampled CPU s (8.04%)</title><rect x="857.03" y="257" width="96.43" height="16" rx="1" fill="hsl(40,74%,68%)"/><text x="860.03" y="269">stem_vm::exec…</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::run · 7.299 sampled CPU s (7.88%)</title><rect x="857.30" y="240" width="94.56" height="16" rx="1" fill="hsl(23,74%,68%)"/><text x="860.30" y="252">ckb_script::…</text></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::boot_vm · 1.144 sampled CPU s (1.24%)</title><rect x="857.30" y="223" width="14.82" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::create_dummy_vm · 0.103 sampled CPU s (0.11%)</title><rect x="857.56" y="206" width="1.34" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>&lt;alloc::vec::into_iter::IntoIter&lt;T,A&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.072 sampled CPU s (0.08%)</title><rect x="857.56" y="189" width="0.93" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::load_vm_program · 1.010 sampled CPU s (1.09%)</title><rect x="858.90" y="206" width="13.09" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::machine::DefaultMachineRunner::load_program_with_metadata · 0.979 sampled CPU s (1.06%)</title><rect x="859.17" y="189" width="12.69" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>ckb_vm::machine::SupportMachine::load_binary · 0.969 sampled CPU s (1.05%)</title><rect x="859.30" y="172" width="12.55" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::&lt;impl ckb_vm::memory::Memory for R&gt;::init_pages · 0.969 sampled CPU s (1.05%)</title><rect x="859.30" y="155" width="12.55" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::iterate_inner · 6.144 sampled CPU s (6.63%)</title><rect x="872.12" y="223" width="79.60" height="16" rx="1" fill="hsl(59,74%,68%)"/><text x="875.12" y="235">ckb_script…</text></g>
+<g><title>&lt;ckb_script::reusable_asm::ReusableMachine as ckb_vm::machine::DefaultMachineRunner&gt;::run · 6.103 sampled CPU s (6.59%)</title><rect x="872.12" y="206" width="79.07" height="16" rx="1" fill="hsl(41,74%,68%)"/><text x="875.12" y="218">&lt;ckb_scrip…</text></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_ADDI · 0.124 sampled CPU s (0.13%)</title><rect x="872.25" y="189" width="1.60" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_BNE · 0.103 sampled CPU s (0.11%)</title><rect x="874.12" y="189" width="1.34" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_CUSTOM_TRACE_END · 0.289 sampled CPU s (0.31%)</title><rect x="875.46" y="189" width="3.74" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_LBU_VERSION1 · 0.165 sampled CPU s (0.18%)</title><rect x="879.20" y="189" width="2.14" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>.prepare_trace · 0.113 sampled CPU s (0.12%)</title><rect x="883.74" y="189" width="1.47" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>&lt;ckb_vm::machine::asm::AsmMachine&lt;R&gt; as ckb_vm::machine::DefaultMachineRunner&gt;::run · 4.392 sampled CPU s (4.74%)</title><rect x="885.34" y="189" width="56.89" height="16" rx="1" fill="hsl(58,74%,68%)"/><text x="888.34" y="201">&lt;ckb_v…</text></g>
+<g><title>&lt;ckb_script::syscalls::load_cell_data::LoadCellData&lt;C&gt; as ckb_vm::syscalls::Syscalls&lt;Mac&gt;&gt;::ecall · 0.072 sampled CPU s (0.08%)</title><rect x="885.34" y="172" width="0.93" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>&lt;stem_vm::LoadContext as ckb_vm::syscalls::Syscalls&lt;M&gt;&gt;::ecall · 0.495 sampled CPU s (0.53%)</title><rect x="886.28" y="172" width="6.41" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice_ref · 0.072 sampled CPU s (0.08%)</title><rect x="886.94" y="155" width="0.93" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>stem_ledger::Cell::type_script · 0.103 sampled CPU s (0.11%)</title><rect x="889.22" y="155" width="1.34" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode · 3.072 sampled CPU s (3.32%)</title><rect x="895.09" y="172" width="39.80" height="16" rx="1" fill="hsl(46,74%,68%)"/><text x="898.09" y="184">ckb_…</text></g>
+<g><title>ckb_vm::decoder::Decoder::decode_raw · 2.144 sampled CPU s (2.31%)</title><rect x="895.09" y="155" width="27.78" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::standard_factory · 0.660 sampled CPU s (0.71%)</title><rect x="895.09" y="138" width="8.55" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::i::factory · 0.629 sampled CPU s (0.68%)</title><rect x="895.09" y="121" width="8.15" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::rvc::factory · 0.206 sampled CPU s (0.22%)</title><rect x="903.91" y="138" width="2.67" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::check_memory_executable · 0.278 sampled CPU s (0.30%)</title><rect x="906.71" y="138" width="3.61" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::standard_factory · 0.093 sampled CPU s (0.10%)</title><rect x="922.87" y="155" width="1.20" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::cost_model::estimate_cycles · 0.082 sampled CPU s (0.09%)</title><rect x="942.24" y="189" width="1.07" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::is_basic_block_end_instruction · 0.196 sampled CPU s (0.21%)</title><rect x="943.44" y="189" width="2.54" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>core::ops::function::Fn::call · 0.103 sampled CPU s (0.11%)</title><rect x="945.98" y="189" width="1.34" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>core::ptr::drop_in_place&lt;ckb_script::scheduler::Scheduler&lt;stem_vm::GroupContext,bool,ckb_script::reusable_asm::ReusableMachine&gt;&gt; · 0.062 sampled CPU s (0.07%)</title><rect x="952.12" y="240" width="0.80" height="16" rx="1" fill="hsl(60,74%,68%)"/></g>
+<g><title>rayon_core::job::StackJob&lt;L,F,R&gt;::run_inline · 1.495 sampled CPU s (1.61%)</title><rect x="953.86" y="308" width="19.37" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>rayon::iter::plumbing::bridge_producer_consumer::helper · 1.495 sampled CPU s (1.61%)</title><rect x="953.86" y="291" width="19.37" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>&lt;rayon::iter::map::MapFolder&lt;C,F&gt; as rayon::iter::plumbing::Folder&lt;T&gt;&gt;::consume_iter · 1.495 sampled CPU s (1.61%)</title><rect x="953.86" y="274" width="19.37" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>stem_vm::VerificationCache::verify · 1.495 sampled CPU s (1.61%)</title><rect x="953.86" y="257" width="19.37" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>stem_vm::execute_group · 1.412 sampled CPU s (1.52%)</title><rect x="954.52" y="240" width="18.30" height="16" rx="1" fill="hsl(40,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::run · 1.392 sampled CPU s (1.50%)</title><rect x="954.66" y="223" width="18.03" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::boot_vm · 0.237 sampled CPU s (0.26%)</title><rect x="954.66" y="206" width="3.07" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::load_vm_program · 0.206 sampled CPU s (0.22%)</title><rect x="955.06" y="189" width="2.67" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>ckb_vm::machine::DefaultMachineRunner::load_program_with_metadata · 0.206 sampled CPU s (0.22%)</title><rect x="955.06" y="172" width="2.67" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>ckb_vm::machine::SupportMachine::load_binary · 0.206 sampled CPU s (0.22%)</title><rect x="955.06" y="155" width="2.67" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::machine::asm::&lt;impl ckb_vm::memory::Memory for R&gt;::init_pages · 0.206 sampled CPU s (0.22%)</title><rect x="955.06" y="138" width="2.67" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>ckb_script::scheduler::Scheduler&lt;C,V,M&gt;::iterate_inner · 1.144 sampled CPU s (1.24%)</title><rect x="957.73" y="206" width="14.82" height="16" rx="1" fill="hsl(59,74%,68%)"/></g>
+<g><title>&lt;ckb_script::reusable_asm::ReusableMachine as ckb_vm::machine::DefaultMachineRunner&gt;::run · 1.144 sampled CPU s (1.24%)</title><rect x="957.73" y="189" width="14.82" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.CKB_VM_ASM_LABEL_OP_CUSTOM_TRACE_END · 0.093 sampled CPU s (0.10%)</title><rect x="958.40" y="172" width="1.20" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>.prepare_trace · 0.062 sampled CPU s (0.07%)</title><rect x="960.00" y="172" width="0.80" height="16" rx="1" fill="hsl(55,74%,68%)"/></g>
+<g><title>&lt;ckb_vm::machine::asm::AsmMachine&lt;R&gt; as ckb_vm::machine::DefaultMachineRunner&gt;::run · 0.825 sampled CPU s (0.89%)</title><rect x="960.80" y="172" width="10.68" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>&lt;stem_vm::LoadContext as ckb_vm::syscalls::Syscalls&lt;M&gt;&gt;::ecall · 0.124 sampled CPU s (0.13%)</title><rect x="961.07" y="155" width="1.60" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode · 0.577 sampled CPU s (0.62%)</title><rect x="962.94" y="155" width="7.48" height="16" rx="1" fill="hsl(46,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::Decoder::decode_raw · 0.361 sampled CPU s (0.39%)</title><rect x="962.94" y="138" width="4.67" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>ckb_vm::decoder::standard_factory · 0.093 sampled CPU s (0.10%)</title><rect x="962.94" y="121" width="1.20" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>ckb_vm::instructions::i::factory · 0.093 sampled CPU s (0.10%)</title><rect x="962.94" y="104" width="1.20" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>stem::native_store::Store::finish_block · 1.402 sampled CPU s (1.51%)</title><rect x="973.36" y="393" width="18.16" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem::native_store::put_nodes · 0.134 sampled CPU s (0.14%)</title><rect x="973.49" y="376" width="1.74" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Patricia::batch_update_parallel · 1.052 sampled CPU s (1.14%)</title><rect x="975.36" y="376" width="13.62" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>&lt;alloc::collections::btree::map::BTreeMap&lt;K,V&gt; as core::iter::traits::collect::FromIterator&lt;(K,V)&gt;&gt;::from_iter · 0.330 sampled CPU s (0.36%)</title><rect x="975.36" y="359" width="4.27" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>alloc::collections::btree::append::&lt;impl alloc::collections::btree::node::NodeRef&lt;alloc::collections::btree::node::marker::Owned,K,V,alloc::collections::btree::node::marker::LeafOrIn… · 0.103 sampled CPU s (0.11%)</title><rect x="975.36" y="342" width="1.34" height="16" rx="1" fill="hsl(39,74%,68%)"/></g>
+<g><title>&lt;alloc::collections::btree::dedup_sorted_iter::DedupSortedIter&lt;K,V,I&gt; as core::iter::traits::iterator::Iterator&gt;::next · 0.062 sampled CPU s (0.07%)</title><rect x="975.36" y="325" width="0.80" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>core::slice::sort::stable::driftsort_main · 0.227 sampled CPU s (0.24%)</title><rect x="976.69" y="342" width="2.94" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>core::slice::sort::stable::drift::sort · 0.227 sampled CPU s (0.24%)</title><rect x="976.69" y="325" width="2.94" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>core::slice::sort::stable::quicksort::quicksort · 0.186 sampled CPU s (0.20%)</title><rect x="976.69" y="308" width="2.40" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>rayon_core::registry::in_worker · 0.557 sampled CPU s (0.60%)</title><rect x="979.77" y="359" width="7.21" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>rayon_core::join::join_context::{{closure}} · 0.557 sampled CPU s (0.60%)</title><rect x="979.77" y="342" width="7.21" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;&amp;Read,alloc::vec::Vec&lt;([u8; 32],core::option::Option&lt;alloc::vec::Vec&lt;u8&gt;&gt;)&gt;&gt;::update_parallel · 0.557 sampled CPU s (0.60%)</title><rect x="979.77" y="325" width="7.21" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::update · 0.557 sampled CPU s (0.60%)</title><rect x="979.77" y="308" width="7.21" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::branch · 0.134 sampled CPU s (0.14%)</title><rect x="979.90" y="291" width="1.74" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::load_optional · 0.351 sampled CPU s (0.38%)</title><rect x="981.64" y="291" width="4.54" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem::native_store::Store::node · 0.227 sampled CPU s (0.24%)</title><rect x="981.77" y="274" width="2.94" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>stem::native_store::Batch::lookup · 0.093 sampled CPU s (0.10%)</title><rect x="981.90" y="257" width="1.20" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;&amp;Read,alloc::vec::Vec&lt;([u8; 32],core::option::Option&lt;alloc::vec::Vec&lt;u8&gt;&gt;)&gt;&gt;::update_parallel · 0.144 sampled CPU s (0.16%)</title><rect x="987.11" y="359" width="1.87" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::load_optional · 0.134 sampled CPU s (0.14%)</title><rect x="987.11" y="342" width="1.74" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem::native_store::Store::node · 0.134 sampled CPU s (0.14%)</title><rect x="987.11" y="325" width="1.74" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>stem::native_store::Batch::lookup · 0.134 sampled CPU s (0.14%)</title><rect x="987.11" y="308" width="1.74" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>std::sync::once_lock::OnceLock&lt;T&gt;::initialize · 0.134 sampled CPU s (0.14%)</title><rect x="987.11" y="291" width="1.74" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>&lt;std::sys::sync::once::futex::Once&gt;::call · 0.134 sampled CPU s (0.14%)</title><rect x="987.11" y="274" width="1.74" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>std::sync::once::Once::call_once_force::{{closure}} · 0.134 sampled CPU s (0.14%)</title><rect x="987.11" y="257" width="1.74" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>&lt;std::collections::hash::map::HashMap&lt;K,V,S&gt; as core::iter::traits::collect::FromIterator&lt;(K,V)&gt;&gt;::from_iter · 0.134 sampled CPU s (0.14%)</title><rect x="987.11" y="240" width="1.74" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>&lt;core::iter::adapters::map::Map&lt;I,F&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.103 sampled CPU s (0.11%)</title><rect x="987.11" y="223" width="1.34" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>hashbrown::map::HashMap&lt;K,V,S,A&gt;::insert · 0.103 sampled CPU s (0.11%)</title><rect x="987.11" y="206" width="1.34" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>core::hash::BuildHasher::hash_one · 0.072 sampled CPU s (0.08%)</title><rect x="987.11" y="189" width="0.93" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>stem::native_store::Store::stage_transaction · 2.381 sampled CPU s (2.57%)</title><rect x="991.52" y="393" width="30.85" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>&lt;core::iter::adapters::chain::Chain&lt;A,B&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.237 sampled CPU s (0.26%)</title><rect x="991.52" y="376" width="3.07" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>&lt;alloc::vec::into_iter::IntoIter&lt;T,A&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.113 sampled CPU s (0.12%)</title><rect x="991.52" y="359" width="1.47" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>alloc::collections::btree::map::BTreeMap&lt;K,V,A&gt;::insert · 0.113 sampled CPU s (0.12%)</title><rect x="991.52" y="342" width="1.47" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>&lt;core::iter::adapters::map::Map&lt;I,F&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.103 sampled CPU s (0.11%)</title><rect x="993.12" y="359" width="1.34" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>alloc::collections::btree::map::BTreeMap&lt;K,V,A&gt;::insert · 0.093 sampled CPU s (0.10%)</title><rect x="993.26" y="342" width="1.20" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>core::iter::adapters::try_process · 0.330 sampled CPU s (0.36%)</title><rect x="994.99" y="376" width="4.27" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>&lt;core::iter::adapters::map::Map&lt;I,F&gt; as core::iter::traits::iterator::Iterator&gt;::try_fold · 0.330 sampled CPU s (0.36%)</title><rect x="994.99" y="359" width="4.27" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>stem::native_store::Store::live_cell · 0.258 sampled CPU s (0.28%)</title><rect x="995.53" y="342" width="3.34" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve · 1.670 sampled CPU s (1.80%)</title><rect x="999.80" y="376" width="21.64" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve_with_capacity · 1.639 sampled CPU s (1.77%)</title><rect x="999.80" y="359" width="21.24" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>stem_ledger::authorization::resolve_cells · 1.010 sampled CPU s (1.09%)</title><rect x="1002.47" y="342" width="13.09" height="16" rx="1" fill="hsl(36,74%,68%)"/></g>
+<g><title>stem_ledger::ResolutionBudget::load · 0.918 sampled CPU s (0.99%)</title><rect x="1003.41" y="325" width="11.89" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::native_store::Store::resolve_live · 0.907 sampled CPU s (0.98%)</title><rect x="1003.41" y="308" width="11.75" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice · 0.144 sampled CPU s (0.16%)</title><rect x="1003.41" y="291" width="1.87" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>stem::native_store::Store::live_cell · 0.464 sampled CPU s (0.50%)</title><rect x="1006.48" y="291" width="6.01" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>bytes::bytes::Bytes::slice · 0.124 sampled CPU s (0.13%)</title><rect x="1006.48" y="274" width="1.60" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>stem_ledger::derive_script_groups · 0.371 sampled CPU s (0.40%)</title><rect x="1015.56" y="342" width="4.81" height="16" rx="1" fill="hsl(61,74%,68%)"/></g>
+<g><title>stem_ledger::get_group · 0.072 sampled CPU s (0.08%)</title><rect x="1018.23" y="325" width="0.93" height="16" rx="1" fill="hsl(47,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;&amp;Read,alloc::vec::Vec&lt;([u8; 32],core::option::Option&lt;alloc::vec::Vec&lt;u8&gt;&gt;)&gt;&gt;::update_parallel::{{closure}} · 0.495 sampled CPU s (0.53%)</title><rect x="1022.90" y="427" width="6.41" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;&amp;Read,alloc::vec::Vec&lt;([u8; 32],core::option::Option&lt;alloc::vec::Vec&lt;u8&gt;&gt;)&gt;&gt;::update_parallel · 0.495 sampled CPU s (0.53%)</title><rect x="1022.90" y="410" width="6.41" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::update · 0.495 sampled CPU s (0.53%)</title><rect x="1022.90" y="393" width="6.41" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::branch · 0.062 sampled CPU s (0.07%)</title><rect x="1023.04" y="376" width="0.80" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::load_optional · 0.340 sampled CPU s (0.37%)</title><rect x="1023.84" y="376" width="4.41" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem::native_store::Store::node · 0.206 sampled CPU s (0.22%)</title><rect x="1024.51" y="359" width="2.67" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>stem::native_store::Batch::lookup · 0.124 sampled CPU s (0.13%)</title><rect x="1024.51" y="342" width="1.60" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::Get(rocksdb::ReadOptions const&amp;, rocksdb::ColumnFamilyHandle*, rocksdb::Slice const&amp;, rocksdb::PinnableSlice*) · 0.938 sampled CPU s (1.01%)</title><rect x="1032.25" y="461" width="12.15" height="16" rx="1" fill="hsl(54,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::GetImpl(rocksdb::ReadOptions const&amp;, rocksdb::Slice const&amp;, rocksdb::DBImpl::GetImplOptions&amp;) · 0.825 sampled CPU s (0.89%)</title><rect x="1032.65" y="444" width="10.68" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>rocksdb::Version::Get(rocksdb::ReadOptions const&amp;, rocksdb::LookupKey const&amp;, rocksdb::PinnableSlice*, rocksdb::PinnableWideColumns*, std::__cxx11::basic_string&lt;char, std::char_trait… · 0.670 sampled CPU s (0.72%)</title><rect x="1033.86" y="427" width="8.68" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>rocksdb::TableCache::Get(rocksdb::ReadOptions const&amp;, rocksdb::InternalKeyComparator const&amp;, rocksdb::FileMetaData const&amp;, rocksdb::Slice const&amp;, rocksdb::GetContext*, unsigned char,… · 0.608 sampled CPU s (0.66%)</title><rect x="1033.99" y="410" width="7.88" height="16" rx="1" fill="hsl(59,74%,68%)"/></g>
+<g><title>rocksdb::BlockBasedTable::Get(rocksdb::ReadOptions const&amp;, rocksdb::Slice const&amp;, rocksdb::GetContext*, rocksdb::SliceTransform const*, bool) · 0.536 sampled CPU s (0.58%)</title><rect x="1034.12" y="393" width="6.94" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>rocksdb::DataBlockIter* rocksdb::BlockBasedTable::InitBlockIterator&lt;rocksdb::DataBlockIter&gt;(rocksdb::BlockBasedTable::Rep const*, rocksdb::Block*, rocksdb::BlockType, rocksdb::DataBl… · 0.134 sampled CPU s (0.14%)</title><rect x="1034.26" y="376" width="1.74" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>rocksdb::Block::NewDataIterator(rocksdb::Comparator const*, unsigned long, rocksdb::DataBlockIter*, rocksdb::Statistics*, bool, bool) · 0.124 sampled CPU s (0.13%)</title><rect x="1034.39" y="359" width="1.60" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>rocksdb::DataBlockIter* rocksdb::BlockBasedTable::NewDataBlockIterator&lt;rocksdb::DataBlockIter&gt;(rocksdb::ReadOptions const&amp;, rocksdb::BlockHandle const&amp;, rocksdb::DataBlockIter*, rock… · 0.309 sampled CPU s (0.33%)</title><rect x="1035.99" y="376" width="4.01" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>std::enable_if&lt;(rocksdb::Block_kData::kCacheEntryRole==((rocksdb::CacheEntryRole)13))||(true), rocksdb::Status&gt;::type rocksdb::BlockBasedTable::RetrieveBlock&lt;rocksdb::Block_kData&gt;(ro… · 0.299 sampled CPU s (0.32%)</title><rect x="1035.99" y="359" width="3.87" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>std::enable_if&lt;(rocksdb::Block_kData::kCacheEntryRole==((rocksdb::CacheEntryRole)13))||(true), rocksdb::Status&gt;::type rocksdb::BlockBasedTable::MaybeReadBlockAndLoadToCache&lt;rocksdb::… · 0.237 sampled CPU s (0.26%)</title><rect x="1036.66" y="342" width="3.07" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>rocksdb::BlockFetcher::ReadBlockContents() · 0.103 sampled CPU s (0.11%)</title><rect x="1036.93" y="325" width="1.34" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>rocksdb::IndexBlockIter::SeekImpl(rocksdb::Slice const&amp;) · 0.175 sampled CPU s (0.19%)</title><rect x="1044.94" y="461" width="2.27" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>rocksdb::InlineSkipList&lt;rocksdb::MemTableRep::KeyComparator const&amp;&gt;::FindGreaterOrEqual(char const*) const · 1.773 sampled CPU s (1.91%)</title><rect x="1047.21" y="461" width="22.97" height="16" rx="1" fill="hsl(61,74%,68%)"/></g>
+<g><title>rocksdb::MemTable::KeyComparator::operator()(char const*, rocksdb::Slice const&amp;) const · 0.216 sampled CPU s (0.23%)</title><rect x="1070.18" y="461" width="2.80" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>rocksdb::lru_cache::LRUCacheShard::LRU_Remove(rocksdb::lru_cache::LRUHandle*) · 0.072 sampled CPU s (0.08%)</title><rect x="1075.93" y="461" width="0.93" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>rocksdb::lru_cache::LRUCacheShard::MaintainPoolSize() · 0.082 sampled CPU s (0.09%)</title><rect x="1076.86" y="461" width="1.07" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>rocksdb::lru_cache::LRUHandleTable::FindPointer(rocksdb::Slice const&amp;, unsigned int) · 0.299 sampled CPU s (0.32%)</title><rect x="1077.93" y="461" width="3.87" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_ecmult_strauss_wnaf.constprop.2 · 0.536 sampled CPU s (0.58%)</title><rect x="1082.34" y="461" width="6.94" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_fe_mul_inner · 0.742 sampled CPU s (0.80%)</title><rect x="1090.08" y="461" width="9.62" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_fe_sqr_inner · 0.340 sampled CPU s (0.37%)</title><rect x="1099.70" y="461" width="4.41" height="16" rx="1" fill="hsl(40,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_fe_sqrt · 0.103 sampled CPU s (0.11%)</title><rect x="1104.11" y="461" width="1.34" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_gej_add_ge_var.constprop.0 · 0.062 sampled CPU s (0.07%)</title><rect x="1105.71" y="461" width="0.80" height="16" rx="1" fill="hsl(28,74%,68%)"/></g>
+<g><title>rustsecp256k1_v0_10_0_modinv64_divsteps_62_var · 0.072 sampled CPU s (0.08%)</title><rect x="1106.78" y="461" width="0.93" height="16" rx="1" fill="hsl(32,74%,68%)"/></g>
+<g><title>snappy::ByteArraySource::~ByteArraySource() · 0.062 sampled CPU s (0.07%)</title><rect x="1108.38" y="461" width="0.80" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>std::pair&lt;unsigned char const*, long&gt; snappy::DecompressBranchless&lt;char*&gt;(unsigned char const*, unsigned char const*, long, char*, long) · 0.134 sampled CPU s (0.14%)</title><rect x="1109.58" y="461" width="1.74" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>leader_store · 3.536 sampled CPU s (3.82%)</title><rect x="1111.99" y="478" width="45.81" height="16" rx="1" fill="hsl(35,74%,68%)"/><text x="1114.99" y="490">leade…</text></g>
+<g><title>[unresolved] · 0.454 sampled CPU s (0.49%)</title><rect x="1111.99" y="461" width="5.88" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>blake2b_compress · 0.186 sampled CPU s (0.20%)</title><rect x="1117.86" y="461" width="2.40" height="16" rx="1" fill="hsl(56,74%,68%)"/></g>
+<g><title>blake2b_ref::blake2b_ref::blake2b_compress · 0.289 sampled CPU s (0.31%)</title><rect x="1120.27" y="461" width="3.74" height="16" rx="1" fill="hsl(36,74%,68%)"/></g>
+<g><title>bool rocksdb::BlockIter&lt;rocksdb::Slice&gt;::BinarySeek&lt;rocksdb::DecodeKey&gt;(rocksdb::Slice const&amp;, unsigned int*, bool*) · 0.072 sampled CPU s (0.08%)</title><rect x="1124.14" y="461" width="0.93" height="16" rx="1" fill="hsl(57,74%,68%)"/></g>
+<g><title>rayon_core::registry::WorkerThread::wait_until_cold · 1.216 sampled CPU s (1.31%)</title><rect x="1125.88" y="461" width="15.76" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>&lt;rayon_core::job::StackJob&lt;L,F,R&gt; as rayon_core::job::Job&gt;::execute · 1.216 sampled CPU s (1.31%)</title><rect x="1125.88" y="444" width="15.76" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>stem::native_store::Store::on_branch · 1.082 sampled CPU s (1.17%)</title><rect x="1125.88" y="427" width="14.02" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::propose::{{closure}}::{{closure}} · 1.082 sampled CPU s (1.17%)</title><rect x="1125.88" y="410" width="14.02" height="16" rx="1" fill="hsl(54,74%,68%)"/></g>
+<g><title>stem::native_store::Store::finish_block · 0.351 sampled CPU s (0.38%)</title><rect x="1126.28" y="393" width="4.54" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Patricia::batch_update_parallel · 0.278 sampled CPU s (0.30%)</title><rect x="1127.08" y="376" width="3.61" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>&lt;alloc::collections::btree::map::BTreeMap&lt;K,V&gt; as core::iter::traits::collect::FromIterator&lt;(K,V)&gt;&gt;::from_iter · 0.103 sampled CPU s (0.11%)</title><rect x="1127.08" y="359" width="1.34" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>core::slice::sort::stable::driftsort_main · 0.082 sampled CPU s (0.09%)</title><rect x="1127.35" y="342" width="1.07" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>core::slice::sort::stable::drift::sort · 0.082 sampled CPU s (0.09%)</title><rect x="1127.35" y="325" width="1.07" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>rayon_core::registry::in_worker · 0.144 sampled CPU s (0.16%)</title><rect x="1128.41" y="359" width="1.87" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>rayon_core::join::join_context::{{closure}} · 0.144 sampled CPU s (0.16%)</title><rect x="1128.41" y="342" width="1.87" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;&amp;Read,alloc::vec::Vec&lt;([u8; 32],core::option::Option&lt;alloc::vec::Vec&lt;u8&gt;&gt;)&gt;&gt;::update_parallel · 0.144 sampled CPU s (0.16%)</title><rect x="1128.41" y="325" width="1.87" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::update · 0.144 sampled CPU s (0.16%)</title><rect x="1128.41" y="308" width="1.87" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::load_optional · 0.072 sampled CPU s (0.08%)</title><rect x="1129.08" y="291" width="0.93" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>stem::native_store::Store::stage_transaction · 0.639 sampled CPU s (0.69%)</title><rect x="1130.82" y="393" width="8.28" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>&lt;core::iter::adapters::chain::Chain&lt;A,B&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.103 sampled CPU s (0.11%)</title><rect x="1130.82" y="376" width="1.34" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>&lt;core::iter::adapters::map::Map&lt;I,F&gt; as core::iter::traits::iterator::Iterator&gt;::fold · 0.072 sampled CPU s (0.08%)</title><rect x="1131.22" y="359" width="0.93" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>core::iter::adapters::try_process · 0.093 sampled CPU s (0.10%)</title><rect x="1132.29" y="376" width="1.20" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>&lt;core::iter::adapters::map::Map&lt;I,F&gt; as core::iter::traits::iterator::Iterator&gt;::try_fold · 0.093 sampled CPU s (0.10%)</title><rect x="1132.29" y="359" width="1.20" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve · 0.351 sampled CPU s (0.38%)</title><rect x="1133.49" y="376" width="4.54" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>stem_ledger::ResolvedTransaction::resolve_with_capacity · 0.340 sampled CPU s (0.37%)</title><rect x="1133.49" y="359" width="4.41" height="16" rx="1" fill="hsl(31,74%,68%)"/></g>
+<g><title>stem_ledger::authorization::resolve_cells · 0.216 sampled CPU s (0.23%)</title><rect x="1134.56" y="342" width="2.80" height="16" rx="1" fill="hsl(36,74%,68%)"/></g>
+<g><title>stem_ledger::ResolutionBudget::load · 0.196 sampled CPU s (0.21%)</title><rect x="1134.56" y="325" width="2.54" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::native_store::Store::resolve_live · 0.196 sampled CPU s (0.21%)</title><rect x="1134.56" y="308" width="2.54" height="16" rx="1" fill="hsl(24,74%,68%)"/></g>
+<g><title>stem::native_store::Store::live_cell · 0.134 sampled CPU s (0.14%)</title><rect x="1135.09" y="291" width="1.74" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem_vm::VerificationCache::verify · 0.062 sampled CPU s (0.07%)</title><rect x="1138.16" y="376" width="0.80" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;&amp;Read,alloc::vec::Vec&lt;([u8; 32],core::option::Option&lt;alloc::vec::Vec&lt;u8&gt;&gt;)&gt;&gt;::update_parallel::{{closure}} · 0.134 sampled CPU s (0.14%)</title><rect x="1139.90" y="427" width="1.74" height="16" rx="1" fill="hsl(49,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;&amp;Read,alloc::vec::Vec&lt;([u8; 32],core::option::Option&lt;alloc::vec::Vec&lt;u8&gt;&gt;)&gt;&gt;::update_parallel · 0.134 sampled CPU s (0.14%)</title><rect x="1139.90" y="410" width="1.74" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::update · 0.134 sampled CPU s (0.14%)</title><rect x="1139.90" y="393" width="1.74" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>stem_ledger::patricia::Nodes&lt;Read,Writes&gt;::load_optional · 0.072 sampled CPU s (0.08%)</title><rect x="1140.30" y="376" width="0.93" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::Get(rocksdb::ReadOptions const&amp;, rocksdb::ColumnFamilyHandle*, rocksdb::Slice const&amp;, rocksdb::PinnableSlice*) · 0.268 sampled CPU s (0.29%)</title><rect x="1142.17" y="461" width="3.47" height="16" rx="1" fill="hsl(54,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::GetImpl(rocksdb::ReadOptions const&amp;, rocksdb::Slice const&amp;, rocksdb::DBImpl::GetImplOptions&amp;) · 0.216 sampled CPU s (0.23%)</title><rect x="1142.70" y="444" width="2.80" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>rocksdb::Version::Get(rocksdb::ReadOptions const&amp;, rocksdb::LookupKey const&amp;, rocksdb::PinnableSlice*, rocksdb::PinnableWideColumns*, std::__cxx11::basic_string&lt;char, std::char_trait… · 0.186 sampled CPU s (0.20%)</title><rect x="1142.97" y="427" width="2.40" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>rocksdb::TableCache::Get(rocksdb::ReadOptions const&amp;, rocksdb::InternalKeyComparator const&amp;, rocksdb::FileMetaData const&amp;, rocksdb::Slice const&amp;, rocksdb::GetContext*, unsigned char,… · 0.175 sampled CPU s (0.19%)</title><rect x="1142.97" y="410" width="2.27" height="16" rx="1" fill="hsl(59,74%,68%)"/></g>
+<g><title>rocksdb::BlockBasedTable::Get(rocksdb::ReadOptions const&amp;, rocksdb::Slice const&amp;, rocksdb::GetContext*, rocksdb::SliceTransform const*, bool) · 0.155 sampled CPU s (0.17%)</title><rect x="1142.97" y="393" width="2.00" height="16" rx="1" fill="hsl(33,74%,68%)"/></g>
+<g><title>rocksdb::DataBlockIter* rocksdb::BlockBasedTable::NewDataBlockIterator&lt;rocksdb::DataBlockIter&gt;(rocksdb::ReadOptions const&amp;, rocksdb::BlockHandle const&amp;, rocksdb::DataBlockIter*, rock… · 0.093 sampled CPU s (0.10%)</title><rect x="1143.37" y="376" width="1.20" height="16" rx="1" fill="hsl(42,74%,68%)"/></g>
+<g><title>std::enable_if&lt;(rocksdb::Block_kData::kCacheEntryRole==((rocksdb::CacheEntryRole)13))||(true), rocksdb::Status&gt;::type rocksdb::BlockBasedTable::RetrieveBlock&lt;rocksdb::Block_kData&gt;(ro… · 0.093 sampled CPU s (0.10%)</title><rect x="1143.37" y="359" width="1.20" height="16" rx="1" fill="hsl(63,74%,68%)"/></g>
+<g><title>std::enable_if&lt;(rocksdb::Block_kData::kCacheEntryRole==((rocksdb::CacheEntryRole)13))||(true), rocksdb::Status&gt;::type rocksdb::BlockBasedTable::MaybeReadBlockAndLoadToCache&lt;rocksdb::… · 0.072 sampled CPU s (0.08%)</title><rect x="1143.51" y="342" width="0.93" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>rocksdb::IndexBlockIter::SeekImpl(rocksdb::Slice const&amp;) · 0.082 sampled CPU s (0.09%)</title><rect x="1145.64" y="461" width="1.07" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>rocksdb::InlineSkipList&lt;rocksdb::MemTableRep::KeyComparator const&amp;&gt;::FindGreaterOrEqual(char const*) const · 0.546 sampled CPU s (0.59%)</title><rect x="1146.98" y="461" width="7.08" height="16" rx="1" fill="hsl(61,74%,68%)"/></g>
+<g><title>rocksdb::MemTable::KeyComparator::operator()(char const*, rocksdb::Slice const&amp;) const · 0.113 sampled CPU s (0.12%)</title><rect x="1154.06" y="461" width="1.47" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>rocksdb::lru_cache::LRUHandleTable::FindPointer(rocksdb::Slice const&amp;, unsigned int) · 0.082 sampled CPU s (0.09%)</title><rect x="1156.46" y="461" width="1.07" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>sync_wal · 2.825 sampled CPU s (3.05%)</title><rect x="1158.06" y="478" width="36.59" height="16" rx="1" fill="hsl(46,74%,68%)"/></g>
+<g><title>[unresolved] · 0.577 sampled CPU s (0.62%)</title><rect x="1158.06" y="461" width="7.48" height="16" rx="1" fill="hsl(41,74%,68%)"/></g>
+<g><title>non-virtual thunk to rocksdb::(anonymous namespace)::BytewiseComparatorImpl::Compare(rocksdb::Slice const&amp;, rocksdb::Slice const&amp;) const · 0.196 sampled CPU s (0.21%)</title><rect x="1165.81" y="461" width="2.54" height="16" rx="1" fill="hsl(44,74%,68%)"/></g>
+<g><title>rocksdb::(anonymous namespace)::MemTableInserter::~MemTableInserter() · 0.093 sampled CPU s (0.10%)</title><rect x="1168.35" y="461" width="1.20" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>rocksdb::(anonymous namespace)::MemTableInserter::DeleteCF(unsigned int, rocksdb::Slice const&amp;) · 0.082 sampled CPU s (0.09%)</title><rect x="1168.35" y="444" width="1.07" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>rocksdb::(anonymous namespace)::MemTableInserter::DeleteImpl(unsigned int, rocksdb::Slice const&amp;, rocksdb::Slice const&amp;, rocksdb::ValueType, rocksdb::ProtectionInfoKVOS&lt;unsigned long… · 0.062 sampled CPU s (0.07%)</title><rect x="1168.48" y="427" width="0.80" height="16" rx="1" fill="hsl(25,74%,68%)"/></g>
+<g><title>rocksdb::InlineSkipList&lt;rocksdb::MemTableRep::KeyComparator const&amp;&gt;::RecomputeSpliceLevels(rocksdb::Slice const&amp;, rocksdb::InlineSkipList&lt;rocksdb::MemTableRep::KeyComparator const&amp;&gt;:… · 1.103 sampled CPU s (1.19%)</title><rect x="1170.35" y="461" width="14.29" height="16" rx="1" fill="hsl(40,74%,68%)"/></g>
+<g><title>rocksdb::MemTable::KeyComparator::operator()(char const*, rocksdb::Slice const&amp;) const · 0.309 sampled CPU s (0.33%)</title><rect x="1185.04" y="461" width="4.01" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>rocksdb::crc32c::crc32c_3way(unsigned int, char const*, unsigned long) · 0.093 sampled CPU s (0.10%)</title><rect x="1189.98" y="461" width="1.20" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>rocksdb_write · 0.268 sampled CPU s (0.29%)</title><rect x="1191.19" y="461" width="3.47" height="16" rx="1" fill="hsl(30,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::Write(rocksdb::WriteOptions const&amp;, rocksdb::WriteBatch*) · 0.268 sampled CPU s (0.29%)</title><rect x="1191.19" y="444" width="3.47" height="16" rx="1" fill="hsl(27,74%,68%)"/></g>
+<g><title>rocksdb::DBImpl::WriteImpl(rocksdb::WriteOptions const&amp;, rocksdb::WriteBatch*, rocksdb::WriteCallback*, unsigned long*, unsigned long, bool, unsigned long*, unsigned long, rocksdb::P… · 0.268 sampled CPU s (0.29%)</title><rect x="1191.19" y="427" width="3.47" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>rocksdb::WriteBatch::Iterate(rocksdb::WriteBatch::Handler*) const · 0.258 sampled CPU s (0.28%)</title><rect x="1191.19" y="410" width="3.34" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>rocksdb::WriteBatchInternal::Iterate(rocksdb::WriteBatch const*, rocksdb::WriteBatch::Handler*, unsigned long, unsigned long) · 0.237 sampled CPU s (0.26%)</title><rect x="1191.45" y="393" width="3.07" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>rocksdb::(anonymous namespace)::MemTableInserter::PutCF(unsigned int, rocksdb::Slice const&amp;, rocksdb::Slice const&amp;) · 0.227 sampled CPU s (0.24%)</title><rect x="1191.45" y="376" width="2.94" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>rocksdb::(anonymous namespace)::MemTableInserter::PutCFImpl(unsigned int, rocksdb::Slice const&amp;, rocksdb::Slice const&amp;, rocksdb::ValueType, rocksdb::ProtectionInfoKVOS&lt;unsigned long&gt;… · 0.186 sampled CPU s (0.20%)</title><rect x="1191.59" y="359" width="2.40" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>rocksdb::MemTable::Add(unsigned long, rocksdb::ValueType, rocksdb::Slice const&amp;, rocksdb::Slice const&amp;, rocksdb::ProtectionInfoKVOS&lt;unsigned long&gt; const*, bool, rocksdb::MemTablePost… · 0.062 sampled CPU s (0.07%)</title><rect x="1191.59" y="342" width="0.80" height="16" rx="1" fill="hsl(39,74%,68%)"/></g>
+<g><title>vote · 0.412 sampled CPU s (0.45%)</title><rect x="1194.66" y="478" width="5.34" height="16" rx="1" fill="hsl(48,74%,68%)"/></g>
+<g><title>main · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="461" width="4.27" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>std::rt::lang_start_internal · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="444" width="4.27" height="16" rx="1" fill="hsl(28,74%,68%)"/></g>
+<g><title>std::rt::lang_start::{{closure}} · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="427" width="4.27" height="16" rx="1" fill="hsl(29,74%,68%)"/></g>
+<g><title>std::sys::backtrace::__rust_begin_short_backtrace · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="410" width="4.27" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem::main · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="393" width="4.27" height="16" rx="1" fill="hsl(34,74%,68%)"/></g>
+<g><title>stem::jolteon::run · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="376" width="4.27" height="16" rx="1" fill="hsl(35,74%,68%)"/></g>
+<g><title>tokio::runtime::runtime::Runtime::block_on · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="359" width="4.27" height="16" rx="1" fill="hsl(43,74%,68%)"/></g>
+<g><title>tokio::runtime::context::runtime::enter_runtime · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="342" width="4.27" height="16" rx="1" fill="hsl(58,74%,68%)"/></g>
+<g><title>tokio::runtime::park::CachedParkThread::block_on · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="325" width="4.27" height="16" rx="1" fill="hsl(23,74%,68%)"/></g>
+<g><title>stem::jolteon::run::{{closure}} · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="308" width="4.27" height="16" rx="1" fill="hsl(26,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::tick::{{closure}} · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="291" width="4.27" height="16" rx="1" fill="hsl(50,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::vote_for · 0.330 sampled CPU s (0.36%)</title><rect x="1195.46" y="274" width="4.27" height="16" rx="1" fill="hsl(38,74%,68%)"/></g>
+<g><title>stem::jolteon::Replica::execute · 0.299 sampled CPU s (0.32%)</title><rect x="1195.46" y="257" width="3.87" height="16" rx="1" fill="hsl(51,74%,68%)"/></g>
+<g><title>core::iter::adapters::try_process · 0.299 sampled CPU s (0.32%)</title><rect x="1195.46" y="240" width="3.87" height="16" rx="1" fill="hsl(62,74%,68%)"/></g>
+<g><title>stem_ledger::Transaction::from_bytes · 0.299 sampled CPU s (0.32%)</title><rect x="1195.46" y="223" width="3.87" height="16" rx="1" fill="hsl(45,74%,68%)"/></g>
+<g><title>stem_ledger::Transaction::from_entity · 0.237 sampled CPU s (0.26%)</title><rect x="1196.13" y="206" width="3.07" height="16" rx="1" fill="hsl(37,74%,68%)"/></g>
+</svg>
