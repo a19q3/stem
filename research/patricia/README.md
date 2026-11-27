@@ -68,9 +68,27 @@ Use `drive.py prepare-v1 --profile sustainable` and the same signed 720,000-paym
 
 Both runs wrote the entire corpus and independently replayed a total of 615 archived blocks. The p99 populations were 354,090 and 433,784 acknowledged measurement writes commonly visible by the cutoff. The candidate drained all 613,784 acknowledged payments. It commonly confirmed 16.1% more payments in the measurement window and used 14.2% more validator process CPU. Peak RSS was 323.6–333.7 MiB per validator in the reference and 332.1–338.9 MiB in the candidate. The candidate recorded four local timeout votes versus zero in the reference. Both recorded zero block-cycle rejections.
 
-Both configurations missed the sustained rate, acknowledgment, backlog and tail-latency gates. The candidate's mean Cell commitment fell on both Leader and Follower paths. Selection then accounted for 65.6% of Leader proposal wall time in the candidate, compared with 53.4% in the reference. The single run order establishes a candidate for repeat testing with the larger verification cache and other stages. Keep the feature selectable while checking reverse order, tail latency and worker contention.
+Both configurations missed the sustained rate, acknowledgment, backlog and tail-latency gates. The candidate's mean Cell commitment fell on both Leader and Follower paths. Selection accounted for 65.6% of Leader proposal wall time in the candidate, compared with 53.4% in the reference.
 
 SHA-256 values were `b55d73ce78c3ba11fd7ed74174e84edb338695c5acb46479ca989677c2bebc18` for the reference, `9247273b15680b172ae43dc4764670915adc116c525eff53984a2c5111776732` for the candidate, `8769948cc9ffcf7cbd96997e75bcfd3a6794442c01ea6770792be786451a3846` for the driver and replay harness, and `2fb0207c35b3416b36fde01361966c2bc09dbbdfb3806061fd1e7004558d4cbe` for genesis. The signed workload BLAKE2b digest was `5ecfc85a430edd167c04f6b568235785ddf6fb61d5dad6b89fec3328f1985939`.
+
+#### Reverse-order subtree comparison
+
+The repeat ran parallel subtrees then serial, with identical executable, genesis and signed-workload digests and fresh databases. The loopback ports changed. Hardware affinity, worker count, cache and profile settings matched. Both wrote the entire corpus, and another 635 archived blocks independently replayed.
+
+| Metric | Parallel Cell subtrees | Serial |
+| --- | ---: | ---: |
+| Common measurement TPS | 2,241.42 | 1,877.33 |
+| Measurement writes without ACK | 102,322 | 176,780 |
+| Peak acknowledged backlog | 90,143 | 95,190 |
+| Backlog growth from a measurement boundary | 38,905 | 27,023 |
+| Acknowledged payments pending at drain | 0 | 11,637 |
+| Conditional p99 | 191.236 s | 197.935 s |
+| Mean Leader Cell commitment | 95.77 ms | 198.14 ms |
+| Mean Follower Cell commitment | 109.39 ms | 213.53 ms |
+| Total validator process CPU | 1,327.90 s | 1,159.30 s |
+
+The parallel candidate confirmed 19.4% more payments in the reverse run and drained all 617,678 acknowledgments. The p99 populations were 437,733 and 355,135. Peak RSS ranged from 328.9 to 332.0 MiB per validator for the candidate and 320.8 to 329.6 MiB for the reference. Both runs recorded zero local timeout votes. All four runs across both pairs failed the sustained profile. The repeated gain supports evaluating the optional candidate with the larger verification cache. Worker contention and the backlog and tail-latency gates remain separate adoption criteria.
 
 ## Original in-memory experiment
 
