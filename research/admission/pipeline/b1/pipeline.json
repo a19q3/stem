@@ -1,0 +1,78 @@
+{
+  "before": [
+    {
+      "coalesced": 0,
+      "dispatched": 88,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 1,
+      "snapshot_misses": 0
+    },
+    {
+      "coalesced": 0,
+      "dispatched": 88,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 0,
+      "snapshot_misses": 0
+    },
+    {
+      "coalesced": 0,
+      "dispatched": 88,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 1,
+      "snapshot_misses": 0
+    },
+    {
+      "coalesced": 0,
+      "dispatched": 88,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 0,
+      "snapshot_misses": 0
+    }
+  ],
+  "after": [
+    {
+      "coalesced": 0,
+      "dispatched": 23147,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 1063,
+      "snapshot_misses": 0
+    },
+    {
+      "coalesced": 0,
+      "dispatched": 22806,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 831,
+      "snapshot_misses": 0
+    },
+    {
+      "coalesced": 0,
+      "dispatched": 22136,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 1104,
+      "snapshot_misses": 0
+    },
+    {
+      "coalesced": 0,
+      "dispatched": 22263,
+      "full": 0,
+      "pending_bytes": 0,
+      "pending_replies": 0,
+      "rechecked": 860,
+      "snapshot_misses": 0
+    }
+  ]
+}
