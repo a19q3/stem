@@ -16,10 +16,7 @@ use ckb_std::{
 };
 use stem_bridge_wire::{
     intercell::{Delivery, Identity, MailboxPolicy, MailboxState, Message},
-    spore::{
-        CKB_SPORE_CODE, CellTransfer, Handoff, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData,
-        TESTNET_SPORE_BETA2,
-    },
+    spore::{CKB_SPORE_CODE, CellTransfer, CustodyProfile, Handoff, MAX_CELL_SPORE_DATA, MeltReceipt, SporeData, TESTNET_SPORE_BETA2},
 };
 
 entry!(main);
@@ -50,8 +47,8 @@ fn verify() -> Result<(), i8> {
         };
         return holder_transfer(&script, spore, authority, gate, holder);
     }
-    let mutant_origin = args.len() == 161 && args[0] == 3;
-    let raw = if mutant_origin { &args[1..] } else { &args[..] };
+    let profile = custody_profile(&args);
+    let raw = if profile.is_some() { &args[1..] } else { &args[..] };
     let (fields, rest) = raw.as_chunks::<32>();
     if !rest.is_empty()
         || fields.contains(&[0; 32])
@@ -93,8 +90,7 @@ fn verify() -> Result<(), i8> {
             || load_cell_type_hash(0, Source::GroupInput).map_err(|_| 110)? != Some(mailbox)
             || load_cell_capacity(1, Source::GroupInput) != Err(SysError::IndexOutOfBound)
             || load_cell_lock_hash(input, Source::Input).map_err(|_| 110)? == owner
-            || (mutant_origin
-                && custody_holder(&script, input, Source::Input, &owner, original)?.is_some())
+            || (profile.is_some() && custody_holder(&script, input, Source::Input, &owner, original)?.is_some())
         {
             return Err(111);
         }
@@ -104,9 +100,8 @@ fn verify() -> Result<(), i8> {
         let bytes =
             stem_contracts::metatype::bounded_data(input, Source::Input, MAX_CELL_SPORE_DATA)
                 .map_err(|_| 110)?;
-        let meltable = if mutant_origin {
-            ty.code_hash().as_slice() == TESTNET_SPORE_BETA2
-                && SporeData::custody_mutant(&bytes).is_some()
+        let meltable = if let Some(profile) = profile {
+            ty.code_hash().as_slice() == profile.spore_code() && profile.parse(&bytes).is_some_and(|s| !s.immortal())
         } else {
             ty.code_hash().as_slice() == CKB_SPORE_CODE
                 && SporeData::unclustered(&bytes).is_some_and(|s| !s.immortal())
@@ -132,7 +127,7 @@ fn verify() -> Result<(), i8> {
     };
     let first_export = spore_input.is_none() && counterpart.is_some();
     let input_index = spore_input.unwrap_or(0);
-    let registered_custody = mutant_origin || counterpart.is_none();
+    let registered_custody = profile.is_some() || counterpart.is_none();
     let previous = if registered_custody && !first_export {
         custody_holder(&script, input_index, Source::Input, &owner, original)?
     } else {
@@ -192,16 +187,16 @@ fn verify() -> Result<(), i8> {
         stem_contracts::metatype::bounded_data(spore_output, Source::Output, MAX_CELL_SPORE_DATA)
             .map_err(|_| 110)?;
     let code = object_type.code_hash();
-    if (previous.is_some() || following.is_some()) && code.as_slice() != TESTNET_SPORE_BETA2 {
+    if (previous.is_some() || following.is_some()) && code.as_slice() != profile.unwrap_or(CustodyProfile::Registered).spore_code() {
         return Err(112);
     }
-    let supported = (!mutant_origin
-        && code.as_slice() == CKB_SPORE_CODE
-        && SporeData::from_cell(&output)
-            .is_some_and(|s| counterpart.is_none() || s.cluster_id.is_none()))
-        || ((counterpart.is_none() || mutant_origin)
-            && code.as_slice() == TESTNET_SPORE_BETA2
-            && SporeData::custody_mutant(&output).is_some());
+    let supported = if let Some(profile) = profile {
+        code.as_slice() == profile.spore_code() && profile.parse(&output).is_some()
+    } else {
+        (code.as_slice() == CKB_SPORE_CODE
+            && SporeData::from_cell(&output).is_some_and(|s| counterpart.is_none() || s.cluster_id.is_none()))
+            || (counterpart.is_none() && code.as_slice() == TESTNET_SPORE_BETA2 && SporeData::custody_mutant(&output).is_some())
+    };
     if (!first_export
         && (stem_contracts::metatype::cell_data_length(input_index, Source::Input)
             .map_err(|_| 110)?
@@ -387,6 +382,10 @@ fn holder_transfer(
     }
 }
 
+fn custody_profile(args: &[u8]) -> Option<CustodyProfile> {
+    if args.len() == 161 { CustodyProfile::from_gate_tag(args[0]) } else { None }
+}
+
 // A reservation uses the unique mailbox creation ID. Its own future OutPoint
 // can therefore be used to derive the standard Spore ID without a hash cycle.
 fn reservation(script: &Script, id: &Identity, code: &Identity) -> Result<(), i8> {
@@ -426,14 +425,10 @@ fn reservation(script: &Script, id: &Identity, code: &Identity) -> Result<(), i8
         }
         let lock = load_cell_lock(index, Source::Input).map_err(|_| 114)?;
         let args = lock.args().raw_data();
-        let mutant_gate = args.len() == 161 && args[0] == 3;
-        let raw = if mutant_gate { &args[1..] } else { &args[..] };
+        let profile = custody_profile(&args);
+        let raw = if profile.is_some() { &args[1..] } else { &args[..] };
         let (fields, rest) = raw.as_chunks::<32>();
-        let expected = if mutant_gate {
-            TESTNET_SPORE_BETA2
-        } else {
-            CKB_SPORE_CODE
-        };
+        let expected = profile.map_or(CKB_SPORE_CODE, CustodyProfile::spore_code);
         if let [gate_id, _, _, gate_code, counterpart, tail @ ..] = fields
             && tail.len() <= 1
             && rest.is_empty()

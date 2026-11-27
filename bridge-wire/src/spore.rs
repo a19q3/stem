@@ -17,6 +17,52 @@ pub const TESTNET_SPORE_BETA2: Identity = [
     0x70, 0x29, 0x17, 0xc, 0xa4, 0x84, 0x8a, 0x4f, 0xf6, 0x38, 0xe5, 0x70, 0x2, 0x13, 0xa, 0xd,
 ];
 
+/// Native titles whose owner changes are authenticated by a transfer of the original on CKB.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CustodyProfile {
+    Registered,
+    ClusterMember,
+}
+
+impl CustodyProfile {
+    pub fn from_gate_tag(tag: u8) -> Option<Self> {
+        match tag {
+            3 => Some(Self::Registered),
+            6 => Some(Self::ClusterMember),
+            _ => None,
+        }
+    }
+
+    pub fn from_identity_tag(tag: u8) -> Option<Self> {
+        match tag {
+            4 => Some(Self::Registered),
+            6 => Some(Self::ClusterMember),
+            _ => None,
+        }
+    }
+
+    pub fn gate_tag(self) -> u8 {
+        match self {
+            Self::Registered => 3,
+            Self::ClusterMember => 6,
+        }
+    }
+
+    pub fn spore_code(self) -> Identity {
+        match self {
+            Self::Registered => TESTNET_SPORE_BETA2,
+            Self::ClusterMember => CKB_SPORE_CODE,
+        }
+    }
+
+    pub fn parse(self, data: &[u8]) -> Option<SporeData<'_>> {
+        match self {
+            Self::Registered => SporeData::custody_mutant(data),
+            Self::ClusterMember => SporeData::from_cell(data).filter(|s| s.cluster_id.is_some()),
+        }
+    }
+}
+
 pub const TRANSFER_HEADER: usize = 64;
 pub const MAX_SPORE_DATA: usize = MAX_PAYLOAD - TRANSFER_HEADER;
 /// The native transaction envelope is at most 512 KiB, including all Cell metadata.
@@ -76,7 +122,7 @@ impl<'a> Handoff<'a> {
         output_hash: &Identity,
         data: &[u8],
     ) -> Option<[u8; 204]> {
-        SporeData::custody_mutant(data)?;
+        SporeData::custody_mutant(data).or_else(|| CustodyProfile::ClusterMember.parse(data))?;
         let mut raw = [0; 204];
         raw[..32].copy_from_slice(original);
         raw[32..64].copy_from_slice(recipient);
@@ -120,8 +166,7 @@ impl MeltReceipt {
     }
 
     pub fn encode(original: &Identity, recipient: &Identity, data: &[u8]) -> Option<[u8; 104]> {
-        if (!SporeData::unclustered(data).is_some_and(|spore| !spore.immortal())
-            && SporeData::custody_mutant(data).is_none())
+        if (!SporeData::from_cell(data).is_some_and(|spore| !spore.immortal()) && SporeData::custody_mutant(data).is_none())
             || original == &[0; 32]
             || recipient == &[0; 32]
         {
@@ -555,6 +600,7 @@ mod tests {
             SporeData::custody_mutant(&member).unwrap().cluster_id,
             Some(&[7; 32])
         );
+        assert!(CustodyProfile::ClusterMember.parse(&member).is_none());
         assert!(CellTransfer::encode(&[1; 32], &[2; 32], &member, &mut buf).is_none());
         let payload = CellTransfer::encode_custody(&[1; 32], &[2; 32], &member, &mut buf).unwrap();
         assert_eq!(
@@ -642,6 +688,44 @@ mod tests {
             assert!(!plain_spore(&data));
             data[content as usize - 1] = b'X';
             assert!(SporeData::decode(&data).is_none());
+        }
+    }
+
+    #[test]
+    fn ordinary_cluster_custody_binds_the_release_and_membership() {
+        use CustodyProfile::{ClusterMember, Registered};
+
+        for profile in [ClusterMember, Registered] {
+            assert_eq!(CustodyProfile::from_gate_tag(profile.gate_tag()), Some(profile));
+        }
+        assert_eq!(CustodyProfile::from_identity_tag(6), Some(ClusterMember));
+        assert_eq!(CustodyProfile::from_identity_tag(4), Some(Registered));
+        assert_eq!(CustodyProfile::from_identity_tag(3), None);
+        assert_eq!(CustodyProfile::from_gate_tag(4), None);
+        assert_eq!(ClusterMember.spore_code(), CKB_SPORE_CODE);
+        assert_eq!(Registered.spore_code(), TESTNET_SPORE_BETA2);
+
+        for (mime, immortal) in [(b"text/plain".as_slice(), false), (b"text/plain;immortal=true".as_slice(), true)] {
+            let content = 20 + mime.len() as u32;
+            let cluster = content + 5;
+            let mut data = [cluster, 16, content, cluster, mime.len() as u32].map(u32::to_le_bytes).concat();
+            data.extend_from_slice(mime);
+            data.extend_from_slice(&[1, 0, 0, 0, b'x']);
+            let grant = |bytes: &[u8]| Handoff::encode(&[1; 32], &[2; 32], &[3; 32], &[4; 36], &[5; 32], bytes);
+            assert!(ClusterMember.parse(&data).is_none());
+            assert!(grant(&data).is_none());
+
+            data[..4].copy_from_slice(&(cluster + 36).to_le_bytes());
+            data.extend_from_slice(&32u32.to_le_bytes());
+            data.extend_from_slice(&[7; 32]);
+            assert_eq!(ClusterMember.parse(&data).unwrap().cluster_id, Some(&[7; 32]));
+            assert!(Registered.parse(&data).is_none());
+            assert!(grant(&data).is_some());
+            assert_eq!(MeltReceipt::encode(&[1; 32], &[2; 32], &data).is_some(), !immortal);
+            data[cluster as usize + 4..].fill(0);
+            assert!(ClusterMember.parse(&data).is_none());
+            assert!(grant(&data).is_none());
+            assert!(MeltReceipt::encode(&[1; 32], &[2; 32], &data).is_none());
         }
     }
 

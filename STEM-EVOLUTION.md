@@ -148,3 +148,5 @@ Axon 的参考资料展示了由 L1 Metadata Cell 提供验证者数据，再验
 第 20 项在两个首发方向的 13 次成员转换中逐笔认证了实际引用的集合 OutPoint 和持有人 Lock。公开测试网高度 12,607,097 的铸造也认证了四个区块前换手的注册 Cell。[两条结算链及公开证明](research/spore-permit/upstream/beta2/dependency-uses/README.md)
 
 第 10 项已在候选区块的 Cell Patricia 树上采用批量暂存写入。相同 2,048 笔签名支付的区块准备中位耗时缩短 1.84%–3.34%。同机四副本两组交叉对照的窗口吞吐分别增加 146.98 和 20.06 TPS，支付写入至共同确认的 p99 分别缩短 2.95 和 3.86 秒。新旧节点互开原数据库后，继续确认了花费旧输出的新交易。[逐笔支付、内存代价和混合版本证明](research/storage/patricia-finishing/README.md)
+
+第 20 项已用主网发布版 Spore V2 验证普通 Cluster 成员从 Stem 首发，经集合持有人授权在 CKB 铸造、钱包换手、返回 Stem 和再次导出。六组四副本开发网还覆盖永生成员、两次 CKB 授权的原生换手、同步销毁退款及 CKB 首发方向的集合换主。三组实验复用了公开测试网四字段集合的原始字节。集合自身挂载 Mutant 仍缺少可确认的发行样本。[公开发行证明与六组结算](research/spore-permit/upstream/collections/README.md)

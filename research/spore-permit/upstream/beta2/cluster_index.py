@@ -41,7 +41,7 @@ def classify(raw):
     def number(pos):
         return int.from_bytes(raw[pos:pos + 4], "little")
     first = number(4)
-    if number(0) != len(raw) or first not in (12, 16) or first > len(raw):
+    if number(0) != len(raw) or first < 12 or first % 4 or first > len(raw):
         return "unparsed", None
     ends = [number(i) for i in range(4, first, 4)] + [len(raw)]
     if any(b < a or b > len(raw) for a, b in zip(ends, ends[1:])):
@@ -51,11 +51,14 @@ def classify(raw):
             return "unparsed", None
     if first == 12:
         return "two-field", None
-    tail = raw[ends[2]:]
+    # Compatible tables may append fields after the optional Mutant ID.
+    # Restrict the ID check to the third field and preserve the layout distinction.
+    tail = raw[ends[2]:ends[3]]
+    prefix = "extended-" if first > 16 else ""
     if not tail:
-        return "absent", None
+        return prefix + "absent", None
     if len(tail) == 36 and number(ends[2]) == 32:
-        return "populated", "0x" + tail[4:].hex()
+        return prefix + "populated", "0x" + tail[4:].hex()
     return "unparsed", None
 
 
@@ -128,7 +131,7 @@ def main():
         json.dump({"rpc": args.rpc, "tip": tip, "page_size": PAGE, "datasets": records}, out, separators=(",", ":"))
     for record in records:
         print(record["query"]["script"]["hash_type"], len(record["rows"]), "outputs",
-              sum(r["shape"] == "populated" for r in record["rows"]), "populated")
+              sum("mutant_id" in r for r in record["rows"]), "populated")
 
 
 if __name__ == "__main__":

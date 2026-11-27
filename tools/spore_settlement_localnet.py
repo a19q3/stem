@@ -87,10 +87,12 @@ def verify_spore_history(binary_path, directory, l1_port, report):
         if not native:
             events.insert(-1, report["ckb_wallet_transfer"])
         request["required_dependencies"] = report["mutant_registration"]["required_dependencies"]
-        if report.get("cluster"):
-            cluster = report["cluster"]
-            request["required_dependencies"] = [*request["required_dependencies"], {"data_hash": hex_bytes(CLUSTER_BETA2)},
-                {"type_hash": hex_bytes(script_hash(cluster["type"])), "data_hash": cluster["data_hash"]}]
+    cluster = report.get("cluster")
+    every_step_uses_cluster = cluster and (native or "mutant_registration" in report)
+    if every_step_uses_cluster:
+        deps = request.get("required_dependencies", [{"data_hash": object_type["code_hash"]}])
+        request["required_dependencies"] = [*deps, {"data_hash": cluster["type"]["code_hash"]},
+            {"type_hash": hex_bytes(script_hash(cluster["type"])), "data_hash": cluster["data_hash"]}]
     deposit_name = "ckb-return" if native else "spore-deposit"
     deposit = json.loads((directory / f"{deposit_name}.json").read_text())
     index, = [i for i, cell in enumerate(deposit["outputs"]) if cell["type"] == object_type]
@@ -102,20 +104,20 @@ def verify_spore_history(binary_path, directory, l1_port, report):
         request["required_states"].append({"lock_hash": hex_bytes(script_hash(grant["next_custody"])),
                                            "data_hash": request["required_states"][0]["data_hash"]})
     collection = None
-    if "mutant_registration" in report and report.get("cluster"):
-        cluster = report["cluster"]
+    if cluster:
         custody = [cluster["minted"]]
         if cluster.get("transferred"):
             custody.append(cluster["transferred"])
         collection_request = {"anchor": request["anchor"], "type_hash": hex_bytes(script_hash(cluster["type"])),
                               "origin": point(custody[0]["hash"], 0), "end_transaction": custody[-1]["hash"],
-                              "required_dependencies": [{"data_hash": hex_bytes(CLUSTER_BETA2)}]}
+                              "required_dependencies": [{"data_hash": cluster["type"]["code_hash"]}]}
         collection = wallet_history(binary_path, directory, l1_port, "collection", collection_request)
         states = collection["verified"]["transitions"]
         assert [s["transaction"] for s in states] == [t["hash"] for t in custody]
         assert all(s["output"]["data_hash"] == cluster["data_hash"] for s in states)
         request["required_dependency_uses"] = []
-        for event in events:
+        # Ordinary CKB-origin members reference the collection at issuance.
+        for event in events if every_step_uses_cluster else events[:1]:
             height = int(event["inclusion"]["header"]["number"], 16)
             state = max((step for step in states if step["height"] <= height), key=lambda step: step["height"])
             cell = state["output"]
@@ -159,7 +161,10 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     codes = [code, mailbox_bin, ckb_lock_bin]
     fund_input, available = vault["change_point"], vault["change"]
     cluster_code = args.spore_cluster_v2.read_bytes() if args.spore_cluster_v2 else None
-    cluster_cap, proxy_cap = 300 * CKB, 120 * CKB if cluster_code else 0
+    cluster_data = (args.spore_cluster_data.read_bytes() if args.spore_cluster_data else
+                    table(molecule_bytes(b"Cross-chain collection"), molecule_bytes(b"CKB custody"), b""))
+    cluster_cap, proxy_cap = max(300, len(cluster_data) + 160) * CKB, 120 * CKB if cluster_code else 0
+    ordinary_member = native_origin and cluster_code is not None and not mutant
     if cluster_code:
         cluster_hash = CLUSTER_BETA2 if mutant else CLUSTER_CODE
         assert ckb_hash(cluster_code) == cluster_hash, "the fixture requires the release-matched Cluster ELF"
@@ -292,7 +297,6 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
     if cluster_code:
         cluster_id = type_id(mint_source + 3)
         cluster_type = script(hex_bytes(cluster_hash), hex_bytes(cluster_id), "data1")
-        cluster_data = table(molecule_bytes(b"Cross-chain collection"), molecule_bytes(b"CKB custody"), b"")
         if not mutant:
             cluster_dep = dependency(point(funded, 3))
         creation = transaction([point(funded, mint_source + 3)],
@@ -304,7 +308,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         cluster_point = point(created_cluster["hash"], 0)
         cluster = {"id": hex_bytes(cluster_id), "type": cluster_type, "data_hash": hex_bytes(ckb_hash(cluster_data)),
                    "minted": created_cluster}
-        if mutant:
+        if mutant or ordinary_member:
             deps.extend([cluster_dep, dependency(cluster_point)])
 
     sequencer_id = type_id(mint_source + 1)
@@ -325,8 +329,10 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         native_authority = script_hash(issuer) if issuer else script_hash(owner)
         native_args = native_id + (native_authority + authority + policy_code if approved_origin else b"") + counterpart
         route_fields = binary(genesis) + mailbox_code + sequencer_id + escrow_code + checkpoint_code + checkpoint_id
-        if mutant:
-            native_args = b"\x04" + native_id + counterpart + ckb_hash(route_fields)
+        gate_tag = b"\x03" if mutant else b"\x06" if ordinary_member else b""
+        if gate_tag:
+            identity_tag = b"\x04" if mutant else b"\x06"
+            native_args = identity_tag + native_id + counterpart + ckb_hash(route_fields)
         mapped_type = script(stem_spore_code, hex_bytes(native_args), "data")
         original = script_hash(mapped_type)
         asset_types = [mapped_type]
@@ -342,11 +348,11 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
             mime += mutant_suffix
         data = table(molecule_bytes(mime + (b";immortal=true" if args.spore_immortal else b"")), molecule_bytes(content),
                      molecule_bytes(cluster_id) if cluster else b"")
-        endpoint = script(stem_spore_code, hex_bytes((b"\x03" if mutant else b"\x02" if approved_origin else b"\x01")
+        endpoint = script(stem_spore_code, hex_bytes((gate_tag or (b"\x02" if approved_origin else b"\x01"))
             + original + route_fields + counterpart + (authority if approved_origin else b"")), "data")
         endpoint_id = script_hash(endpoint)
         ckb_escrow = script(hex_bytes(escrow_code),
-            hex_bytes((b"\x03" if mutant else b"") + sequencer_id + endpoint_id + original + mailbox_code + counterpart
+            hex_bytes(gate_tag + sequencer_id + endpoint_id + original + mailbox_code + counterpart
                       + (authority if approved_origin else b"")), "data2")
     else:
         object_id = type_id(mint_source)
@@ -695,8 +701,9 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         create_votes = votes
 
         native_transfers = []
-        if mutant:
-            rejected["local_mutant_transfer"] = stem_reject(stem_signed("local-mutant-transfer", original_point,
+        if gate_tag:
+            label = "local_mutant_transfer" if mutant else "local_cluster_transfer"
+            rejected[label] = stem_reject(stem_signed(label, original_point,
                 [cell(object_cap-FEE, buyer, data, asset_types)]), "exited with 117")
         if approved_origin:
             recipient = buyer if issuer else owner
@@ -839,7 +846,7 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
         else:
             # An ordinary CKB wallet can transfer the asset using only Spore and its owner lock.
             moved = transaction([spore, fees], [output(spore_cap, fixture.friend_lock, object_type),
-                output(fee_capacity-2*FEE, fixture.standard)], [hex_bytes(data), "0x"], deps[:2] + (deps[4:] if mutant else []))
+                output(fee_capacity-2*FEE, fixture.standard)], [hex_bytes(data), "0x"], deps[:2] + (deps[4:] if gate_tag else []))
             moved["witnesses"] = ["0x", "0x", cobuild(object_type, object_id, fixture.owner_lock, fixture.friend_lock)]
             moved = submit_ckb(fixture.sign("ckb-wallet-transfer", moved,
                 [wallet_group(0, [fixture.owner]), wallet_group(1, [fixture.faucet])]))
@@ -981,7 +988,8 @@ def spore_round(args, l1, fixture, vault, spec, spec_path, mint, clients, relay)
                            "authenticated_inbox": certified("/stem/intercell/inbox", notice["id"])}
         elif not args.spore_immortal and not approved_origin and not mutant:
             last = point(released["hash"], 1)
-            melt = transaction([last], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"], deps[:2])
+            melt = transaction([last], [output(spore_cap - FEE, fixture.owner_lock)], ["0x"],
+                               deps[:2] + (deps[4:] if ordinary_member else []))
             melt["witnesses"] = ["0x", cobuild(object_type, object_id, fixture.owner_lock, None)]
             melted = submit_ckb(fixture.sign("standard-melt", melt, [wallet_group(0, [fixture.owner])]))
             assert l1.call("get_live_cell", last, True)["status"] != "live"

@@ -621,6 +621,8 @@ def main():
                         help="authorize two direct native title transfers using the original CKB Spore")
     parser.add_argument("--spore-handoff-stale-source", action="store_true",
                         help="also commit a CKB receipt naming a spent native input and exercise redemption")
+    parser.add_argument("--spore-cluster-data", type=lambda path: Path(path).resolve(),
+                        help="use the supplied packed Cluster data for collection issuance")
     parser.add_argument("--spore-cluster-v2", type=lambda path: Path(path).resolve(),
                         help="mint the fixture in a Cluster using its published CKB ELF")
     for name in ("stem-native-object", "object-policy", "ckb-stem-object",
@@ -685,8 +687,9 @@ def main():
         parser.error("the native media fixtures require --native-spore-origin")
     if args.native_spore_sync_melt and (not args.native_spore_origin or args.native_spore_approval or args.spore_immortal):
         parser.error("synchronized melt requires a meltable, unrestricted native-origin Spore")
-    if args.spore_handoff and not ((args.native_spore_origin or args.stem_spore) and args.spore_mutant_lua):
-        parser.error("the handoff fixture requires a beta.2 registered Spore settlement endpoint")
+    if args.spore_handoff and not (((args.native_spore_origin or args.stem_spore) and args.spore_mutant_lua)
+                                   or (args.native_spore_origin and args.spore_cluster_v2)):
+        parser.error("a custody handoff requires a registered Spore or a native-origin Cluster member")
     if args.spore_handoff_stale_source and not args.spore_handoff:
         parser.error("the stale source control needs --spore-handoff")
     if args.separate_return_permit and not args.ckb_spore_permit:
@@ -705,8 +708,10 @@ def main():
         parser.error("--spore-immortal requires the original Spore V2 settlement fixture")
     if args.native_spore_origin and any((args.stem_spore, args.stem_native_object, args.export_udt)):
         parser.error("select one native Spore, imported Spore, native object or UDT fixture")
-    if args.native_spore_origin and args.spore_cluster_v2 and not args.spore_mutant_lua:
-        parser.error("a native-origin collection member requires the beta.2 Mutant custody profile")
+    if args.spore_cluster_data and not args.spore_cluster_v2:
+        parser.error("--spore-cluster-data requires --spore-cluster-v2")
+    if args.native_spore_origin and args.spore_cluster_v2 and args.native_spore_approval:
+        parser.error("the approval and collection custody profiles use different native object Types")
     if any((args.native_spore_origin, args.stem_spore, args.ckb_spore_escrow, args.spore_v2, args.spore_cluster_v2)) and (
             not all((args.stem_spore or args.native_spore_origin, args.ckb_spore_escrow, args.spore_v2, args.intercell_mailbox))
             or args.export_udt):

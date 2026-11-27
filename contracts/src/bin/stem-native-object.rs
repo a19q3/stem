@@ -20,8 +20,8 @@ use stem_bridge_wire::{
     metatype::MAX_STATE_BYTES,
     object::{ObjectArgs, creation_id, revision},
     spore::{
-        CellTransfer, Handoff, MAX_CELL_SPORE_DATA, MAX_SPORE_DATA, MELT_TAG, MeltReceipt,
-        SporeData, SporeTransfer, TransferContent, return_nonce,
+        CellTransfer, CustodyProfile, Handoff, MAX_CELL_SPORE_DATA, MAX_SPORE_DATA, MELT_TAG, MeltReceipt, SporeData, SporeTransfer,
+        TransferContent, return_nonce,
     },
 };
 
@@ -73,17 +73,19 @@ fn verify() -> Result<(), i8> {
         }
         return identity(&object, &network, true);
     }
-    if args.len() == 97 && args[0] == 4 {
+    if args.len() == 97
+        && let Some(profile) = CustodyProfile::from_identity_tag(args[0])
+    {
         let [id, counterpart, route] = args[1..].as_chunks::<32>().0 else {
             return Err(116);
         };
         if [id, counterpart, route].contains(&&[0; 32]) {
             return Err(116);
         }
-        return mutant_identity(&script, id, counterpart, route, &network);
+        return custody_identity(&script, id, counterpart, route, &network, profile);
     }
     let (raw, route) = match (args.first(), args.len()) {
-        (Some(3), 257) => (&args[1..], Route::Mutant),
+        (Some(&tag), 257) if let Some(profile) = CustodyProfile::from_gate_tag(tag) => (&args[1..], Route::Custody(profile)),
         (Some(1), 257) => (&args[1..], Route::Standard),
         (Some(2), 289) => {
             let authority = (&args[257..]).try_into().map_err(|_| 116)?;
@@ -113,7 +115,7 @@ fn verify() -> Result<(), i8> {
 enum Route<'a> {
     Original,
     Standard,
-    Mutant,
+    Custody(CustodyProfile),
     ApprovedStandard(&'a Identity),
 }
 
@@ -199,16 +201,17 @@ fn verify_creation(network: &Identity, id: &Identity) -> Result<(), i8> {
 }
 
 // The native title moves only through the object's pinned custody endpoint.
-fn mutant_identity(
+fn custody_identity(
     script: &Script,
     id: &Identity,
     counterpart: &Identity,
     route: &Identity,
     network: &Identity,
+    profile: CustodyProfile,
 ) -> Result<(), i8> {
     let read = |source| match bounded_data(0, source, MAX_CELL_SPORE_DATA) {
         Ok(data)
-            if SporeData::custody_mutant(&data).is_some()
+            if profile.parse(&data).is_some()
                 && load_cell_capacity(1, source) == Err(SysError::IndexOutOfBound)
                 && load(LOAD_TYPE_HASH, source as u64, 0, 1, &mut []).0 == INDEX_OUT_OF_BOUND =>
         {
@@ -224,7 +227,7 @@ fn mutant_identity(
         Ok((lock.code_hash() == script.code_hash()
             && lock.hash_type() == script.hash_type()
             && args.len() == 257
-            && args[0] == 3
+            && args[0] == profile.gate_tag()
             && &args[1..33] == object.as_slice()
             && ckb_hash::blake2b_256(&args[33..225]) == *route
             && &args[225..] == counterpart)
@@ -307,8 +310,8 @@ fn escrow(
     if let Route::ApprovedStandard(authority) = route {
         owner_args.extend_from_slice(authority);
     }
-    if matches!(route, Route::Mutant) {
-        owner_args.insert(0, 3);
+    if let Route::Custody(profile) = route {
+        owner_args.insert(0, profile.gate_tag());
     }
     let owner = Script::new_builder()
         .code_hash(owner_code.pack())
@@ -346,10 +349,10 @@ fn escrow(
     let handoff = Handoff::decode(message.payload);
     let melt = MeltReceipt::decode(message.payload);
     let terminal = melt.is_some();
-    if terminal && !(kind == RECEIVE_ACTION && matches!(route, Route::Standard | Route::Mutant)) {
+    if terminal && !(kind == RECEIVE_ACTION && matches!(route, Route::Standard | Route::Custody(_))) {
         return Err(118);
     }
-    if handoff.is_some() && !(kind == RECEIVE_ACTION && matches!(route, Route::Mutant)) {
+    if handoff.is_some() && !(kind == RECEIVE_ACTION && matches!(route, Route::Custody(_))) {
         return Err(118);
     }
     let transfer = handoff
@@ -357,7 +360,7 @@ fn escrow(
         .map(|h| h.transfer)
         .or(melt)
         .or_else(|| {
-            if matches!(route, Route::Mutant) {
+            if matches!(route, Route::Custody(_)) {
                 CellTransfer::decode_custody(message.payload)
             } else {
                 CellTransfer::decode(message.payload)
@@ -502,7 +505,7 @@ fn inspect(
         let (arg_len, binding_offset, type_count) = match route {
             Route::Original => (128, 64, 2),
             Route::Standard => (64, 32, 1),
-            Route::Mutant => (97, 33, 1),
+            Route::Custody(_) => (97, 33, 1),
             Route::ApprovedStandard(_) => (160, 128, 2),
         };
         match load(

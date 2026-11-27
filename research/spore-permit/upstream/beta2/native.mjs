@@ -8,15 +8,17 @@ const folder = pathToFileURL(resolve(process.argv[2]) + "/");
 const sdk = await import(new URL("stem_wasm.js", folder));
 await sdk.default({ module_or_path: await readFile(new URL("stem_wasm_bg.wasm", folder)) });
 const bytes = (s) => Buffer.from(s.replace(/^0x/, ""), "hex");
-const trust = JSON.parse(await readFile(new URL("committee-trust.json", import.meta.url)));
+const study = process.argv[3] ? pathToFileURL(resolve(process.argv[3]) + "/") : new URL(".", import.meta.url);
+const trust = JSON.parse(await readFile(new URL("committee-trust.json", study)));
 const evidence = {};
-for (const filename of ["histories.json.xz", "two-registrations.json.xz", "cluster-settlement.json.xz",
+const archives = process.argv[3] ? ["settlements.json.xz"] : ["histories.json.xz", "two-registrations.json.xz", "cluster-settlement.json.xz",
     "handoff-compact.json.xz", "handoff-cluster.json.xz", "handoff-large.json.xz",
     "handoff-import-compact.json.xz", "handoff-import-cluster.json.xz", "handoff-import-large.json.xz",
     "registered-policy/settlement.json.xz", "registered-policy/separate-payees.json.xz",
-    "registered-policy/compact-payees.json.xz", "sdk-policies/settlement.json.xz", "dependency-uses/settlement.json.xz"]) {
-    const archive = new URL(filename, import.meta.url);
-    Object.assign(evidence, JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 32*1024*1024})));
+    "registered-policy/compact-payees.json.xz", "sdk-policies/settlement.json.xz", "dependency-uses/settlement.json.xz"];
+for (const filename of archives) {
+    const archive = new URL(filename, study);
+    Object.assign(evidence, JSON.parse(execFileSync("xz", ["-dc", fileURLToPath(archive)], {maxBuffer: 64*1024*1024})));
 }
 for (const [name, root] of Object.entries(trust)) {
     const record = evidence[name].settlement;
@@ -24,7 +26,8 @@ for (const [name, root] of Object.entries(trust)) {
     const transactions = "imported" in record
         ? { imported: record.imported, burned: record.burned, reimported: record.reimported }
         : { issue: record.issued, lock: record.locked, restore: record.restored, relock: record.relocked };
-    if (record.standard_melt) transactions.retire = record.standard_melt.retired;
+    if (record.execution.transferred) transactions.transferred = record.transferred;
+    if (record.standard_melt?.retired) transactions.retire = record.standard_melt.retired;
     const grants = new Map((record.handoffs ?? []).map((grant, i) => [`handoff-${i+1}`, grant]));
     for (const [label, grant] of grants) transactions[label] = grant.native;
     const titles = new Map();
@@ -43,6 +46,24 @@ for (const [name, root] of Object.entries(trust)) {
         assert.equal(header.height, BigInt(tx.height));
         const execution = header.verifyExecution(bytes(sample.transaction), bytes(sample.receipt), bytes(sample.proof));
         assert.equal(Buffer.from(execution.transactionId()).toString("hex"), tx.hash);
+        if (operation === "retire") {
+            const melt = record.standard_melt;
+            for (const [state, present] of [[melt.spent_original, false], [melt.refund, true]]) {
+                const tip = verifier.verifyFinality(bytes(state.finality), false);
+                assert.equal(tip.verifyLiveCell(bytes(state.point), bytes(state.cell ?? ""), bytes(state.proof)), present);
+                assert.equal(tip.height, BigInt(tx.height));
+                tip.free();
+            }
+            assert.equal(bytes(melt.spent_original.point).toString("hex"), record.relocked.hash + "01000000");
+            assert.equal(bytes(melt.refund.point).toString("hex"), tx.hash + "01000000");
+            const decoded = sdk.decodeTransaction(bytes(sample.transaction));
+            const refund = decoded.output(1);
+            const notice = bytes(melt.receipt.record);
+            assert.equal(refund.typeScriptCount, 0);
+            assert.deepEqual(Buffer.from(refund.data()), Buffer.concat([Buffer.from("SPB1"), notice.subarray(136, 168)]));
+            refund.free();
+            decoded.free();
+        }
         if (grants.size && (operation === "restore" || operation === "imported")) {
             const decoded = sdk.decodeTransaction(bytes(sample.transaction));
             const issued = decoded.output(1);
