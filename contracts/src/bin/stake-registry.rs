@@ -562,7 +562,7 @@ fn verify_position_evidence(
             None,
         )?
         .ok_or(Error::Stake)?;
-        stem_stake::jolteon::evidence::verify(
+        stem_stake::settlement::ckb::evidence::verify(
             &checkpoint.policy,
             &checkpoint.tip,
             &liability,

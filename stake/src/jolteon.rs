@@ -4,7 +4,8 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use ed25519_dalek::Signature;
 use prost::Message;
 
-pub mod checkpoint;
+#[cfg(feature = "ckb-settlement")]
+pub use crate::settlement::ckb as checkpoint;
 pub mod evidence;
 
 use crate::{
@@ -72,6 +73,22 @@ impl CommitteeChange {
             members,
         })
     }
+}
+
+/// Commitment shared by committee attestations, rewards and settlement.
+pub fn roster_id(record: &[u8]) -> Hash32 {
+    digest(b"Stem Jolteon checkpoint roster\0", &[record])
+}
+
+/// The two forms that authenticate an execution Header in the deployed protocol.
+pub enum ExecutionProof<'a> {
+    TwoChain(&'a [u8]),
+    TerminalHandoff(&'a [u8]),
+}
+
+pub struct AuthenticatedExecution {
+    pub header: FinalizedHeader,
+    pub successor: Option<CommitteeChange>,
 }
 
 /// Two certified Headers. The child certifies the parent at the next view.
@@ -499,6 +516,25 @@ impl Committee {
         )
     }
 
+    pub fn authenticate_execution(
+        &self,
+        proof: ExecutionProof<'_>,
+    ) -> Result<AuthenticatedExecution> {
+        match proof {
+            ExecutionProof::TwoChain(raw) => Ok(AuthenticatedExecution {
+                header: self.verify_finality(raw)?,
+                successor: None,
+            }),
+            ExecutionProof::TerminalHandoff(raw) => {
+                let (successor, header, _) = self.verify_handoff(raw)?;
+                Ok(AuthenticatedExecution {
+                    header,
+                    successor: Some(successor),
+                })
+            }
+        }
+    }
+
     pub fn verify_finality(&self, bytes: &[u8]) -> Result<FinalizedHeader> {
         if bytes.len() > MAX_PROOF_BYTES {
             return Err(Error::Encoding);
@@ -659,7 +695,7 @@ impl Committee {
     }
 }
 
-fn timestamp(header: &[u8; NATIVE_HEADER_BYTES]) -> u64 {
+pub(crate) fn timestamp(header: &[u8; NATIVE_HEADER_BYTES]) -> u64 {
     u64::from_le_bytes(header[8..16].try_into().expect("fixed timestamp"))
 }
 

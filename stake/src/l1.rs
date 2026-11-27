@@ -403,9 +403,10 @@ pub enum Action<'a> {
     },
     Withdraw(&'a [u8]),
     Freeze(DoubleVote),
+    #[cfg(feature = "ckb-settlement")]
     FreezeJolteon {
-        policy: &'a crate::jolteon::checkpoint::Policy,
-        tip: &'a crate::jolteon::checkpoint::Tip,
+        policy: &'a crate::settlement::ckb::Policy,
+        tip: &'a crate::settlement::ckb::Tip,
         evidence: &'a [u8],
     },
     FinalizeSlash,
@@ -562,6 +563,7 @@ impl ChangeContext<'_> {
                 let height = u64::try_from(evidence.first.height).map_err(|_| Error::Evidence)?;
                 Ok((hash, height, height))
             }),
+            #[cfg(feature = "ckb-settlement")]
             Action::FreezeJolteon {
                 policy,
                 tip,
@@ -573,7 +575,7 @@ impl ChangeContext<'_> {
                     return Err(Error::Identity);
                 }
                 self.freeze(|liability| {
-                    crate::jolteon::evidence::verify(policy, tip, liability, evidence)
+                    crate::settlement::ckb::evidence::verify(policy, tip, liability, evidence)
                 })
             }
             Action::FinalizeSlash => {

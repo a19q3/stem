@@ -12,7 +12,7 @@ use ckb_std::{
         load_script_hash,
     },
 };
-use stem_stake::jolteon::checkpoint::{FundingPolicy, Tip};
+use stem_stake::settlement::ckb::{FundingPolicy, Tip};
 
 entry!(main);
 default_alloc!();

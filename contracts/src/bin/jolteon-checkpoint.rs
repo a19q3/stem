@@ -13,7 +13,7 @@ use ckb_std::{
     },
     type_id,
 };
-use stem_stake::jolteon::checkpoint::{self, Policy, Tip};
+use stem_stake::settlement::ckb::{self as checkpoint, Policy, Tip};
 
 entry!(main);
 default_alloc!();

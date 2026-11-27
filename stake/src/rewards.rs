@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use crate::{
     Error, Hash32, Registry, Result, ValidatorKey, delegation,
-    jolteon::{CommitteeChange, checkpoint::roster_id},
+    jolteon::{CommitteeChange, roster_id},
     l1::{DelegationId, StakeCell},
 };
 

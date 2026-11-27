@@ -5,7 +5,7 @@ use ckb_types::{packed::Byte32, prelude::*};
 use stem_bridge_wire::intercell::{Identity, Message, record_key};
 use stem_stake::{
     Member,
-    jolteon::{Committee, CommitteeChange, FinalizedHeader},
+    jolteon::{Committee, CommitteeChange, ExecutionProof, FinalizedHeader},
 };
 
 use crate::{
@@ -72,12 +72,12 @@ impl FinalityVerifier {
     }
 
     pub fn verify(&self, raw: &[u8], terminal: bool) -> Result<VerifiedHeader> {
-        let finalized = if terminal {
-            self.committee.verify_handoff(raw)?.1
+        let proof = if terminal {
+            ExecutionProof::TerminalHandoff(raw)
         } else {
-            self.committee.verify_finality(raw)?
+            ExecutionProof::TwoChain(raw)
         };
-        self.authenticated(&finalized)
+        self.authenticated(&self.committee.authenticate_execution(proof)?.header)
     }
 
     fn authenticated(&self, finalized: &FinalizedHeader) -> Result<VerifiedHeader> {

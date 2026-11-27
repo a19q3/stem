@@ -22,6 +22,8 @@ pub mod patricia;
 pub mod retirement;
 pub mod rewards;
 pub mod security;
+#[cfg(feature = "ckb-settlement")]
+pub mod settlement;
 mod sparse;
 pub use evidence::{BlockId, DoubleVote, Liability, SignedVote, VoteKind};
 

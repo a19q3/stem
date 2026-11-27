@@ -14,5 +14,5 @@ anyhow.workspace = true
 ckb-types.workspace = true
 stem-bridge-wire = { path = "../../bridge-wire" }
 stem-ledger = { path = "../../ledger" }
-stem-stake = { path = "../../stake" }
+stem-stake = { path = "../../stake", default-features = false }
 wasm-bindgen = "=0.2.118"

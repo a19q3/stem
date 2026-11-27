@@ -17,7 +17,7 @@ use ckb_std::{
 #[cfg(not(feature = "jolteon"))]
 use stem_stake::finality::{CheckpointPolicy, Tip};
 #[cfg(feature = "jolteon")]
-use stem_stake::jolteon::checkpoint::{Policy as CheckpointPolicy, Tip};
+use stem_stake::settlement::ckb::{Policy as CheckpointPolicy, Tip};
 use stem_stake::{Hash32, finality::CheckpointId, l1::CheckpointState};
 
 pub struct Checkpoint {

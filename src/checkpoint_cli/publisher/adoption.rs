@@ -7,7 +7,7 @@ use ckb_types::{
 };
 use prost::Message;
 use serde_json::{Value, json};
-use stem_stake::jolteon::{CommitteeChange, checkpoint as jolteon};
+use stem_stake::{jolteon::CommitteeChange, settlement::ckb as jolteon};
 
 use super::super::next_jolteon_roster;
 use super::{Confirmed, Publisher, State, out_point};

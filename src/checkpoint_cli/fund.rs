@@ -14,7 +14,7 @@ use ckb_types::{
 use clap::Subcommand;
 use serde::Deserialize;
 use serde_json::json;
-use stem_stake::jolteon::checkpoint::{self, FundingPolicy, Tip};
+use stem_stake::settlement::ckb::{self as checkpoint, FundingPolicy, Tip};
 
 use crate::{
     bridge_cli::{print_json, read_json_limited},

@@ -21,7 +21,8 @@ use stem_ledger::{
 use stem_stake::{
     Authority, Member, Registry,
     finality::{CheckpointId, VaultPolicy},
-    jolteon::{CommitteeChange, checkpoint::FundingPolicy},
+    jolteon::CommitteeChange,
+    settlement::ckb::FundingPolicy,
     rewards::epoch_key,
 };
 

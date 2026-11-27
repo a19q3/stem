@@ -1,11 +1,16 @@
 //! Sparse CKB checkpoints authenticated by Stem execution proofs and committee handoffs.
 
+pub mod evidence;
+
 use alloc::vec::Vec;
 use prost::Message;
 
-use crate::{Error, Hash32, Result, digest, finality::NATIVE_HEADER_BYTES};
+use crate::{Error, Hash32, Result, finality::NATIVE_HEADER_BYTES};
 
-use super::{Committee, CommitteeChange, native_height, native_id, timestamp};
+pub use crate::jolteon::roster_id;
+
+use crate::finality::{native_height, native_id};
+use crate::jolteon::{Committee, CommitteeChange, ExecutionProof, timestamp};
 
 const MAX_WITNESS_BYTES: usize = 72 * 1024;
 
@@ -171,10 +176,6 @@ pub struct Advance {
     pub terminal: bool,
 }
 
-pub fn roster_id(record: &[u8]) -> Hash32 {
-    digest(b"Stem Jolteon checkpoint roster\0", &[record])
-}
-
 pub fn verify(policy: &Policy, previous: Option<&Tip>, bytes: &[u8]) -> Result<Tip> {
     if bytes.len() > MAX_WITNESS_BYTES {
         return Err(Error::Encoding);
@@ -215,12 +216,16 @@ pub fn verify(policy: &Policy, previous: Option<&Tip>, bytes: &[u8]) -> Result<T
         anchor,
         &roster.members,
     )?;
-    let (header, new_roster) = if advance.terminal {
-        let (successor, header, _) = committee.verify_handoff(&advance.proof)?;
-        (header, Some(roster_id(&successor.encode())))
+    let proof = if advance.terminal {
+        ExecutionProof::TerminalHandoff(&advance.proof)
     } else {
-        (committee.verify_finality(&advance.proof)?, None)
+        ExecutionProof::TwoChain(&advance.proof)
     };
+    let executed = committee.authenticate_execution(proof)?;
+    let header = executed.header;
+    let new_roster = executed
+        .successor
+        .map(|successor| roster_id(&successor.encode()));
     if header.height() < roster.activation_height {
         return Err(Error::Epoch);
     }

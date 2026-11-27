@@ -24,7 +24,7 @@ ckb-hash.workspace = true
 ckb-jsonrpc-types.workspace = true
 stem-bridge-wire = { path = "bridge-wire" }
 stem-ledger = { path = "ledger" }
-stem-stake = { path = "stake" }
+stem-stake = { path = "stake", default-features = false, features = ["ckb-settlement"] }
 stem-vm = { path = "vm" }
 ckb-types.workspace = true
 ed25519-dalek.workspace = true

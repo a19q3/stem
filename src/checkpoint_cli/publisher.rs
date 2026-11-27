@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use stem::{jolteon::Client, native_store::HistoryIndex};
 use stem_ledger::block::Header;
-use stem_stake::jolteon::{CommitteeChange, HandoffProof, checkpoint as jolteon};
+use stem_stake::{
+    jolteon::{CommitteeChange, HandoffProof},
+    settlement::ckb as jolteon,
+};
 
 use super::{Bundle, build_jolteon_bundle, fund, read_hex};
 use crate::{

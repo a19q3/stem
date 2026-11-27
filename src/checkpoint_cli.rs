@@ -12,7 +12,8 @@ use stem_stake::{
     BlockId,
     checkpoint::{Checkpoint, Domain, Update, ZERO_OUT_POINT, stake_snapshot_commitment},
     finality::{self, Tip, Trust},
-    jolteon::{HandoffProof, checkpoint as jolteon},
+    jolteon::HandoffProof,
+    settlement::ckb as jolteon,
 };
 
 mod fund;
