@@ -2,6 +2,8 @@
 
 #[cfg(feature = "native-reuse-ordered-cell-writes")]
 use std::cell::Cell;
+#[cfg(feature = "native-incremental-cell-projection")]
+use std::time::Duration;
 use std::{
     cell::RefCell,
     panic::{self, AssertUnwindSafe},
@@ -10,7 +12,7 @@ use std::{
         mpsc,
     },
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 #[cfg(feature = "native-rolling-cell-execution")]
@@ -242,7 +244,7 @@ impl Store {
             &PrecedingCells<'_>,
         ) -> Result<ProposalStep>,
     ) -> Result<(usize, bool)> {
-        let depth = self.cell_window_limit(width, *budget);
+        let depth = self.rolling_cell_depth(width, *budget, finish_ordered_suffix);
         debug_assert!(depth >= 2);
         let count = transactions.len();
         let started = Instant::now();
@@ -295,6 +297,8 @@ impl Store {
             .collect::<Vec<Option<Completion>>>();
         let in_flight_limit = width.saturating_mul(2).min(depth);
         let mut in_flight = 0;
+        #[cfg(feature = "native-leader-tail-cycle-shares")]
+        let mut reserved_cycles = 0u64;
         let mut submitted = 0;
         let mut prefix = 0;
         #[cfg(feature = "native-reclaim-cell-projection")]
@@ -308,12 +312,30 @@ impl Store {
                 while prefix < count {
                     self.check_preparation_cancelled()?;
                     let funded = self.cell_window_limit(width, *budget);
+                    #[cfg(feature = "native-leader-tail-cycle-shares")]
+                    let share_tail = finish_ordered_suffix && funded < 2 && budget.cycles >= 2;
+                    #[cfg(feature = "native-leader-tail-cycle-shares")]
+                    let funded = if share_tail { width.min(depth) } else { funded };
                     #[cfg(feature = "native-reclaim-cell-projection")]
                     let funded = if force_ordered { 0 } else { funded };
                     while submitted < count
                         && submitted - prefix < funded
                         && in_flight < in_flight_limit
                     {
+                        let slot = *budget;
+                        #[cfg(feature = "native-leader-tail-cycle-shares")]
+                        let slot = if share_tail {
+                            let vacancies = (funded - (submitted - prefix)).min(count - submitted);
+                            let unreserved = slot.cycles.saturating_sub(reserved_cycles);
+                            let cycles = self.limits.transaction_cycles.min(unreserved / vacancies as u64);
+                            if cycles == 0 {
+                                break;
+                            }
+                            stats.tail_cycle_share_jobs += u64::from(cycles < self.limits.transaction_cycles);
+                            Budget { cycles, ..slot }
+                        } else {
+                            slot
+                        };
                         let position = submitted;
                         #[cfg(feature = "native-incremental-cell-projection")]
                         if projected_prefix < position {
@@ -338,7 +360,12 @@ impl Store {
                             projected_prefix = position;
                         }
                         let tx = &transactions[position];
-                        let slot = *budget;
+                        #[cfg(feature = "native-leader-tail-cycle-shares")]
+                        if finish_ordered_suffix {
+                            // Hold the reservation through ordered settlement, even after
+                            // its worker has returned a result.
+                            reserved_cycles += slot.cycles.min(self.limits.transaction_cycles);
+                        }
                         let send = sender.clone();
                         let parallel_groups = count - prefix < width;
                         scope.spawn_fifo(move |_| {
@@ -394,6 +421,8 @@ impl Store {
                     }
                     stats.peak_outstanding =
                         stats.peak_outstanding.max((submitted - prefix) as u64);
+                    #[cfg(feature = "native-leader-tail-cycle-shares")]
+                    let mut tail_slot = false;
                     let work = if prefix == submitted {
                         if !finish_ordered_suffix {
                             break;
@@ -409,6 +438,11 @@ impl Store {
                             in_flight -= 1;
                             continue;
                         };
+                        #[cfg(feature = "native-leader-tail-cycle-shares")]
+                        if finish_ordered_suffix {
+                            reserved_cycles -= slot.cycles.min(self.limits.transaction_cycles);
+                            tail_slot = slot.cycles < self.limits.transaction_cycles;
+                        }
                         match outcome.unwrap_or_else(|panic| panic::resume_unwind(panic)) {
                             Ok(trial) if trial.sources.published(&published) => {
                                 ProposalTrial::Ready(ReadyCell { effects: trial.effects, slot })
@@ -434,6 +468,10 @@ impl Store {
                     let had_trial = had_trial && !matches!(step, ProposalStep::RejectedParentSpend);
                     if matches!(step, ProposalStep::Reused) {
                         stats.reused += 1;
+                        #[cfg(feature = "native-leader-tail-cycle-shares")]
+                        {
+                            stats.tail_cycle_share_reused += u64::from(tail_slot);
+                        }
                         published[prefix] = true;
                     } else if had_trial {
                         stats.fallbacks += 1;

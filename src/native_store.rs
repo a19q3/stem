@@ -220,6 +220,8 @@ pub struct CellStreamStats {
     pub projection_barriers: u64,
     pub first_submit_us: u64,
     pub refilled_jobs: u64,
+    pub tail_cycle_share_jobs: u64,
+    pub tail_cycle_share_reused: u64,
     pub discarded_jobs: u64,
     pub peak_outstanding: u64,
     pub elapsed_us: u64,
@@ -277,6 +279,12 @@ impl CellStreamStats {
         self.projection_barriers = self.projection_barriers.saturating_add(other.projection_barriers);
         self.first_submit_us = self.first_submit_us.saturating_add(other.first_submit_us);
         self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
+        self.tail_cycle_share_jobs = self
+            .tail_cycle_share_jobs
+            .saturating_add(other.tail_cycle_share_jobs);
+        self.tail_cycle_share_reused = self
+            .tail_cycle_share_reused
+            .saturating_add(other.tail_cycle_share_reused);
         self.discarded_jobs = self.discarded_jobs.saturating_add(other.discarded_jobs);
         self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
         self.elapsed_us = self.elapsed_us.saturating_add(other.elapsed_us);
@@ -4632,6 +4640,34 @@ mod pipeline_store_tests {
                 if cfg!(feature = "native-incremental-cell-projection") { 3 } else { 4 },
             );
 
+            #[cfg(feature = "native-leader-tail-cycle-shares")]
+            {
+                let max = reference.receipts().iter().map(|receipt| receipt.cycles).max()
+                    .expect("four payment receipts");
+                let mut tail_spec = self::spec();
+                tail_spec.development_cells = spec.development_cells.clone();
+                tail_spec.limits.block_cycles = 4 * max;
+                tail_spec.limits.transaction_cycles = tail_spec.limits.block_cycles;
+                let tail_path = tempfile::tempdir()?;
+                let tail_store = Store::open(tail_path.path(), &tail_spec, Retention::Archive)?;
+                let (expected, reference) =
+                    serial_pool.install(|| tail_store.build_proposal(run.iter(), 1001, 16 * 1024))?;
+                let mut scan = ProposalScan::default();
+                let (selected, leader) = workers.install(|| {
+                    tail_store.build_proposal_measured(run.iter(), 1001, 16 * 1024, &mut scan, None)
+                })?;
+                assert_eq!(selected.len(), run.len());
+                assert_eq!(
+                    selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                    expected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                );
+                assert_eq!(leader.header(), reference.header());
+                assert_eq!(leader.receipts(), reference.receipts());
+                assert_same_batch_writes(&leader.batch, &reference.batch);
+                assert!(scan.rolling_cells.tail_cycle_share_jobs >= 2);
+                assert!(scan.rolling_cells.tail_cycle_share_reused >= 2);
+            }
+
             #[cfg(feature = "native-compact-cell-trial-edits")]
             {
                 // Three inputs and outputs spill both inline buffers.
@@ -5012,6 +5048,32 @@ mod pipeline_store_tests {
         let reference = limited.prepare(std::slice::from_ref(&first), 1001, false)?;
         assert_eq!(proposal.header(), reference.header());
         assert_eq!(proposal.receipts(), reference.receipts());
+        #[cfg(feature = "native-leader-tail-cycle-shares")]
+        {
+            // A worker receives at most half of the available cycles on the
+            // first payment. The ordered retry can still use the full balance.
+            let mut tail_scan = ProposalScan { priority_candidates: 2, ..ProposalScan::default() };
+            let (selected, parallel) = workers.install(|| {
+                limited.build_proposal_measured(
+                    [&first, &second, &third, &fourth],
+                    1001,
+                    4096,
+                    &mut tail_scan,
+                    Some(2),
+                )
+            })?;
+            assert_eq!(selected.len(), 1);
+            assert_eq!(selected[0].as_slice(), first.as_slice());
+            assert_eq!(parallel.header(), proposal.header());
+            assert_eq!(parallel.receipts(), proposal.receipts());
+            assert_same_batch_writes(&parallel.batch, &proposal.batch);
+            assert_eq!(
+                (tail_scan.inspected, tail_scan.block_cycle_rejections, tail_scan.cycle_scan_stops),
+                (3, 2, 1),
+            );
+            assert!(tail_scan.rolling_cells.tail_cycle_share_jobs >= 2);
+            assert_eq!(tail_scan.rolling_cells.tail_cycle_share_reused, 0);
+        }
         limited.commit(proposal)?;
         assert!(limited.prepare(std::slice::from_ref(&fourth), 1002, false).is_ok());
         Ok(())
