@@ -149,6 +149,46 @@ of disposable observer snapshots. The static transport is intended for a
 private network. Use the discovery configuration for the signed-transport
 devnet exercise.
 
+## Verify a common finalized checkpoint
+
+Run this check from a trusted operator host using its reviewed genesis
+specification and the private peer addresses. `--min-height` sets the minimum
+accepted common height. A successful command returns the network and genesis
+IDs, common height, Header ID, application hash, certificate epoch and height,
+and each endpoint's reported height as JSON.
+
+```sh
+stem jolteon-readiness --genesis /srv/stem/genesis.json --min-height 1 \
+  --replica 127.0.0.1:22000 --replica 127.0.0.1:22001 \
+  --replica 127.0.0.1:22002 --replica 127.0.0.1:22003
+```
+
+The tool verifies Jolteon finality and intervening committee handoffs from
+the supplied genesis, follows authenticated Header parents when a later
+certificate covers the requested height, and compares the resulting Header
+with the Header returned by every endpoint. The endpoint reporting the
+lowest height must retain its certificate and earlier handoff proofs. All
+endpoints must retain the common Header. Stop or retry on failure after
+checking connectivity, catch-up and retention. The command checks at most
+32 distinct addresses, 64 handoffs and 192 parent links.
+
+This checks a common finalized observation from the configured addresses.
+For progress monitoring, raise the minimum height on subsequent checks.
+Treat the genesis file as trusted input. Replica addresses and status alone
+provide no proof of voter identity or durable state recovery. Check journal
+reopening and catch-up separately. Run the loopback fault fixture with
+`--validators 4 --offline 1 --check-readiness` to exercise rejection of a
+stopped endpoint, mismatched genesis and a minimum height ahead of the
+network, then verify agreement after restart.
+
+In the Native V1 loopback regression, four validators with weights
+`[1, 2, 1, 2]` confirmed all 32 payments with one validator stopped. The
+initial check authenticated height 3. The stopped endpoint failed the
+check and the restarted endpoint agreed with the other three at height 13.
+The separately executed `jolteon-proof` command returned the same application
+hash. A separate `checkpoint history` process reopened the archive and rebuilt
+a historical Header proof at that checkpoint.
+
 ## Exercise the native Jolteon path
 
 The fixture starts ordinary replicas and one archive using `stem run`. It generates disposable keys for a private loopback network.

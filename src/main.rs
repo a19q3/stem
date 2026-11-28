@@ -12,6 +12,8 @@ mod l1;
 mod native_spec;
 #[cfg(unix)]
 mod native_wallet;
+#[cfg(unix)]
+mod readiness_cli;
 #[cfg(all(unix, feature = "comet-benchmark"))]
 use stem::socket;
 #[cfg(unix)]
@@ -140,6 +142,8 @@ enum Command {
         #[arg(long)]
         terminal: bool,
     },
+    /// Verify a shared finalized execution checkpoint from a group of replicas.
+    JolteonReadiness(readiness_cli::Readiness),
     /// Export or restore a finalized Jolteon state snapshot.
     JolteonSnapshot {
         #[command(subcommand)]
@@ -432,6 +436,7 @@ fn main() -> Result<()> {
                 "app_hash": hex::encode(header.app_hash(store.network()).as_slice()),
             }))
         }
+        Command::JolteonReadiness(check) => check.run(),
         Command::JolteonSnapshot { command } => command.run(),
         #[cfg(feature = "comet-benchmark")]
         Command::CometAbci {

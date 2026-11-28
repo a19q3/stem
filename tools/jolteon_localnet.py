@@ -202,12 +202,38 @@ def scenario(args):
         latest = states(indices)
         return latest if all(item["height"] >= height and item["committed_transactions"] >= transactions for item in latest) else None
 
+    def readiness(min_height, *, genesis=spec, expected_error=None):
+        command = [args.binary, "jolteon-readiness", "--genesis", genesis,
+                   "--min-height", str(min_height)]
+        for port in peers:
+            command += ["--replica", f"127.0.0.1:{port}"]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        if expected_error is not None:
+            assert result.returncode != 0 and expected_error in result.stderr, result
+            assert not result.stdout, result
+            return result.stderr.strip()
+        result.check_returncode()
+        verified = json.loads(result.stdout)
+        assert verified["height"] >= min_height and len(verified["replicas"]) == len(peers), verified
+        return verified
+
     everybody = list(range(len(peers)))
     start_metrics = {}
+    readiness_checks = {}
     try:
         for i in everybody:
             launch(i, True)
         initial = wait_for(lambda: observed(everybody, 3), "weighted finality at every replica", seconds=30)
+        if getattr(args, "check_readiness", False):
+            readiness_checks["initial"] = readiness(3)
+            readiness_checks["future_height"] = readiness(1 << 40, expected_error="below requested minimum")
+            other_genesis = args.output / "wrong-network-genesis.json"
+            wrong = json.loads(spec.read_text())
+            wrong["network_id"] = hex_bytes(ckb_hash(b"other network for readiness test"))
+            write_json(other_genesis, wrong)
+            readiness_checks["wrong_genesis"] = readiness(
+                3, genesis=other_genesis, expected_error="against trusted genesis",
+            )
         for i, proc in nodes.items():
             start_metrics[i] = process_resources(proc.pid)
         write_json(args.output / "initial.json", initial)
@@ -226,6 +252,9 @@ def scenario(args):
         for i in offline:
             nodes[i].kill()
             nodes[i].wait(timeout=10)
+        if getattr(args, "check_readiness", False) and offline:
+            stopped = peers[offline[0]]
+            readiness_checks["stopped_replica"] = readiness(3, expected_error=f"read status from 127.0.0.1:{stopped}")
         fresh = states(serving)
         before = min(item["height"] for item in fresh)
         before_view = max(item["view"] for item in fresh)
@@ -291,6 +320,9 @@ def scenario(args):
         if args.offline_blocks > 192:
             assert offline and all(resumed[i]["replayed_blocks"] > 0 for i in offline), resumed
         agreed_height = min(v["height"] for v in resumed)
+        if getattr(args, "check_readiness", False):
+            readiness_checks["after_restart"] = readiness(agreed_height)
+            write_json(args.output / "readiness.json", readiness_checks)
         headers = [rpc(port, HEADER, struct.pack("<Q", agreed_height)) for port in peers]
         if any(value != headers[0] for value in headers) or "header" not in headers[0]:
             raise AssertionError("replicas finalized different execution Headers")
@@ -395,6 +427,7 @@ def main():
     parser.add_argument("--recovery-seconds", type=int, default=45)
     parser.add_argument("--history-window", type=int)
     parser.add_argument("--check-pruning", action="store_true")
+    parser.add_argument("--check-readiness", action="store_true")
     parser.add_argument("--port", type=int, default=22000)
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)

@@ -1,36 +1,35 @@
 # Stem V1 engineering plan
 
-Review date 27 November 2026. The published integration baseline is [`654c9e1`](https://github.com/a19q3/stem/commit/654c9e1e3da6ef2ca64cfe8bdf19b83716ee33d1). Each local comparison records its own build revision or executable fingerprint. Use `fefb8cc` and `12338f2` for the historical comparisons that specify them.
+Review date 29 November 2026. The reproducible Native V1 candidate is [`a960b6d`](https://github.com/a19q3/stem/commit/a960b6d8340c80073e30f8b1be0c738b3e64349b). Build it with `cargo build --locked --release --bin stem --features native-v1-profile`. The feature remains opt-in with the existing default as the control. The two comparable Native runs improved execution service and tail latency near 5,500 offered payments/s. The second control was impaired, so the available measurements cannot establish the production default. [Exact profile, controls and replays](research/storage/native-residency-integration/README.md)
 
 Stem V1 votes authenticate the executed Header and use unified state finality. The CKB settlement adapter consumes that finality with the existing Checkpoint proof format. Standard Spore and Cluster settlement has a frozen regression baseline. Extended Spore compatibility and fixed-delay execution have separate research records. [Protocol](STEM-PROTOCOL.md) · [Evolution path](STEM-EVOLUTION.md) · [Original acceptance index](research/original-21.md)
 
-## Local pipeline decisions
+## Engineering phase
 
-| Area | Local decision entering qualification |
+Freeze speculative VM, state storage, scheduling and consensus changes. Preserve the existing experiment reports and exact feature profiles. Resume performance work when a qualified application or deployment exposes a material bottleneck. Continue correctness, safety, resource caps, recovery and independent-host qualification. The Sui and Aptos study runs independently on the same physical host. Keep the workload, actual offered rate, resource budgets and definitions of finality, visibility and durability with each measurement.
+
+| Programme | Existing path to reuse | Next acceptance gate |
+| --- | --- | --- |
+| Native DeFi | Polytype predicates and differential checks in #15–#20, native Lineage, OTX and Intent, Keeper, AMM and CLOB in #24–#30. | Qualify the reference market and position workflows with authenticated asset accounting, adverse fills and cancellations, independent replay, restart and documented interfaces. |
+| Stem Primary | Native registry and authenticated source handoffs in #31 and Intercell in #29. | Advance sovereign Case A through explicit admission and lifecycle, verified generations, replay-safe channel state and terminal settlement evidence. Refunds require authenticated destination outcomes. Case B has a separate validity and availability model. |
+| Private testnet engineering | Existing static and discovery devnets, systemd operation, authenticated snapshots and native proof verification. | Verify common finalized Headers, restart, lagging replicas, committee rotation, malformed requests, storage exhaustion and recovery. Independent-host qualification precedes any public activation. |
+| RPC, Indexer and Explorer | Native query and wallet interfaces, canonical proof formats and CKB upstream API and Explorer. | Define bounded versioned reads, keeping the full TypeSet. Verify indexed results against finalized state and test resumable ingestion and reconstruction. Coordinate schema with the existing wallet. |
+
+Public rollout, external exposure, real-value custody and production economics require maintainer approval. Keep CellScript deferred and use the existing Rust and RISC-V application interfaces. Track results, negative controls and open trust assumptions on the owning issues.
+
+### RPC and Explorer upstream revisions
+
+| Component | Upstream baseline |
 | --- | --- |
-| Admission and Follower | Enable Follower preparation with the cross-block combination. Keep asynchronous Admission opt-in pending integrated storage and mixed-workload comparisons. [Cross-block comparison](research/execution-pipeline/cross-block.md) · [Standalone Follower control](research/storage/external/README.md#follower-only-sustainable-profile-pair) |
-| Leader | Enable early successor construction with the cross-block combination. Keep age priority selectable for the fairness comparison. [Scheduling-only pair](research/execution-pipeline/cross-block.md#instrumented-scheduling-only-pair) · [Selection comparison](research/storage/admission-order/README.md#reverse-order-sustained-comparison) |
-| Work Stealing and commitments | Keep both opt-in. Mixed Work Stealing pairs reversed direction. Concurrent commitments reduced mean Follower prep and control wait in both pairs, with less than 0.4% difference in window TPS. |
-| Cell subtrees and VM cache | Enable parallel Cell subtree mutation and bounded candidate Cell prefetch. Keep the serial control and configurable VM cache capacity. [Subtree comparison](research/patricia/README.md#mixed-type-group-ablation-and-default) · [Cell prefetch comparison](research/follower-preparation/README.md#candidate-local-cell-reads) |
-| Certified Commit | Enable the writer as part of the measured cross-block combination. Keep the paced and synchronous reference builds for ablations. [Matched mature payment pressure and recovery](research/execution-pipeline/cross-block.md#matched-mature-payment-pressure) |
-| Block resources | Use 4B cycles and 2,048 transactions for the payment reference. Increasing the item limit to 3,072 moved saturation to the cycle budget and regressed throughput in the matched pair. In the 3,900/s mixed-script replay, the opt-in scan limit cleared every acknowledged transfer in both cycle-limited pairs. Compare bounded scanning when the workload shows cycle saturation. [Item-limit comparison](research/storage/admission-order/README.md#transaction-count-limit-under-a-fixed-cycle-budget) |
+| CKB RPC | [`119598b` RPC docs and source](https://github.com/nervosnetwork/ckb/tree/119598b0a1146a569068ac80bdba7eb5f6292fd3/rpc) |
+| CKB Explorer backend | [`11b8133`](https://github.com/nervosnetwork/ckb-explorer/tree/11b81330ef97a6f72c784a70dc8ce156ad565b9d) · [MIT terms](https://github.com/nervosnetwork/ckb-explorer/blob/11b81330ef97a6f72c784a70dc8ce156ad565b9d/COPYING) |
+| CKB Explorer frontend | [`39f93f2`](https://github.com/nervosnetwork/ckb-explorer-frontend/tree/39f93f2d2bd7a682c0d8dffe25192c2db63c7ad9) · [MIT terms](https://github.com/nervosnetwork/ckb-explorer-frontend/blob/39f93f2d2bd7a682c0d8dffe25192c2db63c7ad9/COPYING) |
 
-[Native evidence and reproduction](research/execution-pipeline/README.md) · [Mixed scheduler evidence](research/scheduling/README.md)
-
-## Native consolidation sequence
-
-1. Run integrated ablations and choose the default configuration using matched payment and mixed-script trials, with independent replay and commit-recovery evidence.
-2. Measure Script and TypeSet interning and prove exact reconstruction, atomic storage accounting and migration before enabling it in #23.
-3. Qualify dependency-aware Lineage execution against serial execution, including rollback and authenticated reads in #24 and #27.
-4. Qualify scalable Keeper scheduling and execution with bounded due work, deterministic charges, fairness and recovery in #28.
-5. Test certificate reuse, auxiliary dissemination and redundant broadcast together with controlled egress, losses and repair deadlines in #7, #9 and #10.
-6. Qualify native AMM and CLOB throughput against pinned market and accounting checks in #30.
-
-Run the sequence on one physical host. Independent-host qualification and development outside this sequence are deferred. Preserve execution-bound voting, canonical encoding, deterministic resource accounting and existing security guarantees through every iteration. Use the [original experiment index](research/README.md) for the controls and negative results. Report matched comparisons, regression results, independent replay and remaining bottlenecks on the owning issue. Commit and push verified results before moving to the next iteration.
+Keep both `COPYING` notices with their respective ports. Use CKB's RPC encoding and pagination conventions where semantics match. Stem read models must account for weighted execution finality, complete Polytype identities, Lineage history and the distinction between certified state and cross-network settlement.
 
 ### Reference payment qualification
 
-Revisit the single-host sustainable profile after the substantive native improvements are integrated. Use the existing 3,000 TPS criteria as reference evidence during the consolidation. Vary block cycles, transaction limits or cadence as network parameters when a workload shows saturation at the corresponding boundary. Preserve the branch-aware selection results and require exact parent binding and eligibility after branch changes for any later candidate.
+Retain the 3,000 TPS single-host procedure as historical reference evidence. Vary block cycles, transaction limits or cadence when an application or deployment shows saturation at that boundary. Keep the branch-aware results and require exact parent binding and eligibility after branch changes for any later candidate.
 
 Use 60 seconds warmup, 180 seconds measurement and 45 seconds drain. For the sustainable 3,000 profile, measure at least 540,000 common confirmations across the window and at least 177,000 in each minute. Require at least 99.9% scheduled writes, at most 0.1% unacknowledged, p99 at most five seconds, acknowledged backlog peak at most 15,000 and growth across minute boundaries at most 3,000. Declare changes to service targets before a run. Every acknowledged payment must commonly confirm by drain. For the first overload run offer 3,300/s, retain the 3,000 TPS floor, declare rejection and backlog bounds, and report p99 with its population. Preserve failing runs and distinguish lost writes, missing acknowledgments, drained work and work left pending. [Exact rules and verifier](research/storage/external/qualification.md)
 
@@ -77,7 +76,8 @@ These experiments have the original evidence and reproduction links in the [rese
 | [#28 Keeper](https://github.com/a19q3/stem/issues/28) | Borrowed agenda decoding reduced full-agenda decode time by 44%. Four- and sixteen-replica runs replayed all 770 wakes. With pressure at the 32-entry cap, applied timed wake p99 was 3.854 s and all 98 rejected bookings reported the cap. [Agenda and wake evidence](BENCHMARKS.md#keeper-agenda-decoding-and-wake-replay) | A larger agenda requires a separate resource and consensus-limit decision. |
 | [#29 Intercell](https://github.com/a19q3/stem/issues/29) | Native authenticated CKB/Stem lanes and bounded message payloads have live evidence. | Measure batched proof and relay cost by source, destination and settlement, with exact replay and acknowledgement. |
 | [#30 DEX benchmark](https://github.com/a19q3/stem/issues/30) | The native AMM verified 73,440 swaps on 4 and 16 co-located replicas across hot and distributed workloads up to 1,024 markets. The native CLOB verified 42,560 operations and 33,442 fills, with independent prefixes remaining opt-in. [AMM evidence](BENCHMARKS.md#native-amm-qualification-with-a-reserve-oracle) · [CLOB evidence](research/clob/README.md) | Longer mixed-application qualification and independent-host measurements remain separate gates. |
-| [#31 Stem Primary](https://github.com/a19q3/stem/issues/31) | Three live loopback devnets verify two signed registrations via a native registry Type. Four live Primary validators then accepted two consecutive source handoffs from a stopped CKB-funded archive and proved the registry and receipts after each restart. [Live registration](research/primary/README.md#native-registration-on-three-live-devnets) · [Source handoffs](research/primary/README.md#execute-archived-source-handoffs-on-a-live-primary) | Frozen during native consolidation. |
+| [#31 Stem Primary](https://github.com/a19q3/stem/issues/31) | Three live loopback devnets verify two signed registrations via a native registry Type. Four live Primary validators then accepted two consecutive source handoffs from a stopped CKB-funded archive and proved the registry and receipts after each restart. [Live registration](research/primary/README.md#native-registration-on-three-live-devnets) · [Source handoffs](research/primary/README.md#execute-archived-source-handoffs-on-a-live-primary) | P0 for Case A. Verify bounded dynamic registry and channel lifecycle with retained authority for in-flight messages. |
+| [#32 Follower preparation](https://github.com/a19q3/stem/issues/32) | The Cell resolver and authenticated state residency measurements are archived under the exact Native build and fixture. [Evidence](research/storage/native-residency-integration/README.md) | Freeze further generic tuning and reopen on a measured application or deployment bottleneck. |
 
 ## Evidence for each development round
 
