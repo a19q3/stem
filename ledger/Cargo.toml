@@ -13,6 +13,7 @@ compact-verified-journal = ["verified-patricia-cache"]
 segmented-verified-journal = ["compact-verified-journal"]
 execution-material-cache = []
 inline-cell-resolution = []
+lazy-cell-digests = []
 
 [dependencies]
 anyhow.workspace = true
