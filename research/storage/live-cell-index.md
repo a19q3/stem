@@ -311,3 +311,39 @@ pin with a commit and a new pin, and then advances an idle cache across
 another commit. It checks deleted records and reuse of an unchanged
 record. Runtime regressions, replay and performance comparisons remain
 pending.
+
+### Sharded decoded Live Cell caches
+
+`native-sharded-live-cache` divides the existing decoded record cache into
+eight shards. Each generation still allows at most 4,096 Live Cell records
+and 16 MiB of record bytes in total. Each shard has its own lock, a
+512-record allowance and a two MiB byte allowance. Shard assignment uses a
+process-local hash of the complete OutPoint. A capacity flush replaces the
+contents of one shard, and a record larger than its shard allowance goes
+through the normal read path without being retained.
+
+The active Replica cache and worker caches both use the selected layout.
+Committed invalidation takes the shard locks in index order while applying
+changed OutPoints. The pinned cache bank still admits workers only after
+matching the exact durable Header. Existing readers of an older Header
+keep their snapshot and separate generation. Candidate writes and
+tombstones retain priority over cache hits.
+
+Compare the same build configuration with and without
+`native-sharded-live-cache`. Hold `native-shared-pinned-cell-cache`, the
+resident indexes, worker counts, affinity, RocksDB settings and signed
+workload fixed. When shared pins are enabled, `pinned_cell_cache.shards` and
+`capacity_flushes` describe the current retained generation. Account for
+generation changes when comparing counters. Record peak RSS, record bytes,
+cache hits from the workload profile, Cell-resolution wall time and CPU,
+and common finality during mixed-type and payment churn. Include a warm
+several-worker control and a disk-backed run without the full resident
+index. The prior unpinned [MultiGet comparison](../follower-preparation/README.md#other-full-block-candidates)
+continues to support the existing point reader.
+
+Shard-local limits can underuse the total allowance when access is uneven.
+Mapping every lookup adds a hash, and commit invalidation still spans all
+shards. The compile-checked regressions cover a capacity flush isolated
+from another shard, exact invalidation and the pinned generation's
+old/new Header behavior. Runtime qualification and performance results
+are pending.
