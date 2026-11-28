@@ -12,6 +12,8 @@ use stem_stake::{Hash32, jolteon::Point};
 use tokio::sync::mpsc;
 
 use super::{CommitWindow, MAX_PROPOSAL_BYTES, Replica, can_vote_at, commit_overlap};
+#[cfg(feature = "jolteon-pre-quorum-proposal")]
+use super::BranchExecution;
 use crate::native_store::{PinnedView, Prepared, ProposalScan, StateReadFault};
 #[cfg(feature = "jolteon-cancel-stale-execution")]
 use crate::native_store::{PreparationCancellation, PreparationCancelled};
@@ -23,9 +25,20 @@ struct Stamp {
     base: Point,
     base_header: Hash32,
     parent: Point,
+    #[cfg(feature = "jolteon-pre-quorum-proposal")]
+    prior_high: Option<Point>,
 }
 
 impl Stamp {
+    #[cfg(feature = "jolteon-pre-quorum-proposal")]
+    fn awaiting_quorum(&self, epoch: u64, view: u64, base: Point, high: Point) -> bool {
+        self.prior_high == Some(high)
+            && self.epoch == epoch
+            && self.base == base
+            && self.parent.view == view
+            && view.checked_add(1) == Some(self.view)
+    }
+
     fn remaining<'a>(
         &self,
         current: &Self,
@@ -159,6 +172,8 @@ impl Replica {
             base: self.finalized,
             base_header: self.store.tip().id(self.store.network()).unpack(),
             parent: self.high.point,
+            #[cfg(feature = "jolteon-pre-quorum-proposal")]
+            prior_high: None,
         }
     }
 
@@ -170,11 +185,24 @@ impl Replica {
         time: u64,
         commit: Option<CommitWindow>,
     ) -> Result<()> {
+        self.schedule_proposal_at(
+            self.proposal_stamp(), branch, ancestors, parent_header, time, commit,
+        )
+    }
+
+    fn schedule_proposal_at(
+        &mut self,
+        stamp: Stamp,
+        branch: Vec<Point>,
+        ancestors: Vec<Arc<Prepared>>,
+        parent_header: Hash32,
+        time: u64,
+        commit: Option<CommitWindow>,
+    ) -> Result<()> {
         ensure!(
             !self.proposal_pipeline.running && self.proposal_pipeline.ready.is_none(),
             "proposal construction already running"
         );
-        let stamp = self.proposal_stamp();
         let state = self.store.pinned_view();
         let (transactions, scan) = self.mempool.proposal_candidates();
         let committing = commit.is_some();
@@ -212,7 +240,78 @@ impl Replica {
         if committing {
             jobs.commit_overlap_started = jobs.commit_overlap_started.saturating_add(1);
         }
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        if stamp.prior_high.is_some() {
+            jobs.pre_quorum_started = jobs.pre_quorum_started.saturating_add(1);
+        }
         Ok(())
+    }
+
+    #[cfg(feature = "jolteon-pre-quorum-proposal")]
+    pub(super) fn prepare_next_view(
+        &mut self,
+        voted: Point,
+        branch: Vec<Point>,
+        execution: BranchExecution,
+    ) -> Result<()> {
+        let Some(view) = voted.view.checked_add(1) else {
+            return Ok(());
+        };
+        if self.proposal_pipeline.running
+            || self.proposal_pipeline.ready.is_some()
+            || self.mempool.len() == 0
+            || self.view != voted.view
+            || self.high.point.view.checked_add(1) != Some(voted.view)
+            || self.candidates[&voted].proposal.parent.point != self.high.point
+            || branch.len() >= super::MAX_BRANCH
+            || branch.len() != execution.batches.len()
+            || Some(self.committee.leader(view)?) != self.member
+        {
+            return Ok(());
+        }
+        let stamp = Stamp {
+            view,
+            parent: voted,
+            prior_high: Some(self.high.point),
+            ..self.proposal_stamp()
+        };
+        if !self.waiting_for_proposal_quorum(&stamp) {
+            return Ok(());
+        }
+        let parent = execution.batches.last().context("missing voted execution")?.header();
+        if execution.pending.as_ref().is_some_and(|change| {
+            parent.context.height.saturating_add(1) >= change.activation_height
+        }) {
+            return Ok(());
+        }
+        let Ok(time) = super::now_ms() else {
+            return Ok(());
+        };
+        if time <= parent.context.timestamp_ms {
+            return Ok(());
+        }
+        self.schedule_proposal_at(stamp, branch, execution.batches, voted.header, time, None)
+    }
+
+    #[cfg(feature = "jolteon-pre-quorum-proposal")]
+    fn waiting_for_proposal_quorum(&self, stamp: &Stamp) -> bool {
+        stamp.awaiting_quorum(self.committee.epoch(), self.view, self.finalized, self.high.point)
+            && self.pre_quorum_eligible(stamp)
+    }
+
+    #[cfg(feature = "jolteon-pre-quorum-proposal")]
+    fn pre_quorum_eligible(&self, stamp: &Stamp) -> bool {
+        self.handoff_tip.is_none()
+            && !self.recovery.active
+            && !self.preferred.contains_key(&stamp.view)
+            && self.since.elapsed() < self.timeout * (1 << self.backoff)
+    }
+
+    #[cfg(feature = "jolteon-pre-quorum-proposal")]
+    fn keep_pre_quorum_proposal(&self, stamp: &Stamp, branch: &[Point]) -> bool {
+        self.pre_quorum_eligible(stamp)
+            && (stamp.awaiting_quorum(self.committee.epoch(), self.view, self.finalized, self.high.point)
+                || stamp.remaining(&self.proposal_stamp(), branch, false).is_some())
     }
 
     #[cfg(feature = "jolteon-cross-block-pipeline")]
@@ -224,6 +323,10 @@ impl Replica {
     ) -> Result<()> {
         let current = self.proposal_stamp();
         if self.proposal_pipeline.ready.as_ref().is_some_and(|done| {
+            #[cfg(feature = "jolteon-pre-quorum-proposal")]
+            if self.waiting_for_proposal_quorum(&done.stamp) {
+                return false;
+            }
             done.stamp
                 .remaining(&current, &done.branch, done.commit.is_some())
                 .is_none()
@@ -251,6 +354,12 @@ impl Replica {
     }
 
     pub(super) fn publish_paced_proposal(&mut self) -> Result<bool> {
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        if self.proposal_pipeline.ready.as_ref().is_some_and(|done| {
+            self.waiting_for_proposal_quorum(&done.stamp)
+        }) {
+            return Ok(true);
+        }
         let Some(done) = self.proposal_pipeline.ready.take() else {
             return Ok(false);
         };
@@ -259,6 +368,13 @@ impl Replica {
 
     #[cfg(feature = "jolteon-cancel-stale-execution")]
     pub(super) fn cancel_stale_proposal(&mut self) {
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        if self.proposal_pipeline.ready.as_ref().is_some_and(|done| {
+            done.stamp.prior_high.is_some() && !self.keep_pre_quorum_proposal(&done.stamp, &done.branch)
+        }) {
+            let stale = self.proposal_pipeline.ready.take().expect("stale proposal");
+            self.discard_proposal(stale.elapsed);
+        }
         let Some(active) = self.proposal_pipeline.active.as_ref() else {
             return;
         };
@@ -266,7 +382,7 @@ impl Replica {
             return;
         }
         let stamp = active.stamp;
-        let obsolete = stamp.epoch != self.committee.epoch()
+        let obsolete = || stamp.epoch != self.committee.epoch()
             || stamp.view != self.view
             || stamp.parent != self.high.point
             || self.since.elapsed() >= self.timeout * (1 << self.backoff)
@@ -274,6 +390,14 @@ impl Replica {
                 && stamp
                     .remaining(&self.proposal_stamp(), &active.branch, active.committing)
                     .is_none());
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        let obsolete = if stamp.prior_high.is_some() {
+            !self.keep_pre_quorum_proposal(&stamp, &active.branch)
+        } else {
+            obsolete()
+        };
+        #[cfg(not(feature = "jolteon-pre-quorum-proposal"))]
+        let obsolete = obsolete();
         if obsolete && active.cancellation.cancel() {
             let jobs = &mut self.execution.proposal_jobs;
             jobs.cancel_requested = jobs.cancel_requested.saturating_add(1);
@@ -300,6 +424,18 @@ impl Replica {
             self.execution
                 .proposal_commitments
                 .record(execution.commitment_timing());
+        }
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        if done.stamp.prior_high.is_some() {
+            // The next tick processes finality before attempting publication.
+            if !matches!(&done.execution, Ok(None))
+                && self.keep_pre_quorum_proposal(&done.stamp, &done.branch)
+            {
+                self.proposal_pipeline.ready = Some(done);
+            } else {
+                self.discard_proposal(done.elapsed);
+            }
+            return Ok(());
         }
         self.finish_proposal(done).map(|_| ())
     }
@@ -337,6 +473,10 @@ impl Replica {
             return Ok(true);
         }
         let overlap = commit_overlap(done.commit.as_ref(), done.work);
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        let pre_quorum_overlap = done.stamp.prior_high.map(|_| {
+            self.since.saturating_duration_since(done.work.0).min(done.work.1)
+        });
         let rebased_blocks = remaining.map_or(0, |suffix| done.branch.len() - suffix.len());
         let (transactions, execution) = done
             .execution
@@ -363,6 +503,12 @@ impl Replica {
         )?;
         let jobs = &mut self.execution.proposal_jobs;
         jobs.published = jobs.published.saturating_add(1);
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        if let Some(overlap) = pre_quorum_overlap {
+            jobs.pre_quorum_published = jobs.pre_quorum_published.saturating_add(1);
+            jobs.pre_quorum_overlap_us =
+                jobs.pre_quorum_overlap_us.saturating_add(overlap.as_micros() as u64);
+        }
         if !overlap.is_zero() {
             jobs.commit_overlap_published = jobs.commit_overlap_published.saturating_add(1);
             jobs.commit_overlap_us = jobs.commit_overlap_us.saturating_add(overlap.as_micros() as u64);
@@ -385,7 +531,11 @@ mod tests {
         let base = point(3, 3);
         let first = point(4, 4);
         let parent = point(5, 5);
-        let stamp = Stamp { epoch: 1, view: 6, base, base_header: base.header, parent };
+        let stamp = Stamp {
+            epoch: 1, view: 6, base, base_header: base.header, parent,
+            #[cfg(feature = "jolteon-pre-quorum-proposal")]
+            prior_high: None,
+        };
         let branch = [first, parent];
         assert_eq!(stamp.remaining(&stamp, &branch, false), Some(branch.as_slice()));
 
@@ -408,5 +558,36 @@ mod tests {
         current.epoch -= 1;
         current.view += 1;
         assert!(stamp.remaining(&current, &branch, true).is_none());
+    }
+
+    #[cfg(feature = "jolteon-pre-quorum-proposal")]
+    #[test]
+    fn pre_quorum_preparation_needs_the_exact_voted_parent() {
+        let point = |view, byte| Point { view, parent_view: view - 1, header: [byte; 32] };
+        let base = point(4, 4);
+        let high = point(5, 5);
+        let voted = point(6, 6);
+        let fork = point(6, 16);
+        let before = Stamp {
+            epoch: 2, view: 6, base, base_header: base.header, parent: high, prior_high: None,
+        };
+        let job = Stamp { view: 7, parent: voted, prior_high: Some(high), ..before };
+        let branch = [high, voted];
+        assert!(job.awaiting_quorum(before.epoch, before.view, base, high));
+        assert!(job.remaining(&before, &branch, false).is_none());
+        assert!(!job.awaiting_quorum(before.epoch + 1, before.view, base, high));
+        assert!(!job.awaiting_quorum(before.epoch, before.view, high, high));
+        assert!(!job.awaiting_quorum(before.epoch, before.view, base, point(5, 15)));
+
+        let timeout = Stamp { view: 7, ..before };
+        assert!(!job.awaiting_quorum(timeout.epoch, timeout.view, base, high));
+        assert!(job.remaining(&timeout, &branch, false).is_none());
+        let changed = Stamp { parent: fork, ..timeout };
+        assert!(job.remaining(&changed, &branch, false).is_none());
+
+        let certified = Stamp { parent: voted, ..timeout };
+        assert_eq!(job.remaining(&certified, &branch, false), Some(branch.as_slice()));
+        let committed = Stamp { base: high, base_header: high.header, ..certified };
+        assert_eq!(job.remaining(&committed, &branch, false), Some(&branch[1..]));
     }
 }
