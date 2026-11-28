@@ -107,17 +107,33 @@ pub const MAX_RESOLVED_CELL_BYTES: usize = 128 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub struct Cell {
     encoded: wire::Cell,
-    hashes: Arc<OnceLock<CellHashes>>,
+    hashes: Arc<CellDigestCache>,
 }
 
+#[cfg(not(feature = "lazy-cell-digests"))]
+type CellDigestCache = OnceLock<CellHashes>;
+#[cfg(feature = "lazy-cell-digests")]
+type CellDigestCache = CellHashes;
+
 #[derive(Debug)]
+#[cfg(not(feature = "lazy-cell-digests"))]
 struct CellHashes {
     content: Byte32,
     data: Byte32,
 }
 
+#[derive(Debug, Default)]
+#[cfg(feature = "lazy-cell-digests")]
+struct CellHashes {
+    content: OnceLock<Byte32>,
+    data: OnceLock<Byte32>,
+}
+
 impl Cell {
     pub fn content_hash(&self) -> &Byte32 {
+        #[cfg(feature = "lazy-cell-digests")]
+        return self.hashes.content.get_or_init(|| blake2b_256(self.as_slice()).pack());
+        #[cfg(not(feature = "lazy-cell-digests"))]
         &self.hashes().content
     }
 
@@ -191,9 +207,15 @@ impl Cell {
     /// Own just this validated Cell's bytes, independently of a transaction
     /// buffer it may have been sliced from.
     pub fn detached(&self) -> Self {
-        Self::validated_entity(wire::Cell::new_unchecked(Bytes::copy_from_slice(
-            self.as_slice(),
-        )))
+        let encoded = wire::Cell::new_unchecked(Bytes::copy_from_slice(self.as_slice()));
+        #[cfg(feature = "lazy-cell-digests")]
+        {
+            // The digest state owns only hashes. It cannot keep the source
+            // transaction bytes alive after the resident Cell is detached.
+            Self { encoded, hashes: Arc::clone(&self.hashes) }
+        }
+        #[cfg(not(feature = "lazy-cell-digests"))]
+        Self::validated_entity(encoded)
     }
 
     fn from_entity(encoded: wire::Cell) -> Result<Self> {
@@ -268,6 +290,7 @@ impl Cell {
         self.encoded.data().raw_data()
     }
 
+    #[cfg(not(feature = "lazy-cell-digests"))]
     fn hashes(&self) -> &CellHashes {
         self.hashes.get_or_init(|| CellHashes {
             content: blake2b_256(self.as_slice()).pack(),
@@ -276,6 +299,12 @@ impl Cell {
     }
 
     pub fn data_hash(&self) -> &Byte32 {
+        #[cfg(feature = "lazy-cell-digests")]
+        return self.hashes.data.get_or_init(|| {
+            let cell = self.encoded.as_reader();
+            blake2b_256(cell.data().raw_data()).pack()
+        });
+        #[cfg(not(feature = "lazy-cell-digests"))]
         &self.hashes().data
     }
 
@@ -1201,7 +1230,7 @@ impl Transaction {
             network,
             &[
                 self.id(network).as_slice(),
-                fee_cell.hashes().content.as_slice(),
+                fee_cell.content_hash().as_slice(),
             ],
         ))
     }
@@ -1888,7 +1917,7 @@ impl ResolvedTransaction {
             for cells in [&self.inputs, &self.cell_deps] {
                 hash.update(&(cells.len() as u64).to_le_bytes());
                 for live in cells {
-                    hash.update(live.cell.hashes().content.as_slice());
+                    hash.update(live.cell.content_hash().as_slice());
                     hash.update(&live.origin.encode());
                 }
             }
@@ -2219,6 +2248,32 @@ mod tests {
         assert!(make(vec![], vec![], vec![input.clone(), input.clone()]).is_err());
         assert!(make(vec![dep.clone(), dep], vec![], vec![input.clone()]).is_err());
         assert!(make(vec![], vec![header.clone(), header], vec![input]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lazy-cell-digests")]
+    fn lazy_digests_share_exact_values_across_detached_cells() -> Result<()> {
+        for size in [0, 1, 128, 16_384] {
+            let data = Bytes::from(vec![13; size]);
+            let cell = Cell::new(100_000_000_000, script(0), vec![script(1)], data.clone())?;
+            let content_hash: Byte32 = blake2b_256(cell.as_slice()).pack();
+            let data_hash: Byte32 = blake2b_256(&data).pack();
+            assert_eq!(cell.content_hash(), &content_hash);
+            assert!(cell.hashes.data.get().is_none());
+
+            let detached = cell.detached();
+            assert_eq!(detached.as_slice(), cell.as_slice());
+            assert_ne!(detached.as_slice().as_ptr(), cell.as_slice().as_ptr());
+            assert!(Arc::ptr_eq(&cell.hashes, &detached.hashes));
+            assert_eq!(detached.data_hash(), &data_hash);
+            assert_eq!(cell.hashes.data.get(), Some(&data_hash));
+
+            let reopened = Cell::from_slice(cell.as_slice())?;
+            assert_eq!(reopened.data_hash(), &data_hash);
+            assert!(reopened.hashes.content.get().is_none());
+            assert_eq!(reopened.content_hash(), &content_hash);
+        }
         Ok(())
     }
 

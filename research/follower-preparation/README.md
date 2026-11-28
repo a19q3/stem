@@ -204,6 +204,32 @@ direct Code deps to a repeated Dep Group and compares both rolling
 paths against serial execution. Runtime, replay and performance
 evidence are pending.
 
+## Computing Cell digests independently
+
+The optional `native-lazy-cell-digests` feature stores separate lazy
+slots for the digest of the canonical Cell encoding and the digest of
+its raw Data. Transaction authorization and VM verification-cache keys
+request the complete Cell digest. Program addressing and the VM Data
+hash syscall can request the Data digest. Both use the existing
+CKB-personalized BLAKE2b and hash their original bytes. The scheduler
+and VM still charge the same logical resource costs.
+
+An inline resident Live Cell copied out of a candidate buffer keeps
+the two digest slots. Those slots contain only the digests. The copy
+owns its Cell bytes, so the memo does not retain a transaction buffer.
+The interned-script layout still reconstructs each queried Cell from
+its preserved byte fragments.
+
+Compare the two builds at identical fixed-block and sustained settings.
+Include payments, Data-bearing contract inputs and repeated Code deps.
+Report CPU and wall time in resolution and VM, exact Headers, receipt
+and proof equality, and memory for warm and cold resident indexes.
+The separate slots use more metadata per Cell. A workload that requests
+both digests can see additional memo lookups, so the saved computation
+depends on which digests actual scripts request. The compile-checked
+fixture covers empty and nonempty Data, both first-use orders and
+detached byte ownership. Runtime, replay and performance are pending.
+
 ## Inline Cell resolution bookkeeping
 
 The ordinary resolver inserts consumed inputs and resolved Code OutPoints
