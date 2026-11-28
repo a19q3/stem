@@ -42,10 +42,10 @@ impl PinnedCellCache {
                 // A slow worker can open its snapshot before a newer worker
                 // selects a generation. Keep the newer bank in that case.
                 state.private_acquisitions = state.private_acquisitions.saturating_add(1);
-                return Arc::default();
+                return Arc::new(LiveCache::pinned());
             }
         }
-        let cells = Arc::new(LiveCache::default());
+        let cells = Arc::new(LiveCache::pinned());
         state.latest = Some(Generation {
             height,
             header: id,
@@ -79,18 +79,19 @@ impl PinnedCellCache {
     pub(super) fn status(&self) -> PinnedCellCacheStatus {
         let state = self.state.lock().expect("pinned Cell cache");
         let generation = state.latest.as_ref();
-        let (entries, record_bytes, capacity_flushes) =
-            generation.map_or((0, 0, 0), |current| current.cells.totals());
+        let totals = generation.map(|current| current.cells.totals()).unwrap_or_default();
         PinnedCellCacheStatus {
             retained_height: generation.map(|current| current.height),
-            entries,
-            record_bytes,
+            entries: totals.entries,
+            record_bytes: totals.record_bytes,
             shared_acquisitions: state.shared_acquisitions,
             private_acquisitions: state.private_acquisitions,
             generations: state.generations,
             carried_forward: state.carried_forward,
             shards: LiveCache::SHARDS,
-            capacity_flushes,
+            capacity_flushes: totals.capacity_flushes,
+            absence_entries: totals.absence_entries,
+            absence_hits: totals.absence_hits,
         }
     }
 }
