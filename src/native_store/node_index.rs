@@ -49,6 +49,7 @@ pub(super) struct NodeIndex {
     shards: [Shard; SHARDS],
     active: AtomicBool,
     bytes: AtomicUsize,
+    nodes: AtomicUsize,
     limit_bytes: usize,
     recovery_us: u64,
 }
@@ -71,6 +72,7 @@ impl NodeIndex {
             shards: std::array::from_fn(|_| Shard::default()),
             active: AtomicBool::new(true),
             bytes: AtomicUsize::new(0),
+            nodes: AtomicUsize::new(0),
             limit_bytes,
             recovery_us: 0,
         };
@@ -101,6 +103,7 @@ impl NodeIndex {
         }
 
         let commitment = Commitment::new(store.network.unpack(), Namespace::Cells);
+        let mut loaded = 0;
         cursor.seek(prefix);
         while let Some(key) = cursor.key().filter(|key| key.starts_with(&prefix)) {
             let id = id_from_key(key)?;
@@ -115,6 +118,7 @@ impl NodeIndex {
                 .get_mut()
                 .expect("Cell node shard")
                 .insert(id, node);
+            loaded += 1;
             cursor.next();
         }
         if store.tip.state.cell_root.as_slice() != store.cells.empty_root() {
@@ -128,6 +132,7 @@ impl NodeIndex {
                 "missing committed Cell root node"
             );
         }
+        index.nodes.store(loaded, Ordering::Relaxed);
         index.recovery_us = started.elapsed().as_micros() as u64;
         Ok(index)
     }
@@ -181,26 +186,34 @@ impl NodeIndex {
             return;
         }
         let prefix = [STATE_NODE, Namespace::Cells.tag()];
-        let mut by_shard: [Vec<(&Key, Option<&[u8]>)>; SHARDS] =
-            std::array::from_fn(|_| Vec::new());
-        for (key, value) in &batch.writes {
-            if let Some(id) = key
-                .strip_prefix(&prefix)
-                .and_then(|bytes| <&Key>::try_from(bytes).ok())
-            {
-                by_shard[slot(id)].push((id, value.as_deref()));
-            }
+        let node_edits = || {
+            batch.writes.iter().filter_map(|(key, value)| {
+                let id = <&Key>::try_from(key.strip_prefix(&prefix)?).ok()?;
+                Some((id, value.as_deref()))
+            })
+        };
+        let mut counts = [0; SHARDS];
+        for (id, _) in node_edits() {
+            counts[slot(id)] += 1;
         }
+        let mut by_shard = counts.map(Vec::with_capacity);
+        for (id, value) in node_edits() {
+            by_shard[slot(id)].push((id, value));
+        }
+        let mut nodes = self.nodes.load(Ordering::Relaxed);
         for (shard, changes) in self.shards.iter().zip(by_shard) {
             if changes.is_empty() {
                 continue;
             }
             let mut rows = shard.rows.write().expect("Cell node shard");
+            let old_len = rows.len();
             for (id, encoded) in changes {
                 if let Some(encoded) = encoded {
                     let count = rows.len() + 1;
                     if let Ok(node) = node_storage::canonical(encoded)
-                        && (rows.contains_key(id) || self.reserve(&mut rows, count))
+                        && (count <= rows.capacity()
+                            || rows.contains_key(id)
+                            || self.reserve(&mut rows, count))
                     {
                         rows.insert(*id, node);
                         continue;
@@ -211,7 +224,9 @@ impl NodeIndex {
                 }
                 rows.remove(id);
             }
+            nodes = nodes - old_len + rows.len();
         }
+        self.nodes.store(nodes, Ordering::Relaxed);
     }
 
     pub(super) fn retire(&self) -> usize {
@@ -220,18 +235,14 @@ impl NodeIndex {
             *shard.rows.write().expect("Cell node shard") = Rows::default();
         }
         self.bytes.store(0, Ordering::Relaxed);
+        self.nodes.store(0, Ordering::Relaxed);
         self.limit_bytes
     }
 
     pub(super) fn status(&self) -> CellNodeIndexStatus {
-        let nodes = self
-            .shards
-            .iter()
-            .map(|shard| shard.rows.read().expect("Cell node shard").len())
-            .sum();
         CellNodeIndexStatus {
             active: self.active.load(Ordering::Acquire),
-            nodes,
+            nodes: self.nodes.load(Ordering::Relaxed),
             accounted_bytes: self.bytes.load(Ordering::Relaxed),
             limit_bytes: self.limit_bytes,
             recovery_us: self.recovery_us,
