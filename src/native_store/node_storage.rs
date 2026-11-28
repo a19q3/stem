@@ -32,6 +32,18 @@ impl AsRef<[u8]> for CanonicalNode {
     }
 }
 
+#[cfg(feature = "native-verified-cell-nodes")]
+pub(super) type NodeRead = stem_ledger::patricia::NodeRead<CanonicalNode>;
+#[cfg(not(feature = "native-verified-cell-nodes"))]
+pub(super) type NodeRead = CanonicalNode;
+
+pub(super) fn read(stored: &[u8]) -> Result<NodeRead> {
+    let node = canonical(stored)?;
+    #[cfg(feature = "native-verified-cell-nodes")]
+    let node = NodeRead::raw(node);
+    Ok(node)
+}
+
 pub(super) fn canonical(stored: &[u8]) -> Result<CanonicalNode> {
     let mut bytes = [0; BRANCH_BYTES];
     let len = match stored {

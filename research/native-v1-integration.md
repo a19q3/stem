@@ -9,6 +9,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Lineage and Keeper | `45028dc` | Independent Head lookahead and one-shot wake preparation [Keeper notes](../BENCHMARKS.md#parallel-preparation-of-independent-due-commands) |
 | Certificates and votes | `34e4743` | Shared direct frames and exact current-certificate reuse [Communication notes](certificates/README.md#sharing-certificates-and-direct-vote-frames) |
 | Resident Patricia publication | `0eba67f` | Publish on the certified writer after WAL sync or on the Replica when it installs the durable tip [Resident Patricia notes](storage/resident-patricia.md) |
+| Verified resident nodes | `native-verified-cell-nodes` | Authenticate decoded nodes at cache insertion and reuse them by content ID [Comparison notes](storage/resident-patricia.md#verified-decoded-resident-nodes) |
 
 This integration adds `jolteon-resident-node-publication` as an independent control. Only the selected writer path updates the node index before its acknowledgement. The normal installer updates the Live Cell index and publishes nodes when the writer did not. The node-count and shard preallocation changes follow the same build option.
 
@@ -25,6 +26,7 @@ export CXXFLAGS='-include cstdint'
 cells=native-rolling-cell-execution,native-leader-dependency-execution,native-execution-material-cache
 contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
 publication=jolteon-resident-node-publication
+verified_nodes=native-verified-cell-nodes
 certificates=jolteon-shared-certificate-path
 
 build() {
@@ -39,8 +41,9 @@ build baseline
 build cell-execution --features "$cells"
 build contract-execution --features "$contracts"
 build publication --features "$publication"
+build verified-nodes --features "$verified_nodes"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$contracts,$publication,$certificates"
+build combined --features "$cells,$contracts,$publication,$verified_nodes,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

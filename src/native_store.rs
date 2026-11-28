@@ -1713,10 +1713,10 @@ impl Store {
         self.header(height)?.context("missing indexed Header")
     }
 
-    fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<node_storage::CanonicalNode>> {
+    fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<node_storage::NodeRead>> {
         let key = state_key(STATE_NODE, namespace, id);
         if let Some(value) = self.candidate_value(&key) {
-            return value.map(node_storage::canonical).transpose();
+            return value.map(node_storage::read).transpose();
         }
         if namespace == Namespace::Cells
             && let Some(node) = self.cell_nodes.as_ref().and_then(|index| index.lookup(id))
@@ -1725,7 +1725,7 @@ impl Store {
         }
         self.db.get_opt(key, &self.read_options)?
             .as_deref()
-            .map(node_storage::canonical)
+            .map(node_storage::read)
             .transpose()
     }
 
@@ -3667,14 +3667,15 @@ mod pipeline_store_tests {
         options.set_snapshot(&snapshot);
         let mut pinned = store.read_view(&[]);
         pinned.read_options = Arc::new(options);
-        let cached = pinned.node(Namespace::Cells, &root)?.context("missing index hit")?;
+        let query = record::cell_key(&pinned.cells, &OutPoint::new([37; 32].pack(), 0));
+        let prove = || pinned.cells.edit(root, |id| pinned.node(Namespace::Cells, id)).prove(&query);
+        let cached = prove()?;
         let mut retired = Batch::default();
         retired.delete(key);
         store.db.delete(key)?;
         index.advance(&retired);
         assert!(store.node(Namespace::Cells, &root)?.is_none());
-        let old = pinned.node(Namespace::Cells, &root)?.context("missing old snapshot node")?;
-        assert_eq!(cached.as_ref(), old.as_ref());
+        assert_eq!(cached, prove()?);
         let status = store.cell_node_index_status().unwrap();
         assert_eq!((status.hits, status.misses), (1, 2));
         Ok(())

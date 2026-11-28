@@ -15,6 +15,12 @@ use stem_stake::patricia::{
 };
 pub use stem_stake::patricia::{Key, Namespace};
 
+mod node_value;
+use node_value::checked_node;
+pub use node_value::NodeValue;
+#[cfg(feature = "verified-patricia-cache")]
+pub use node_value::{NodeRead, VerifiedNodes};
+
 #[derive(Clone, Debug)]
 pub struct Patricia {
     commitment: Commitment,
@@ -91,7 +97,7 @@ impl Patricia {
     pub fn edit<Read, Value>(&self, root: Key, read: Read) -> Edit<'_, Read>
     where
         Read: FnMut(&Key) -> Result<Option<Value>>,
-        Value: AsRef<[u8]>,
+        Value: NodeValue,
     {
         Edit {
             root,
@@ -115,7 +121,7 @@ impl Patricia {
     ) -> Result<(Key, BTreeMap<Key, Option<Vec<u8>>>)>
     where
         Read: FnMut(&Key) -> Result<Option<Value>>,
-        Value: AsRef<[u8]>,
+        Value: NodeValue,
     {
         let mut nodes = Nodes {
             tree: self,
@@ -138,7 +144,7 @@ impl Patricia {
     ) -> Result<(Key, BTreeMap<Key, Option<Vec<u8>>>)>
     where
         Read: Fn(&Key) -> Result<Option<Value>> + Sync,
-        Value: AsRef<[u8]>,
+        Value: NodeValue,
     {
         let workers = rayon::current_num_threads();
         if workers < 2 || changes.len() < 2 * MIN_PARALLEL_CHANGES {
@@ -222,7 +228,7 @@ type PreviousValue = (Key, Key, Option<Key>);
 impl<Read, Value> Nodes<'_, &Read, Vec<(Key, Option<Vec<u8>>)>>
 where
     Read: Fn(&Key) -> Result<Option<Value>> + Sync,
-    Value: AsRef<[u8]>,
+    Value: NodeValue,
 {
     fn update_parallel(
         &mut self,
@@ -289,7 +295,7 @@ impl NodeWrites for Vec<(Key, Option<Vec<u8>>)> {
 impl<Read, Value> Edit<'_, Read>
 where
     Read: FnMut(&Key) -> Result<Option<Value>>,
-    Value: AsRef<[u8]>,
+    Value: NodeValue,
 {
     pub fn root(&self) -> Key {
         self.root
@@ -324,7 +330,7 @@ where
         let mut value = None;
         while id != self.nodes.tree.empty_root() {
             let node = self.nodes.load(&id, |node, bytes| {
-                nodes.push(bytes.to_vec());
+                nodes.push(bytes.map_or_else(|| node.encode(), <[u8]>::to_vec));
                 node
             })?;
             match node {
@@ -370,7 +376,7 @@ where
 impl<Read, Value, Writes> Nodes<'_, Read, Writes>
 where
     Read: FnMut(&Key) -> Result<Option<Value>>,
-    Value: AsRef<[u8]>,
+    Value: NodeValue,
     Writes: NodeWrites,
 {
     fn prove_sorted(
@@ -384,8 +390,15 @@ where
             return Ok(());
         }
         let node = self.load(&id, |node, bytes| {
-            for &(_, index) in queries {
-                proofs[index].1.nodes.push(bytes.to_vec());
+            if let Some(bytes) = bytes {
+                for &(_, index) in queries {
+                    proofs[index].1.nodes.push(bytes.to_vec());
+                }
+            } else {
+                let encoded = node.encode();
+                for &(_, index) in queries {
+                    proofs[index].1.nodes.push(encoded.clone());
+                }
             }
             node
         })?;
@@ -431,21 +444,24 @@ where
         self.update(old, changes, 0, &mut previous)
     }
 
-    fn load<T>(&mut self, id: &Key, use_node: impl FnOnce(Node, &[u8]) -> T) -> Result<T> {
+    fn load<T>(&mut self, id: &Key, use_node: impl FnOnce(Node, Option<&[u8]>) -> T) -> Result<T> {
         let loaded;
-        let bytes = match self.writes.pending(id) {
-            Some(entry) => entry.as_deref(),
+        let (node, bytes) = match self.writes.pending(id) {
+            Some(entry) => checked_node(
+                entry.as_ref().context("missing Patricia node")?,
+                self.tree,
+                id,
+            )?,
             None => {
                 loaded = (self.read)(id)?;
-                loaded.as_ref().map(AsRef::as_ref)
+                checked_node(
+                    loaded.as_ref().context("missing Patricia node")?,
+                    self.tree,
+                    id,
+                )?
             }
-        }
-        .context("missing Patricia node")?;
-        ensure!(
-            self.tree.node_hash(bytes) == *id,
-            "Patricia node hash mismatch"
-        );
-        Ok(use_node(Node::decode(bytes)?, bytes))
+        };
+        Ok(use_node(node, bytes))
     }
 
     fn insert(&mut self, node: Node) -> Key {
@@ -815,6 +831,35 @@ mod tests {
             assert_eq!(parallel, serial);
             assert_eq!(parallel_writes, writes);
             assert_eq!(parallel_prior, serial_prior);
+
+            #[cfg(feature = "verified-patricia-cache")]
+            {
+                let mut cache = VerifiedNodes::new(tree.clone());
+                for (id, bytes) in storage.iter().step_by(2) {
+                    cache.insert(*id, bytes)?;
+                }
+                let mixed = |id: &Key| cache.get(id)
+                    .or_else(|| storage.get(id).map(|bytes| NodeRead::raw(bytes.as_slice())));
+                let mut verified_prior = Vec::new();
+                let (verified, journal) = pool.install(|| {
+                    tree.batch_update_parallel(root, |id| Ok(mixed(id)), &changes, |key, before, after| {
+                        verified_prior.push((key, before, after));
+                    })
+                })?;
+                assert_eq!(verified, serial);
+                assert_eq!(journal, writes);
+                assert_eq!(verified_prior, serial_prior);
+                let mut mixed_view = tree.edit(verified, |id| {
+                    Ok(journal.get(id).map_or_else(|| mixed(id), |write| {
+                        write.as_deref().map(NodeRead::raw)
+                    }))
+                });
+                let mut raw_view = tree.edit(serial, |id| {
+                    Ok(writes.get(id).map_or_else(|| storage.get(id).map(Vec::as_slice), |write| write.as_deref()))
+                });
+                let sampled: Vec<_> = keys.iter().step_by(43).copied().collect();
+                assert_eq!(mixed_view.prove_many(&sampled)?, raw_view.prove_many(&sampled)?);
+            }
 
             // Read both resulting views from the pinned parent and independent journals.
             let mut expected =
