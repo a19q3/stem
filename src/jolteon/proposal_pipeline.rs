@@ -38,6 +38,13 @@ impl Stamp {
         if self.base == current.base {
             return (self.base_header == current.base_header).then_some(branch);
         }
+        if cfg!(feature = "jolteon-exact-prefix-pipeline") {
+            if current.base.view <= self.base.view || current.base.header != current.base_header {
+                return None;
+            }
+            let index = branch.iter().position(|point| *point == current.base)?;
+            return Some(&branch[index + 1..]);
+        }
         let (first, suffix) = branch.split_first()?;
         (committing && *first == current.base && first.header == current.base_header)
             .then_some(suffix)
@@ -268,7 +275,7 @@ impl Replica {
             return Ok(true);
         }
         let overlap = commit_overlap(done.commit.as_ref(), done.work);
-        let rebased = done.stamp.base != current.base;
+        let rebased_blocks = remaining.map_or(0, |suffix| done.branch.len() - suffix.len());
         let (transactions, execution) = done
             .execution
             .map_err(|error| {
@@ -298,8 +305,9 @@ impl Replica {
             jobs.commit_overlap_published = jobs.commit_overlap_published.saturating_add(1);
             jobs.commit_overlap_us = jobs.commit_overlap_us.saturating_add(overlap.as_micros() as u64);
         }
-        if rebased {
+        if rebased_blocks != 0 {
             jobs.rebased = jobs.rebased.saturating_add(1);
+            jobs.rebased_blocks = jobs.rebased_blocks.saturating_add(rebased_blocks as u64);
         }
         Ok(true)
     }
@@ -321,10 +329,15 @@ mod tests {
 
         let mut current = Stamp { base: first, base_header: first.header, ..stamp };
         assert_eq!(stamp.remaining(&current, &branch, true), Some(&branch[1..]));
-        assert!(stamp.remaining(&current, &branch, false).is_none());
+        let exact_prefix = cfg!(feature = "jolteon-exact-prefix-pipeline");
+        assert_eq!(stamp.remaining(&current, &branch, false), exact_prefix.then_some(&branch[1..]));
         current.base_header = parent.header;
         assert!(stamp.remaining(&current, &branch, true).is_none());
         current.base = parent;
+        assert_eq!(stamp.remaining(&current, &branch, true), exact_prefix.then_some(&branch[2..]));
+        assert_eq!(stamp.remaining(&current, &branch, false), exact_prefix.then_some(&branch[2..]));
+        current.base = point(4, 14);
+        current.base_header = current.base.header;
         assert!(stamp.remaining(&current, &branch, true).is_none());
         current.base = first;
         current.base_header = first.header;

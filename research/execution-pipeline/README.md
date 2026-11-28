@@ -408,3 +408,48 @@ python3 research/execution-pipeline/analyze.py
 ```
 
 The analysis uses the signed archive, initial and final per-node counters, timeout-view snapshots, and process accounting from each run. Capture `member`, `timeout_views`, `last_untimely_view`, `height` and `epoch` from the driver's initial and final status arrays for `views.json`. The mean control wait runs from a complete peer control frame at the transport to the Replica taking that frame. This includes inbound control-queue backpressure. Local timeout counts record persisted local timeout votes. Stale results remain in preparation service timing, which excludes waiting for the main loop to consume a finished result.
+
+## Reusing work across an exact certified prefix
+
+The `jolteon-exact-prefix-pipeline` candidate extends the existing
+single-write overlap to an ordinary contiguous sequence of certified
+writes. The Replica can start a successor job during that sequence and
+continues acknowledging each synchronous write in order. Recovery,
+committee handoff and execution close to the activation boundary keep
+the existing scheduling guards.
+
+If a worker acquires its snapshot after durability has advanced, it can
+skip any already-durable prefix of its scheduled ancestors. It verifies
+parent linkage and height for every skipped block and compares the full
+durable Header bytes. It then executes on the remaining speculative
+suffix. The rebased read uses a fresh private Cell cache and the exact
+Header for the bounded resident index. A replaced branch or unexpected
+durable tip returns no artifact. A Leader completion still has to match
+the current epoch, view, parent, certified Point and remaining branch.
+A Follower completion retains its exact transaction and execution
+checks. The existing durable vote and publication gates still apply.
+
+Eligible consecutive writes share timing intervals from the single
+writer. Worker overlap sums the intersections with actual write service
+intervals and excludes the gaps between them. The status adds
+`overlap_eligible_writes` for acknowledged writes eligible for this
+scheduling and `rebased_blocks` for durable ancestors traversed by
+successfully reused jobs. Existing counters still distinguish scheduled,
+discarded and published work. The timeline measures jobs scheduled
+during an eligible write sequence.
+
+Compare the feature with the existing `jolteon-cross-block-pipeline`
+default using the same Leader and Follower schedulers, resident indexes,
+workload and hardware. Include ordinary one-block finalization, a
+known-prefix catch-up with consecutive writes, a sibling replacement,
+and the existing delayed-WAL restart controls. Compare exact signed
+Headers, receipts, consensus journal, CKB checkpoints and independent
+replay. Normal load may seldom advance more than one durable block
+at a time. Look at the actual eligible-write and reused-job counters
+before attributing a throughput or finality change.
+
+Compiled regressions exercise one and two committed ancestors, a
+disconnected prefix, a spent Cell previously cached at the old pin,
+Leader epoch and view checks, and overlap timing across a write gap.
+Runtime regressions, matched throughput and durability trials remain
+pending.

@@ -574,6 +574,28 @@ impl PinnedView {
             .context(StateReadFault)?;
         let skip = if tip.as_ref() == self.0.tip.encode() {
             0
+        } else if cfg!(feature = "jolteon-exact-prefix-pipeline") {
+            // Match the complete durable execution Header in the contiguous
+            // chain of prepared ancestors tied to this pin.
+            let mut previous = &self.0.tip;
+            let mut found = None;
+            for (index, ancestor) in branch.iter().enumerate() {
+                let next = ancestor.header();
+                if ancestor.parent != previous.id(&self.0.network)
+                    || previous.context.height.checked_add(1) != Some(next.context.height)
+                {
+                    return Ok(None);
+                }
+                if tip.as_ref() == next.encode() {
+                    found = Some(index + 1);
+                    break;
+                }
+                previous = next;
+            }
+            let Some(skip) = found else {
+                return Ok(None);
+            };
+            skip
         } else if committing
             && branch.first().is_some_and(|first| {
                 first.parent == self.0.tip.id(&self.0.network)
@@ -589,8 +611,13 @@ impl PinnedView {
         let mut view = self.0.read_view(&branch[..skip]);
         // The accepted prefix is already in the snapshot.
         view.branch.clear();
-        if skip != 0 && let Some(index) = &mut view.live_index {
-            index.at_header(view.tip.id(&view.network).unpack());
+        if skip != 0 {
+            // Rebased reads use a different committed Cell image from the
+            // original pin, even if the same PinnedView is opened again.
+            view.live_cache = Arc::default();
+            if let Some(index) = &mut view.live_index {
+                index.at_header(view.tip.id(&view.network).unpack());
+            }
         }
         // The private view and its options are dropped before the snapshot.
         // Its Live Cell cache and committed stake inputs are private to this view.
@@ -3910,9 +3937,23 @@ mod pipeline_store_tests {
     #[test]
     fn late_worker_can_open_only_the_expected_durable_prefix() -> Result<()> {
         let home = tempfile::tempdir()?;
-        let mut store = Store::open(home.path(), &spec(), Retention::Recent(2))?;
+        let mut spec = spec();
+        let point = OutPoint::new([39; 32].pack(), 0);
+        spec.development_cells.push((
+            point.clone(),
+            Cell::new(
+                20_000_000_000, ckb_types::packed::Script::default(), vec![], bytes::Bytes::new(),
+            )?,
+        ));
+        let mut store = Store::open(home.path(), &spec, Retention::Recent(2))?;
         let pinned = store.pinned_view();
-        let first = Arc::new(store.prepare(&[], 1001, false)?);
+        assert!(pinned.with_snapshot(|view| view.live_cell(&point))?.flatten().is_some());
+        let mut overlay = store.overlay(None);
+        overlay.live.insert(point.clone(), None);
+        let context = HeaderContext::after(
+            &spec.network, store.tip(), 1001, Tree::transactions(spec.network.clone(), &[])?.root(),
+        )?;
+        let first = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
         let fork = Arc::new(store.prepare(&[], 1002, false)?);
         let second = Arc::new(store.on_branch(std::slice::from_ref(&first), |view| {
             view.prepare(&[], 1003, false)
@@ -3930,8 +3971,15 @@ mod pipeline_store_tests {
         };
         let (_, before) = build(&branch, true)?.context("missing old snapshot result")?;
         store.commit_certified(&first, &[], &[])?;
-        assert!(build(&branch, false)?.is_none());
-        assert!(build(&[fork, second.clone()], true)?.is_none());
+        let exact_prefix = cfg!(feature = "jolteon-exact-prefix-pipeline");
+        assert_eq!(build(&branch, false)?.is_some(), exact_prefix);
+        assert!(build(&[fork.clone(), second.clone()], true)?.is_none());
+        // The original pin previously cached this Cell at the old durable
+        // tip. The rebased snapshot must see its committed deletion.
+        let rebased_cell = pinned.with_branch_snapshot(&branch, true, |view, _| {
+            view.live_cell(&point)
+        })?;
+        assert!(matches!(rebased_cell, Some(None)));
 
         let (_, late) = build(&branch, true)?.context("exact prefix should rebase")?;
         assert_eq!(before.header(), late.header());
@@ -3943,7 +3991,20 @@ mod pipeline_store_tests {
         assert_eq!(before.header(), follower.header());
         assert_same_batch_writes(&before.batch, &follower.batch);
         store.commit_certified(&second, &[], &[])?;
-        assert!(build(&branch, true)?.is_none());
+        let late = build(&branch, true)?;
+        assert_eq!(late.is_some(), exact_prefix);
+        if let Some((_, late)) = late {
+            assert_eq!(before.header(), late.header());
+            assert_eq!(before.receipts(), late.receipts());
+            assert_same_batch_writes(&before.batch, &late.batch);
+            let follower = pinned
+                .prepare_candidate(&branch, &[], 1004, false)?
+                .context("Follower should open both durable ancestors")?;
+            assert_eq!(before.header(), follower.header());
+            assert_same_batch_writes(&before.batch, &follower.batch);
+        }
+        assert!(build(&[fork, second.clone()], true)?.is_none());
+        assert!(build(&[second], true)?.is_none());
         Ok(())
     }
 

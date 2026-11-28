@@ -227,6 +227,9 @@ impl Replica {
                 jobs.applied = jobs.applied.saturating_add(1);
                 if binding.base != self.finalized {
                     jobs.rebased = jobs.rebased.saturating_add(1);
+                    if let Some(index) = binding.branch.iter().position(|point| *point == self.finalized) {
+                        jobs.rebased_blocks = jobs.rebased_blocks.saturating_add((index + 1) as u64);
+                    }
                 }
                 let overlap = commit_overlap(commit.as_ref(), work);
                 if !overlap.is_zero() {

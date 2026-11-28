@@ -67,16 +67,43 @@ const RELAY_RETRIES_PER_TICK: usize = 8;
 const MAX_VERIFICATION_CACHE_ENTRIES: usize = 131_072;
 
 #[cfg(any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"))]
-type CommitWindow = Arc<std::sync::OnceLock<(Instant, Duration)>>;
+type CommitSpan = (Instant, Duration);
+#[cfg(feature = "jolteon-exact-prefix-pipeline")]
+type CommitWindow = Arc<std::sync::Mutex<Vec<CommitSpan>>>;
+#[cfg(all(
+    not(feature = "jolteon-exact-prefix-pipeline"),
+    any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"),
+))]
+type CommitWindow = Arc<std::sync::OnceLock<CommitSpan>>;
+
+#[cfg(feature = "jolteon-commit-pipeline")]
+fn record_commit_span(window: &CommitWindow, span: CommitSpan) {
+    #[cfg(feature = "jolteon-exact-prefix-pipeline")]
+    window.lock().expect("commit timeline").push(span);
+    #[cfg(not(feature = "jolteon-exact-prefix-pipeline"))]
+    let _ = window.set(span);
+}
 
 #[cfg(any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"))]
-fn commit_overlap(window: Option<&CommitWindow>, (start, elapsed): (Instant, Duration)) -> Duration {
-    let Some(&(commit_start, commit_elapsed)) = window.and_then(|window| window.get()) else {
+fn commit_overlap(window: Option<&CommitWindow>, (start, elapsed): CommitSpan) -> Duration {
+    let Some(window) = window else {
         return Duration::ZERO;
     };
-    (start + elapsed)
-        .min(commit_start + commit_elapsed)
-        .saturating_duration_since(start.max(commit_start))
+    let overlap = |&(commit_start, commit_elapsed): &CommitSpan| {
+        (start + elapsed)
+            .min(commit_start + commit_elapsed)
+            .saturating_duration_since(start.max(commit_start))
+    };
+    #[cfg(feature = "jolteon-exact-prefix-pipeline")]
+    {
+        // One writer records disjoint intervals. The gaps between two
+        // certified writes contribute no overlap to the worker.
+        window.lock().expect("commit timeline").iter().map(overlap).sum()
+    }
+    #[cfg(not(feature = "jolteon-exact-prefix-pipeline"))]
+    {
+        window.get().map_or(Duration::ZERO, overlap)
+    }
 }
 
 #[derive(Deserialize)]
@@ -994,7 +1021,7 @@ impl Replica {
         let mut durable = Vec::new();
         let commit_count = batches.len() - usize::from(!child.wire.seal);
         #[cfg(feature = "jolteon-commit-pipeline")]
-        let overlap = commit_count == 1
+        let overlap = (commit_count == 1 || cfg!(feature = "jolteon-exact-prefix-pipeline"))
             && !child.wire.seal
             && !self.recovery.active
             && self.handoff_tip.is_none()
@@ -1002,6 +1029,9 @@ impl Replica {
             && pending.as_ref().is_none_or(|change| {
                 child.header.context.height.saturating_add(1) < change.activation_height
             });
+        #[cfg(feature = "jolteon-commit-pipeline")]
+        let window = (overlap && cfg!(feature = "jolteon-cross-block-pipeline"))
+            .then(CommitWindow::default);
         let proof = if child.wire.seal {
             let change = pending.context("terminal execution has no successor")?;
             let (announcement, path) = self
@@ -1106,7 +1136,8 @@ impl Replica {
                 Arc::clone(prepared),
                 records,
                 retired,
-                overlap.then_some((branch.as_slice(), batches.as_slice())),
+                overlap.then_some((&branch[index..], &batches[index..])),
+                window.clone(),
             )
             .await
             .context(StorageFault)?;
