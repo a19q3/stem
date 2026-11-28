@@ -13,13 +13,14 @@ use jmt::{
 use sha2::{Digest, Sha256};
 use stem_ledger::{
     block::Header,
+    light::FinalityVerifier,
     patricia::{Key, Namespace, Patricia},
     record,
 };
 
 use super::{
-    Batch, JMT_NODE, MARKER, MAX_CELL_PROOF_BATCH, STATE_RECORD, STORAGE_LAYOUT, Store, TIP,
-    state_key,
+    Batch, HEADER, JMT_NODE, MARKER, MAX_CELL_PROOF_BATCH, STATE_RECORD, STORAGE_LAYOUT, Spec,
+    Store, TIP, index_key, state_key,
 };
 
 mod proof_audit;
@@ -321,6 +322,50 @@ pub fn audit_cell_state_with_proofs(
     expected_header: &Byte32,
     proof_options: CellAuditProofOptions,
 ) -> Result<serde_json::Value> {
+    audit_cell_state_at(path, network, expected_header, proof_options, None)
+}
+
+/// Authenticate the recovered tip of a development database and its ancestry
+/// from the independently replayed measurement Header before auditing Cells.
+pub fn audit_recovered_cell_state(
+    path: &Path,
+    spec: &Spec,
+    genesis: &Byte32,
+    measured_height: u64,
+    measured_header: &Byte32,
+    options: CellAuditProofOptions,
+) -> Result<serde_json::Value> {
+    ensure!(
+        spec.stake.is_none() && spec.bridge.is_none(),
+        "recovery comparison requires an isolated development chain"
+    );
+    let members = spec
+        .development_validators
+        .iter()
+        .map(|(key, power)| {
+            Ok(stem_stake::Member {
+                key: *key,
+                power: u64::try_from(*power)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let verifier = FinalityVerifier::new(spec.network.clone(), genesis.clone(), &members)?;
+    audit_cell_state_at(
+        path,
+        spec.network.clone(),
+        measured_header,
+        options,
+        Some((genesis, measured_height, verifier)),
+    )
+}
+
+fn audit_cell_state_at(
+    path: &Path,
+    network: Byte32,
+    expected_header: &Byte32,
+    proof_options: CellAuditProofOptions,
+    recovery: Option<(&Byte32, u64, FinalityVerifier)>,
+) -> Result<serde_json::Value> {
     ensure!(
         (1..=MAX_CELL_PROOF_BATCH).contains(&proof_options.batch_width),
         "audit batch width must be between 1 and {MAX_CELL_PROOF_BATCH}"
@@ -343,10 +388,49 @@ pub fn audit_cell_state_with_proofs(
         .context("unknown Stem database layout")?;
     let genesis = Byte32::from_slice(genesis)?;
     let tip = Header::decode(&database.get(TIP)?.context("missing durable Stem tip")?)?;
-    ensure!(
-        &tip.id(&network) == expected_header,
-        "recovered Stem tip differs from the expected Header"
-    );
+    let tip_id = tip.id(&network);
+    let recovery_started = Instant::now();
+    let measured_height = if let Some((expected_genesis, height, verifier)) = recovery {
+        ensure!(&genesis == expected_genesis, "wrong recovered genesis");
+        ensure!(
+            tip.context.height >= height,
+            "recovered tip predates the measurement"
+        );
+        let certified = crate::jolteon::verify_development_recovery_tip(
+            &verifier,
+            tip.context.height,
+            |key| Ok(database.get(index_key(b'j', key))?.map(|raw| raw.to_vec())),
+        )?;
+        ensure!(certified == tip, "durable tip differs from its certificate");
+        let mut parent = if height == tip.context.height {
+            tip_id.clone()
+        } else {
+            tip.context.parent.clone()
+        };
+        for current in (height..tip.context.height).rev() {
+            let raw = database
+                .get(index_key(HEADER, &current.to_be_bytes()))?
+                .context("recovered database lacks the ancestry of the measured height")?;
+            let header = Header::decode(&raw)?;
+            ensure!(
+                header.context.height == current && header.id(&network) == parent,
+                "broken recovered Header ancestry"
+            );
+            parent = header.context.parent;
+        }
+        ensure!(
+            &parent == expected_header,
+            "recovered tip does not descend from the measured Header"
+        );
+        Some(height)
+    } else {
+        ensure!(
+            &tip_id == expected_header,
+            "recovered Stem tip differs from the expected Header"
+        );
+        None
+    };
+    let recovery_us = measured_height.map(|_| recovery_started.elapsed().as_micros());
 
     let cells = Patricia::new(network, Namespace::Cells);
     let prefix = [STATE_RECORD, Namespace::Cells.tag()];
@@ -427,7 +511,10 @@ pub fn audit_cell_state_with_proofs(
     Ok(serde_json::json!({
         "engine": if is_jmt { "sha256-jmt-0.12" } else { "compact-patricia" },
         "height": version,
-        "header": hex::encode(expected_header.as_slice()),
+        "header": hex::encode(tip_id.as_slice()),
+        "measured_height": measured_height,
+        "measured_header": measured_height.map(|_| hex::encode(expected_header.as_slice())),
+        "recovery_authentication_us": recovery_us,
         "genesis": hex::encode(genesis.as_slice()),
         "cell_root": hex::encode(root),
         "system_root": hex::encode(tip.state.system_root.as_slice()),

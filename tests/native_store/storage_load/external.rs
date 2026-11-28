@@ -20,7 +20,7 @@ use stem_ledger::{
 };
 use stem_stake::Member;
 
-use super::{Fixture, Load, statuses};
+use super::{Fixture, Load, percentiles, statuses};
 use crate::{Retention, Store, comet::write_spec};
 
 #[derive(Deserialize)]
@@ -332,7 +332,7 @@ pub(super) fn verify_report(
     jobs: &[(String, Transaction)],
     workload: &str,
     load: Load,
-) -> Result<()> {
+) -> Result<serde_json::Value> {
     let report: Evidence = serde_json::from_reader(std::io::BufReader::new(fs::File::open(path)?))?;
     let settings = &report.load;
     ensure!(
@@ -360,7 +360,7 @@ pub(super) fn verify_report(
     );
     let by_id = jobs.iter().map(|(id, tx)| (id.as_str(), tx)).collect();
     let mut blocks = report.blocks.iter();
-    let mut seen = HashSet::new();
+    let mut seen = HashMap::new();
     let mut window = 0;
     let mut elapsed = 0;
     for sample in &report.samples {
@@ -393,7 +393,10 @@ pub(super) fn verify_report(
                 window += ids.len();
             }
             for id in ids {
-                ensure!(seen.insert(id), "repeated confirmed payment");
+                ensure!(
+                    seen.insert(id, elapsed).is_none(),
+                    "repeated confirmed payment"
+                );
             }
             head = next;
         }
@@ -405,7 +408,8 @@ pub(super) fn verify_report(
             && head.context.height == report.agreed_height,
         "incomplete chain to certified finality"
     );
-    let verifier = finality_verifier(fixture, local_genesis(fixture)?)?;
+    let genesis = local_genesis(fixture)?;
+    let verifier = finality_verifier(fixture, genesis.clone())?;
     ensure!(
         verifier
             .verify(&hex::decode(&report.finality)?, false)?
@@ -487,21 +491,30 @@ pub(super) fn verify_report(
     let mut writes_in_window = 0;
     let mut acks_in_window = 0;
     let mut visible_without_ack = 0;
+    let cutoff = load.seconds * 1_000_000;
+    let mut pending_at_cutoff = 0;
+    let mut pending_at_end = 0;
+    let mut confirmed_ids = ckb_hash::new_blake2b();
+    let mut latencies = Vec::with_capacity(seen.len());
     for ((id, _), [write, ack]) in jobs.iter().zip(times) {
         ensure!(
             ack.is_none_or(|at| write.is_some_and(|w| w <= at)),
             "acknowledgement precedes dispatch"
         );
-        let confirmed = seen.contains(id);
-        ensure!(
-            !confirmed || write.is_some(),
-            "confirmed payment lacks a recorded write"
-        );
+        let confirmed = seen.get(id);
+        if let Some(seen_at) = confirmed {
+            let written_at = write.context("confirmed payment lacks a recorded write")?;
+            latencies.push(seen_at.saturating_sub(written_at));
+            confirmed_ids.update(id.as_bytes());
+        }
         offered += usize::from(write.is_some());
         admitted += usize::from(ack.is_some());
-        writes_in_window += usize::from(write.is_some_and(|t| t <= load.seconds * 1_000_000));
-        acks_in_window += usize::from(ack.is_some_and(|t| t <= load.seconds * 1_000_000));
-        visible_without_ack += usize::from(confirmed && ack.is_none());
+        writes_in_window += usize::from(write.is_some_and(|t| t <= cutoff));
+        let ack_in_window = ack.is_some_and(|t| t <= cutoff);
+        acks_in_window += usize::from(ack_in_window);
+        pending_at_cutoff += usize::from(ack_in_window && confirmed.is_none_or(|&t| t > cutoff));
+        pending_at_end += usize::from(ack.is_some_and(|t| t <= elapsed) && confirmed.is_none());
+        visible_without_ack += usize::from(confirmed.is_some() && ack.is_none());
     }
     let s = report.summary;
     ensure!(
@@ -530,5 +543,24 @@ pub(super) fn verify_report(
         seen.len(),
         head.context.height
     );
-    Ok(())
+    let mut confirmed_digest = [0; 32];
+    confirmed_ids.finalize(&mut confirmed_digest);
+    Ok(json!({
+        "genesis": hex::encode(genesis.as_slice()),
+        "header": hex::encode(head.id(network).as_slice()),
+        "height": head.context.height,
+        "network": report.network,
+        "workload_id": report.workload_id,
+        "confirmed_set_blake2b": hex::encode(confirmed_digest),
+        "offered": offered,
+        "offered_during_window": writes_in_window,
+        "admitted": admitted,
+        "admitted_during_offer": acks_in_window,
+        "visible": seen.len(),
+        "visible_during_offer": window,
+        "visibility_tps": tps,
+        "acknowledged_pending_at_offer_cutoff": pending_at_cutoff,
+        "acknowledged_pending_at_last_sample": pending_at_end,
+        "latency_us": percentiles(latencies.into_iter()),
+    }))
 }

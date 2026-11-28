@@ -126,9 +126,15 @@ enum Command {
         home: PathBuf,
         #[arg(long)]
         genesis: PathBuf,
-        /// Exact finalized Header ID authenticated independently of the database.
+        /// Finalized Header ID authenticated independently of the database.
         #[arg(long)]
         expected_header: String,
+        /// Allow a later durable tip that descends from this authenticated height.
+        #[arg(long, requires = "expected_genesis")]
+        measured_height: Option<u64>,
+        /// Independently derived genesis ID of the measured development network.
+        #[arg(long, requires = "measured_height")]
+        expected_genesis: Option<String>,
         /// Number of queries in one proof-generation batch.
         #[arg(long)]
         proof_batch_width: Option<usize>,
@@ -386,6 +392,8 @@ fn main() -> Result<()> {
             home,
             genesis,
             expected_header,
+            measured_height,
+            expected_genesis,
             proof_batch_width,
             jmt_proof_cache_nodes,
         } => {
@@ -399,21 +407,31 @@ fn main() -> Result<()> {
             proof_options.jmt_cache_nodes = jmt_proof_cache_nodes;
 
             let spec = native_spec::load(&genesis)?;
-            let bytes = hex::decode(
-                expected_header
-                    .strip_prefix("0x")
-                    .unwrap_or(&expected_header),
-            )?;
-            let expected_header = Byte32::from_slice(&bytes)?;
-            println!(
-                "{}",
+            let id = |raw: &str| -> Result<Byte32> {
+                let bytes = hex::decode(raw.strip_prefix("0x").unwrap_or(raw))?;
+                Ok(Byte32::from_slice(&bytes)?)
+            };
+            let expected_header = id(&expected_header)?;
+            let database = home.join("db");
+            let report = if let (Some(height), Some(genesis)) = (measured_height, expected_genesis)
+            {
+                stem::native_store::audit_recovered_cell_state(
+                    &database,
+                    &spec,
+                    &id(&genesis)?,
+                    height,
+                    &expected_header,
+                    proof_options,
+                )?
+            } else {
                 stem::native_store::audit_cell_state_with_proofs(
-                    &home.join("db"),
+                    &database,
                     spec.network,
                     &expected_header,
                     proof_options,
                 )?
-            );
+            };
+            println!("{report}");
             Ok(())
         }
         Command::JolteonTrust { genesis } => {

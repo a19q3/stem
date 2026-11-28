@@ -2106,6 +2106,22 @@ pub fn verify_finality(
     Ok(verifier.verify(raw, terminal)?.header().clone())
 }
 
+#[cfg(feature = "native-research-jmt")]
+pub(crate) fn verify_development_recovery_tip(
+    verifier: &stem_ledger::light::FinalityVerifier,
+    height: u64,
+    read_record: impl FnOnce(&[u8]) -> Result<Option<Vec<u8>>>,
+) -> Result<Header> {
+    let record: wire::Finalized = wire::canonical(
+        &read_record(&finality_key(height))?.context("missing durable tip certificate")?,
+    )?;
+    ensure!(
+        record.epoch == 0 && !record.handoff,
+        "the research fixture requires a fixed development committee"
+    );
+    Ok(verifier.verify(&record.proof, false)?.header().clone())
+}
+
 fn proposal_key(epoch: u64, point: Point) -> Vec<u8> {
     let mut key = proposal_prefix(epoch, point.view);
     key.extend_from_slice(&point.encode()[8..]);

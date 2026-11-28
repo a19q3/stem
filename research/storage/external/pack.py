@@ -36,6 +36,8 @@ def pack(report, receipt_sample=None):
     evidence.update(before=heights(report["before"]), blocks=blocks,
                     delivery_times=[[r["offered_us"], r["acknowledged_us"]] for r in report["deliveries"]],
                     samples=[{"at_us": s["at_us"], **heights(s)} for s in report["samples"]])
+    if "limits" in report:
+        evidence["limits"] = report["limits"]
     if "driver_clock" in report:
         evidence["driver_clock"] = report["driver_clock"]
     if "reused_connections" in report["summary"] and all(

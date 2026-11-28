@@ -207,10 +207,60 @@ trace can compare this digest across engines, while each arm still
 authenticates its exact canonical bytes and origin. The digest alone
 does not establish equivalent receipts, ordering, origins or resource charges.
 
-The replicated implementation and its restart regressions are compile-checked.
-The isolated measurements above remain the measured comparison. Replicated
-throughput, finality, recovery after interruption and proof costs on the
-same funded corpus await runtime qualification.
+### Paired replay and stopped-store audit
+
+Use the [payment driver](external/README.md#prepare-the-trial) with loopback
+endpoints. Build both the driver harness and node with `native-research-jmt`.
+Prepare a single trial with `drive.py --engine patricia ... prepare`. Reuse
+its genesis JSON, topology and explicitly recorded CPU affinity, RocksDB
+cache, Live Cell index budget, metrics and retention settings for both
+runs. Start fresh node homes for each run. Use the same executable and
+a stopped archive validator from each run for the audit. Switch
+`STEM_RESEARCH_JMT` on only for the JMT nodes. The driver command takes
+`--engine` before its phase so its preflight derives the right genesis.
+
+```sh
+python3 research/storage/external/drive.py --harness "$harness" --contracts "$contracts" \
+    --engine patricia measure --trial trial --output patricia-measurement
+python3 research/storage/external/drive.py --harness "$harness" --contracts "$contracts" \
+    --engine jmt measure --trial trial --output jmt-measurement
+python3 research/storage/external/compare_state.py \
+    --harness "$harness" --contracts "$contracts" --trial trial \
+    --patricia-report patricia-measurement/stem-storage-*/report.json \
+    --jmt-report jmt-measurement/stem-storage-*/report.json \
+    --binary "$stem" --patricia-home "$patricia_archive" --jmt-home "$jmt_archive" \
+    --proof-batch-width 32 --output paired-state.json
+```
+
+Run each measurement while its own committee is online. Run the comparison
+after both committees stop. It checks the prepared workload settings and
+limits, independently regenerates the signed workload for each arm,
+authenticates each measured history from its own genesis, and computes
+the first-observed finality rate, acknowledged backlog and write-to-common latency. It records
+whether the two arms finalized the same set of measured payments. Raw
+reports include per-replica WAL, flush and compaction deltas. Newly packed
+reports retain the resource limits for paired replay, and the raw reports
+are needed for storage counters. Record CPU, peak RSS, physical I/O and
+the launch configuration alongside the JSON. Replica configuration and
+observational timings require operator evidence.
+
+When both archive homes are supplied, the command reads their databases
+without mutating them. It verifies the certificate on each durable tip
+against the independently derived development committee and follows the
+authenticated Header parents back to the exact measured Header. This
+allows the stopped node to be ahead of the sampling cutoff while rejecting
+a different genesis, missing ancestry or an uncertified tip. The audit
+then rebuilds the Cell commitment and verifies the sampled proofs at
+the recovered height. To exercise crash recovery, use the existing
+interruption and restart procedure for each run before this audit, and
+record the interruption point and restart time separately. The two
+recovered tips can reflect different post-sampling executions. Compare
+the Cell content digests only for equivalent transition traces.
+
+The paired runner and recovery audit have compile checks. The isolated
+measurements above remain the measured comparison. Replicated throughput,
+finality, resource costs and recovery after interruption on a matched
+funded corpus remain to be measured.
 
 ### Matched proof batch widths and JMT node reuse
 

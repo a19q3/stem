@@ -51,7 +51,9 @@ use node_index::NodeIndex;
 #[cfg(feature = "native-research-jmt")]
 mod research_jmt;
 #[cfg(feature = "native-research-jmt")]
-pub use research_jmt::{CellAuditProofOptions, audit_cell_state, audit_cell_state_with_proofs};
+pub use research_jmt::{
+    CellAuditProofOptions, audit_cell_state, audit_cell_state_with_proofs, audit_recovered_cell_state,
+};
 mod node_storage;
 #[cfg(feature = "jolteon-cancel-stale-execution")]
 mod preparation;

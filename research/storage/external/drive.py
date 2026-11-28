@@ -27,6 +27,8 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--harness", type=Path, required=True, help="compiled native_store integration test")
+    parser.add_argument("--engine", choices=("patricia", "jmt"),
+                        help="select the development Cell commitment for preflight and replay")
     parser.add_argument("--contracts", type=Path, required=True, help="directory containing stem-lock")
     phases = parser.add_subparsers(dest="phase", required=True)
     prepare = phases.add_parser("prepare")
@@ -58,6 +60,7 @@ def main():
     measure.add_argument("--output", type=Path, required=True, help="new directory for this measurement")
     verify = phases.add_parser("verify")
     verify.add_argument("--report", type=Path, required=True)
+    verify.add_argument("--verified-output", type=Path, help="write the verified Header ID and replay summary")
     for phase in (prepare, v1, measure, verify):
         phase.add_argument("--trial", type=Path, required=True, help="genesis and measurement plan directory")
     args = parser.parse_args()
@@ -109,10 +112,17 @@ def main():
             (args.output / "driver.json").write_text(json.dumps({"harness_sha256": harness_hash}) + "\n")
     with tempfile.TemporaryDirectory() as scratch:
         env = {k: v for k, v in os.environ.items() if not k.startswith("STEM_STORAGE_")}
+        if args.engine == "jmt":
+            env["STEM_RESEARCH_JMT"] = "1"
+        elif args.engine == "patricia":
+            env.pop("STEM_RESEARCH_JMT", None)
         env.update({"STEM_STORAGE_" + k: str(v) for k, v in settings.items()})
         env.update(STEM_STORAGE_TOPOLOGY=str(topology), STEM_TEST_CONTRACT_DIR=str(args.contracts.resolve()),
                    STEM_TEST_EVIDENCE_ROOT=str(args.output.resolve()) if args.phase == "measure" else scratch)
         if args.phase == "verify":
+            if args.verified_output:
+                verified = Path(scratch) / "verified.json"
+                env["STEM_STORAGE_REPLAY_OUTPUT"] = str(verified)
             report = args.report.resolve()
             if report.suffix == ".xz":
                 expanded = Path(scratch) / "report.json"
@@ -124,6 +134,10 @@ def main():
             env["STEM_STORAGE_GENESIS_OUTPUT"] = str(trial)
         subprocess.run([args.harness.resolve(), "--exact", "storage_load::sustained_payment_storage",
                         "--ignored", "--nocapture"], env=env, check=True)
+        if args.phase == "verify" and args.verified_output:
+            data = verified.read_bytes()
+            with args.verified_output.open("xb") as result:
+                result.write(data)
     if preparing:
         shutil.copyfile(topology, trial / "replicas.json")
         plan["genesis_sha256"] = digest(trial / "genesis.json")

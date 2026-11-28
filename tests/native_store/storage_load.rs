@@ -367,13 +367,17 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
             topology.is_some(),
             "offline verification requires the prepared topology"
         );
-        return external::verify_report(
+        let verified = external::verify_report(
             std::path::Path::new(&report),
             &fixture,
             &jobs,
             &workload_hash,
             load,
-        );
+        )?;
+        if let Some(path) = std::env::var_os("STEM_STORAGE_REPLAY_OUTPUT") {
+            fs::write(path, serde_json::to_vec_pretty(&verified)?)?;
+        }
+        return Ok(());
     }
     let (replicas, clients) = if let Some(external) = &topology {
         (
