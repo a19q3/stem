@@ -18,6 +18,7 @@ detect-asm = ["ckb-vm/detect-asm"]
 logging = ["ckb-logger"]
 flatmemory = []
 vm-reuse = []
+trace-cycle-reuse = ["ckb-vm/trace-cycle-reuse"]
 
 [dependencies]
 ckb-traits.workspace = true

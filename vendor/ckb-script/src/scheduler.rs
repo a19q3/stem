@@ -14,7 +14,6 @@ use ckb_vm::snapshot2::Snapshot2Context;
 use ckb_vm::{
     Error, FlattenedArgsReader, Register,
     bytes::Bytes,
-    cost_model::estimate_cycles,
     elf::parse_elf,
     machine::{CoreMachine, DefaultMachineBuilder, DefaultMachineRunner, Pause, SupportMachine},
     memory::Memory,
@@ -1023,7 +1022,7 @@ where
         };
 
         let machine_builder = DefaultMachineBuilder::new(core_machine)
-            .instruction_cycle_func(Box::new(estimate_cycles));
+            .estimate_instruction_cycles();
         let machine_builder =
             (self.syscall_generator)(id, &self.sg_data, &vm_context, &self.syscall_context)
                 .into_iter()
