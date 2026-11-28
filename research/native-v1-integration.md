@@ -28,6 +28,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Resident Lock and TypeSet sharing | `a19ba05` | Inline and interned resident Live Cells at the same memory limit [Layout notes](storage/live-cell-index.md#resident-lock-and-typeset-sharing) |
 | Leader Lineage materialization | `native-leader-lineage-execution` | Reuse ready Lineage work through greedy Leader selection [Comparison notes](execution-pipeline/README.md#leader-lineage-materialization) |
 | Rolling Lineage materialization | `native-rolling-lineage-execution` | Refill ready materialization jobs during ordered settlement on the accepted prefix [Comparison notes](execution-pipeline/README.md#rolling-lineage-materialization) |
+| Lineage Cell read reuse | `native-reuse-lineage-cell-reads` | Reuse exact fee, Executor and ordered-stage Cell records [Comparison notes](execution-pipeline/README.md#lineage-cell-read-reuse) |
 | Lineage and Keeper | `45028dc` | Independent Head lookahead and one-shot wake preparation [Keeper notes](../BENCHMARKS.md#parallel-preparation-of-independent-due-commands) |
 | Leader Keeper prefix reuse | `native-reuse-keeper-proposal-prefix` | Reuse settled one-shot wakes when finishing the selected proposal [Keeper notes](../BENCHMARKS.md#reusing-the-keeper-prefix-in-leader-proposals) |
 | Certificates and votes | `34e4743` | Shared direct frames and exact current-certificate reuse [Communication notes](certificates/README.md#sharing-certificates-and-direct-vote-frames) |
@@ -72,6 +73,7 @@ shared_proposal_snapshot=jolteon-shared-proposal-snapshot
 shared_proposal_bytes=jolteon-share-proposal-bytes
 contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
 rolling_lineage=native-rolling-lineage-execution
+lineage_reads=native-reuse-lineage-cell-reads
 leader_lineage=native-leader-lineage-execution
 keeper_prefix=native-reuse-keeper-proposal-prefix
 publication=jolteon-resident-node-publication
@@ -118,6 +120,7 @@ build pre-quorum --features "$exact_prefix,$cancellation,$pre_quorum"
 build shared-proposal-snapshot --features "$pre_quorum,$shared_proposal_snapshot"
 build shared-proposal-bytes --features "$shared_proposal_bytes"
 build contract-execution --features "$contracts"
+build lineage-cell-reads --features "$contracts,$lineage_reads"
 build rolling-lineage --features "$contracts,$rolling_lineage"
 build leader-lineage --features "$contracts,$rolling_lineage,$leader_lineage"
 build keeper-prefix --features "$contracts,$keeper_prefix"
@@ -137,7 +140,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

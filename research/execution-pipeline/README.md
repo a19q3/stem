@@ -561,3 +561,38 @@ The snapshot regression covers cancellation before work begins and
 after preparation returns, followed by clean preparation on the
 authoritative Store. The regression target was compiled. Runtime
 behavior and performance have not been measured for this candidate.
+
+#### Lineage Cell read reuse
+
+`native-reuse-lineage-cell-reads` uses the already-read fee record for
+Lineage preflight and the preflight's exact Executor Cell for materialization.
+The fee change also applies when booking a Keeper reservation. Fee
+authorization, the signed Executor data hash and logical read accounting
+use their existing rules.
+
+When the ordered stage materializes a command locally, it retains up to
+32 successful Cell reads and four MiB of canonical record bytes. The same
+stage can then re-resolve inputs and dependencies from those records.
+Current staged reads, including deletions, take precedence. The cache is
+scoped to that staging call and excludes output collision checks and
+reads brought back by background materializations. Each background
+materialization can still avoid its own repeated fee and Executor reads.
+Final resolution, failure and refund handling, charged reads, bytes and
+cycles follow the canonical path.
+
+Compare the same command corpus with and without the flag. Use an ordered
+single-Head workload, disjoint Heads with the same rolling scheduler in
+both arms, and mixed atomic commands and Keeper wakes. Keep resident
+layouts, shared caches, worker allocation and resource limits fixed.
+Record Cell resolver CPU and wall time, candidate and proposal timing,
+and peak RSS with both cold and warm Cell records. Compare the complete
+Headers, ordered receipts, charged resources, Cell and Head proofs and
+independent replay before interpreting performance. A Resident Cell or
+hot decoded-cache hit already avoids disk I/O. In that case, temporary
+map lookups and retained references may cost more than the saved work.
+
+The scoped-cache unit test covers exact keys, error fallback and
+entry-limit exhaustion. Existing integration targets cover ordered
+latest and exact Heads, stale dependencies, fee-only rollback and
+dependent Keeper wakes. Compile checks cover the control and candidate.
+Runtime and performance results remain pending.

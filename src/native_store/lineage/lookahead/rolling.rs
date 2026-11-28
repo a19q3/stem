@@ -143,8 +143,8 @@ impl Store {
                                         tx,
                                         block,
                                         &inputs.heads,
-                                        &inputs.live,
                                         slot,
+                                        |point| self.resolve_live(&inputs.live, point),
                                     )
                                 }));
                                 let _ = send.send(Completion {
