@@ -254,6 +254,67 @@ impl Store {
             &PrecedingCells<'_>,
         ) -> Result<ProposalStep>,
     ) -> Result<(usize, bool)> {
+        let (processed, stopped) = self.drive_cell_segment(
+            transactions,
+            block,
+            origin,
+            width,
+            budget,
+            overlay,
+            stats,
+            finish_ordered_suffix,
+            #[cfg(feature = "native-resume-rolling-proposal")]
+            finish_ordered_suffix,
+            #[cfg(feature = "native-shared-cell-deps")]
+            dependency_reads,
+            &mut settle,
+        )?;
+        #[cfg(feature = "native-resume-rolling-proposal")]
+        if finish_ordered_suffix && !stopped && processed < transactions.len() {
+            // The first scope has joined, and its accepted effects are back
+            // in the overlay. Give the remaining entries one fresh scope.
+            stats.projection_restarts += 1;
+            let (tail, stopped) = self.drive_cell_segment(
+                &transactions[processed..],
+                block,
+                origin,
+                width,
+                budget,
+                overlay,
+                stats,
+                true,
+                false,
+                #[cfg(feature = "native-shared-cell-deps")]
+                dependency_reads,
+                &mut settle,
+            )?;
+            return Ok((processed + tail, stopped));
+        }
+        Ok((processed, stopped))
+    }
+
+    fn drive_cell_segment(
+        &self,
+        transactions: &[Transaction],
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        width: usize,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        stats: &mut CellStreamStats,
+        finish_ordered_suffix: bool,
+        #[cfg(feature = "native-resume-rolling-proposal")] resume_on_barrier: bool,
+        #[cfg(feature = "native-shared-cell-deps")] dependency_reads: &mut Option<
+            super::DependencyReads,
+        >,
+        settle: &mut impl FnMut(
+            &Transaction,
+            ProposalTrial<ReadyCell>,
+            &mut Budget,
+            &mut Overlay,
+            &PrecedingCells<'_>,
+        ) -> Result<ProposalStep>,
+    ) -> Result<(usize, bool)> {
         let depth = self.rolling_cell_depth(width, *budget, finish_ordered_suffix);
         debug_assert!(depth >= 2);
         let count = transactions.len();
@@ -549,6 +610,14 @@ impl Store {
                         cancelled.store(true, Ordering::Relaxed);
                         submitted = prefix + 1;
                         ready.iter_mut().for_each(|slot| *slot = None);
+                        #[cfg(feature = "native-resume-rolling-proposal")]
+                        if resume_on_barrier
+                            && count - submitted >= 2
+                            && self.rolling_cell_depth(width, *budget, true) >= 2
+                        {
+                            prefix = submitted;
+                            return Ok((prefix, false));
+                        }
                     }
                     prefix += 1;
                     if matches!(step, ProposalStep::Stop) {

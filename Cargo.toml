@@ -86,6 +86,7 @@ native-mask-rejected-cell-projections = ["native-rolling-leader-execution", "nat
 native-reuse-ordered-cell-writes = []
 native-incremental-cell-projection = []
 native-reclaim-cell-projection = ["native-incremental-cell-projection", "native-reuse-ordered-cell-writes"]
+native-resume-rolling-proposal = ["native-rolling-leader-execution", "native-reclaim-cell-projection"]
 native-execution-material-cache = ["stem-ledger/execution-material-cache"]
 native-compact-cell-trial-edits = ["dep:smallvec"]
 
