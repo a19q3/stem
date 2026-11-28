@@ -1,5 +1,9 @@
-//! Opt-in research candidate. All entries are owned by one replica and epoch.
-use super::{Committee, Network, Point, TimeoutCertificate};
+//! Opt-in certificate reuse, scoped to one replica and committee.
+use super::Network;
+#[cfg(feature = "jolteon-shared-certificate-path")]
+use super::Quorum;
+#[cfg(feature = "jolteon-certificate-experiment")]
+use super::{Committee, Point, TimeoutCertificate};
 use bytes::Bytes;
 use serde::Serialize;
 use std::sync::Arc;
@@ -7,24 +11,36 @@ use std::sync::Arc;
 #[derive(Default, Serialize)]
 pub(super) struct FrameCache {
     #[serde(skip)]
-    latest: Option<(Bytes, Arc<Vec<u8>>)>,
+    latest: Option<CachedFrame>,
     hits: u64,
     encodes: u64,
 }
 
+struct CachedFrame {
+    epoch: u64,
+    kind: u32,
+    body: Bytes,
+    frame: Arc<Vec<u8>>,
+}
+
 impl FrameCache {
-    // Each slot has a fixed sender/kind and is cleared on committee replacement.
+    // One sender owns this cache, and committee replacement clears its slots.
     pub(super) fn send(&mut self, net: &Network, kind: u32, body: &[u8]) {
-        if let Some((old, frame)) = &self.latest
-            && old.as_ref() == body
+        if let Some(cached) = &self.latest
+            && (cached.epoch, cached.kind, cached.body.as_ref()) == (net.epoch, kind, body)
         {
             self.hits += 1;
-            net.broadcast_frame(kind, frame.clone());
+            net.broadcast_frame(kind, cached.frame.clone());
             return;
         }
         let bytes = Bytes::copy_from_slice(body);
         let frame = net.frame(net.epoch, kind, bytes.clone());
-        self.latest = Some((bytes, frame.clone()));
+        self.latest = Some(CachedFrame {
+            epoch: net.epoch,
+            kind,
+            body: bytes,
+            frame: frame.clone(),
+        });
         self.encodes += 1;
         net.broadcast_frame(kind, frame);
     }
@@ -32,12 +48,19 @@ impl FrameCache {
 
 #[derive(Default, Serialize)]
 pub(super) struct Cache {
+    #[cfg(feature = "jolteon-certificate-experiment")]
     #[serde(skip)]
     parent: Option<(u64, Point, Vec<u8>)>,
     parent_hits: u64,
     parent_tc_checks: u64,
     pub(super) quorum_frame: FrameCache,
     pub(super) timeout_frame: FrameCache,
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    current_qc_hits: u64,
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    current_tc_hits: u64,
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    pub(super) vote_frame_encodes_saved: u64,
 }
 
 impl Cache {
@@ -47,6 +70,7 @@ impl Cache {
 
     // Only the committee's pure parent-view predicate is memoized. Every input
     // is decoded and proposal, execution and durable voting checks still run.
+    #[cfg(feature = "jolteon-certificate-experiment")]
     pub(super) fn verify_parent(
         &mut self,
         committee: &Committee,
@@ -70,12 +94,36 @@ impl Cache {
         self.parent = Some((view, parent, raw.to_vec()));
         Ok(Some(tc))
     }
+
+    /// The replica maintains the decoded QC and its authenticated journal
+    /// bytes together. A different encoding goes through the normal verifier.
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    pub(super) fn reuse_quorum(
+        &mut self,
+        high: &Quorum,
+        verified: &[u8],
+        received: &[u8],
+    ) -> Option<Quorum> {
+        if verified == received {
+            self.current_qc_hits += 1;
+            return Some(high.clone());
+        }
+        None
+    }
+
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    pub(super) fn known_timeout(&mut self, verified: &[u8], received: &[u8]) -> bool {
+        let hit = !verified.is_empty() && verified == received;
+        self.current_tc_hits += u64::from(hit);
+        hit
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::jolteon::wire;
+    use crate::jolteon::{Committee, Point, TimeoutCertificate};
     use ed25519_dalek::{Signer, SigningKey};
     use stem_stake::{
         Member,
@@ -128,6 +176,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "jolteon-certificate-experiment")]
     fn success_memo_matches_reference_across_inputs_and_reset() {
         let (committee, members, tc) = fixture(4);
         let parent = tc.high.point;
@@ -165,29 +214,82 @@ mod tests {
         assert_eq!(cache.parent_hits, 0);
     }
 
+    #[test]
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    fn current_certificate_reuse_requires_exact_authenticated_bytes() {
+        let (committee, members, tc) = fixture(4);
+        committee.verify_quorum(&tc.high).unwrap();
+        committee.verify_timeout_certificate(&tc).unwrap();
+        let quorum = tc.high.encode();
+        let timeout = tc.encode();
+        let mut cache = Cache::default();
+        let reused = cache.reuse_quorum(&tc.high, &quorum, &quorum).unwrap();
+        assert_eq!(reused.encode(), quorum);
+        assert!(cache.known_timeout(&timeout, &timeout));
+
+        let mut altered = tc.clone();
+        altered.votes[0].share.signature[0] ^= 1;
+        assert!(!cache.known_timeout(&timeout, &altered.encode()));
+        assert!(
+            cache
+                .reuse_quorum(&tc.high, &quorum, &quorum[..9])
+                .is_none()
+        );
+        let mut changed_quorum = quorum.clone();
+        *changed_quorum.last_mut().unwrap() ^= 1;
+        assert!(
+            cache
+                .reuse_quorum(&tc.high, &quorum, &changed_quorum)
+                .is_none()
+        );
+        let decoded = Quorum::decode(&changed_quorum, committee.size()).unwrap();
+        assert!(committee.verify_quorum(&decoded).is_err());
+        assert_eq!((cache.current_qc_hits, cache.current_tc_hits), (1, 1));
+
+        cache.reset();
+        let next = Committee::at_anchor([1; 32], [2; 32], 1, [3; 32], &members).unwrap();
+        let anchor = next.genesis_quorum();
+        assert!(
+            cache
+                .reuse_quorum(&anchor, &anchor.encode(), &quorum)
+                .is_none()
+        );
+        assert!(!cache.known_timeout(&[], &timeout));
+        assert_eq!((cache.current_qc_hits, cache.current_tc_hits), (0, 0));
+    }
+
     #[tokio::test]
     async fn repeated_frames_match_canonical_encoding() {
-        let (net, _inbox) = Network::listen(0, &["127.0.0.1:0".parse().unwrap()], 3, None)
+        let (mut net, _inbox) = Network::listen(0, &["127.0.0.1:0".parse().unwrap()], 3, None)
             .await
             .unwrap();
         let mut cache = FrameCache::default();
         let mut previous = None;
-        for bytes in [vec![2; 500], vec![2; 500], vec![3; 500]] {
-            cache.send(&net, wire::QUORUM, &bytes);
-            let (body, frame) = cache.latest.as_ref().unwrap();
+        for (epoch, kind, bytes) in [
+            (3, wire::QUORUM, vec![2; 500]),
+            (3, wire::QUORUM, vec![2; 500]),
+            (3, wire::QUORUM, vec![3; 500]),
+            (4, wire::QUORUM, vec![3; 500]),
+            (4, wire::TIMEOUT_CERTIFICATE, vec![3; 500]),
+        ] {
+            net.epoch = epoch;
+            cache.send(&net, kind, &bytes);
+            let cached = cache.latest.as_ref().unwrap();
+            let frame = &cached.frame;
             assert_eq!(
                 frame.as_slice(),
-                net.frame(3, wire::QUORUM, bytes.clone()).as_slice()
+                net.frame(epoch, kind, bytes.clone()).as_slice()
             );
-            if let Some((old, old_frame)) = previous {
-                assert_eq!(Arc::ptr_eq(frame, &old_frame), old == bytes);
+            if let Some((key, old_frame)) = previous {
+                assert_eq!(Arc::ptr_eq(frame, &old_frame), key == (epoch, kind, bytes));
             }
-            previous = Some((body.to_vec(), frame.clone()));
+            previous = Some(((epoch, kind, cached.body.to_vec()), frame.clone()));
         }
-        assert_eq!((cache.hits, cache.encodes), (1, 2));
+        assert_eq!((cache.hits, cache.encodes), (1, 4));
     }
 
     #[test]
+    #[cfg(feature = "jolteon-certificate-experiment")]
     #[ignore = "matched certificate CPU experiment"]
     fn repeated_timeout_cost() {
         for n in [4, 16, 64, 128] {

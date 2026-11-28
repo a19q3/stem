@@ -16,6 +16,7 @@ default = [
 ]
 comet-benchmark = []
 jolteon-certificate-experiment = []
+jolteon-shared-certificate-path = []
 jolteon-admission-pipeline = []
 jolteon-candidate-pipeline = []
 jolteon-commit-pipeline = ["jolteon-candidate-pipeline"]

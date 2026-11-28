@@ -194,6 +194,12 @@ pub struct CertificateExperimentMetrics {
     pub parent_tc_checks: u64,
     pub quorum_frame: FrameReuseMetrics,
     pub timeout_frame: FrameReuseMetrics,
+    #[serde(default)]
+    pub current_qc_hits: u64,
+    #[serde(default)]
+    pub current_tc_hits: u64,
+    #[serde(default)]
+    pub vote_frame_encodes_saved: u64,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
