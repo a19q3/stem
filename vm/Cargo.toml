@@ -8,6 +8,7 @@ publish = false
 
 [features]
 rolling-script-groups = []
+trace-cycle-reuse = ["ckb-script/trace-cycle-reuse"]
 
 [dependencies]
 anyhow.workspace = true

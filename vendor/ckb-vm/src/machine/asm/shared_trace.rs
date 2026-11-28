@@ -15,6 +15,8 @@ pub(super) struct Template {
     code: [u8; CODE_BYTES],
     pub decoded: usize,
     pub trace: Trace,
+    #[cfg(feature = "trace-cycle-reuse")]
+    pub estimated_cycles: bool,
 }
 
 pub(super) struct Cache(Box<[Option<Template>]>);
@@ -56,6 +58,7 @@ impl Cache {
         length: usize,
         decoded: usize,
         trace: &Trace,
+        #[cfg(feature = "trace-cycle-reuse")] estimated_cycles: bool,
     ) {
         self.0[slot] = Some(Template {
             isa,
@@ -64,6 +67,8 @@ impl Cache {
             code: code.try_into().expect("code window"),
             decoded,
             trace: trace.clone(),
+            #[cfg(feature = "trace-cycle-reuse")]
+            estimated_cycles,
         });
     }
 }
@@ -128,7 +133,11 @@ mod tests {
             ..Default::default()
         };
         let slot = cache.slot(0, 2, pc, &code);
-        cache.insert(slot, 0, 2, &code, 12, 1, &trace);
+        cache.insert(
+            slot, 0, 2, &code, 12, 1, &trace,
+            #[cfg(feature = "trace-cycle-reuse")]
+            false,
+        );
         assert!(cache.get(slot, 0, 2, pc, &code).is_some());
         assert!(cache.get(slot, 1, 2, pc, &code).is_none());
         assert!(cache.get(slot, 0, 1, pc, &code).is_none());
