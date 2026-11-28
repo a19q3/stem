@@ -321,3 +321,37 @@ speculative attempt, a script error masked by the canonical cycle
 budget, and six real groups at the exact cycle limit and one cycle
 below it. Runtime regression, replay and performance qualification
 remain pending.
+### Reusing a parallel rejection for an exact parent spend
+
+The `native-reuse-parent-spend-rejections` option carries a missing
+OutPoint from a failed fixed-window or rolling Leader trial to ordered
+settlement. For an ordinary transaction without Header Deps, the first
+explicit input is the first state read. If the missing point is that input
+and the newest exact ancestor still has a deletion with no overriding
+accepted edit, the Leader counts the rejection without resolving the
+transaction a second time. Other failures use ordered staging. A missing
+committed record without a parent deletion or a later input takes the
+ordered path. A speculative absence by itself never authorizes a skip.
+
+The candidate keeps visit order, the age lane, budgets and cycle-scan
+limits. It changes neither mempool membership nor the Follower verifier.
+In particular, the [earlier age-lane lookahead result](../storage/admission-order/README.md#branch-aware-priority-lookahead)
+still supports keeping the existing order. The new path reuses a failed
+preparation at its original position and applies no state effects.
+
+Build the same revision with `native-leader-dependency-execution` and
+toggle only `native-reuse-parent-spend-rejections`. Repeat the pair with
+`native-rolling-leader-execution` enabled in both arms. Compare selected
+bytes, complete Headers, receipts and durable writes on the same parent
+and its sibling, and run independent replay for the live fixture. Report
+`parallel_parent_rejections_reused`, parent and in-proposal spends,
+ordered fallback, worker jobs, selection time, CPU and finality for
+independent payments and mixed contracts. Parent-spend time measures the
+ordered stage, while the first failed worker trial still contributes to
+worker time. The historical sequential profile measured about 1.065
+aggregate Leader seconds of parent-spend rejection during 180 seconds of
+payments. The scope of savings here depends on how often the parallel
+schedulers would have repeated that work. The regression cases for
+parent spends, a sibling, nonexistent inputs and same-block duplicates
+have been compile-checked. Runtime validation and performance measurements
+remain pending.
