@@ -204,6 +204,35 @@ direct Code deps to a repeated Dep Group and compares both rolling
 paths against serial execution. Runtime, replay and performance
 evidence are pending.
 
+## Reusing the owned RocksDB Live Cell buffer
+
+The optional `native-owned-live-cell-reads` feature targets committed
+Cell lookups that fall through the candidate, resident and decoded
+caches. The ordinary RocksDB point-read API returns a C-allocated copy
+of the whole record. The decoder keeps that allocation and gives the
+canonical Cell body a shared slice. The fixed OutPoint and Origin
+fields are decoded as before. It validates the same Cell bytes and
+checks that the stored OutPoint matches the requested key before the
+record can enter the decoded cache.
+
+The adapter consumes only the owned point-read value from the locked
+`ckb-rocksdb` binding. RocksDB returns a malloc allocation independent
+of the database, snapshot or thread. Its destructor calls
+`rocksdb_free` on the original allocation. Candidate prefetch
+continues to copy from its short-lived pinned lookup. The compiled
+fixture checks physical Cell byte ownership and exact encoding after
+closing the database and moving the record to another thread.
+
+Compare the feature against the same binary configuration and input
+order, using ordinary payments and contract inputs with larger Data.
+Include decoded-cache misses, pinned candidate prefetch hits and
+resident-index hits to distinguish coverage. Record lookup CPU,
+allocations, RSS and phase time alongside exact Headers, receipts,
+proofs and replay. The point read still makes RocksDB's original copy,
+and the shared slice retains the fixed record prefix. For very small
+Cells the extra ownership wrapper may offset the saved byte copy.
+Runtime, replay and performance evidence are pending.
+
 ## Computing Cell digests independently
 
 The optional `native-lazy-cell-digests` feature stores separate lazy
