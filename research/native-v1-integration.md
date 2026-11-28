@@ -41,6 +41,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Compact write journal | `native-compact-write-journal` | Inline short row keys and index positions without copying keys [Comparison notes](storage/patricia-finishing/README.md#compact-prepared-write-journal) |
 | Generated Cell node journals | `native-verified-cell-journal` | Reuse generated nodes through speculative reads, WAL encoding and resident publication [Comparison notes](storage/resident-patricia.md#generated-cell-node-journals) |
 | Compact generated node journals | `native-compact-patricia-journal` | Store tombstones and lookup positions separately from decoded nodes [Comparison notes](storage/resident-patricia.md#compact-generated-node-journal) |
+| Segmented generated node journals | `native-segmented-patricia-journal` | Transfer generated node buffers at parallel subtree joins [Comparison notes](storage/resident-patricia.md#segmented-generated-node-journals) |
 | Stream generated node publication | `native-stream-node-publication` | Apply the verified journal directly to contiguous resident shards [Comparison notes](storage/resident-patricia.md#streaming-verified-edits-into-the-resident-shards) |
 
 This integration adds `jolteon-resident-node-publication` as an independent control. Only the selected writer path updates the node index before its acknowledgement. The normal installer updates the Live Cell index and publishes nodes when the writer did not. The node-count and shard preallocation changes follow the same build option.
@@ -87,6 +88,7 @@ inline_outpoints=native-inline-outpoint-index
 verified_nodes=native-verified-cell-nodes
 verified_journal=native-verified-cell-journal
 compact_patricia_journal=native-compact-patricia-journal
+segmented_patricia_journal=native-segmented-patricia-journal
 stream_node_publication=native-stream-node-publication
 compact_journal=native-compact-write-journal
 certificates=jolteon-shared-certificate-path
@@ -135,12 +137,13 @@ build inline-outpoints --features "$inline_outpoints"
 build verified-nodes --features "$verified_nodes"
 build verified-journal --features "$verified_journal"
 build compact-patricia-journal --features "$verified_journal,$compact_patricia_journal"
+build segmented-patricia-journal --features "$segmented_patricia_journal"
 build node-publication-control --features "$verified_journal,$publication"
 build node-publication-stream --features "$verified_journal,$publication,$stream_node_publication"
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

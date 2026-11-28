@@ -321,3 +321,37 @@ byte edits on the same shard layout. It covers resident inserts and
 tombstones, exact membership and absence proofs, an older snapshot
 across the write, and both publication locations. Runtime checks and
 performance measurements remain pending.
+
+### Segmented generated node journals
+
+`native-segmented-patricia-journal` builds on the compact generated
+journal. A parallel subtree join transfers ownership of the populated
+child node buffers. Only the compact lookup entries are appended and
+their segment positions adjusted. New parent nodes use a separate
+buffer. The stable content-ID sort keeps the same last edit, including
+tombstones. Reads and publication locate the same authenticated node
+through its segment and row position.
+
+The layout changes how locally generated node bodies are retained and
+merged. Every content ID still comes from canonical node encoding. The
+journal presents the same sorted bytes and tombstones to the existing
+read, compact RocksDB writer and resident publication paths. The WAL
+synchronization point follows the existing certified write.
+
+Compare `native-compact-patricia-journal` with
+`native-segmented-patricia-journal` on the same funded parent, signed
+workload, pinned state and cache allowances. Use one worker as the serial
+control and 2, 4 and 8 for the parallel comparison. Measure subtree join
+and edit CPU, allocation traffic, peak RSS, speculative read time and
+certified batch construction. Hold stream publication and write-buffer
+reuse fixed. Check exact root, previous-value callbacks, journal bytes,
+proof paths and recovered state before comparing latency and finality.
+A segmented location stores one extra machine word per entry. Multiple
+buffers can retain spare capacity, and indirect lookups can cost more in
+read-heavy or single-worker cases.
+
+The compile-checked merge regression checks nested joins, retained
+allocation identity, duplicate IDs and deletions. The existing Patricia
+mutation differential covers serial and parallel roots, ordered
+callbacks, exact node writes and proofs. Runtime and performance results
+remain pending.

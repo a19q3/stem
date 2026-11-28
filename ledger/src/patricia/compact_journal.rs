@@ -1,15 +1,26 @@
 //! Decoded nodes kept separately from the sorted content IDs and tombstones.
 
+#[cfg(not(feature = "segmented-verified-journal"))]
 use std::num::NonZeroUsize;
 
 use super::{BatchWrites, Key, Node, NodeWrites};
 
-type Entry = (Key, Option<NonZeroUsize>);
+#[cfg(feature = "segmented-verified-journal")]
+mod segments;
+#[cfg(feature = "segmented-verified-journal")]
+use segments::{Location, NodeSegments};
+
+#[cfg(not(feature = "segmented-verified-journal"))]
+type Location = NonZeroUsize;
+#[cfg(not(feature = "segmented-verified-journal"))]
+type NodeSegments = Vec<Node>;
+
+type Entry = (Key, Option<Location>);
 
 #[derive(Debug)]
 pub(super) struct CompactJournal {
     entries: Vec<Entry>,
-    nodes: Vec<Node>,
+    nodes: NodeSegments,
 }
 
 impl CompactJournal {
@@ -41,14 +52,24 @@ impl CompactJournal {
     }
 
     fn row<'a>(&'a self, (id, node): &'a Entry) -> (&'a Key, Option<&'a Node>) {
-        (id, node.map(|index| &self.nodes[index.get() - 1]))
+        #[cfg(feature = "segmented-verified-journal")]
+        let node = node.map(|location| self.nodes.get(location));
+        #[cfg(not(feature = "segmented-verified-journal"))]
+        let node = node.map(|location| &self.nodes[location.get() - 1]);
+        (id, node)
     }
 }
 
 impl NodeWrites for CompactJournal {
     fn record_insert(&mut self, id: Key, node: Node, _: &[u8]) {
-        self.nodes.push(node);
-        self.entries.push((id, NonZeroUsize::new(self.nodes.len())));
+        #[cfg(feature = "segmented-verified-journal")]
+        let location = self.nodes.push(node);
+        #[cfg(not(feature = "segmented-verified-journal"))]
+        let location = {
+            self.nodes.push(node);
+            NonZeroUsize::new(self.nodes.len()).expect("inserted generated node")
+        };
+        self.entries.push((id, Some(location)));
     }
 
     fn record_delete(&mut self, id: Key) {
@@ -60,7 +81,7 @@ impl BatchWrites for CompactJournal {
     fn with_capacity(rows: usize) -> Self {
         Self {
             entries: Vec::with_capacity(rows),
-            nodes: Vec::new(),
+            nodes: NodeSegments::default(),
         }
     }
 
@@ -71,15 +92,24 @@ impl BatchWrites for CompactJournal {
 
     #[cfg(feature = "parallel-patricia")]
     fn append(&mut self, other: Self) {
-        let offset = self.nodes.len();
+        #[cfg(feature = "segmented-verified-journal")]
+        let offset = self.nodes.append(other.nodes);
+        #[cfg(not(feature = "segmented-verified-journal"))]
+        let offset = {
+            let offset = self.nodes.len();
+            self.nodes.extend(other.nodes);
+            offset
+        };
         self.entries
             .extend(other.entries.into_iter().map(|(id, node)| {
-                (
-                    id,
-                    node.map(|index| index.checked_add(offset).expect("combined node index")),
-                )
+                let node = node.map(|location| {
+                    #[cfg(feature = "segmented-verified-journal")]
+                    return location.shift_segments(offset);
+                    #[cfg(not(feature = "segmented-verified-journal"))]
+                    location.checked_add(offset).expect("combined node index")
+                });
+                (id, node)
             }));
-        self.nodes.extend(other.nodes);
     }
 }
 
@@ -100,7 +130,9 @@ mod tests {
         let early = [1; 32];
         let overwritten = [2; 32];
         let unchanged = [3; 32];
-        let missing = [4; 32];
+        let parent = [4; 32];
+        let missing = [5; 32];
+        let base = [0; 32];
         let leaf = |value| Node::Leaf {
             key: [9; 32],
             value: [value; 32],
@@ -112,11 +144,19 @@ mod tests {
         right.record_insert(early, leaf(3), &[]);
         right.record_delete(overwritten);
 
+        #[cfg(feature = "segmented-verified-journal")]
+        let left_node = left.row(&left.entries[1]).1.unwrap() as *const Node;
+        #[cfg(feature = "segmented-verified-journal")]
+        let right_node = right.row(&right.entries[0]).1.unwrap() as *const Node;
         left.append(right);
-        let rows = left.finish();
+        left.record_insert(parent, leaf(4), &[]);
+        let mut top = CompactJournal::with_capacity(0);
+        top.record_insert(base, leaf(0), &[]);
+        top.append(left);
+        let rows = top.finish();
         assert_eq!(
             rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            [early, overwritten, unchanged]
+            [base, early, overwritten, unchanged, parent]
         );
         assert_eq!(rows.get_key_value(&early), Some((&early, Some(&leaf(3)))));
         assert_eq!(rows.get_key_value(&overwritten), Some((&overwritten, None)));
@@ -124,6 +164,19 @@ mod tests {
             rows.get_key_value(&unchanged),
             Some((&unchanged, Some(&leaf(2))))
         );
+        assert_eq!(rows.get_key_value(&base), Some((&base, Some(&leaf(0)))));
+        assert_eq!(rows.get_key_value(&parent), Some((&parent, Some(&leaf(4)))));
         assert!(rows.get_key_value(&missing).is_none());
+        #[cfg(feature = "segmented-verified-journal")]
+        {
+            assert!(std::ptr::eq(
+                rows.get_key_value(&unchanged).unwrap().1.unwrap(),
+                left_node
+            ));
+            assert!(std::ptr::eq(
+                rows.get_key_value(&early).unwrap().1.unwrap(),
+                right_node
+            ));
+        }
     }
 }
