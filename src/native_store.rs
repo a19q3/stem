@@ -50,6 +50,8 @@ pub use live_index::{LiveCellIndexLayout, LiveCellIndexStatus};
 use live_index::IndexView;
 mod node_index;
 pub use node_index::CellNodeIndexStatus;
+#[cfg(feature = "native-hot-cell-node-cache")]
+pub use node_index::HotCellNodeStatus;
 use node_index::NodeIndex;
 #[cfg(feature = "native-research-jmt")]
 mod research_jmt;
@@ -586,6 +588,8 @@ pub struct Store {
     pinned_cell_cache: Arc<pinned_cell_cache::PinnedCellCache>,
     live_index: Option<IndexView>,
     cell_nodes: Option<Arc<NodeIndex>>,
+    #[cfg(feature = "native-hot-cell-node-cache")]
+    cell_node_header: Key,
     research_jmt: bool,
     #[cfg(feature = "jolteon-cancel-stale-execution")]
     cancellation: Option<PreparationCancellation>,
@@ -730,6 +734,10 @@ impl PinnedView {
             }
             if let Some(index) = &mut view.live_index {
                 index.at_header(view.tip.id(&view.network).unpack());
+            }
+            #[cfg(feature = "native-hot-cell-node-cache")]
+            {
+                view.cell_node_header = view.tip.id(&view.network).unpack();
             }
         }
         // The private view and its options are dropped before the snapshot.
@@ -1354,6 +1362,8 @@ impl Store {
             )?;
             genesis
         };
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        let cell_node_header = tip.id(&network).unpack();
         let store = Self {
             db: Arc::new(db),
             read_options: Arc::new(ReadOptions::default()),
@@ -1380,6 +1390,8 @@ impl Store {
             pinned_cell_cache: Arc::default(),
             live_index: None,
             cell_nodes: None,
+            #[cfg(feature = "native-hot-cell-node-cache")]
+            cell_node_header,
             research_jmt,
             cache: Arc::new(VerificationCache::for_genesis(
                 DEFAULT_VERIFICATION_CACHE_ENTRIES,
@@ -1610,6 +1622,8 @@ impl Store {
             pinned_cell_cache: Arc::clone(&self.pinned_cell_cache),
             live_index: self.live_index.clone(),
             cell_nodes: self.cell_nodes.clone(),
+            #[cfg(feature = "native-hot-cell-node-cache")]
+            cell_node_header: self.cell_node_header,
             research_jmt: self.research_jmt,
             #[cfg(feature = "jolteon-cancel-stale-execution")]
             cancellation: self.cancellation.clone(),
@@ -2035,14 +2049,28 @@ impl Store {
         if let Some(row) = self.node_in_memory(namespace, id, &key)? {
             return Ok(row);
         }
-        self.read_stored_node(&key)
+        self.read_stored_node((namespace == Namespace::Cells).then_some(id), &key)
     }
 
-    fn read_stored_node(&self, key: &[u8]) -> Result<Option<node_storage::NodeRead>> {
+    fn read_stored_node(
+        &self,
+        cell_id: Option<&Key>,
+        key: &[u8],
+    ) -> Result<Option<node_storage::NodeRead>> {
         self.db.get_opt(key, &self.read_options)?
             .as_deref()
-            .map(node_storage::read)
+            .map(|stored| self.decode_stored_node(cell_id, stored))
             .transpose()
+    }
+
+    fn decode_stored_node(&self, _cell_id: Option<&Key>, stored: &[u8]) -> Result<node_storage::NodeRead> {
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        if let Some(id) = _cell_id
+            && let Some(index) = &self.cell_nodes
+        {
+            return index.remember_stored(&self.cell_node_header, id, stored);
+        }
+        node_storage::read(stored)
     }
 
     // Outer None requests a database read. An inner None is a branch tombstone.
@@ -2067,9 +2095,14 @@ impl Store {
             }
         }
         if namespace == Namespace::Cells
-            && let Some(node) = self.cell_nodes.as_ref().and_then(|index| index.lookup(id))
+            && let Some(index) = &self.cell_nodes
         {
-            return Ok(Some(Some(node)));
+            let node = index.lookup(id);
+            #[cfg(feature = "native-hot-cell-node-cache")]
+            let node = node.or_else(|| index.lookup_hot(&self.cell_node_header, id));
+            if let Some(node) = node {
+                return Ok(Some(Some(node)));
+            }
         }
         Ok(None)
     }
@@ -2090,12 +2123,14 @@ impl Store {
         }
         if keys.len() < 4 {
             for (position, key) in missing.into_iter().zip(keys) {
-                nodes[position] = self.read_stored_node(&key)?;
+                nodes[position] = self.read_stored_node(Some(&ids[position]), &key)?;
             }
         } else {
             let values = self.db.multi_get_opt(keys, &self.read_options);
             for (position, value) in missing.into_iter().zip(values) {
-                nodes[position] = value?.as_deref().map(node_storage::read).transpose()?;
+                nodes[position] = value?.as_deref()
+                    .map(|stored| self.decode_stored_node(Some(&ids[position]), stored))
+                    .transpose()?;
             }
         }
         Ok(nodes)
@@ -3830,6 +3865,14 @@ impl Store {
         if !node_publication_done && let Some(index) = &self.cell_nodes {
             index.advance(&prepared.batch);
         }
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        {
+            let next = prepared.next.id(&self.network).unpack();
+            if let Some(index) = &self.cell_nodes {
+                index.advance_hot(&self.cells, &prepared.batch, self.cell_node_header, next);
+            }
+            self.cell_node_header = next;
+        }
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
         self.stake_inputs = Arc::clone(&prepared.stake_inputs);
@@ -4776,6 +4819,18 @@ mod pipeline_store_tests {
         let root: Key = store.tip().state.cell_root.unpack();
         assert!(record::verify_cell(&store.cells, &root, &point, found.as_ref(), &proof));
         assert_eq!(found.context("missing database-backed proof")?.cell.as_slice(), cell.as_slice());
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        {
+            let cold = store.cell_node_index_status().unwrap().hot_cache.unwrap();
+            let (found, cached) = store.prove_cell(&point)?;
+            assert_eq!(proof, cached);
+            assert!(record::verify_cell(&store.cells, &root, &point, found.as_ref(), &cached));
+            let status = store.cell_node_index_status().unwrap();
+            let hot = status.hot_cache.unwrap();
+            assert!(hot.rows > 0);
+            assert!(hot.hits > cold.hits);
+            assert!(hot.accounted_bytes <= status.limit_bytes);
+        }
         Ok(())
     }
 

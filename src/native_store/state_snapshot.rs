@@ -228,6 +228,10 @@ impl Store {
                 .map(|m| (m, super::Purpose::Restore)),
         )?;
         self.tip = image.header;
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        {
+            self.cell_node_header = self.tip.id(&self.network).unpack();
+        }
         self.stake_inputs = Arc::default();
         self.live_cache.clear();
         self.history = frontier;
