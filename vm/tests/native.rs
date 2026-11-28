@@ -522,7 +522,11 @@ fn multi_asset_settlement_runs_every_group_with_real_signature() -> Result<()> {
     println!("five Type Script Groups across two assets: {serial} cycles");
     assert_eq!(pool.install(|| verify(tx.clone(), serial, true))?, serial);
     assert!(verify(tx.clone(), serial - 1, false).is_err());
-    assert!(pool.install(|| verify(tx, serial - 1, true)).is_err());
+    let error = pool.install(|| verify(tx, serial - 1, true)).unwrap_err();
+    #[cfg(feature = "rolling-script-groups")]
+    assert!(stem_vm::is_cycle_limit(&error));
+    #[cfg(not(feature = "rolling-script-groups"))]
+    let _ = error;
 
     let stripped = network.signed(
         inputs.clone(),
