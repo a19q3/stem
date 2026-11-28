@@ -188,3 +188,48 @@ benefit depends on useful consumers behind a successful fallback.
 Independent payments and complete worker adoption may see little
 change. Runtime regression, independent replay and timings are
 pending.
+
+### Incremental projection in the rolling schedulers
+
+The rolling control builds the complete declaration index for a run
+before it submits a worker. With `native-incremental-cell-projection`,
+the coordinator only builds and publishes declarations strictly before
+the next worker position. The first transaction can be submitted
+without waiting for any declarations. An early stop skips entries
+which could never be observed by a submitted worker. This applies to
+both rolling Leader and Follower paths. Keep the shared dependency
+reader setting fixed in comparisons, since its initial hint collection
+can still precede the first submit.
+
+The coordinator constructs each transaction's declarations outside
+the projection lock. It publishes that transaction's edits together
+before submitting a later position. Workers select the last edit
+strictly before their own position even if later declarations have
+now been published. They copy the owned Cell handle or check presence
+while holding the read lock for that lookup. VM execution and
+RocksDB reads run outside that lock. The canonical coordinator still
+settles in proposal order and checks every projected source and actual
+resource charge before adopting a result. An ordered fallback reads
+its exact accepted prefix and delta.
+
+Both build modes report `projected_transactions`, `projection_us` and
+`first_submit_us` in rolling metrics. The timings accumulate across
+runs. `first_submit_us` measures when the first job is submitted,
+including other upfront work and enqueueing. Measure worker start
+and occupancy separately. `projection_us` covers declaration
+construction and insertion, including any insertion lock wait in
+the incremental build. The incremental map can still grow to the
+size of the processed run.
+
+Toggle only `native-incremental-cell-projection` with the same rolling
+roles, signed inputs, snapshot, resource limits, worker count and
+caches. Use full independent payments, dependency chains, mixed Type
+Groups, and a proposal sweep that reaches its early-stop policy.
+Compare exact selected transactions, Headers, receipts and write
+journals, then measure first submission, CPU, preparation wall
+time, discarded work and finality. The compiled regression targets
+add declaration counts to complete four-transaction runs and an
+early-stop case. A shared lock on dependency reads could cost more
+than the shorter startup saves, especially at high worker counts
+and on VM-cache hits. Runtime regression, replay and performance
+comparisons remain pending.

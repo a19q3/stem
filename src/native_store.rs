@@ -192,6 +192,9 @@ pub struct CellStreamStats {
     pub reused: u64,
     pub fallbacks: u64,
     pub ordered_declarations: u64,
+    pub projected_transactions: u64,
+    pub projection_us: u64,
+    pub first_submit_us: u64,
     pub refilled_jobs: u64,
     pub discarded_jobs: u64,
     pub peak_outstanding: u64,
@@ -220,6 +223,14 @@ impl DependencyReadStats {
 }
 
 impl CellStreamStats {
+    #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
+    fn record_projection(&mut self, transactions: usize, elapsed: Duration) {
+        self.projected_transactions = self.projected_transactions.saturating_add(transactions as u64);
+        self.projection_us = self.projection_us.saturating_add(
+            u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX),
+        );
+    }
+
     pub(crate) fn record(&mut self, other: Self) {
         self.runs = self.runs.saturating_add(other.runs);
         self.jobs = self.jobs.saturating_add(other.jobs);
@@ -228,6 +239,10 @@ impl CellStreamStats {
         self.ordered_declarations = self
             .ordered_declarations
             .saturating_add(other.ordered_declarations);
+        self.projected_transactions = self.projected_transactions
+            .saturating_add(other.projected_transactions);
+        self.projection_us = self.projection_us.saturating_add(other.projection_us);
+        self.first_submit_us = self.first_submit_us.saturating_add(other.first_submit_us);
         self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
         self.discarded_jobs = self.discarded_jobs.saturating_add(other.discarded_jobs);
         self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
@@ -2589,9 +2604,9 @@ impl Store {
                 if let Some(MissingLiveCell(point)) = error.downcast_ref()
                     && tx.inputs().any(|input| &input.previous_output == point)
                 {
-                    let staged = overlay.live.get(point).map(Option::as_ref)
-                        .or_else(|| canonical.and_then(|view| view.get(point)));
-                    if matches!(staged, Some(None)) {
+                    let spent = overlay.live.get(point).map(Option::is_none)
+                        .or_else(|| canonical.and_then(|view| view.get(point, |record| record.is_none())));
+                    if spent == Some(true) {
                         scan.spent_in_proposal = scan.spent_in_proposal.saturating_add(1);
                         scan.priority_spent_in_proposal = scan.priority_spent_in_proposal.saturating_add(priority);
                     } else if matches!(self.branch_cell(point), Some(None)) {
@@ -2903,13 +2918,13 @@ impl Store {
         // Current candidate writes, including deletions, supersede all hints.
         let staged = |point: &OutPoint| {
             live.get(point)
-                .map(Option::as_ref)
-                .or_else(|| preceding.and_then(|view| view.get(point)))
+                .cloned()
+                .or_else(|| preceding.and_then(|view| view.get(point, |record| record.cloned())))
         };
         let speculative_bytes = std::cell::Cell::new(0usize);
         let fresh = |point: &OutPoint| {
             let record = match staged(point) {
-                Some(record) => record.cloned(),
+                Some(record) => record,
                 None => lookup(point)?,
             }
             .with_context(|| MissingLiveCell(point.clone()))?;
@@ -3038,10 +3053,9 @@ impl Store {
                     "block Cell write bytes",
                 )?;
                 let point = OutPoint::new(id.clone(), u32::try_from(index)?);
-                ensure!(
-                    staged(&point).is_none() && lookup(&point)?.is_none(),
-                    "duplicate output OutPoint"
-                );
+                let edited = live.contains_key(&point)
+                    || preceding.is_some_and(|view| view.get(&point, |_| ()).is_some());
+                ensure!(!edited && lookup(&point)?.is_none(), "duplicate output OutPoint");
                 Ok((
                     point,
                     Some(LiveCell {
@@ -4155,6 +4169,10 @@ mod pipeline_store_tests {
             assert_eq!(scan.rolling_cells.jobs, 4);
             assert_eq!(scan.rolling_cells.peak_outstanding, 3);
             assert_eq!(scan.rolling_cells.refilled_jobs, 1);
+            assert_eq!(
+                scan.rolling_cells.projected_transactions,
+                if cfg!(feature = "native-incremental-cell-projection") { 3 } else { 4 },
+            );
 
             // A stop consumes only the ordered entry that reported it.
             let block = BlockContext::after(
@@ -4179,6 +4197,10 @@ mod pipeline_store_tests {
             assert_eq!(outcome, (1, true));
             assert_eq!(calls, 1);
             assert_eq!((stats.jobs, stats.discarded_jobs), (3, 2));
+            assert_eq!(
+                stats.projected_transactions,
+                if cfg!(feature = "native-incremental-cell-projection") { 2 } else { 4 },
+            );
         }
         #[cfg(all(
             feature = "native-reuse-ordered-cell-writes",
@@ -4270,6 +4292,10 @@ mod pipeline_store_tests {
             assert_eq!((stats.runs, stats.jobs, stats.reused, stats.fallbacks), (1, 4, 4, 0));
             assert_eq!(stats.peak_outstanding, 3);
             assert_eq!(stats.refilled_jobs, 1);
+            assert_eq!(
+                stats.projected_transactions,
+                if cfg!(feature = "native-incremental-cell-projection") { 3 } else { 4 },
+            );
             #[cfg(feature = "native-shared-cell-deps")]
             assert_eq!((stats.dependency_reads.cached, stats.dependency_reads.hits), (1, 4));
         }
