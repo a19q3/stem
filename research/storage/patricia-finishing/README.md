@@ -187,3 +187,31 @@ including Cell sizes immediately around the cutoff and the protocol
 maximum. The regression target and native and JMT builds passed compile
 checks. The RocksDB static archives export the exact C entry point.
 Runtime and performance results remain pending.
+
+## Parallel Cell record hashing
+
+`native-parallel-cell-record-hashes` computes canonical OutPoint keys
+and new Live Cell value hashes on the existing execution worker pool.
+It activates during parallel preparation with at least two workers and
+256 changed entries. The indexed collection uses a minimum split grain
+of 128 entries and retains LiveChanges map order so the write batch can
+pair each creation with its prepared key. The existing sort then hands
+the same changes to the selected authenticated-state backend. Explicit
+serial preparation keeps the serial hash path. Both native Patricia
+and experimental JMT use the same prehash stage.
+
+Compare `prepared-cell-keys` and `parallel-cell-hashes` at identical
+worker, state, block and network budgets. Record `cell_keys`,
+`cell_tree`, `cell_batch`, candidate preparation, total validator CPU,
+peak RSS, and finality across sustained payments and mixed contracts.
+Include one worker and blocks below the threshold, plus churn consisting
+mostly of deletions. The temporary array stores borrowed references
+to the records. Parallel scheduling and that array can cost
+more than they save for small records, skewed payloads or contention
+with VM and state work. The cutoff and grain are experimental.
+
+The existing serial versus parallel commitment fixture now includes
+large Cell bodies alongside ordinary records and checks exact Header
+and batch equality, including precomputed writer-key order when enabled.
+The authenticated root calculation and durable write path keep their
+existing encodings. Runtime, replay and performance results are pending.

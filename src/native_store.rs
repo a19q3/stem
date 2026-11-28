@@ -2639,17 +2639,40 @@ impl Store {
     ) -> Result<(Byte32, CellCommitmentTiming)> {
         self.check_preparation_cancelled()?;
         let started = Instant::now();
-        let mut cell_changes = Vec::with_capacity(live.len());
-        for (point, record) in live {
+        let hash_change = |(point, cell): (&OutPoint, &Option<LiveCell>)| {
             let id = record::cell_key(&self.cells, point);
-            let value = record
-                .as_ref()
-                .map(|record| record::cell_value(&self.cells, point, record));
+            let value = cell.as_ref().map(|cell| record::cell_value(&self.cells, point, cell));
+            (id, value)
+        };
+        let mut cell_changes = Vec::with_capacity(live.len());
+        const HASH_GRAIN: usize = 128;
+        if cfg!(feature = "native-parallel-cell-record-hashes")
+            && parallel
+            && live.len() >= 2 * HASH_GRAIN
+            && rayon::current_num_threads() > 1
+        {
+            // The write path pairs created IDs with the LiveChanges map.
+            // Collect through an indexed iterator in that order before sorting.
+            let entries: Vec<_> = live.iter().collect();
+            entries
+                .into_par_iter()
+                .with_min_len(HASH_GRAIN)
+                .map(hash_change)
+                .collect_into_vec(&mut cell_changes);
+            self.check_preparation_cancelled()?;
             #[cfg(feature = "native-prepared-cell-record-keys")]
-            if value.is_some() {
-                batch.created_cell_ids.push(id);
+            batch.created_cell_ids.extend(
+                cell_changes.iter().filter_map(|(id, value)| value.as_ref().map(|_| *id)),
+            );
+        } else {
+            for change in live {
+                let (id, value) = hash_change(change);
+                #[cfg(feature = "native-prepared-cell-record-keys")]
+                if value.is_some() {
+                    batch.created_cell_ids.push(id);
+                }
+                cell_changes.push((id, value));
             }
-            cell_changes.push((id, value));
         }
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
         let keyed = Instant::now();
@@ -4388,7 +4411,8 @@ fn append_journal_row(
         feature = "jolteon-proposal-pipeline",
         feature = "native-commitment-pipeline",
         feature = "native-cell-subtree-parallel",
-        feature = "native-research-jmt"
+        feature = "native-research-jmt",
+        feature = "native-parallel-cell-record-hashes"
     )
 ))]
 mod pipeline_store_tests {
@@ -6040,7 +6064,11 @@ mod pipeline_store_tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "native-commitment-pipeline", feature = "native-cell-subtree-parallel"))]
+    #[cfg(any(
+        feature = "native-commitment-pipeline",
+        feature = "native-cell-subtree-parallel",
+        feature = "native-parallel-cell-record-hashes"
+    ))]
     #[test]
     fn namespace_commitments_keep_the_ordered_write_batch() -> Result<()> {
         use bytes::Bytes;
@@ -6051,6 +6079,13 @@ mod pipeline_store_tests {
         let mut spec = spec();
         let lock = Script::default();
         let capacity = Cell::minimum_capacity(&lock, &[], 0)? + 1_000_000_000;
+        #[cfg(feature = "native-parallel-cell-record-hashes")]
+        let large_cell = Cell::new(
+            Cell::minimum_capacity(&lock, &[], 4096)?,
+            lock.clone(),
+            vec![],
+            Bytes::from(vec![0x5a; 4096]),
+        )?;
         let cell = Cell::new(capacity, lock, vec![], Bytes::new())?;
         let spent = (0..400)
             .map(|index| OutPoint::new([41; 32].pack(), index))
@@ -6080,10 +6115,13 @@ mod pipeline_store_tests {
             let origin = Origin::new(view.network(), &context);
             for (index, point) in spent.iter().enumerate() {
                 overlay.live.insert(point.clone(), None);
+                let created = &cell;
+                #[cfg(feature = "native-parallel-cell-record-hashes")]
+                let created = if index % 64 == 0 { &large_cell } else { created };
                 overlay.live.insert(
                     OutPoint::new([42; 32].pack(), index as u32),
                     Some(LiveCell {
-                        cell: cell.clone(),
+                        cell: created.clone(),
                         origin: origin.clone(),
                     }),
                 );
