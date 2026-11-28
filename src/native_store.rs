@@ -62,6 +62,10 @@ mod node_storage;
 mod pinned_cell_cache;
 #[cfg(feature = "jolteon-cancel-stale-execution")]
 mod preparation;
+#[cfg(feature = "native-compact-prepared-cell-delta")]
+mod prepared_cells;
+#[cfg(feature = "native-compact-prepared-cell-delta")]
+use prepared_cells::PreparedCells;
 #[cfg(feature = "jolteon-cancel-stale-execution")]
 pub(crate) use preparation::{PreparationCancellation, PreparationCancelled};
 mod staking;
@@ -765,6 +769,8 @@ pub struct PinnedCellCacheStatus {
 
 type CellEdit = (OutPoint, Option<LiveCell>);
 type LiveChanges = BTreeMap<OutPoint, Option<LiveCell>>;
+#[cfg(not(feature = "native-compact-prepared-cell-delta"))]
+type PreparedCells = LiveChanges;
 #[cfg(feature = "native-compact-cell-trial-edits")]
 type CellOutputEdits = smallvec::SmallVec<[CellEdit; 2]>;
 #[cfg(not(feature = "native-compact-cell-trial-edits"))]
@@ -779,7 +785,7 @@ pub struct Prepared {
     validator_updates: Vec<stem_stake::Member>,
     committee_change: Option<CommitteeChange>,
     stake_inputs: Arc<OnceLock<StakeInputs>>,
-    live: LiveChanges,
+    live: PreparedCells,
     #[cfg(feature = "native-prepared-live-cell-ownership")]
     detached_live_records: bool,
     batch: Batch,
@@ -1860,10 +1866,14 @@ impl Store {
     }
 
     fn branch_cell(&self, point: &OutPoint) -> Option<&Option<LiveCell>> {
-        self.branch
-            .iter()
-            .rev()
-            .find_map(|prepared| prepared.live.get(point))
+        #[cfg(feature = "native-compact-prepared-cell-delta")]
+        let mut hash = None;
+        self.branch.iter().rev().find_map(|prepared| {
+            #[cfg(feature = "native-compact-prepared-cell-delta")]
+            return prepared.live.get_hashed(point, &mut hash);
+            #[cfg(not(feature = "native-compact-prepared-cell-delta"))]
+            prepared.live.get(point)
+        })
     }
 
     fn cached_live_cell(&self, point: &OutPoint) -> Option<LiveCell> {
@@ -2508,7 +2518,7 @@ impl Store {
             validator_updates: system.validator_updates,
             committee_change: system.committee_change,
             stake_inputs: system.stake_inputs,
-            live,
+            live: live.into(),
             #[cfg(feature = "native-prepared-live-cell-ownership")]
             detached_live_records,
             batch,
@@ -4122,7 +4132,7 @@ struct WritePrefix {
 fn sync_with_consensus<V: AsRef<[u8]>>(
     db: &DB,
     batch: &Batch,
-    live: Option<(&Patricia, &LiveChanges)>,
+    live: Option<(&Patricia, &PreparedCells)>,
     records: &[(Vec<u8>, V)],
     retired: &[Range<Vec<u8>>],
     measured: Option<(&StorageMetrics, Purpose)>,
@@ -4133,7 +4143,7 @@ fn sync_with_consensus<V: AsRef<[u8]>>(
 
 fn assemble_write_prefix<'a>(
     batch: &'a Batch,
-    live: Option<(&Patricia, &LiveChanges)>,
+    live: Option<(&Patricia, &PreparedCells)>,
     measured: bool,
     recycled: Option<WriteBatch>,
 ) -> Result<(WritePrefix, BTreeSet<&'a [u8]>)> {
@@ -4147,7 +4157,7 @@ fn assemble_write_prefix<'a>(
         #[cfg(feature = "native-prepared-cell-record-keys")]
         let mut ids = batch.created_cell_ids.iter();
         let mut encoded = Vec::new();
-        for (point, cell) in changes {
+        for (point, cell) in changes.iter() {
             // The Patricia edit already scheduled actual record deletions.
             if let Some(cell) = cell {
                 #[cfg(not(feature = "native-prepared-cell-record-keys"))]
@@ -4278,7 +4288,8 @@ fn append_journal_row(
         feature = "jolteon-proposal-pipeline",
         feature = "native-commitment-pipeline",
         feature = "native-cell-subtree-parallel",
-        feature = "native-parallel-cell-record-hashes"
+        feature = "native-parallel-cell-record-hashes",
+        feature = "native-compact-prepared-cell-delta"
     )
 ))]
 mod pipeline_store_tests {
@@ -4569,7 +4580,7 @@ mod pipeline_store_tests {
         let mut changes = LiveChanges::new();
         changes.insert(source.clone(), None);
         changes.insert(target.clone(), Some(new_cell));
-        index.advance([7; 32], &changes, false);
+        index.advance([7; 32], &changes.into(), false);
         assert!(index.resident());
         assert!(matches!(index.lookup(&source)?, Some(None)));
         assert!(matches!(index.lookup(&target)?, Some(Some(_))));
@@ -4775,6 +4786,53 @@ mod pipeline_store_tests {
         }
         assert!(build(&[fork, second.clone()], true)?.is_none());
         assert!(build(&[second], true)?.is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "native-compact-prepared-cell-delta")]
+    #[test]
+    fn compact_prepared_branch_spends_mask_indexed_parent_creations() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let store = Store::open(home.path(), &spec(), Retention::Archive)?;
+        let point = |index| OutPoint::new([94; 32].pack(), index);
+        let cell = Cell::new(20_000_000_000, Default::default(), vec![], Default::default())?;
+        let context = |view: &Store, time| {
+            HeaderContext::after(
+                view.network(),
+                view.tip(),
+                time,
+                Tree::transactions(view.network().clone(), &[])?.root(),
+            )
+        };
+        let first = context(&store, 1001)?;
+        let origin = Origin::new(store.network(), &first);
+        let mut overlay = store.overlay(None);
+        for index in 0..256 {
+            overlay.live.insert(point(index), Some(LiveCell {
+                cell: cell.clone(),
+                origin: origin.clone(),
+            }));
+        }
+        let parent = Arc::new(store.finish_block(first, overlay, &[], vec![], 0, 0, false)?);
+        let (spent, sibling) = store.on_branch(std::slice::from_ref(&parent), |view| {
+            assert!(view.live_cell(&point(1))?.is_some());
+            let mut overlay = view.overlay(None);
+            overlay.live.insert(point(1), None);
+            Ok((
+                Arc::new(view.finish_block(context(view, 1002)?, overlay, &[], vec![], 0, 0, false)?),
+                Arc::new(view.prepare(&[], 1003, false)?),
+            ))
+        })?;
+        store.on_branch(&[Arc::clone(&parent), spent], |view| {
+            assert!(view.live_cell(&point(1))?.is_none());
+            assert!(view.live_cell(&point(2))?.is_some());
+            Ok(())
+        })?;
+        store.on_branch(&[parent, sibling], |view| {
+            assert!(view.live_cell(&point(1))?.is_some());
+            Ok(())
+        })?;
+        assert!(store.live_cell(&point(1))?.is_none());
         Ok(())
     }
 
@@ -5638,7 +5696,7 @@ mod pipeline_store_tests {
                     matches!(layout, LiveCellIndexLayout::Inline),
                 );
                 if prepared.live_records_detached() {
-                    let owned = prepared.live[&created[0]].as_ref().unwrap();
+                    let owned = prepared.live.get(&created[0]).unwrap().as_ref().unwrap();
                     assert_eq!(owned.cell.as_slice(), cell.as_slice());
                     assert_ne!(owned.cell.as_slice().as_ptr(), cell.as_slice().as_ptr());
                 }
@@ -5662,7 +5720,7 @@ mod pipeline_store_tests {
                 assert_eq!(published.cell.as_slice(), cell.as_slice());
                 #[cfg(feature = "native-prepared-live-cell-ownership")]
                 if prepared.live_records_detached() {
-                    let owned = prepared.live[&created[0]].as_ref().unwrap();
+                    let owned = prepared.live.get(&created[0]).unwrap().as_ref().unwrap();
                     assert_eq!(published.cell.as_slice().as_ptr(), owned.cell.as_slice().as_ptr());
                 }
                 Ok(())
@@ -5897,7 +5955,7 @@ mod pipeline_store_tests {
             assert_eq!(from_snapshot.header(), serial.header());
             assert!(pinned.with_snapshot(|_| Ok(()))?.is_none());
             #[cfg(feature = "native-prepared-cell-record-keys")]
-            for (point, cell) in &serial.live {
+            for (point, cell) in serial.live.iter() {
                 let expected = cell.as_ref().map(|cell| record::encode_cell(point, cell));
                 let stored = store.db.get(store.live_cell_key(point))?;
                 assert_eq!(stored.as_deref(), expected.as_deref());
