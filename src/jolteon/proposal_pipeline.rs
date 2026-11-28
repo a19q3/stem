@@ -13,7 +13,10 @@ use tokio::sync::mpsc;
 
 use super::{CommitWindow, MAX_PROPOSAL_BYTES, Replica, can_vote_at, commit_overlap};
 use crate::native_store::{PinnedView, Prepared, ProposalScan, StateReadFault};
+#[cfg(feature = "jolteon-cancel-stale-execution")]
+use crate::native_store::{PreparationCancellation, PreparationCancelled};
 
+#[derive(Clone, Copy)]
 struct Stamp {
     epoch: u64,
     view: u64,
@@ -75,10 +78,20 @@ pub(super) struct Completion {
     commit: Option<CommitWindow>,
 }
 
+#[cfg(feature = "jolteon-cancel-stale-execution")]
+struct Active {
+    stamp: Stamp,
+    branch: Vec<Point>,
+    committing: bool,
+    cancellation: PreparationCancellation,
+}
+
 pub(super) struct Pipeline {
     send: mpsc::Sender<Job>,
     running: bool,
     ready: Option<Completion>,
+    #[cfg(feature = "jolteon-cancel-stale-execution")]
+    active: Option<Active>,
 }
 
 impl Pipeline {
@@ -126,6 +139,8 @@ impl Pipeline {
                 send,
                 running: false,
                 ready: None,
+                #[cfg(feature = "jolteon-cancel-stale-execution")]
+                active: None,
             },
             results,
         ))
@@ -163,6 +178,15 @@ impl Replica {
         let state = self.store.pinned_view();
         let (transactions, scan) = self.mempool.proposal_candidates();
         let committing = commit.is_some();
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        let active = Active {
+            stamp,
+            branch: branch.clone(),
+            committing,
+            cancellation: PreparationCancellation::default(),
+        };
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        let state = state.with_cancellation(active.cancellation.clone());
         let job = Job {
             stamp,
             branch,
@@ -179,6 +203,10 @@ impl Replica {
             .try_send(job)
             .map_err(|_| anyhow::anyhow!("proposal construction worker stopped"))?;
         self.proposal_pipeline.running = true;
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        {
+            self.proposal_pipeline.active = Some(active);
+        }
         let jobs = &mut self.execution.proposal_jobs;
         jobs.started = jobs.started.saturating_add(1);
         if committing {
@@ -229,11 +257,45 @@ impl Replica {
         self.finish_proposal(done)
     }
 
+    #[cfg(feature = "jolteon-cancel-stale-execution")]
+    pub(super) fn cancel_stale_proposal(&mut self) {
+        let Some(active) = self.proposal_pipeline.active.as_ref() else {
+            return;
+        };
+        if active.cancellation.is_cancelled() {
+            return;
+        }
+        let stamp = active.stamp;
+        let obsolete = stamp.epoch != self.committee.epoch()
+            || stamp.view != self.view
+            || stamp.parent != self.high.point
+            || self.since.elapsed() >= self.timeout * (1 << self.backoff)
+            || (stamp.base != self.finalized
+                && stamp
+                    .remaining(&self.proposal_stamp(), &active.branch, active.committing)
+                    .is_none());
+        if obsolete && active.cancellation.cancel() {
+            let jobs = &mut self.execution.proposal_jobs;
+            jobs.cancel_requested = jobs.cancel_requested.saturating_add(1);
+        }
+    }
+
     pub(super) fn complete_proposal(&mut self, done: Completion) -> Result<()> {
         ensure!(self.proposal_pipeline.running, "unexpected proposal completion");
         self.proposal_pipeline.running = false;
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        {
+            self.proposal_pipeline.active = None;
+        }
         self.execution.proposal.observe(done.elapsed);
         self.execution.proposal_scan.record(done.scan);
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        if matches!(&done.execution, Err(error) if error.is::<PreparationCancelled>()) {
+            let jobs = &mut self.execution.proposal_jobs;
+            jobs.cancelled = jobs.cancelled.saturating_add(1);
+            jobs.cancelled_us = jobs.cancelled_us.saturating_add(done.elapsed.as_micros() as u64);
+            return Ok(());
+        }
         if let Ok(Some((_, execution))) = &done.execution {
             self.execution
                 .proposal_commitments

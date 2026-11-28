@@ -49,6 +49,10 @@ mod node_index;
 pub use node_index::CellNodeIndexStatus;
 use node_index::NodeIndex;
 mod node_storage;
+#[cfg(feature = "jolteon-cancel-stale-execution")]
+mod preparation;
+#[cfg(feature = "jolteon-cancel-stale-execution")]
+pub(crate) use preparation::{PreparationCancellation, PreparationCancelled};
 mod staking;
 mod state_snapshot;
 mod storage_metrics;
@@ -483,6 +487,8 @@ pub struct Store {
     live_cache: Arc<Mutex<LiveCache>>,
     live_index: Option<IndexView>,
     cell_nodes: Option<Arc<NodeIndex>>,
+    #[cfg(feature = "jolteon-cancel-stale-execution")]
+    cancellation: Option<PreparationCancellation>,
 }
 
 #[cfg(any(
@@ -498,6 +504,12 @@ pub(crate) struct PinnedView(Store);
     feature = "jolteon-proposal-pipeline"
 ))]
 impl PinnedView {
+    #[cfg(feature = "jolteon-cancel-stale-execution")]
+    pub(crate) fn with_cancellation(mut self, cancellation: PreparationCancellation) -> Self {
+        self.0.cancellation = Some(cancellation);
+        self
+    }
+
     #[cfg(feature = "jolteon-admission-pipeline")]
     pub(crate) fn check(&self, raw: bytes::Bytes) -> Result<Option<Transaction>> {
         self.with_snapshot(|view| {
@@ -559,6 +571,7 @@ impl PinnedView {
         committing: bool,
         task: impl FnOnce(&Store, &[Arc<Prepared>]) -> Result<T>,
     ) -> Result<Option<T>> {
+        self.0.check_preparation_cancelled()?;
         let snapshot = self.0.db.snapshot();
         let tip = snapshot
             .get(TIP)
@@ -615,7 +628,9 @@ impl PinnedView {
         // The private view and its options are dropped before the snapshot.
         // Its Live Cell cache and committed stake inputs are private to this view.
         view.read_options = Arc::new(options);
-        task(&view, &branch[skip..]).map(Some)
+        let result = task(&view, &branch[skip..])?;
+        view.check_preparation_cancelled()?;
+        Ok(Some(result))
     }
 }
 
@@ -1118,6 +1133,8 @@ impl Store {
                 spec.vm_crypto_v1,
             )),
             branch: Vec::new(),
+            #[cfg(feature = "jolteon-cancel-stale-execution")]
+            cancellation: None,
         })
     }
 
@@ -1284,6 +1301,8 @@ impl Store {
             live_cache: Arc::clone(&self.live_cache),
             live_index: self.live_index.clone(),
             cell_nodes: self.cell_nodes.clone(),
+            #[cfg(feature = "jolteon-cancel-stale-execution")]
+            cancellation: self.cancellation.clone(),
         }
     }
 
@@ -1725,6 +1744,15 @@ impl Store {
             .transpose()
     }
 
+    #[inline]
+    fn check_preparation_cancelled(&self) -> Result<()> {
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        if self.cancellation.as_ref().is_some_and(PreparationCancellation::is_cancelled) {
+            return Err(PreparationCancelled.into());
+        }
+        Ok(())
+    }
+
     /// Resolve conflicts and protocol state in proposal order. Schedule immutable
     /// VM contexts in bounded windows and charge each result in proposal order.
     /// A failure discards the entire block overlay.
@@ -1734,6 +1762,7 @@ impl Store {
         timestamp_ms: u64,
         parallel: bool,
     ) -> Result<Prepared> {
+        self.check_preparation_cancelled()?;
         let height = self
             .tip
             .context
@@ -1813,6 +1842,7 @@ impl Store {
             let lineage = segment[0].has_lineage_command();
             let mut prefetch_remaining = 0usize;
             while !segment.is_empty() {
+                self.check_preparation_cancelled()?;
                 #[cfg(feature = "native-lineage-dependency-lookahead")]
                 if lineage && width > 1 {
                     let count = self.prepare_lineage_lookahead(
@@ -1939,7 +1969,9 @@ impl Store {
                 let completed: Vec<_> = jobs
                     .into_par_iter()
                     .map(|(position, resolved, limit)| {
-                        (position, self.cache.verify(resolved, limit, group_parallel))
+                        let verified = self.check_preparation_cancelled()
+                            .and_then(|()| self.cache.verify(resolved, limit, group_parallel));
+                        (position, verified)
                     })
                     .collect();
                 for (position, verified) in completed {
@@ -2045,11 +2077,17 @@ impl Store {
         fees: u64,
         parallel: bool,
     ) -> Result<Prepared> {
+        self.check_preparation_cancelled()?;
         let started = Instant::now();
         let height = context.height;
         let live = std::mem::take(&mut overlay.live);
         let mut batch = Batch::default();
-        let build_execution = || timed(|| encode_execution(&self.network, execution, &receipts));
+        let build_execution = || {
+            timed(|| {
+                self.check_preparation_cancelled()?;
+                encode_execution(&self.network, execution, &receipts)
+            })
+        };
         let (cells, system, execution) =
             if cfg!(feature = "native-commitment-pipeline")
                 && parallel
@@ -2131,6 +2169,7 @@ impl Store {
         live: &LiveChanges,
         parallel: bool,
     ) -> Result<(Byte32, CellCommitmentTiming)> {
+        self.check_preparation_cancelled()?;
         let started = Instant::now();
         let mut cell_changes = Vec::with_capacity(live.len());
         for (point, record) in live {
@@ -2193,6 +2232,7 @@ impl Store {
         height: u64,
         fees: u64,
     ) -> Result<SystemCommitment> {
+        self.check_preparation_cancelled()?;
         let mut system = self.system.edit(as_key(&self.tip.state.system_root), |id| {
             self.node(Namespace::System, id)
         });
@@ -2395,6 +2435,7 @@ impl Store {
         let mut transactions = transactions.into_iter().peekable();
         let mut window = ProposalWindow::new();
         loop {
+            self.check_preparation_cancelled()?;
             if progress.transactions.len() + due.commands.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
                 || progress.wire_bytes == 0
@@ -2471,6 +2512,7 @@ impl Store {
         adopt: Option<impl FnOnce(&mut Budget, &mut Overlay) -> Option<Receipt>>,
         canonical: Option<&PrecedingCells<'_>>,
     ) -> Result<ProposalStep> {
+        self.check_preparation_cancelled()?;
         let priority = u64::from(
             cfg!(feature = "jolteon-aged-proposal-selection")
                 && scan.inspected < scan.priority_candidates,
@@ -2521,6 +2563,8 @@ impl Store {
                 progress.transactions.push(tx.clone());
             }
             Err(error) if error.is::<StateReadFault>() => return Err(error),
+            #[cfg(feature = "jolteon-cancel-stale-execution")]
+            Err(error) if error.is::<PreparationCancelled>() => return Err(error),
             Err(error) => {
                 if error.is::<BlockVmBudgetExceeded>() {
                     progress.cycle_rejections += 1;
@@ -2754,6 +2798,7 @@ impl Store {
         batch: Option<LineageBatchMember<'_>>,
         preceding: Option<&PrecedingCells<'_>>,
     ) -> Result<Receipt> {
+        self.check_preparation_cancelled()?;
         let context = block.candidate();
         let tx_bytes =
             tx.as_slice().len() as u64 + batch.as_ref().map_or(0, |item| item.extra_bytes);
@@ -3747,6 +3792,32 @@ mod pipeline_store_tests {
         let error = store.enable_live_cell_index(NonZeroUsize::new(2).unwrap()).unwrap_err();
         assert!(error.to_string().contains("authenticated Cell root"));
         assert!(store.live_cell_index_status().is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-cancel-stale-execution")]
+    #[test]
+    fn abandoned_snapshot_work_has_no_prepared_result() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let store = Store::open(home.path(), &spec(), Retention::Archive)?;
+        let tip = store.tip().clone();
+        let cancellation = PreparationCancellation::default();
+        let pinned = store.pinned_view().with_cancellation(cancellation.clone());
+        let interrupted = pinned.with_snapshot(|view| {
+            let prepared = view.prepare(&[], 1001, false)?;
+            assert!(cancellation.cancel());
+            Ok(prepared)
+        });
+        assert!(matches!(interrupted, Err(error) if error.is::<PreparationCancelled>()));
+        assert!(!cancellation.cancel());
+
+        let never_started = pinned.with_snapshot(|_| -> Result<()> {
+            panic!("cancelled job should not open a snapshot");
+        });
+        assert!(matches!(never_started, Err(error) if error.is::<PreparationCancelled>()));
+        assert_eq!(store.tip(), &tip);
+        assert!(store.header(1)?.is_none());
+        assert!(store.prepare(&[], 1001, false).is_ok());
         Ok(())
     }
 

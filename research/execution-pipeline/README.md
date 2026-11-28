@@ -453,3 +453,42 @@ disconnected prefix, a spent Cell previously cached at the old pin,
 Leader epoch and view checks, and overlap timing across a write gap.
 Runtime regressions, matched throughput and durability trials remain
 pending.
+
+## Cancelling obsolete preparation
+
+The optional `jolteon-cancel-stale-execution` feature lets the Replica signal
+a running Leader or Follower preparation job when its result can no longer
+be used. A Leader job can stop when its epoch, view or QC parent changes,
+its view deadline expires, or durability advances outside its eligible
+branch. A Follower job can stop when its epoch changes, the committed
+branch excludes it, or its target has already become durable. Follower
+work survives a view change if its exact branch can still be used.
+An eligible durable prefix can still be reused.
+
+The job checks its token at snapshot, transaction, worker-dispatch and
+commitment boundaries. A VM or storage operation already in progress can
+finish. Running jobs still release their slots by reporting completion
+to the Replica. The worker returns a distinct cancellation result, which
+does not count as an invalid candidate. Jobs that finish before observing
+the request still pass through exact result matching. Cancellation never
+installs a prepared batch or changes vote persistence.
+
+The status records `cancel_requested`, `cancelled` and `cancelled_us` for
+Leader and Follower work. The last field is elapsed preparation time
+for jobs that acknowledged cancellation, measured from dequeue to result.
+It includes waits and does not measure worker CPU or time saved.
+
+For comparison, build the same source with and without the cancellation
+feature. Hold the worker count, exact-prefix option and workload fixed.
+Include a no-timeout control, a Leader worker delayed across a view expiry,
+an in-branch durable advance, and finalization of a sibling branch.
+Measure request and acknowledgement counts, stale execution, useful
+reuse, VM-worker CPU and control-message wait. Recheck signed Headers,
+receipts and finality using the independent verifier and include recovery.
+Low-churn runs may have few opportunities for cancellation. Check for
+unnecessary re-execution before considering a default change.
+
+The snapshot regression covers cancellation before work begins and
+after preparation returns, followed by clean preparation on the
+authoritative Store. The regression target was compiled. Runtime
+behavior and performance have not been measured for this candidate.
