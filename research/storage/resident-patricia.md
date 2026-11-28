@@ -284,3 +284,40 @@ Sorting can allocate temporary index storage, and binary search may
 change the cost of sparse reads. Compare peak memory as well as the
 retained journal footprint. Runtime validation and performance
 measurements remain pending.
+
+### Streaming verified edits into the resident shards
+
+The normal publisher groups every edit into shard vectors. When the
+certified writer publication option is enabled, it also counts the
+edits first to preallocate those vectors. With
+`native-stream-node-publication`, the resident index uses the high bits
+of the content ID for shard assignment. The verified journal already
+uses ascending content IDs, so each shard receives one contiguous run.
+The publisher consumes that run directly under one shard lock and
+continues with the next run. Stored byte edits still use the grouping
+path. The streaming path accepts both verified journal layouts.
+
+The shard operation still applies ordered deletions and insertions,
+validates generated IDs and domains, checks the existing allocation
+limit and retires the index on failure. Publication runs after the
+synchronous WAL succeeds, either on the certified writer or during
+installation on the Replica. An older pinned view can read reclaimed
+IDs from its RocksDB snapshot. The new shard mapping also applies to
+startup and point lookup.
+
+Toggle `native-stream-node-publication` while holding
+`native-verified-cell-journal`, the journal layout, writer publication
+setting and all memory budgets fixed. Compare allocation counts,
+`commit_jobs.cell_node_publication` for the certified writer arm,
+publish and pinned lookup latency, RSS and common finality. Repeat with
+the normal and compact generated journals. Different high and low
+hash bits can change per-shard capacity rounding, so record accounted
+bytes and residency for both controls. The change removes grouping
+work from publication. Hash-table updates and shard lock holds still
+need measurement under concurrent proof and execution reads.
+
+The compile-checked regression compares streamed edits with grouped
+byte edits on the same shard layout. It covers resident inserts and
+tombstones, exact membership and absence proofs, an older snapshot
+across the write, and both publication locations. Runtime checks and
+performance measurements remain pending.

@@ -103,7 +103,12 @@ pub(super) struct NodeIndex {
 }
 
 fn slot(id: &Key) -> usize {
-    usize::from(id[0]) % SHARDS
+    let first = usize::from(id[0]);
+    if cfg!(feature = "native-stream-node-publication") {
+        first * SHARDS / (usize::from(u8::MAX) + 1)
+    } else {
+        first % SHARDS
+    }
 }
 
 fn id_from_key(key: &[u8]) -> Result<Key> {
@@ -248,11 +253,15 @@ impl NodeIndex {
         }
         #[cfg(feature = "native-verified-cell-journal")]
         if let Some((_, journal)) = &batch.cell_nodes {
-            self.advance_edits(|| {
+            let edits = || {
                 journal
                     .iter()
                     .map(|(id, node)| (id, node.map(NodeUpdate::Generated)))
-            });
+            };
+            #[cfg(feature = "native-stream-node-publication")]
+            self.advance_sorted(edits());
+            #[cfg(not(feature = "native-stream-node-publication"))]
+            self.advance_edits(edits);
             return;
         }
         let prefix = [STATE_NODE, Namespace::Cells.tag()];
@@ -263,6 +272,33 @@ impl NodeIndex {
                 Some((id, value.as_deref().map(NodeUpdate::Stored)))
             })
         });
+    }
+
+    #[cfg(feature = "native-stream-node-publication")]
+    fn advance_sorted<'a>(
+        &self,
+        edits: impl Iterator<Item = (&'a Key, Option<NodeUpdate<'a>>)>,
+    ) {
+        // An ordered content ID range belongs to just one shard. Each
+        // generated journal is sorted before it reaches the durable writer.
+        let mut edits = edits.peekable();
+        #[cfg(feature = "jolteon-resident-node-publication")]
+        let mut nodes = self.nodes.load(Ordering::Relaxed);
+        while let Some((id, _)) = edits.peek() {
+            let index = slot(id);
+            let changes = std::iter::from_fn(|| edits.next_if(|(id, _)| slot(id) == index));
+            if !self.apply_shard(
+                &self.shards[index],
+                changes,
+                #[cfg(feature = "jolteon-resident-node-publication")]
+                &mut nodes,
+            ) {
+                self.retire();
+                return;
+            }
+        }
+        #[cfg(feature = "jolteon-resident-node-publication")]
+        self.nodes.store(nodes, Ordering::Relaxed);
     }
 
     fn advance_edits<'a, Edits>(&self, node_edits: impl Fn() -> Edits)
@@ -285,36 +321,50 @@ impl NodeIndex {
         #[cfg(feature = "jolteon-resident-node-publication")]
         let mut nodes = self.nodes.load(Ordering::Relaxed);
         for (shard, changes) in self.shards.iter().zip(by_shard) {
-            if changes.is_empty() {
-                continue;
-            }
-            let mut rows = shard.rows.write().expect("Cell node shard");
-            #[cfg(feature = "jolteon-resident-node-publication")]
-            let old_len = rows.len();
-            for (id, update) in changes {
-                if let Some(update) = update {
-                    let count = rows.len() + 1;
-                    if ((cfg!(feature = "jolteon-resident-node-publication")
-                        && count <= rows.capacity())
-                        || rows.contains_key(id)
-                        || self.reserve(&mut rows, count))
-                        && update.apply(&mut rows, id).is_ok()
-                    {
-                        continue;
-                    }
-                    drop(rows);
-                    self.retire();
-                    return;
-                }
-                rows.remove(id);
-            }
-            #[cfg(feature = "jolteon-resident-node-publication")]
+            if !changes.is_empty()
+                && !self.apply_shard(
+                    shard,
+                    changes,
+                    #[cfg(feature = "jolteon-resident-node-publication")]
+                    &mut nodes,
+                )
             {
-                nodes = nodes - old_len + rows.len();
+                self.retire();
+                return;
             }
         }
         #[cfg(feature = "jolteon-resident-node-publication")]
         self.nodes.store(nodes, Ordering::Relaxed);
+    }
+
+    fn apply_shard<'a>(
+        &self,
+        shard: &Shard,
+        changes: impl IntoIterator<Item = (&'a Key, Option<NodeUpdate<'a>>)>,
+        #[cfg(feature = "jolteon-resident-node-publication")] nodes: &mut usize,
+    ) -> bool {
+        let mut rows = shard.rows.write().expect("Cell node shard");
+        #[cfg(feature = "jolteon-resident-node-publication")]
+        let old_len = rows.len();
+        for (id, update) in changes {
+            let Some(update) = update else {
+                rows.remove(id);
+                continue;
+            };
+            let count = rows.len() + 1;
+            let fits = (cfg!(feature = "jolteon-resident-node-publication")
+                && count <= rows.capacity())
+                || rows.contains_key(id)
+                || self.reserve(&mut rows, count);
+            if !fits || update.apply(&mut rows, id).is_err() {
+                return false;
+            }
+        }
+        #[cfg(feature = "jolteon-resident-node-publication")]
+        {
+            *nodes = *nodes - old_len + rows.len();
+        }
+        true
     }
 
     pub(super) fn retire(&self) -> usize {

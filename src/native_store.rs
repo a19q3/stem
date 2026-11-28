@@ -4795,9 +4795,29 @@ mod pipeline_store_tests {
             };
             let mut store = store;
             store.enable_cell_node_index(NonZeroUsize::new(8).unwrap())?;
+            #[cfg(feature = "native-stream-node-publication")]
+            let grouped = {
+                // The raw journal uses the same test shard layout and the
+                // ordinary grouping path, independent of the sorted stream.
+                let mut raw = Batch::default();
+                for (id, bytes) in &witness {
+                    let key = state_key(STATE_NODE, Namespace::Cells, id);
+                    match bytes {
+                        Some(bytes) => raw.put_owned(key, node_storage::compact(bytes.clone())),
+                        None => raw.delete(key),
+                    }
+                }
+                let index = NodeIndex::recover(
+                    &store,
+                    store.cell_node_index_status().unwrap().limit_bytes,
+                )?;
+                index.advance(&raw);
+                index
+            };
             let pinned = store.pinned_view();
             let next: Key = parallel.header().state.cell_root.unpack();
-            let write = store.certified_write(Arc::new(parallel), Vec::new(), Vec::new())?;
+            let parallel = Arc::new(parallel);
+            let write = store.certified_write(Arc::clone(&parallel), Vec::new(), Vec::new())?;
             let from_snapshot = pinned
                 .with_snapshot(|old| {
                     let timing = std::thread::spawn(write)
@@ -4817,6 +4837,28 @@ mod pipeline_store_tests {
             assert_same_batch_writes(&from_snapshot.batch, &serial.batch);
             assert_eq!(from_snapshot.header(), serial.header());
             assert!(pinned.with_snapshot(|_| Ok(()))?.is_none());
+            #[cfg(feature = "native-stream-node-publication")]
+            {
+                store.install_durable_tip(&parallel, cfg!(feature = "jolteon-resident-node-publication"));
+                let streamed = store.cell_nodes.as_ref().unwrap();
+                let expected = grouped.status();
+                let actual = streamed.status();
+                assert!(actual.active && expected.active);
+                assert_eq!(actual.nodes, expected.nodes);
+                assert!(actual.accounted_bytes <= actual.limit_bytes);
+                assert!(expected.accounted_bytes <= expected.limit_bytes);
+                for (id, bytes) in &witness {
+                    assert_eq!(streamed.lookup(id).is_some(), bytes.is_some());
+                }
+                let query = [
+                    record::cell_key(&store.cells, &spent[0]),
+                    record::cell_key(&store.cells, &OutPoint::new([42; 32].pack(), 0)),
+                ];
+                let read = |index: &NodeIndex| {
+                    store.cells.edit(next, |id| Ok(index.lookup(id))).prove_many(&query)
+                };
+                assert_eq!(read(streamed)?, read(&grouped)?);
+            }
             #[cfg(feature = "native-verified-cell-journal")]
             for (id, expected) in witness {
                 let stored = store.db.get(state_key(STATE_NODE, Namespace::Cells, &id))?;
