@@ -137,6 +137,7 @@ pub struct ProposalScan {
     pub parallel_cell_reused: u64,
     pub parallel_cell_fallback: u64,
     pub parallel_cell_us: u64,
+    pub rolling_cells: CellStreamStats,
     pub dependency_reads: DependencyReadStats,
     pub keeper_wakes: KeeperWakeMetrics,
 }
@@ -183,6 +184,7 @@ pub struct CellStreamStats {
     pub reused: u64,
     pub fallbacks: u64,
     pub refilled_jobs: u64,
+    pub discarded_jobs: u64,
     pub peak_outstanding: u64,
     pub elapsed_us: u64,
     pub dependency_reads: DependencyReadStats,
@@ -215,6 +217,7 @@ impl CellStreamStats {
         self.reused = self.reused.saturating_add(other.reused);
         self.fallbacks = self.fallbacks.saturating_add(other.fallbacks);
         self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
+        self.discarded_jobs = self.discarded_jobs.saturating_add(other.discarded_jobs);
         self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
         self.elapsed_us = self.elapsed_us.saturating_add(other.elapsed_us);
         self.dependency_reads.record(other.dependency_reads);
@@ -263,6 +266,7 @@ impl ProposalScan {
         self.parallel_cell_reused = self.parallel_cell_reused.saturating_add(scan.parallel_cell_reused);
         self.parallel_cell_fallback = self.parallel_cell_fallback.saturating_add(scan.parallel_cell_fallback);
         self.parallel_cell_us = self.parallel_cell_us.saturating_add(scan.parallel_cell_us);
+        self.rolling_cells.record(scan.rolling_cells);
         self.dependency_reads.record(scan.dependency_reads);
         self.keeper_wakes.record(scan.keeper_wakes);
     }
@@ -679,6 +683,21 @@ struct SystemCommitment {
     validator_updates: Vec<stem_stake::Member>,
     committee_change: Option<CommitteeChange>,
     stake_inputs: Arc<OnceLock<StakeInputs>>,
+}
+
+struct ProposalProgress {
+    transactions: Vec<Transaction>,
+    receipts: Vec<Receipt>,
+    reusable: bool,
+    wire_bytes: u64,
+    cycle_rejections: u64,
+    cycle_scan_limit: Option<u64>,
+}
+
+enum ProposalStep {
+    Reused,
+    Ordered,
+    Stop,
 }
 
 struct ProposalSelection {
@@ -2317,7 +2336,6 @@ impl Store {
     ) -> Result<ProposalSelection> {
         let mut budget = Budget::new(self.limits);
         let mut overlay = self.overlay(self.stage_stake()?);
-        let mut wire_bytes = max_bytes;
         let block = BlockContext::after(
             &self.network,
             &self.tip,
@@ -2327,12 +2345,17 @@ impl Store {
         )?;
         let origin = Origin::new(&self.network, block.candidate());
         let due = self.due(block.candidate().height, &mut budget)?;
-        let (mut receipts, keeper_wakes) =
+        let (receipts, keeper_wakes) =
             self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay, true)?;
         scan.keeper_wakes = keeper_wakes;
-        let mut reusable = due.commands.is_empty();
-        let mut selected = Vec::new();
-        let mut cycle_rejections = 0;
+        let mut progress = ProposalProgress {
+            transactions: Vec::new(),
+            receipts,
+            reusable: due.commands.is_empty(),
+            wire_bytes: max_bytes,
+            cycle_rejections: 0,
+            cycle_scan_limit,
+        };
         let width = if cfg!(feature = "native-leader-dependency-execution") {
             rayon::current_num_threads()
         } else {
@@ -2345,15 +2368,27 @@ impl Store {
         let mut transactions = transactions.into_iter().peekable();
         let mut window = ProposalWindow::new();
         loop {
-            if selected.len() + due.commands.len() == self.limits.transaction_count as usize
+            if progress.transactions.len() + due.commands.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
-                || wire_bytes == 0
+                || progress.wire_bytes == 0
             {
                 break;
             }
+            #[cfg(feature = "native-rolling-leader-execution")]
+            if width > 1
+                && let Some(stopped) = self.stage_rolling_proposal(
+                    &mut transactions, &mut window, &block, &origin, &mut budget, &mut overlay,
+                    &mut progress, scan, width, due.commands.len(),
+                )?
+            {
+                if stopped {
+                    break;
+                }
+                continue;
+            }
             let next = if width > 1 {
                 let available =
-                    self.limits.transaction_count as usize - selected.len() - due.commands.len();
+                    self.limits.transaction_count as usize - progress.transactions.len() - due.commands.len();
                 window.next(
                     &mut transactions,
                     self,
@@ -2361,7 +2396,7 @@ impl Store {
                     &origin,
                     &overlay,
                     budget,
-                    wire_bytes,
+                    progress.wire_bytes,
                     available,
                     width,
                     scan,
@@ -2372,109 +2407,125 @@ impl Store {
             let Some((item, trial)) = next else {
                 break;
             };
-            let priority = u64::from(
-                cfg!(feature = "jolteon-aged-proposal-selection") && scan.inspected < scan.priority_candidates,
-            );
-            scan.inspected = scan.inspected.saturating_add(1);
-            scan.priority_inspected = scan.priority_inspected.saturating_add(priority);
-            let started = Instant::now();
-            let tx = item.borrow();
-            let len = tx.as_slice().len();
-            if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
-                continue;
-            }
-            let entry_bytes = proposal_entry_bytes(len);
-            let Some(next_wire) = wire_bytes.checked_sub(entry_bytes) else {
-                continue;
-            };
-            // Without Header Deps the VM has no origin-based Header to load.
-            // Ordinary calls and single Lineage commands see the same height
-            // and parent throughout. Keep the full replay for other inspected
-            // operations, including any of them that failed selection.
-            reusable &= tx.header_deps().len() == 0
-                && tx.operation().is_none()
-                && tx.keeper_action().is_none()
-                && tx.keeper_schedule().is_none()
-                && tx.lineage_batch().is_none();
-            let receipt = trial.and_then(|trial| {
-                let adopted = trial
-                    .ok()
-                    .and_then(|work| window.adopt(work, &mut budget, &mut overlay));
-                if adopted.is_some() {
-                    scan.parallel_cell_reused = scan.parallel_cell_reused.saturating_add(1);
-                } else {
-                    scan.parallel_cell_fallback = scan.parallel_cell_fallback.saturating_add(1);
+            let fixed = &mut window;
+            let adoption = trial.map(|result| {
+                move |budget: &mut Budget, overlay: &mut Overlay| {
+                    result.ok().and_then(|work| fixed.adopt(work, budget, overlay))
                 }
-                adopted
             });
-            let staged = if let Some(receipt) = receipt {
-                Ok(receipt)
-            } else {
-                self.stage(
-                    tx,
-                    &block,
-                    &origin,
-                    &mut budget,
-                    &mut overlay,
-                    None,
-                    |resolved, limit| self.cache.verify(resolved, limit, true),
-                )
-            };
-            match staged {
-                Ok(receipt) => {
-                    scan.selected = scan.selected.saturating_add(1);
-                    scan.priority_selected = scan.priority_selected.saturating_add(priority);
-                    wire_bytes = next_wire;
-                    receipts.push(receipt);
-                    selected.push(tx.clone());
-                }
-                Err(error) if error.is::<StateReadFault>() => return Err(error),
-                Err(error) => {
-                    if error.is::<BlockVmBudgetExceeded>() {
-                        cycle_rejections += 1;
-                        scan.block_cycle_rejections = scan.block_cycle_rejections.saturating_add(1);
-                        scan.priority_cycle_rejections = scan.priority_cycle_rejections.saturating_add(priority);
-                        scan.block_cycle_rejection_us = scan.block_cycle_rejection_us.saturating_add(
-                            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-                        );
-                        if cycle_scan_limit == Some(cycle_rejections) {
-                            // Preserve ordering and leave unvisited entries eligible on the next branch.
-                            scan.cycle_scan_stops = scan.cycle_scan_stops.saturating_add(1);
-                            break;
-                        }
-                    }
-                    if let Some(MissingLiveCell(point)) = error.downcast_ref()
-                        && tx.inputs().any(|input| &input.previous_output == point)
-                    {
-                        if matches!(overlay.live.get(point), Some(None)) {
-                            scan.spent_in_proposal = scan.spent_in_proposal.saturating_add(1);
-                            scan.priority_spent_in_proposal = scan.priority_spent_in_proposal.saturating_add(priority);
-                        } else if matches!(
-                            self.branch
-                                .iter()
-                                .rev()
-                                .find_map(|block| block.live.get(point)),
-                            Some(None)
-                        ) {
-                            scan.spent_in_parent = scan.spent_in_parent.saturating_add(1);
-                            scan.priority_spent_in_parent = scan.priority_spent_in_parent.saturating_add(priority);
-                            scan.spent_in_parent_us = scan.spent_in_parent_us.saturating_add(
-                                u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-                            );
-                        }
-                    }
-                }
+            let step = self.stage_proposal_entry(
+                item.borrow(), &block, &origin, &mut budget, &mut overlay, &mut progress,
+                scan, adoption, None,
+            )?;
+            if matches!(step, ProposalStep::Stop) {
+                break;
             }
         }
         #[cfg(feature = "native-shared-cell-deps")]
         scan.dependency_reads.record(window.dependency_stats());
         Ok(ProposalSelection {
-            transactions: selected,
+            transactions: progress.transactions,
             context: block.into_candidate(),
             overlay,
-            receipts,
-            reusable,
+            receipts: progress.receipts,
+            reusable: progress.reusable,
         })
+    }
+
+    fn stage_proposal_entry(
+        &self,
+        tx: &Transaction,
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        progress: &mut ProposalProgress,
+        scan: &mut ProposalScan,
+        adopt: Option<impl FnOnce(&mut Budget, &mut Overlay) -> Option<Receipt>>,
+        canonical: Option<&PrecedingCells<'_>>,
+    ) -> Result<ProposalStep> {
+        let priority = u64::from(
+            cfg!(feature = "jolteon-aged-proposal-selection")
+                && scan.inspected < scan.priority_candidates,
+        );
+        scan.inspected = scan.inspected.saturating_add(1);
+        scan.priority_inspected = scan.priority_inspected.saturating_add(priority);
+        let started = Instant::now();
+        let len = tx.as_slice().len();
+        if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
+            return Ok(ProposalStep::Ordered);
+        }
+        let Some(next_wire) = progress.wire_bytes.checked_sub(proposal_entry_bytes(len)) else {
+            return Ok(ProposalStep::Ordered);
+        };
+        // Without Header Deps the VM has no origin-based Header to load.
+        // Ordinary calls and single Lineage commands see the same height
+        // and parent throughout. Keep the full replay for other inspected
+        // operations, including any of them that failed selection.
+        progress.reusable &= tx.header_deps().len() == 0
+            && tx.operation().is_none()
+            && tx.keeper_action().is_none()
+            && tx.keeper_schedule().is_none()
+            && tx.lineage_batch().is_none();
+        let receipt = adopt.and_then(|adopt| {
+            let receipt = adopt(budget, overlay);
+            if receipt.is_some() {
+                scan.parallel_cell_reused = scan.parallel_cell_reused.saturating_add(1);
+            } else {
+                scan.parallel_cell_fallback = scan.parallel_cell_fallback.saturating_add(1);
+            }
+            receipt
+        });
+        let reused = receipt.is_some();
+        let verify = |resolved, limit| self.cache.verify(resolved, limit, true);
+        let staged = match (receipt, canonical) {
+            (Some(receipt), _) => Ok(receipt),
+            (None, Some(view)) => self.stage_transaction(
+                tx, block, origin, budget, overlay, None, verify, None, Some(view),
+            ),
+            (None, None) => self.stage(tx, block, origin, budget, overlay, None, verify),
+        };
+        match staged {
+            Ok(receipt) => {
+                scan.selected = scan.selected.saturating_add(1);
+                scan.priority_selected = scan.priority_selected.saturating_add(priority);
+                progress.wire_bytes = next_wire;
+                progress.receipts.push(receipt);
+                progress.transactions.push(tx.clone());
+            }
+            Err(error) if error.is::<StateReadFault>() => return Err(error),
+            Err(error) => {
+                if error.is::<BlockVmBudgetExceeded>() {
+                    progress.cycle_rejections += 1;
+                    scan.block_cycle_rejections = scan.block_cycle_rejections.saturating_add(1);
+                    scan.priority_cycle_rejections = scan.priority_cycle_rejections.saturating_add(priority);
+                    scan.block_cycle_rejection_us = scan.block_cycle_rejection_us.saturating_add(
+                        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                    );
+                    if progress.cycle_scan_limit == Some(progress.cycle_rejections) {
+                        scan.cycle_scan_stops = scan.cycle_scan_stops.saturating_add(1);
+                        return Ok(ProposalStep::Stop);
+                    }
+                }
+                if let Some(MissingLiveCell(point)) = error.downcast_ref()
+                    && tx.inputs().any(|input| &input.previous_output == point)
+                {
+                    let staged = overlay.live.get(point).map(Option::as_ref)
+                        .or_else(|| canonical.and_then(|view| view.get(point)));
+                    if matches!(staged, Some(None)) {
+                        scan.spent_in_proposal = scan.spent_in_proposal.saturating_add(1);
+                        scan.priority_spent_in_proposal = scan.priority_spent_in_proposal.saturating_add(priority);
+                    } else if matches!(self.branch_cell(point), Some(None)) {
+                        scan.spent_in_parent = scan.spent_in_parent.saturating_add(1);
+                        scan.priority_spent_in_parent = scan.priority_spent_in_parent.saturating_add(priority);
+                        scan.spent_in_parent_us = scan.spent_in_parent_us.saturating_add(
+                            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                        );
+                    }
+                }
+            }
+        }
+        Ok(if reused { ProposalStep::Reused } else { ProposalStep::Ordered })
     }
 
     pub fn check(&self, tx: &Transaction) -> Result<Receipt> {
@@ -3794,6 +3845,51 @@ mod pipeline_store_tests {
         let parent = Arc::new(store.prepare(std::slice::from_ref(&first), 1001, false)?);
         let mut scan = ProposalScan { priority_candidates: 3, ..ProposalScan::default() };
         let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        #[cfg(feature = "native-rolling-leader-execution")]
+        {
+            let run = [first.clone(), second.clone(), third.clone(), fourth.clone()];
+            let serial_pool = rayon::ThreadPoolBuilder::new().num_threads(1).build()?;
+            let (expected, reference) =
+                serial_pool.install(|| store.build_proposal(run.iter(), 1001, 16 * 1024))?;
+            let mut scan = ProposalScan::default();
+            let (selected, prepared) = workers.install(|| {
+                store.build_proposal_measured(run.iter(), 1001, 16 * 1024, &mut scan, None)
+            })?;
+            assert_eq!(
+                selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                expected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+            );
+            assert_eq!(prepared.header(), reference.header());
+            assert_eq!(prepared.receipts(), reference.receipts());
+            assert_same_batch_writes(&prepared.batch, &reference.batch);
+            assert_eq!(scan.rolling_cells.jobs, 4);
+            assert_eq!(scan.rolling_cells.peak_outstanding, 3);
+            assert_eq!(scan.rolling_cells.refilled_jobs, 1);
+
+            // A stop consumes only the ordered entry that reported it.
+            let block = BlockContext::after(
+                &spec.network, store.tip(), 1001, Byte32::default(), spec.capacity,
+            )?;
+            let origin = Origin::new(&spec.network, block.candidate());
+            let mut stats = CellStreamStats::default();
+            let mut calls = 0;
+            let outcome = workers.install(|| {
+                store.drive_cell_run(
+                    &run, &block, &origin, 2, &mut Budget::new(spec.limits),
+                    &mut store.overlay(None), &mut stats, true,
+                    #[cfg(feature = "native-shared-cell-deps")]
+                    &mut None,
+                    |tx, _, _, _, _| {
+                        assert_eq!(tx.as_slice(), first.as_slice());
+                        calls += 1;
+                        Ok(ProposalStep::Stop)
+                    },
+                )
+            })?;
+            assert_eq!(outcome, (1, true));
+            assert_eq!(calls, 1);
+            assert_eq!((stats.jobs, stats.discarded_jobs), (3, 2));
+        }
         #[cfg(feature = "native-rolling-cell-execution")]
         {
             let run = [first.clone(), second.clone(), third.clone(), fourth.clone()];

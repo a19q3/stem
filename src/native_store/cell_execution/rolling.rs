@@ -3,16 +3,27 @@
 use std::{
     cell::RefCell,
     panic::{self, AssertUnwindSafe},
-    sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, TryRecvError},
+    },
     thread,
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "native-rolling-cell-execution")]
+use super::Context;
+#[cfg(feature = "native-rolling-leader-execution")]
+use super::ProposalWindow;
 use super::{
-    BlockContext, Budget, Context, Effects, Origin, Overlay, PrecedingCells, ProjectedPrefix,
-    Receipt, Result, Sources, Store, Transaction, project,
+    BlockContext, Budget, Effects, Origin, Overlay, PrecedingCells, ProjectedPrefix, Receipt,
+    Result, Sources, Store, Transaction, project,
 };
-use crate::native_store::CellStreamStats;
+use crate::native_store::{CellStreamStats, ProposalStep};
+#[cfg(feature = "native-rolling-leader-execution")]
+use crate::native_store::{ProposalProgress, ProposalScan};
+#[cfg(feature = "native-rolling-leader-execution")]
+use std::{borrow::Borrow, iter::Peekable};
 
 #[derive(Default)]
 pub(super) struct SourcePositions {
@@ -42,6 +53,38 @@ struct Trial {
 
 type Completion = (usize, Budget, thread::Result<Result<Trial>>);
 
+pub(in crate::native_store) struct ReadyCell {
+    effects: Effects,
+    slot: Budget,
+}
+
+impl ReadyCell {
+    pub(in crate::native_store) fn adopt(
+        self,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+    ) -> Option<Receipt> {
+        self.effects.adopt(self.slot, budget, overlay)
+    }
+}
+
+// The coordinator can reach an entry after its speculative budget runs out,
+// or recheck a trial whose result or dependencies could not be adopted.
+pub(in crate::native_store) enum CellAttempt {
+    Ordered,
+    Recheck,
+    Ready(ReadyCell),
+}
+
+impl CellAttempt {
+    fn adopt(self, budget: &mut Budget, overlay: &mut Overlay) -> Option<Receipt> {
+        match self {
+            Self::Ready(work) => work.adopt(budget, overlay),
+            Self::Ordered | Self::Recheck => None,
+        }
+    }
+}
+
 fn next_completion(receiver: &Receiver<Completion>) -> Completion {
     loop {
         match receiver.try_recv() {
@@ -65,6 +108,7 @@ fn next_completion(receiver: &Receiver<Completion>) -> Completion {
 }
 
 impl Store {
+    #[cfg(feature = "native-rolling-cell-execution")]
     pub(in crate::native_store) fn prepare_cell_run(
         &self,
         transactions: &[Transaction],
@@ -91,16 +135,150 @@ impl Store {
         if count <= depth {
             return Ok(0);
         }
+        let (processed, _) = self.drive_cell_run(
+            &transactions[..count],
+            block,
+            origin,
+            width,
+            budget,
+            overlay,
+            stats,
+            false,
+            #[cfg(feature = "native-shared-cell-deps")]
+            dependency_reads,
+            |tx, ready, budget, overlay, canonical| {
+                let reused = ready.adopt(budget, overlay);
+                let (receipt, step) = if let Some(receipt) = reused {
+                    (receipt, ProposalStep::Reused)
+                } else {
+                    let receipt = self.stage_transaction(
+                        tx,
+                        block,
+                        origin,
+                        budget,
+                        overlay,
+                        None,
+                        |resolved, limit| self.cache.verify(resolved, limit, false),
+                        None,
+                        Some(canonical),
+                    )?;
+                    (receipt, ProposalStep::Ordered)
+                };
+                *fees = fees
+                    .checked_add(receipt.fee)
+                    .context("block fee overflow")?;
+                receipts.push(receipt);
+                Ok(step)
+            },
+        )?;
+        Ok(processed)
+    }
 
-        let transactions = &transactions[..count];
+    #[cfg(feature = "native-rolling-leader-execution")]
+    pub(in crate::native_store) fn stage_rolling_proposal<T: Borrow<Transaction>>(
+        &self,
+        input: &mut Peekable<impl Iterator<Item = T>>,
+        window: &mut ProposalWindow<T>,
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        progress: &mut ProposalProgress,
+        scan: &mut ProposalScan,
+        width: usize,
+        keeper_count: usize,
+    ) -> Result<Option<bool>> {
+        let available =
+            self.limits.transaction_count as usize - progress.transactions.len() - keeper_count;
+        let run = self.collect_proposal_run(input, *budget, progress.wire_bytes, available, width);
+        match run.as_slice() {
+            [] => return Ok(None),
+            [tx] => {
+                let step = self.stage_proposal_entry(
+                    tx,
+                    block,
+                    origin,
+                    budget,
+                    overlay,
+                    progress,
+                    scan,
+                    None::<fn(&mut Budget, &mut Overlay) -> Option<Receipt>>,
+                    None,
+                )?;
+                return Ok(Some(matches!(step, ProposalStep::Stop)));
+            }
+            _ => {}
+        }
+        // When shared dependency reads are enabled the window owns the one
+        // read cache for this proposal, including the fixed/ordered paths.
+        #[cfg(not(feature = "native-shared-cell-deps"))]
+        let _ = window;
+        let mut stats = CellStreamStats::default();
+        let (_, stopped) = self.drive_cell_run(
+            &run,
+            block,
+            origin,
+            width,
+            budget,
+            overlay,
+            &mut stats,
+            true,
+            #[cfg(feature = "native-shared-cell-deps")]
+            window.shared_reads(),
+            |tx, ready, budget, overlay, canonical| {
+                let adoption = (!matches!(ready, CellAttempt::Ordered)).then_some(
+                    move |budget: &mut Budget, overlay: &mut Overlay| ready.adopt(budget, overlay),
+                );
+                self.stage_proposal_entry(
+                    tx,
+                    block,
+                    origin,
+                    budget,
+                    overlay,
+                    progress,
+                    scan,
+                    adoption,
+                    Some(canonical),
+                )
+            },
+        )?;
+        scan.parallel_cell_jobs = scan.parallel_cell_jobs.saturating_add(stats.jobs);
+        scan.rolling_cells.record(stats);
+        Ok(Some(stopped))
+    }
+
+    pub(in crate::native_store) fn drive_cell_run(
+        &self,
+        transactions: &[Transaction],
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        width: usize,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        stats: &mut CellStreamStats,
+        finish_ordered_suffix: bool,
+        #[cfg(feature = "native-shared-cell-deps")] dependency_reads: &mut Option<
+            super::DependencyReads,
+        >,
+        mut settle: impl FnMut(
+            &Transaction,
+            CellAttempt,
+            &mut Budget,
+            &mut Overlay,
+            &PrecedingCells<'_>,
+        ) -> Result<ProposalStep>,
+    ) -> Result<(usize, bool)> {
+        let depth = self.cell_window_limit(width, *budget);
+        debug_assert!(depth >= 2);
+        let count = transactions.len();
         let started = Instant::now();
         stats.runs += 1;
         let writes = project(&self.network, transactions, origin)?;
         #[cfg(feature = "native-shared-cell-deps")]
         let shared = &*dependency_reads
             .get_or_insert_with(|| super::DependencyReads::collect(self, transactions));
-        // Workers see an immutable prefix and the declared edits in this run.
-        // Ordered staging writes into a separate delta until the scope joins.
+        // Workers see an immutable prefix and declared edits in this run.
+        // The coordinator applies accepted effects in a separate delta.
         let mut base = std::mem::take(&mut overlay.live);
         let prior = &base;
         let canonical = PrecedingCells {
@@ -111,6 +289,7 @@ impl Store {
         };
         let projected = &writes;
         let (sender, receiver) = mpsc::channel();
+        let cancelled = &AtomicBool::new(false);
         let mut adopted = vec![false; count];
         let mut ready = (0..depth)
             .map(|_| None)
@@ -119,105 +298,109 @@ impl Store {
         let mut in_flight = 0;
         let mut submitted = 0;
         let mut prefix = 0;
-        let result = rayon::in_place_scope_fifo(|scope| -> Result<usize> {
-            while prefix < count {
-                let funded = self.cell_window_limit(width, *budget);
-                while submitted < count
-                    && submitted - prefix < funded
-                    && in_flight < in_flight_limit
-                {
-                    let position = submitted;
-                    let tx = &transactions[position];
-                    let slot = *budget;
-                    let send = sender.clone();
-                    let parallel_groups = count - prefix < width;
-                    scope.spawn_fifo(move |_| {
-                        // A worker panic must still occupy its completion slot.
-                        // Otherwise the coordinator can wait forever for it.
-                        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-                            let sources = RefCell::new(SourcePositions::default());
-                            let view = PrecedingCells {
-                                base: prior,
-                                projection: Some(ProjectedPrefix {
-                                    writes: projected,
-                                    position,
-                                    sources: Sources::Run(&sources),
-                                }),
+        let result = rayon::in_place_scope_fifo(|scope| {
+            let result = (|| -> Result<(usize, bool)> {
+                while prefix < count {
+                    let funded = self.cell_window_limit(width, *budget);
+                    while submitted < count
+                        && submitted - prefix < funded
+                        && in_flight < in_flight_limit
+                    {
+                        let position = submitted;
+                        let tx = &transactions[position];
+                        let slot = *budget;
+                        let send = sender.clone();
+                        let parallel_groups = count - prefix < width;
+                        scope.spawn_fifo(move |_| {
+                            if cancelled.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            // A panic must still occupy its completion slot
+                            // while the coordinator can need that result.
+                            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                                let sources = RefCell::new(SourcePositions::default());
+                                let view = PrecedingCells {
+                                    base: prior,
+                                    projection: Some(ProjectedPrefix {
+                                        writes: projected,
+                                        position,
+                                        sources: Sources::Run(&sources),
+                                    }),
+                                    #[cfg(feature = "native-shared-cell-deps")]
+                                    dependencies: shared.reader(),
+                                };
+                                let effects = self.execute_cell_trial(
+                                    tx,
+                                    block,
+                                    origin,
+                                    slot,
+                                    &view,
+                                    parallel_groups,
+                                )?;
                                 #[cfg(feature = "native-shared-cell-deps")]
-                                dependencies: shared.reader(),
-                            };
-                            let effects = self.execute_cell_trial(
-                                tx,
-                                block,
-                                origin,
-                                slot,
-                                &view,
-                                parallel_groups,
-                            )?;
-                            #[cfg(feature = "native-shared-cell-deps")]
-                            drop(view);
-                            Ok(Trial {
-                                effects,
-                                sources: sources.into_inner(),
-                            })
-                        }));
-                        let _ = send.send((position, slot, outcome));
-                    });
-                    if submitted >= depth && submitted > prefix {
-                        stats.refilled_jobs += 1;
+                                drop(view);
+                                Ok(Trial {
+                                    effects,
+                                    sources: sources.into_inner(),
+                                })
+                            }));
+                            let _ = send.send((position, slot, outcome));
+                        });
+                        if submitted >= depth && submitted > prefix {
+                            stats.refilled_jobs += 1;
+                        }
+                        submitted += 1;
+                        in_flight += 1;
+                        stats.jobs += 1;
                     }
-                    submitted += 1;
-                    in_flight += 1;
-                    stats.jobs += 1;
-                }
-                stats.peak_outstanding = stats.peak_outstanding.max((submitted - prefix) as u64);
-                if prefix == submitted {
-                    break;
-                }
-
-                let Some((_, slot, outcome)) = ready[prefix % depth].take() else {
-                    let completion = next_completion(&receiver);
-                    let index = completion.0 % depth;
-                    debug_assert!(ready[index].is_none());
-                    ready[index] = Some(completion);
-                    in_flight -= 1;
-                    continue;
-                };
-                let trial = outcome.unwrap_or_else(|panic| panic::resume_unwind(panic));
-                let reused = trial.ok().and_then(|trial| {
-                    if trial.sources.adopted(&adopted) {
-                        trial.effects.adopt(slot, budget, overlay)
+                    stats.peak_outstanding =
+                        stats.peak_outstanding.max((submitted - prefix) as u64);
+                    let work = if prefix == submitted {
+                        if !finish_ordered_suffix {
+                            break;
+                        }
+                        submitted += 1;
+                        CellAttempt::Ordered
                     } else {
-                        None
+                        let Some((_, slot, outcome)) = ready[prefix % depth].take() else {
+                            let completion = next_completion(&receiver);
+                            let index = completion.0 % depth;
+                            debug_assert!(ready[index].is_none());
+                            ready[index] = Some(completion);
+                            in_flight -= 1;
+                            continue;
+                        };
+                        let trial = outcome.unwrap_or_else(|panic| panic::resume_unwind(panic));
+                        trial
+                            .ok()
+                            .filter(|trial| trial.sources.adopted(&adopted))
+                            .map_or(CellAttempt::Recheck, |trial| {
+                                CellAttempt::Ready(ReadyCell {
+                                    effects: trial.effects,
+                                    slot,
+                                })
+                            })
+                    };
+                    let had_trial = !matches!(work, CellAttempt::Ordered);
+                    let step = settle(&transactions[prefix], work, budget, overlay, &canonical)?;
+                    if matches!(step, ProposalStep::Reused) {
+                        stats.reused += 1;
+                        adopted[prefix] = true;
+                    } else if had_trial {
+                        stats.fallbacks += 1;
                     }
-                });
-                let receipt = if let Some(receipt) = reused {
-                    stats.reused += 1;
-                    adopted[prefix] = true;
-                    receipt
-                } else {
-                    stats.fallbacks += 1;
-                    // These transactions have no wrapper operations; the
-                    // ordinary staging function reads the exact accepted prefix.
-                    self.stage_transaction(
-                        &transactions[prefix],
-                        block,
-                        origin,
-                        budget,
-                        overlay,
-                        None,
-                        |resolved, limit| self.cache.verify(resolved, limit, false),
-                        None,
-                        Some(&canonical),
-                    )?
-                };
-                *fees = fees
-                    .checked_add(receipt.fee)
-                    .context("block fee overflow")?;
-                receipts.push(receipt);
-                prefix += 1;
+                    prefix += 1;
+                    if matches!(step, ProposalStep::Stop) {
+                        return Ok((prefix, true));
+                    }
+                }
+                Ok((prefix, false))
+            })();
+            if submitted > prefix {
+                cancelled.store(true, Ordering::Relaxed);
+                stats.discarded_jobs += (submitted - prefix) as u64;
             }
-            Ok(prefix)
+            result
         });
         #[cfg(feature = "native-shared-cell-deps")]
         drop(canonical);
