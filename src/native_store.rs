@@ -1385,9 +1385,19 @@ impl Store {
         limit_mib: NonZeroUsize,
         layout: LiveCellIndexLayout,
     ) -> Result<()> {
+        self.configure_live_cell_index(limit_mib, layout, 1)
+    }
+
+    /// Recover the resident index with a fixed local worker pool.
+    pub fn configure_live_cell_index(
+        &mut self,
+        limit_mib: NonZeroUsize,
+        layout: LiveCellIndexLayout,
+        recovery_workers: usize,
+    ) -> Result<()> {
         ensure!(self.branch.is_empty() && self.live_index.is_none(), "Live Cell index already configured or view is speculative");
         let limit = limit_mib.get().checked_mul(1 << 20).context("Live Cell index budget overflow")?;
-        self.live_index = Some(IndexView::recover(self, limit, layout)?);
+        self.live_index = Some(IndexView::recover(self, limit, layout, recovery_workers)?);
         Ok(())
     }
 
@@ -4267,7 +4277,7 @@ mod pipeline_store_tests {
             drop(pinned);
             drop(store);
             let mut reopened = Store::open(home.path(), &spec, Retention::Archive)?;
-            reopened.enable_live_cell_index_with_layout(NonZeroUsize::new(2).unwrap(), layout)?;
+            reopened.configure_live_cell_index(NonZeroUsize::new(2).unwrap(), layout, 2)?;
             assert_eq!(leaf_proofs(&reopened)?, after);
             assert_eq!(reopened.live_cell_index_status().unwrap().previous_header_bytes, 0);
         }
@@ -4289,10 +4299,10 @@ mod pipeline_store_tests {
         );
         spec.development_cells.push((source.clone(), make_cell(8)?));
         let store = Store::open(home.path(), &spec, Retention::Archive)?;
-        let sized = IndexView::recover(&store, 2 << 20, LiveCellIndexLayout::Inline)?;
+        let sized = IndexView::recover(&store, 2 << 20, LiveCellIndexLayout::Inline, 2)?;
         let room = 16 << 10;
         let limit = sized.status().accounted_bytes + room;
-        let mut index = IndexView::recover(&store, limit, LiveCellIndexLayout::Inline)?;
+        let mut index = IndexView::recover(&store, limit, LiveCellIndexLayout::Inline, 2)?;
         let old = index.clone();
         let new_cell = LiveCell {
             // Fits without the before-image, but its small remaining headroom
@@ -4389,9 +4399,13 @@ mod pipeline_store_tests {
             origin: Origin::new(&store.network, &store.tip.context),
         };
         store.db.put(store.live_cell_key(&point), record::encode_cell(&point, &cell))?;
-        let error = store.enable_live_cell_index(NonZeroUsize::new(2).unwrap()).unwrap_err();
-        assert!(error.to_string().contains("authenticated Cell root"));
-        assert!(store.live_cell_index_status().is_none());
+        for workers in [1, 2] {
+            let error = store
+                .configure_live_cell_index(NonZeroUsize::new(2).unwrap(), LiveCellIndexLayout::Inline, workers)
+                .unwrap_err();
+            assert!(error.to_string().contains("authenticated Cell root"));
+            assert!(store.live_cell_index_status().is_none());
+        }
         Ok(())
     }
 

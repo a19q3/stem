@@ -23,6 +23,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
 | Prior durable Live Cell view | `native-live-cell-parent-index` | Keep overlapping workers on resident reads through one tip advance [Index comparison notes](storage/live-cell-index.md#keeping-the-prior-durable-header-resident) |
 | Fixed-width resident OutPoints | `native-inline-outpoint-index` | Keep full packed keys in table buckets [Index comparison notes](storage/live-cell-index.md#fixed-width-resident-outpoint-keys) |
+| Parallel resident recovery | `--live-cell-recovery-workers` | Validate and hash bounded row batches before the ordered authenticated fold [Comparison notes](storage/live-cell-index.md#bounded-parallel-index-recovery) |
 | Resident Lock and TypeSet sharing | `a19ba05` | Inline and interned resident Live Cells at the same memory limit [Layout notes](storage/live-cell-index.md#resident-lock-and-typeset-sharing) |
 | Leader Lineage materialization | `native-leader-lineage-execution` | Reuse ready Lineage work through greedy Leader selection [Comparison notes](execution-pipeline/README.md#leader-lineage-materialization) |
 | Rolling Lineage materialization | `native-rolling-lineage-execution` | Refill ready materialization jobs during ordered settlement on the accepted prefix [Comparison notes](execution-pipeline/README.md#rolling-lineage-materialization) |
@@ -138,7 +139,7 @@ build combined --features "$cells,$dependencies,$inline_resolution,$rolling_lead
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
 
-The native test launcher accepts `STEM_TEST_REPLICA_BIN` and the storage settings `STEM_TEST_ROCKSDB_BLOCK_CACHE_MIB`, `STEM_TEST_LIVE_CELL_INDEX_MIB`, `STEM_TEST_CELL_NODE_INDEX_MIB` and `STEM_TEST_LIVE_CELL_INDEX_INTERN_SCRIPTS=1`. The same launcher passes these options for payment, market and Keeper trials. A manually started funded-replica trial uses the corresponding CLI options directly.
+The native test launcher accepts `STEM_TEST_REPLICA_BIN` and the storage settings `STEM_TEST_ROCKSDB_BLOCK_CACHE_MIB`, `STEM_TEST_LIVE_CELL_INDEX_MIB`, `STEM_TEST_LIVE_CELL_RECOVERY_WORKERS`, `STEM_TEST_CELL_NODE_INDEX_MIB` and `STEM_TEST_LIVE_CELL_INDEX_INTERN_SCRIPTS=1`. The same launcher passes these options for payment, market and Keeper trials. A manually started funded-replica trial uses the corresponding CLI options directly.
 
 The VM result cache supports same-binary comparisons using replica
 configuration fields `verification_cache_entries`,
