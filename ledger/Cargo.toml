@@ -9,6 +9,7 @@ publish = false
 [features]
 parallel-patricia = ["dep:rayon"]
 batched-patricia-proofs = []
+patricia-frontier-edit = ["parallel-patricia", "verified-patricia-cache"]
 verified-patricia-cache = ["dep:hashbrown"]
 compact-verified-journal = ["verified-patricia-cache"]
 segmented-verified-journal = ["compact-verified-journal"]
