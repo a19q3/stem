@@ -16,7 +16,7 @@ use stem_ledger::{Transaction, block::Header};
 use stem_stake::Hash32;
 
 use super::wire;
-use crate::native_store::{CommitmentTiming, LineageSchedule, ProposalScan};
+use crate::native_store::{CellStreamStats, CommitmentTiming, LineageSchedule, ProposalScan};
 
 const IDLE_SUBMISSION_CONNECTIONS: usize = 4;
 
@@ -88,6 +88,8 @@ pub struct ExecutionMetrics {
     pub candidate_commitments: CommitmentMetrics,
     #[serde(default)]
     pub candidate_lineage: LineageSchedule,
+    #[serde(default)]
+    pub candidate_cell_stream: CellStreamStats,
     #[serde(default)]
     pub control_queue: LatencyHistogram,
     #[serde(default)]

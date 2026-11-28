@@ -148,6 +148,30 @@ pub struct LineageSchedule {
     pub serial_commands: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct CellStreamStats {
+    pub runs: u64,
+    pub jobs: u64,
+    pub reused: u64,
+    pub fallbacks: u64,
+    pub refilled_jobs: u64,
+    pub peak_outstanding: u64,
+    pub elapsed_us: u64,
+}
+
+impl CellStreamStats {
+    pub(crate) fn record(&mut self, other: Self) {
+        self.runs = self.runs.saturating_add(other.runs);
+        self.jobs = self.jobs.saturating_add(other.jobs);
+        self.reused = self.reused.saturating_add(other.reused);
+        self.fallbacks = self.fallbacks.saturating_add(other.fallbacks);
+        self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
+        self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
+        self.elapsed_us = self.elapsed_us.saturating_add(other.elapsed_us);
+    }
+}
+
 impl LineageSchedule {
     pub(crate) fn record(&mut self, other: Self) {
         self.access_analysis_us = self.access_analysis_us.saturating_add(other.access_analysis_us);
@@ -563,6 +587,7 @@ pub struct Prepared {
     batch: Batch,
     commitments: CommitmentTiming,
     lineage_schedule: LineageSchedule,
+    cell_stream: CellStreamStats,
 }
 
 pub(crate) struct CommitmentTiming {
@@ -660,6 +685,10 @@ impl Prepared {
 
     pub(crate) fn lineage_schedule(&self) -> LineageSchedule {
         self.lineage_schedule
+    }
+
+    pub(crate) fn cell_stream(&self) -> CellStreamStats {
+        self.cell_stream
     }
 
     /// CometBFT expects results only for transactions submitted with the proposal.
@@ -1615,6 +1644,8 @@ impl Store {
             && width > 1
             && !self.live_index.as_ref().is_some_and(IndexView::resident);
         let mut lineage_schedule = LineageSchedule::default();
+        #[cfg(feature = "native-rolling-cell-execution")]
+        let mut cell_stream = CellStreamStats::default();
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
         for mut segment in transactions
@@ -1624,10 +1655,21 @@ impl Store {
             let mut prefetch_remaining = 0usize;
             while !segment.is_empty() {
                 if cfg!(feature = "native-dependency-execution") && width > 1 && !lineage {
-                    let count = self.prepare_cell_window(
+                    #[cfg(feature = "native-rolling-cell-execution")]
+                    let count = self.prepare_cell_run(
                         segment, &block, &origin, width, &mut budget, &mut overlay,
-                        &mut receipts, &mut fees,
+                        &mut receipts, &mut fees, &mut cell_stream,
                     )?;
+                    #[cfg(not(feature = "native-rolling-cell-execution"))]
+                    let count = 0;
+                    let count = if count == 0 {
+                        self.prepare_cell_window(
+                            segment, &block, &origin, width, &mut budget, &mut overlay,
+                            &mut receipts, &mut fees,
+                        )?
+                    } else {
+                        count
+                    };
                     if count != 0 {
                         segment = &segment[count..];
                         prefetch_remaining = prefetch_remaining.saturating_sub(count);
@@ -1747,6 +1789,10 @@ impl Store {
             parallel,
         )?;
         prepared.lineage_schedule = lineage_schedule;
+        #[cfg(feature = "native-rolling-cell-execution")]
+        {
+            prepared.cell_stream = cell_stream;
+        }
         Ok(prepared)
     }
 
@@ -1896,6 +1942,7 @@ impl Store {
                 execution: execution_time,
             },
             lineage_schedule: LineageSchedule::default(),
+            cell_stream: CellStreamStats::default(),
         })
     }
 
@@ -2561,6 +2608,7 @@ impl Store {
         } else {
             None
         };
+        let speculative = preceding.is_some_and(PrecedingCells::is_speculative);
         // Current candidate writes, including deletions, supersede all hints.
         let staged = |point: &OutPoint| {
             live.get(point)
@@ -2574,7 +2622,7 @@ impl Store {
                 None => lookup(point)?,
             }
             .with_context(|| MissingLiveCell(point.clone()))?;
-            if preceding.is_some() {
+            if speculative {
                 let used = speculative_bytes.get().saturating_add(record.cell.as_slice().len());
                 ensure!(used <= MAX_SPECULATIVE_READ_BYTES, "large Cell reads need ordered execution");
                 speculative_bytes.set(used);
@@ -2651,7 +2699,7 @@ impl Store {
         let keeper_cycles = keeper_change.as_ref().map_or(0, |change| change.cycles);
         let id = resolved.execution_id();
         let lineage_changes = match &self.lineage {
-            Some(code) if preceding.is_some() => {
+            Some(code) if speculative => {
                 ensure!(
                     !resolved.groups().iter().any(|group| {
                         group.kind == stem_ledger::ScriptGroupKind::Type
@@ -3502,6 +3550,19 @@ mod pipeline_store_tests {
         let parent = Arc::new(store.prepare(std::slice::from_ref(&first), 1001, false)?);
         let mut scan = ProposalScan { priority_candidates: 3, ..ProposalScan::default() };
         let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        #[cfg(feature = "native-rolling-cell-execution")]
+        {
+            let run = [first.clone(), second.clone(), third.clone(), fourth.clone()];
+            let serial = store.prepare(&run, 1001, false)?;
+            let pipelined = workers.install(|| store.prepare(&run, 1001, true))?;
+            assert_eq!(pipelined.header(), serial.header());
+            assert_eq!(pipelined.receipts(), serial.receipts());
+            assert_eq!(pipelined.batch.writes, serial.batch.writes);
+            let stats = pipelined.cell_stream();
+            assert_eq!((stats.runs, stats.jobs, stats.reused, stats.fallbacks), (1, 4, 4, 0));
+            assert_eq!(stats.peak_outstanding, 3);
+            assert_eq!(stats.refilled_jobs, 1);
+        }
         let (selected, proposal) = workers
             .install(|| store.pinned_view().build_proposal(
                 std::slice::from_ref(&parent),

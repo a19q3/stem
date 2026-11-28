@@ -16,6 +16,9 @@ use std::{
     vec::IntoIter,
 };
 
+#[cfg(feature = "native-rolling-cell-execution")]
+mod rolling;
+
 const MAX_WINDOW: usize = u32::BITS as usize;
 const MAX_DECLARED_EDITS: usize = 64;
 pub(super) const MAX_SPECULATIVE_READ_BYTES: usize = 4 * 1024 * 1024;
@@ -31,6 +34,42 @@ struct History {
 }
 
 type Writes = HashMap<OutPoint, History>;
+
+fn project<T: Borrow<Transaction>>(
+    network: &ckb_types::packed::Byte32,
+    transactions: &[T],
+    origin: &Origin,
+) -> Result<Writes> {
+    let mut writes = Writes::with_capacity(transactions.len() * 2);
+    for (position, tx) in transactions.iter().enumerate() {
+        let tx = tx.borrow();
+        for input in tx.inputs() {
+            record(
+                &mut writes,
+                input.previous_output,
+                Write {
+                    position,
+                    cell: None,
+                },
+            );
+        }
+        let id = tx.id(network);
+        for (index, cell) in tx.outputs().enumerate() {
+            record(
+                &mut writes,
+                OutPoint::new(id.clone(), u32::try_from(index)?),
+                Write {
+                    position,
+                    cell: Some(LiveCell {
+                        cell,
+                        origin: origin.clone(),
+                    }),
+                },
+            );
+        }
+    }
+    Ok(writes)
+}
 
 fn record(writes: &mut Writes, point: OutPoint, edit: Write) {
     match writes.entry(point) {
@@ -48,24 +87,42 @@ fn record(writes: &mut Writes, point: OutPoint, edit: Write) {
 /// the ordinary staging path before a later result can become authoritative.
 pub(super) struct PrecedingCells<'a> {
     base: &'a LiveChanges,
+    projection: Option<ProjectedPrefix<'a>>,
+}
+
+struct ProjectedPrefix<'a> {
     writes: &'a Writes,
     position: usize,
-    dependencies: Cell<u32>,
+    sources: Sources<'a>,
+}
+
+enum Sources<'a> {
+    Window(&'a Cell<u32>),
+    #[cfg(feature = "native-rolling-cell-execution")]
+    Run(&'a std::cell::RefCell<rolling::SourcePositions>),
 }
 
 impl PrecedingCells<'_> {
+    pub(super) fn is_speculative(&self) -> bool {
+        self.projection.is_some()
+    }
+
     pub(super) fn get(&self, point: &OutPoint) -> Option<Option<&LiveCell>> {
-        if let Some(history) = self.writes.get(point)
-            && history.first.position < self.position
+        if let Some(prefix) = &self.projection
+            && let Some(history) = prefix.writes.get(point)
+            && history.first.position < prefix.position
         {
             let cutoff = history
                 .later
-                .partition_point(|edit| edit.position < self.position);
+                .partition_point(|edit| edit.position < prefix.position);
             let edit = cutoff
                 .checked_sub(1)
                 .map_or(&history.first, |i| &history.later[i]);
-            self.dependencies
-                .set(self.dependencies.get() | (1 << edit.position));
+            match prefix.sources {
+                Sources::Window(mask) => mask.set(mask.get() | (1 << edit.position)),
+                #[cfg(feature = "native-rolling-cell-execution")]
+                Sources::Run(sources) => sources.borrow_mut().record(edit.position),
+            }
             return Some(edit.cell.as_ref());
         }
         self.base.get(point).map(Option::as_ref)
@@ -73,9 +130,7 @@ impl PrecedingCells<'_> {
 }
 
 pub(super) struct Executed {
-    receipt: Receipt,
-    cells: LiveChanges,
-    remaining: Budget,
+    effects: Effects,
     dependencies: u32,
     position_bit: u32,
 }
@@ -93,11 +148,24 @@ impl Executed {
         if self.dependencies & !*adopted != 0 {
             return None;
         }
+        let receipt = self.effects.adopt(slot, budget, overlay)?;
+        *adopted |= self.position_bit;
+        Some(receipt)
+    }
+}
+
+struct Effects {
+    receipt: Receipt,
+    cells: LiveChanges,
+    remaining: Budget,
+}
+
+impl Effects {
+    fn adopt(self, slot: Budget, budget: &mut Budget, overlay: &mut Overlay) -> Option<Receipt> {
         let mut next = *budget;
         next.charge_cell_work(slot, self.remaining).ok()?;
         overlay.live.extend(self.cells);
         *budget = next;
-        *adopted |= self.position_bit;
         Some(self.receipt)
     }
 }
@@ -274,66 +342,64 @@ impl Store {
         slot: Budget,
         overlay: &Overlay,
     ) -> Result<Vec<Result<Executed>>> {
-        let mut writes = Writes::with_capacity(window.len() * 2);
-        for (position, tx) in window.iter().enumerate() {
-            let tx = tx.borrow();
-            for input in tx.inputs() {
-                record(
-                    &mut writes,
-                    input.previous_output,
-                    Write {
-                        position,
-                        cell: None,
-                    },
-                );
-            }
-            let id = tx.id(&self.network);
-            for (index, cell) in tx.outputs().enumerate() {
-                record(
-                    &mut writes,
-                    OutPoint::new(id.clone(), u32::try_from(index)?),
-                    Write {
-                        position,
-                        cell: Some(LiveCell {
-                            cell,
-                            origin: origin.clone(),
-                        }),
-                    },
-                );
-            }
-        }
+        let writes = project(&self.network, window, origin)?;
         Ok(window
             .par_iter()
             .enumerate()
             .map(|(position, tx)| {
+                let dependencies = Cell::new(0);
                 let view = PrecedingCells {
                     base: &overlay.live,
-                    writes: &writes,
-                    position,
-                    dependencies: Cell::new(0),
+                    projection: Some(ProjectedPrefix {
+                        writes: &writes,
+                        position,
+                        sources: Sources::Window(&dependencies),
+                    }),
                 };
-                let mut remaining = slot;
-                let mut work = self.overlay(None);
-                let receipt = self.stage_transaction(
+                let effects = self.execute_cell_trial(
                     tx.borrow(),
                     block,
                     origin,
-                    &mut remaining,
-                    &mut work,
-                    None,
-                    |resolved, limit| self.cache.verify(resolved, limit, window.len() < width),
-                    None,
-                    Some(&view),
+                    slot,
+                    &view,
+                    window.len() < width,
                 )?;
                 Ok(Executed {
-                    receipt,
-                    cells: work.live,
-                    remaining,
-                    dependencies: view.dependencies.get(),
+                    effects,
+                    dependencies: dependencies.get(),
                     position_bit: 1 << position,
                 })
             })
             .collect())
+    }
+
+    fn execute_cell_trial(
+        &self,
+        tx: &Transaction,
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        slot: Budget,
+        view: &PrecedingCells<'_>,
+        parallel_groups: bool,
+    ) -> Result<Effects> {
+        let mut remaining = slot;
+        let mut work = self.overlay(None);
+        let receipt = self.stage_transaction(
+            tx,
+            block,
+            origin,
+            &mut remaining,
+            &mut work,
+            None,
+            |resolved, limit| self.cache.verify(resolved, limit, parallel_groups),
+            None,
+            Some(view),
+        )?;
+        Ok(Effects {
+            receipt,
+            cells: work.live,
+            remaining,
+        })
     }
 }
 

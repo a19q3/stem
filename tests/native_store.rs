@@ -800,6 +800,47 @@ fn candidate_reads_respect_same_block_writes_and_parent_replacement() -> Result<
 }
 
 #[test]
+#[cfg(feature = "native-rolling-cell-execution")]
+fn rolling_preparation_reads_and_preserves_the_prefix_before_the_run() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 32;
+    let dir = tempfile::tempdir()?;
+    let store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+
+    // Exceeds the ordinary-transaction edit limit, so this transaction
+    // and the first spend stage before the rolling run starts.
+    let amount = (FUND - FEE) / 65;
+    let output = Cell::new(amount, fixture.lock.clone(), vec![], Bytes::new())?;
+    let fanout = fixture.seal(Transaction::new(
+        fixture.deps.clone(),
+        vec![],
+        vec![CellInput::new(fixture.spend.clone(), None)],
+        vec![output; 65],
+        vec![],
+    )?)?;
+    let fanout_id = fanout.id(store.network());
+    let mut point = OutPoint::new(fanout_id.clone(), 0);
+    let mut transactions = vec![fanout];
+    for offset in 1..=10 {
+        let tx = fixture.signed(point, None, amount - offset * FEE, None)?;
+        point = OutPoint::new(tx.id(store.network()), 0);
+        transactions.push(tx);
+    }
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    let mut parallel = store;
+    let serial = parallel.prepare(&transactions, TIME + 1, false)?;
+    let rolling = workers.install(|| parallel.prepare(&transactions, TIME + 1, true))?;
+    assert_eq!(rolling.header(), serial.header());
+    assert_eq!(rolling.receipts(), serial.receipts());
+
+    parallel.commit(rolling)?;
+    assert!(parallel.live_cell(&point)?.is_some());
+    assert!(parallel.live_cell(&OutPoint::new(fanout_id.clone(), 0))?.is_none());
+    assert!(parallel.live_cell(&OutPoint::new(fanout_id, 1))?.is_some());
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "native-dependency-execution")]
 fn projected_preparation_tracks_a_created_and_consumed_dep_group() -> Result<()> {
     use ckb_types::{core::DepType, packed::OutPointVec};

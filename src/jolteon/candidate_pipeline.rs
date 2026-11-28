@@ -192,6 +192,9 @@ impl Replica {
             self.execution
                 .candidate_lineage
                 .record(execution.lineage_schedule());
+            self.execution
+                .candidate_cell_stream
+                .record(execution.cell_stream());
         }
         if !self.preparation_is_current(&binding) || matches!(prepared, Ok(None)) {
             let jobs = &mut self.execution.candidate_jobs;

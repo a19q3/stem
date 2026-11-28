@@ -74,6 +74,16 @@ Leader scans expose `parallel_cell_jobs`, `parallel_cell_reused`, `parallel_cell
 
 The implementation is compile-checked pending runtime and replay qualification. To attribute improvements when testing resumes, compare the original builder, Leader only, Follower only, and both stages with fixed workers and index settings. With valid independent transfers, the coordinator should reuse most trials. A churn workload should also contain stale inputs and competing spends to quantify work repeated or launched past a scan stop. Each window still waits for its workers before adopting results, and saturated blocks fall back to the existing builder once they can no longer reserve multiple full transaction cycle limits.
 
+### Rolling Follower preparation
+
+`native-rolling-cell-execution` extends ordinary Follower preparation. For a run longer than a fixed window, one immutable projection covers the run. Workers verify against that projection and the earlier accepted block prefix. The coordinator keeps a separate ordered delta and refills the queue after publishing a ready prefix. A slow later trial no longer holds back publication of earlier results. Trials carry the positions of the edits they read across previous window boundaries. Ordered fallback reads the actual prefix and delta, and only successful trials certify their projected writes.
+
+The active job queue is limited to two jobs per worker. Running and completed work together stay within four slots per worker, 32 slots overall, and the remaining block cycles reserved at each transaction's full limit. Reads retain the 4 MiB per-trial limit. The projection is bounded by block transaction limits, and the short-window and ordered paths still handle small runs and protocol barriers. The Leader continues to use its separate fixed-window configuration.
+
+`candidate_cell_stream` reports attempted jobs, adopted results, fallbacks, refills overlapping earlier unadopted jobs after the initial window, peak outstanding work, and elapsed run time including projection. Compiled fixtures compare full Headers, receipts and writes to serial preparation. They cover a refill beyond the initial window, spending across rolling boundaries and starting from a nonempty ordered prefix. Regression execution, independent replay and performance qualification are pending.
+
+For matched tests, hold the Leader feature and resident index configuration constant and vary only the rolling option over the fixed-window Follower. Include fully independent payments and long same-block chains with unequal script costs. Inspect refill occupancy and full preparation time against coordinator and worker CPU. A large immutable projection front-loads indexing, and a slow earliest position can still fill the bounded reorder buffer. The queue hands completions through a channel, which can cost more than the barrier it removes on short VM-cache-hit workloads.
+
 ## Reproduce the resolved-job experiment
 
 ```sh

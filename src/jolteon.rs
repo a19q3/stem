@@ -899,6 +899,9 @@ impl Replica {
                 self.execution
                     .candidate_lineage
                     .record(prepared.lineage_schedule());
+                self.execution
+                    .candidate_cell_stream
+                    .record(prepared.cell_stream());
                 ensure!(
                     prepared.header() == &proposal.header,
                     "candidate execution differs from the signed Header"

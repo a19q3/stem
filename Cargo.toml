@@ -30,6 +30,7 @@ native-lineage-ready-prefix = []
 native-work-stealing = []
 native-dependency-execution = []
 native-leader-dependency-execution = []
+native-rolling-cell-execution = ["native-dependency-execution"]
 
 [dependencies]
 anyhow.workspace = true
