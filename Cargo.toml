@@ -17,6 +17,7 @@ default = [
 comet-benchmark = []
 jolteon-certificate-experiment = []
 jolteon-shared-certificate-path = []
+jolteon-retain-verified-quorums = ["jolteon-shared-certificate-path", "dep:lru"]
 jolteon-admission-pipeline = []
 jolteon-candidate-pipeline = []
 jolteon-commit-pipeline = ["jolteon-candidate-pipeline"]
@@ -83,6 +84,7 @@ clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
 hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
 imbl = { version = "7.0.2", optional = true }
+lru = { workspace = true, optional = true }
 prost = "0.13"
 rand.workspace = true
 rayon.workspace = true

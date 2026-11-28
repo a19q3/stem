@@ -28,6 +28,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Lineage and Keeper | `45028dc` | Independent Head lookahead and one-shot wake preparation [Keeper notes](../BENCHMARKS.md#parallel-preparation-of-independent-due-commands) |
 | Leader Keeper prefix reuse | `native-reuse-keeper-proposal-prefix` | Reuse settled one-shot wakes when finishing the selected proposal [Keeper notes](../BENCHMARKS.md#reusing-the-keeper-prefix-in-leader-proposals) |
 | Certificates and votes | `34e4743` | Shared direct frames and exact current-certificate reuse [Communication notes](certificates/README.md#sharing-certificates-and-direct-vote-frames) |
+| Decoded QC retention | `jolteon-retain-verified-quorums` | Share bounded exact recent certificates in the direct path [Comparison notes](certificates/README.md#retaining-decoded-quorum-certificates) |
 | Resident Patricia publication | `0eba67f` | Publish on the certified writer after WAL sync or on the Replica when it installs the durable tip [Resident Patricia notes](storage/resident-patricia.md) |
 | Prebuilt finality state writes | `jolteon-prebuilt-state-write` | Assemble one certified state prefix before the atomic finality write [Comparison notes](execution-pipeline/cross-block.md#prebuilding-the-certified-state-writebatch) |
 | Verified resident nodes | `native-verified-cell-nodes` | Authenticate decoded nodes at cache insertion and reuse them by content ID [Comparison notes](storage/resident-patricia.md#verified-decoded-resident-nodes) |
@@ -82,6 +83,7 @@ compact_patricia_journal=native-compact-patricia-journal
 stream_node_publication=native-stream-node-publication
 compact_journal=native-compact-write-journal
 certificates=jolteon-shared-certificate-path
+retained_quorums=jolteon-retain-verified-quorums
 
 build() {
     local label=$1
@@ -127,7 +129,8 @@ build node-publication-control --features "$verified_journal,$publication"
 build node-publication-stream --features "$verified_journal,$publication,$stream_node_publication"
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$certificates"
+build retained-quorums --features "$retained_quorums"
+build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
