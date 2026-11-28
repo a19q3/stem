@@ -154,3 +154,36 @@ The compile-checked regressions cover ordered Live Cell puts and deletes,
 recycling between commits, discarding an unselected prebuild and clean
 reopen after consecutive writes. Runtime regressions, interruption,
 independent replay and performance measurements remain pending.
+
+## Vectored writes for large Cell records
+
+`native-vectored-cell-writes` writes a new Live Cell whose canonical Cell
+body is at least 4 KiB by supplying the packed OutPoint, encoded Origin
+and Cell body to RocksDB as three slices. The RocksDB write batch appends
+the parts as a single default-column-family put. The existing state key,
+value format, put order, metrics and synchronous WAL boundary apply.
+Smaller Cell bodies continue through the reused contiguous scratch buffer.
+Both authenticated-state engines share this write-batch assembly.
+
+The candidate removes one intermediate copy of each eligible value and
+avoids growing the contiguous scratch buffer for those values. RocksDB's
+vectored C wrapper allocates small arrays of slice descriptors, and the
+write batch still holds the complete records. The 4 KiB cutoff is a
+candidate setting, and its crossover in a mixed block is unmeasured.
+
+Build both arms from the same source and toggle only
+`native-vectored-cell-writes`. Use identical signed contracts, memory
+allowances, worker settings and certified writer options. Compare small
+payments, larger typed Cells and mixed block sizes around the cutoff.
+Record batch assembly time and CPU, allocations, peak RSS, WAL sync and
+bytes and common finality. Compare exact Headers, ordered receipts, batch
+bytes and proofs through independently verified reopen. Repeat this
+ablation for each authenticated-state engine before ranking them.
+
+The regression
+`vectored_cell_records_match_contiguous_batches_and_durable_rows`
+covers the exact serialized batch, synchronous database writes and reopen,
+including Cell sizes immediately around the cutoff and the protocol
+maximum. The regression target and native and JMT builds passed compile
+checks. The RocksDB static archives export the exact C entry point.
+Runtime and performance results remain pending.
