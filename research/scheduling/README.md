@@ -281,3 +281,43 @@ and final map merge can offset lower speculative retention. The
 compiled fixtures cover an output read after its declaration retires
 and a late replacement spend after an earlier candidate is skipped.
 Runtime regressions, replay and performance comparisons are pending.
+
+### Rolling Script Group verification
+
+The fixed-wave verifier waits for every group in a worker-sized batch.
+The `native-rolling-script-groups` candidate can refill a worker slot
+while an earlier group is still running. It applies when the caller
+permits parallel groups, there is more than one worker, and the
+transaction spans more than one wave. It uses the existing Rayon pool
+and cost estimator, with at most one executing job per worker slot
+and at most two outstanding positions per worker in the transaction.
+A verifier waiting on the pool can execute queued Rayon work.
+
+Canonical settlement checks group results in group order and charges
+against the current remaining cycle budget. A speculative cycle
+failure with a smaller allowance is retried with that budget. A
+script error from a larger allowance is retried to preserve any
+earlier ordered cycle exhaustion. The coordinator prefers a ready
+canonical result before refilling the queue. A failed verification
+abandons pending work, and already running workers finish within
+their assigned limits. The verification cache still publishes only
+successful transaction verifications.
+
+For a matched comparison use the same binary settings and toggle
+only `native-rolling-script-groups`. Keep candidate and Leader task
+schedulers, cache settings and CPU placement fixed. Include small
+single-wave payments, multi-asset transactions with uneven script
+costs, and transactions near their exact budget. Use an ordering
+control that produces the same serial receipts, charged cycles, and
+failure classes. Run the mixed Type Group workload with more groups
+than worker slots and compare both orders. Measure worker CPU and
+occupancy, verification wall time, and independent finality.
+Speculative retries and channel handoffs can outweigh the avoided
+barriers, particularly when groups are uniformly cheap or execution
+is already fully occupied by independent transactions.
+
+The compiled VM fixtures cover ordered charges after an undersized
+speculative attempt, a script error masked by the canonical cycle
+budget, and six real groups at the exact cycle limit and one cycle
+below it. Runtime regression, replay and performance qualification
+remain pending.

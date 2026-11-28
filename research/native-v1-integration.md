@@ -9,6 +9,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Reuse after ordered Cell settlement | `native-reuse-ordered-cell-writes` | Keep matching speculative consumers after an ordinary producer falls back [Comparison notes](scheduling/README.md#reusing-ordered-cell-writes) |
 | Incremental Cell projection | `native-incremental-cell-projection` | Publish declaration prefixes as rolling tasks are submitted [Comparison notes](scheduling/README.md#incremental-projection-in-the-rolling-schedulers) |
 | Reclaim settled Cell declarations | `native-reclaim-cell-projection` | Keep speculative history near the active rolling window [Comparison notes](scheduling/README.md#retiring-settled-projection-edits) |
+| Rolling Script Groups | `native-rolling-script-groups` | Refill group workers and charge their cycles in canonical order [Comparison notes](scheduling/README.md#rolling-script-group-verification) |
 | Exact certified prefix | `jolteon-exact-prefix-pipeline` | Reuse pinned successor jobs across consecutive certified writes [Comparison notes](execution-pipeline/README.md#reusing-work-across-an-exact-certified-prefix) |
 | Cancel obsolete preparation | `jolteon-cancel-stale-execution` | Stop work on expired Leader proposals or irrecoverable Follower branches [Comparison notes](execution-pipeline/README.md#cancelling-obsolete-preparation) |
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
@@ -39,6 +40,7 @@ rolling_leader=native-rolling-leader-execution
 ordered_cells=native-reuse-ordered-cell-writes
 incremental_projection=native-incremental-cell-projection
 reclaim_projection=native-reclaim-cell-projection
+rolling_groups=native-rolling-script-groups
 exact_prefix=jolteon-exact-prefix-pipeline
 cancellation=jolteon-cancel-stale-execution
 contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
@@ -65,6 +67,7 @@ build ordered-cell-writes --features "$cells,$rolling_leader,$ordered_cells"
 build incremental-projection --features "$cells,$rolling_leader,$incremental_projection"
 build projection-reclaim-control --features "$cells,$rolling_leader,$incremental_projection,$ordered_cells"
 build projection-reclaim --features "$cells,$rolling_leader,$reclaim_projection"
+build rolling-script-groups --features "$cells,$rolling_leader,$rolling_groups"
 build exact-prefix --features "$exact_prefix"
 build cancellation --features "$cancellation"
 build contract-execution --features "$contracts"
@@ -74,7 +77,7 @@ build verified-nodes --features "$verified_nodes"
 build verified-journal --features "$verified_journal"
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$rolling_leader,$ordered_cells,$incremental_projection,$reclaim_projection,$exact_prefix,$cancellation,$contracts,$publication,$parent_cells,$verified_journal,$compact_journal,$certificates"
+build combined --features "$cells,$dependencies,$rolling_leader,$ordered_cells,$incremental_projection,$reclaim_projection,$rolling_groups,$exact_prefix,$cancellation,$contracts,$publication,$parent_cells,$verified_journal,$compact_journal,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

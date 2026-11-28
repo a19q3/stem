@@ -3,6 +3,8 @@
 mod cache;
 mod crypto;
 pub mod executor;
+#[cfg(feature = "rolling-script-groups")]
+mod group_schedule;
 
 pub use cache::{CacheLockStats, VerificationCache, VerificationCacheStats};
 pub use crypto::{CRYPTO_V1, SECP256K1_RECOVER, SECP256K1_RECOVERY_CYCLES};
@@ -208,6 +210,10 @@ fn verify_groups(
     } else {
         1
     };
+    #[cfg(feature = "rolling-script-groups")]
+    if workers > 1 && group_count > workers {
+        return group_schedule::verify(group_count, max_cycles, workers, estimates, run, observe);
+    }
     for start in (0..group_count).step_by(workers) {
         let end = (start + workers).min(group_count);
         let remaining = max_cycles - total;
@@ -221,17 +227,7 @@ fn verify_groups(
         let equal_share = remaining / (end - start) as u64;
         let results: Vec<_> = (start..end)
             .into_par_iter()
-            .map(|group| {
-                let limit = estimates
-                    .get(group)
-                    .copied()
-                    .flatten()
-                    .map_or(equal_share, |cycles| {
-                        cycles.saturating_mul(2).max(equal_share)
-                    })
-                    .min(remaining);
-                run(group, limit)
-            })
+            .map(|group| run(group, group_limit(estimates, group, equal_share, remaining)))
             .collect();
         for (index, result) in results.into_iter().enumerate() {
             let cycles = match result {
@@ -245,6 +241,15 @@ fn verify_groups(
         }
     }
     Ok(total)
+}
+
+fn group_limit(estimates: &[Option<u64>], group: usize, share: u64, remaining: u64) -> u64 {
+    estimates
+        .get(group)
+        .copied()
+        .flatten()
+        .map_or(share, |cycles| cycles.saturating_mul(2).max(share))
+        .min(remaining)
 }
 
 /// Identify a cycle-limit failure from a VM run or cached verification.
