@@ -248,8 +248,10 @@ own position. Jobs that already observed a declaration retain their
 recorded source positions and still check them before reuse.
 
 The coordinator folds at intervals of the initial job window.
-There must be no unsettled position before the chosen boundary. A
-worker-adopted write or an explicitly certified ordered write agrees
+There must be no unsettled position before the chosen boundary.
+The projection cursor also skips settled positions whose edits were
+never indexed, which can occur when the budget shrinks the queue.
+A worker-adopted write or an explicitly certified ordered write agrees
 with its projection. A skipped Leader candidate published no edits.
 An outstanding worker that observed a skipped declaration still
 fails the source check. A worker that reads after pruning sees the
