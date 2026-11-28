@@ -31,6 +31,7 @@ native-work-stealing = []
 native-dependency-execution = []
 native-leader-dependency-execution = []
 native-rolling-cell-execution = ["native-dependency-execution"]
+native-execution-material-cache = ["stem-ledger/execution-material-cache"]
 
 [dependencies]
 anyhow.workspace = true

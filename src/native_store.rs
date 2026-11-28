@@ -1601,16 +1601,10 @@ impl Store {
             "block transaction count exceeded"
         );
         let mut overlay = self.overlay(self.stage_stake()?);
-        let with_due = (!due.commands.is_empty()).then(|| {
-            due.commands
-                .iter()
-                .chain(transactions)
-                .cloned()
-                .collect::<Vec<_>>()
-        });
-        let execution = with_due.as_deref().unwrap_or(transactions);
-        let total_bytes = execution
+        let total_bytes = due
+            .commands
             .iter()
+            .chain(transactions)
             .try_fold(0u64, |total, tx| {
                 total.checked_add(tx.as_slice().len() as u64)
             })
@@ -1619,6 +1613,21 @@ impl Store {
             total_bytes <= budget.bytes,
             "block transaction bytes exceeded"
         );
+        #[cfg(feature = "native-execution-material-cache")]
+        let materialized: Vec<_> = transactions
+            .iter()
+            .map(|tx| tx.with_execution_material(&self.network))
+            .collect();
+        #[cfg(feature = "native-execution-material-cache")]
+        let transactions = materialized.as_slice();
+        let with_due = (!due.commands.is_empty()).then(|| {
+            due.commands
+                .iter()
+                .chain(transactions)
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let execution = with_due.as_deref().unwrap_or(transactions);
         let block = BlockContext::after(
             &self.network,
             &self.tip,
@@ -2190,6 +2199,10 @@ impl Store {
         } else {
             1
         };
+        #[cfg(feature = "native-execution-material-cache")]
+        let transactions = transactions
+            .into_iter()
+            .map(|item| item.borrow().with_execution_material(&self.network));
         let mut transactions = transactions.into_iter().peekable();
         let mut window = ProposalWindow::new();
         loop {

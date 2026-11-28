@@ -327,9 +327,20 @@ struct ParsedLineageCommand {
     commitment: OnceLock<[u8; 32]>,
 }
 
+#[cfg(feature = "execution-material-cache")]
+#[derive(Debug)]
+struct ExecutionMaterial {
+    network: Byte32,
+    id: OnceLock<Byte32>,
+    commitment: OnceLock<[u8; 32]>,
+    outputs: OnceLock<Box<[Cell]>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Transaction {
     encoded: wire::Transaction,
+    #[cfg(feature = "execution-material-cache")]
+    execution_material: Option<Arc<ExecutionMaterial>>,
     lineage_command: Option<Arc<ParsedLineageCommand>>,
     lineage_intent: Option<Arc<lineage::Intent>>,
     lineage_batch: Option<Arc<[Transaction]>>,
@@ -537,6 +548,8 @@ impl Transaction {
             .map(Arc::new);
         let mut tx = Self {
             encoded,
+            #[cfg(feature = "execution-material-cache")]
+            execution_material: None,
             lineage_command,
             lineage_intent,
             lineage_batch: None,
@@ -724,6 +737,29 @@ impl Transaction {
         self.encoded.as_bytes()
     }
 
+    /// Share data derived from these immutable bytes across candidate tasks.
+    /// Callers can keep the original transaction in long-lived queues.
+    #[cfg(feature = "execution-material-cache")]
+    pub fn with_execution_material(&self, network: &Byte32) -> Self {
+        let mut tx = self.clone();
+        if tx.lineage_command.is_none() && self.material_for(network).is_none() {
+            tx.execution_material = Some(Arc::new(ExecutionMaterial {
+                network: network.clone(),
+                id: OnceLock::new(),
+                commitment: OnceLock::new(),
+                outputs: OnceLock::new(),
+            }));
+        }
+        tx
+    }
+
+    #[cfg(feature = "execution-material-cache")]
+    fn material_for(&self, network: &Byte32) -> Option<&ExecutionMaterial> {
+        self.execution_material
+            .as_deref()
+            .filter(|material| &material.network == network)
+    }
+
     fn command_hashes(&self, network: &Byte32) -> Option<&ParsedLineageCommand> {
         let parsed = self.lineage_command.as_deref()?;
         (parsed.network.get_or_init(|| network.clone()) == network).then_some(parsed)
@@ -738,6 +774,10 @@ impl Transaction {
                 &[self.encoded.raw().as_slice(), references.as_slice()],
             )
         };
+        #[cfg(feature = "execution-material-cache")]
+        if let Some(material) = self.material_for(network_id) {
+            return material.id.get_or_init(compute).clone();
+        }
         match self.command_hashes(network_id) {
             Some(parsed) => parsed.id.get_or_init(compute).clone(),
             None => compute(),
@@ -756,6 +796,10 @@ impl Transaction {
                 &[self.as_slice()],
             )
         };
+        #[cfg(feature = "execution-material-cache")]
+        if let Some(material) = self.material_for(network_id) {
+            return *material.commitment.get_or_init(compute);
+        }
         match self.command_hashes(network_id) {
             Some(parsed) => *parsed.commitment.get_or_init(compute),
             None => compute(),
@@ -1215,11 +1259,26 @@ impl Transaction {
     }
 
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = Cell> {
-        self.encoded
-            .raw()
-            .outputs()
-            .into_iter()
-            .map(Cell::validated_entity)
+        let encoded = self.encoded.raw().outputs();
+        #[cfg(feature = "execution-material-cache")]
+        {
+            let material = self.execution_material.as_deref();
+            (0..encoded.len()).map(move |index| {
+                if let Some(material) = material {
+                    let outputs = material.outputs.get_or_init(|| {
+                        encoded
+                            .clone()
+                            .into_iter()
+                            .map(Cell::validated_entity)
+                            .collect()
+                    });
+                    return outputs[index].clone();
+                }
+                Cell::validated_entity(encoded.get(index).expect("validated output index"))
+            })
+        }
+        #[cfg(not(feature = "execution-material-cache"))]
+        encoded.into_iter().map(Cell::validated_entity)
     }
 
     pub fn witnesses(&self) -> impl ExactSizeIterator<Item = GroupWitness> {
@@ -2118,6 +2177,51 @@ mod tests {
         assert!(make(vec![], vec![], vec![input.clone(), input.clone()]).is_err());
         assert!(make(vec![dep.clone(), dep], vec![], vec![input.clone()]).is_err());
         assert!(make(vec![], vec![header.clone(), header], vec![input]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "execution-material-cache")]
+    fn reuses_execution_material_without_dropping_network_or_witness_binding() -> Result<()> {
+        let network = [6; 32].pack();
+        let other = [7; 32].pack();
+        let tx = Transaction::new(
+            vec![],
+            vec![],
+            vec![CellInput::new(OutPoint::new([1; 32].pack(), 0), None)],
+            vec![Cell::new(
+                100_000_000_000,
+                script(0),
+                vec![script(1), script(2)],
+                Bytes::from_static(b"cell data"),
+            )?],
+            vec![],
+        )?;
+        let view = tx.with_execution_material(&network);
+        let clone = view.with_execution_material(&network);
+        assert_eq!(view.as_slice(), tx.as_slice());
+        for id in [&network, &other] {
+            assert_eq!(view.id(id), tx.id(id));
+            assert_eq!(view.commitment(id), tx.commitment(id));
+        }
+        assert_ne!(view.id(&network), view.id(&other));
+        assert_ne!(view.commitment(&network), view.commitment(&other));
+        assert!(tx.execution_material.is_none());
+
+        let canonical = tx.outputs().next().context("output")?;
+        let projected = view.outputs().next().context("projected output")?;
+        let resolved = clone.outputs().next().context("resolved output")?;
+        assert_eq!(projected.as_slice(), canonical.as_slice());
+        assert!(Arc::ptr_eq(&projected.hashes, &resolved.hashes));
+
+        let signed = view.with_witnesses(vec![GroupWitness {
+            group_index: 0,
+            proof_data: Bytes::new(),
+            seal: Bytes::from_static(b"witness"),
+        }])?;
+        assert_eq!(signed.id(&network), view.id(&network));
+        assert_ne!(signed.commitment(&network), view.commitment(&network));
+        assert!(signed.execution_material.is_none());
         Ok(())
     }
 

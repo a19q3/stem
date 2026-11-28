@@ -84,6 +84,14 @@ The active job queue is limited to two jobs per worker. Running and completed wo
 
 For matched tests, hold the Leader feature and resident index configuration constant and vary only the rolling option over the fixed-window Follower. Include fully independent payments and long same-block chains with unequal script costs. Inspect refill occupancy and full preparation time against coordinator and worker CPU. A large immutable projection front-loads indexing, and a slow earliest position can still fill the bounded reorder buffer. The queue hands completions through a channel, which can cost more than the barrier it removes on short VM-cache-hit workloads.
 
+### Sharing immutable execution material
+
+`native-execution-material-cache` lets a candidate transaction share its raw ID, complete witnessed commitment and materialized output Cells across projection, ordered staging, VM verification and commitment construction. Follower preparation attaches the cache after the block size checks. The Leader attaches it to the candidates it visits without retaining it in the mempool. An existing copy can also be reused during full preparation when the builder falls back to replay.
+
+The hashes are computed from the original bytes and the exact network. A request for a different network computes its own digest. Newly encoded transactions start without the cache. Sharing output Cells also shares their existing content and data hash memoization. Resolution still checks live inputs, dependencies, Header ancestry, Capacity, witnesses and every Script Group. No encoding, proof format, resource budget or durable state is derived from local cache state.
+
+The regression target checks byte and digest equivalence across independent networks, shared output material and invalidation when witnesses change. Release builds and test target compilation passed. Runtime regression, replay and load comparisons are pending. Compare the same fixed or rolling scheduler with and without the cache. Track transaction hashing, allocations, preparation wall time and RSS for ordinary payments, larger outputs and heterogeneous Polytype Cells. A per-candidate allocation and one-time output materialization can outweigh the savings for very small transactions, particularly when the Leader rejects a large fraction of the pool.
+
 ## Reproduce the resolved-job experiment
 
 ```sh
