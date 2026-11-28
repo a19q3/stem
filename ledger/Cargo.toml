@@ -10,6 +10,7 @@ publish = false
 parallel-patricia = ["dep:rayon"]
 verified-patricia-cache = ["dep:hashbrown"]
 compact-verified-journal = ["verified-patricia-cache"]
+segmented-verified-journal = ["compact-verified-journal"]
 execution-material-cache = []
 inline-cell-resolution = []
 

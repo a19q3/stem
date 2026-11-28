@@ -179,8 +179,11 @@ sizes and other features fixed across the original resident layout,
 [generated journal comparison](resident-patricia.md#generated-cell-node-journals)
 separates traversal, serialized WAL preparation and publication. The
 additional `native-compact-patricia-journal` arm keeps those settings
-fixed and changes the generated Patricia journal representation.
-Record its peak RSS and preparation separately. The read-only audit
+fixed and changes the generated Patricia journal representation. The
+`native-segmented-patricia-journal` arm uses the same compact journal
+control and transfers node buffers at parallel joins. Treat this as a
+separate Patricia ablation before comparing either layout with JMT.
+Record peak RSS and preparation separately. The read-only audit
 reads durable nodes in every arm. Run the paired
 comparison in both orders and compare actual offer, common confirmation,
 finality latency, backlog, RSS and the RocksDB metrics. Record genesis IDs
