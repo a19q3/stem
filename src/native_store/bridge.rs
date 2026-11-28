@@ -897,7 +897,7 @@ impl Bridge {
         Ok(changes)
     }
 
-    fn is_burn(&self, lock: &Script) -> bool {
+    pub(super) fn is_burn(&self, lock: &Script) -> bool {
         lock.code_hash() == self.burn
     }
 

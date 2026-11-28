@@ -33,6 +33,7 @@ use stem_stake::jolteon::{COMMITTEE_RECORD, CommitteeChange};
 use stem_vm::VerificationCache;
 
 mod bridge;
+mod cell_execution;
 mod cell_query;
 pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
@@ -58,6 +59,7 @@ use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
 mod test_contract;
 
 use bridge::{Bridge, BridgeChanges, StagedBridge};
+use cell_execution::{MAX_SPECULATIVE_READ_BYTES, PrecedingCells};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
 use staking::{StagedStake, StakeInputs, Staking};
 pub use staking::{StakeGenesis, stake_registry_policy};
@@ -1611,6 +1613,17 @@ impl Store {
             let lineage = segment[0].has_lineage_command();
             let mut prefetch_remaining = 0usize;
             while !segment.is_empty() {
+                if cfg!(feature = "native-dependency-execution") && width > 1 && !lineage {
+                    let count = self.prepare_cell_window(
+                        segment, &block, &origin, width, &mut budget, &mut overlay,
+                        &mut receipts, &mut fees,
+                    )?;
+                    if count != 0 {
+                        segment = &segment[count..];
+                        prefetch_remaining = prefetch_remaining.saturating_sub(count);
+                        continue;
+                    }
+                }
                 if prefetch_cells && !lineage && prefetch_remaining == 0 {
                     prefetch_remaining = segment.len().min(32);
                     self.prefetch_candidate_cells(&segment[..prefetch_remaining], &mut overlay);
@@ -2326,6 +2339,7 @@ impl Store {
             staged_command,
             verify,
             None,
+            None,
         )
     }
 
@@ -2368,6 +2382,7 @@ impl Store {
                             journal: &mut journal,
                             extra_bytes: if index == 0 { extra_bytes } else { 0 },
                         }),
+                        None,
                     )
                     .with_context(|| format!("Lineage batch member {index}"))?;
                 receipt.fee = receipt
@@ -2404,6 +2419,7 @@ impl Store {
         staged_command: Option<lineage::Materialized>,
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
         batch: Option<LineageBatchMember<'_>>,
+        preceding: Option<&PrecedingCells<'_>>,
     ) -> Result<Receipt> {
         let context = block.candidate();
         let tx_bytes =
@@ -2483,13 +2499,26 @@ impl Store {
             Some(cell) => Ok(cell.clone()),
             None => self.live_cell(point),
         };
+        let preceding = if cfg!(feature = "native-dependency-execution") { preceding } else { None };
         // Current candidate writes, including deletions, supersede all hints.
+        let staged = |point: &OutPoint| {
+            live.get(point)
+                .map(Option::as_ref)
+                .or_else(|| preceding.and_then(|view| view.get(point)))
+        };
+        let speculative_bytes = std::cell::Cell::new(0usize);
         let fresh = |point: &OutPoint| {
-            match live.get(point) {
-                Some(staged) => staged.clone(),
+            let record = match staged(point) {
+                Some(record) => record.cloned(),
                 None => lookup(point)?,
             }
-            .with_context(|| MissingLiveCell(point.clone()))
+            .with_context(|| MissingLiveCell(point.clone()))?;
+            if preceding.is_some() {
+                let used = speculative_bytes.get().saturating_add(record.cell.as_slice().len());
+                ensure!(used <= MAX_SPECULATIVE_READ_BYTES, "large Cell reads need ordered execution");
+                speculative_bytes.set(used);
+            }
+            Ok(record)
         };
         let header = |hash: &Byte32| self.resolve_header(hash, context.height);
         let concrete = materialized
@@ -2560,14 +2589,22 @@ impl Store {
         };
         let keeper_cycles = keeper_change.as_ref().map_or(0, |change| change.cycles);
         let id = resolved.execution_id();
-        let lineage_changes = self
-            .lineage
-            .as_ref()
-            .map(|code| {
-                lineage::changes(self, code, lineages, &resolved, &id, &changes.omit_outputs)
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let lineage_changes = match &self.lineage {
+            Some(code) if preceding.is_some() => {
+                ensure!(
+                    !resolved.groups().iter().any(|group| {
+                        group.kind == stem_ledger::ScriptGroupKind::Type
+                            && stem_ledger::lineage::is_marker(code, &group.script)
+                    }),
+                    "Lineage registry changes need ordered execution"
+                );
+                lineage::Heads::new()
+            }
+            Some(code) => {
+                lineage::changes(self, code, lineages, &resolved, &id, &changes.omit_outputs)?
+            }
+            None => lineage::Heads::new(),
+        };
         let lineage_reads = lineage_changes.len() as u64;
         let reads = resolved.cell_reads() as u64
             + resolved.l1_references().len() as u64
@@ -2602,7 +2639,7 @@ impl Store {
                 )?;
                 let point = OutPoint::new(id.clone(), u32::try_from(index)?);
                 ensure!(
-                    !live.contains_key(&point) && lookup(&point)?.is_none(),
+                    staged(&point).is_none() && lookup(&point)?.is_none(),
                     "duplicate output OutPoint"
                 );
                 Ok((
@@ -2694,6 +2731,7 @@ impl Store {
                             Some(refund),
                             verify,
                             None,
+                            preceding,
                         );
                     }
                 }

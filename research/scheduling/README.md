@@ -56,6 +56,16 @@ The binaries hashed to `b8953afa511f2b75a5b90e667a449ee9d152e7a661d051f8ab057557
 
 Run `storage_load::sustained_payment_storage` with `STEM_TEST_REPLICA_BIN` and `STEM_STORAGE_PAYMENT_TYPE_GROUPS=12`. Under the `STEM_STORAGE_` prefix set `REPLICAS=4`, `RATE=2600`, `SECONDS=20`, `DRAIN=30`, `SENDERS=64`, `VM_WORKERS=4`, `RETENTION=256`, `CADENCE=100`, `BLOCK_CYCLES=4000000000`, `BLOCK_TRANSACTIONS=2048` and enable `READY_SENDERS`, `COMPLETE_VOLUME` and `REUSE_SUBMISSIONS`. The mixed fixture allocates independent input Cells at genesis and requires `PREFUND_PAYMENTS=0`, `PAYMENT_CHAINS=0` and `PAYMENT_DATA_BYTES=0`.
 
+## Resolving and verifying a window of Cell transactions
+
+`native-dependency-execution` is an opt-in candidate for `Store::prepare`. The earlier Work Stealing candidate starts VM verification after ordered Cell resolution and staging. This candidate passes resolution, effect construction and VM verification to the workers. A transaction reads the latest declaration for an OutPoint strictly before its own position, including deletions, then the accepted block prefix and the pinned parent. The same lookup expands Dep Groups. A consumer can verify against its producer's immutable output while the producer's authorization is still running.
+
+The coordinator accepts results in proposal order and applies each transaction's actual resource charges before publishing its effects. If work fails or its charge will not fit, the coordinator runs that transaction and the rest of the window through ordered staging. Windows are bounded by four jobs per worker, 32 total jobs and the remaining block cycles at each transaction's full cycle limit. Jobs exceeding the speculative read limit of 4 MiB fall back to ordered staging. Lineage registry changes, Keeper, bridge operations, certified L1 references and group messages use ordered staging. The candidate is used for Follower preparation and any Leader path that invokes full preparation. Normal Leader selection still uses its existing greedy builder.
+
+The branch checks cover a same-block spend chain, conflicting spends, a replaced speculative parent, and a Dep Group created, read and consumed within one block. The branch was checked with `cargo check --locked --offline --release --all-features --tests`, `cargo build --locked --offline --release --features native-dependency-execution --bin stem` and `cargo check --locked --offline --release --no-default-features --lib --bin stem`. Regression execution, independent replay and load comparisons are pending. The preceding Work Stealing results apply to the earlier candidate.
+
+When workload testing resumes, compare builds differing only in `native-dependency-execution` with the same workers, parent snapshots and input corpus. Independent mixed Type Groups and same-block spend chains exercise different parts of the mechanism. Record end-to-end confirmation and Follower preparation alongside worker CPU, fallbacks and discarded work. Projection adds an OutPoint index and a hash of each transaction up front. Read contention and repeat work after an invalid prefix may offset the savings on VM-cache hits or under tight resource limits.
+
 ## Reproduce the resolved-job experiment
 
 ```sh
