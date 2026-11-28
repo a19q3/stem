@@ -22,6 +22,7 @@ jolteon-candidate-pipeline = []
 jolteon-commit-pipeline = ["jolteon-candidate-pipeline"]
 jolteon-resident-node-publication = ["jolteon-commit-pipeline"]
 jolteon-proposal-pipeline = []
+jolteon-shared-proposal-snapshot = ["jolteon-proposal-pipeline", "dep:imbl"]
 jolteon-cross-block-pipeline = ["jolteon-commit-pipeline", "jolteon-proposal-pipeline"]
 jolteon-exact-prefix-pipeline = ["jolteon-cross-block-pipeline"]
 jolteon-cancel-stale-execution = ["jolteon-candidate-pipeline", "jolteon-proposal-pipeline"]
@@ -69,6 +70,7 @@ ed25519-dalek.workspace = true
 clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
 hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
+imbl = { version = "7.0.2", optional = true }
 prost = "0.13"
 rand.workspace = true
 rayon.workspace = true

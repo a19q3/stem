@@ -144,6 +144,10 @@ pub struct CommitMetrics {
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
 pub struct ProposalMetrics {
     pub started: u64,
+    #[serde(default)]
+    pub snapshot_capture: LatencyHistogram,
+    #[serde(default)]
+    pub snapshot_entries: u64,
     pub published: u64,
     pub stale: u64,
     #[serde(default)]

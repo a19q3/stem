@@ -571,10 +571,10 @@ impl PinnedView {
     }
 
     #[cfg(feature = "jolteon-proposal-pipeline")]
-    pub(crate) fn build_proposal(
+    pub(crate) fn build_proposal<T: Borrow<Transaction>>(
         &self,
         branch: &[Arc<Prepared>],
-        transactions: Vec<Transaction>,
+        transactions: impl IntoIterator<Item = T>,
         time: u64,
         max_bytes: u64,
         scan: &mut ProposalScan,
@@ -3726,7 +3726,7 @@ mod pipeline_store_tests {
             let (transactions, proposal) = old
                 .build_proposal(
                     &[ancestor.clone()],
-                    Vec::new(),
+                    std::iter::empty::<Transaction>(),
                     1002,
                     1024,
                     &mut ProposalScan::default(),
@@ -3748,7 +3748,9 @@ mod pipeline_store_tests {
         assert!(old.with_snapshot(|_| Ok(()))?.is_none());
         #[cfg(feature = "jolteon-proposal-pipeline")]
         assert!(
-            old.build_proposal(&[], Vec::new(), 1002, 1024, &mut ProposalScan::default(), false)?
+            old.build_proposal(
+                &[], std::iter::empty::<Transaction>(), 1002, 1024, &mut ProposalScan::default(), false,
+            )?
                 .is_none()
         );
         let fresh = store.pinned_view();
@@ -4033,7 +4035,7 @@ mod pipeline_store_tests {
         let build = |branch: &[_], committing| {
             pinned.build_proposal(
                 branch,
-                Vec::new(),
+                std::iter::empty::<Transaction>(),
                 1004,
                 1024,
                 &mut ProposalScan::default(),
@@ -4441,10 +4443,11 @@ mod pipeline_store_tests {
                 assert_eq!(scan.dependency_reads.cached, 2);
             }
         }
+        let candidates = [first.clone(), missing, second.clone(), second.clone()];
         let (selected, proposal) = workers
             .install(|| store.pinned_view().build_proposal(
                 std::slice::from_ref(&parent),
-                vec![first.clone(), missing, second.clone(), second.clone()],
+                candidates.iter(),
                 1002,
                 4096,
                 &mut scan,
