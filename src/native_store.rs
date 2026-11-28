@@ -578,6 +578,24 @@ pub enum Retention {
     Archive,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CellStorage {
+    Patricia,
+    VersionedJmt,
+    FixedRootJmt,
+}
+
+impl CellStorage {
+    fn is_jmt(self) -> bool {
+        self != Self::Patricia
+    }
+
+    #[cfg(feature = "native-research-jmt")]
+    fn fixed_jmt_root(self) -> bool {
+        self == Self::FixedRootJmt
+    }
+}
+
 pub struct Store {
     db: Arc<DB>,
     read_options: Arc<ReadOptions>,
@@ -612,7 +630,7 @@ pub struct Store {
     cell_nodes: Option<Arc<NodeIndex>>,
     #[cfg(feature = "native-hot-cell-node-cache")]
     cell_node_header: Key,
-    research_jmt: bool,
+    cell_storage: CellStorage,
     #[cfg(feature = "jolteon-cancel-stale-execution")]
     cancellation: Option<PreparationCancellation>,
 }
@@ -1141,14 +1159,12 @@ impl Store {
         measured: bool,
         cache_mib: Option<NonZeroUsize>,
     ) -> Result<Self> {
-        Self::open_configured(
-            path,
-            spec,
-            retention,
-            measured,
-            cache_mib,
-            std::env::var_os("STEM_RESEARCH_JMT").is_some(),
-        )
+        let storage = match std::env::var_os("STEM_RESEARCH_JMT").as_deref() {
+            None => CellStorage::Patricia,
+            Some(mode) if mode == "fixed-root" => CellStorage::FixedRootJmt,
+            Some(_) => CellStorage::VersionedJmt,
+        };
+        Self::open_configured(path, spec, retention, measured, cache_mib, storage)
     }
 
     fn open_configured(
@@ -1157,7 +1173,7 @@ impl Store {
         retention: Retention,
         measured: bool,
         cache_mib: Option<NonZeroUsize>,
-        research_jmt: bool,
+        cell_storage: CellStorage,
     ) -> Result<Self> {
         spec.validate_l1_policies()?;
         ensure!(
@@ -1238,16 +1254,20 @@ impl Store {
             options.enable_statistics();
         }
         ensure!(
-            !research_jmt || cfg!(feature = "native-research-jmt"),
+            !cell_storage.is_jmt() || cfg!(feature = "native-research-jmt"),
             "STEM_RESEARCH_JMT requires the native-research-jmt build"
         );
         #[cfg(feature = "native-research-jmt")]
-        let layout = if research_jmt {
+        let layout = if cell_storage.is_jmt() {
             ensure!(
                 spec.stake.is_none() && spec.bridge.is_none(),
                 "JMT trial requires an isolated development chain"
             );
-            research_jmt::LAYOUT
+            if cell_storage.fixed_jmt_root() {
+                research_jmt::FIXED_ROOT_LAYOUT
+            } else {
+                research_jmt::LAYOUT
+            }
         } else {
             STORAGE_LAYOUT
         };
@@ -1315,10 +1335,10 @@ impl Store {
         );
         let cell_root = {
             #[cfg(feature = "native-research-jmt")]
-            if research_jmt {
+            if cell_storage.is_jmt() {
                 if fresh {
                     let (root, nodes) = research_jmt::bootstrap(allocations)?;
-                    research_jmt::write(&mut batch, nodes, 0)?;
+                    research_jmt::write(&mut batch, nodes, 0, cell_storage.fixed_jmt_root())?;
                     root.0
                 } else {
                     research_jmt::root_from_sorted(allocations.into_iter().map(Ok))?
@@ -1488,7 +1508,7 @@ impl Store {
             cell_nodes: None,
             #[cfg(feature = "native-hot-cell-node-cache")]
             cell_node_header,
-            research_jmt,
+            cell_storage,
             cache: Arc::new(VerificationCache::for_genesis(
                 DEFAULT_VERIFICATION_CACHE_ENTRIES,
                 spec.vm_crypto_v1,
@@ -1498,7 +1518,7 @@ impl Store {
             cancellation: None,
         };
         #[cfg(feature = "native-research-jmt")]
-        if research_jmt {
+        if cell_storage.is_jmt() {
             research_jmt::check_view_root(&store)?;
         }
         Ok(store)
@@ -1529,7 +1549,7 @@ impl Store {
         records: impl IntoIterator<Item = Result<(Key, Key)>>,
     ) -> Result<Key> {
         #[cfg(feature = "native-research-jmt")]
-        if self.research_jmt {
+        if self.cell_storage.is_jmt() {
             return research_jmt::root_from_sorted(records);
         }
         self.cells.root_from_sorted_records(records)
@@ -1610,7 +1630,7 @@ impl Store {
 
     /// Enable the optional bounded Cell Patricia node index.
     pub fn enable_cell_node_index(&mut self, limit_mib: NonZeroUsize) -> Result<()> {
-        ensure!(!self.research_jmt, "the Patricia node index is outside the JMT comparison");
+        ensure!(!self.cell_storage.is_jmt(), "the Patricia node index is outside the JMT comparison");
         ensure!(
             self.branch.is_empty() && self.cell_nodes.is_none(),
             "Cell node index already configured or view is speculative"
@@ -1729,7 +1749,7 @@ impl Store {
             cell_nodes: self.cell_nodes.clone(),
             #[cfg(feature = "native-hot-cell-node-cache")]
             cell_node_header: self.cell_node_header,
-            research_jmt: self.research_jmt,
+            cell_storage: self.cell_storage,
             #[cfg(feature = "jolteon-cancel-stale-execution")]
             cancellation: self.cancellation.clone(),
         }
@@ -2099,7 +2119,7 @@ impl Store {
     }
 
     pub fn prove_cell(&self, point: &OutPoint) -> Result<(Option<LiveCell>, Proof)> {
-        ensure!(!self.research_jmt, "use the isolated JMT proof audit");
+        ensure!(!self.cell_storage.is_jmt(), "use the isolated JMT proof audit");
         let key = record::cell_key(&self.cells, point);
         let mut tree = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
             self.node(Namespace::Cells, id)
@@ -2109,7 +2129,7 @@ impl Store {
     }
 
     pub fn prove_cells(&self, points: &[OutPoint]) -> Result<Vec<(Option<LiveCell>, Proof)>> {
-        ensure!(!self.research_jmt, "use the isolated JMT proof audit");
+        ensure!(!self.cell_storage.is_jmt(), "use the isolated JMT proof audit");
         ensure!(
             points.len() <= MAX_CELL_PROOF_BATCH,
             "too many Live Cell proofs in one batch"
@@ -2773,7 +2793,7 @@ impl Store {
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
         let keyed = Instant::now();
         #[cfg(feature = "native-research-jmt")]
-        if self.research_jmt {
+        if self.cell_storage.is_jmt() {
             let version = self
                 .tip
                 .context
@@ -4590,7 +4610,8 @@ mod pipeline_store_tests {
         for jmt in [false, true] {
             let home = tempfile::tempdir()?;
             let open = |jmt| {
-                Store::open_configured(home.path(), &spec, Retention::Archive, false, None, jmt)
+                let mode = if jmt { CellStorage::VersionedJmt } else { CellStorage::Patricia };
+                Store::open_configured(home.path(), &spec, Retention::Archive, false, None, mode)
             };
             let mut store = open(jmt)?;
             store.enable_live_cell_index(budget)?;
@@ -4670,6 +4691,93 @@ mod pipeline_store_tests {
         Ok(())
     }
 
+    #[cfg(feature = "native-research-jmt")]
+    #[test]
+    fn fixed_jmt_root_preserves_headers_proofs_and_pinned_roots() -> Result<()> {
+        let spec = spec();
+        let points = [0, 1].map(|index| OutPoint::new([37; 32].pack(), index));
+        let cell = Cell::new(20_000_000_000, Default::default(), vec![], Default::default())?;
+        let mut reference = None;
+        for mode in [CellStorage::VersionedJmt, CellStorage::FixedRootJmt] {
+            let home = tempfile::tempdir()?;
+            let open = |mode| {
+                Store::open_configured(home.path(), &spec, Retention::Archive, false, None, mode)
+            };
+            let mut store = open(mode)?;
+            let db = Arc::clone(&store.db);
+            let snapshot = db.snapshot();
+            let mut options = ReadOptions::default();
+            options.set_snapshot(&snapshot);
+            let mut pinned = store.read_view(&[]);
+            pinned.read_options = Arc::new(options);
+            let mut branch = Vec::new();
+            let mut headers = vec![store.tip().encode()];
+            for (offset, change) in [
+                None, Some(true), None, Some(false), None, Some(true), None,
+            ].into_iter().enumerate() {
+                let time = 1001 + offset as u64;
+                let block = store.on_branch(&branch, |view| {
+                    research_jmt::check_view_root(view)?;
+                    let Some(insert) = change else {
+                        return view.prepare(&[], time, false);
+                    };
+                    let tx_root = Tree::transactions(spec.network.clone(), &[])?.root();
+                    let context = HeaderContext::after(&spec.network, view.tip(), time, tx_root)?;
+                    let mut overlay = view.overlay(None);
+                    for point in &points {
+                        overlay.live.insert(point.clone(), insert.then(|| LiveCell {
+                            cell: cell.clone(),
+                            origin: Origin::new(&spec.network, &context),
+                        }));
+                    }
+                    view.finish_block(context, overlay, &[], vec![], 0, 0, false)
+                })?;
+                if mode.fixed_jmt_root() {
+                    if change.is_none() {
+                        assert!(!block.batch.writes.iter().any(|(key, _)| {
+                            let key: &[u8] = key.as_ref();
+                            key.starts_with(research_jmt::FIXED_ROOT_KEY)
+                        }));
+                    } else {
+                        assert!(matches!(
+                            block.batch.lookup(research_jmt::FIXED_ROOT_KEY),
+                            Some(Some(_))
+                        ));
+                    }
+                }
+                headers.push(block.next.encode());
+                branch.push(Arc::new(block));
+            }
+            store.on_branch(&branch, research_jmt::check_view_root)?;
+            for block in &branch {
+                store.commit_certified(block, &[], &[])?;
+            }
+            research_jmt::check_view_root(&pinned)?;
+            assert_eq!(pinned.tip().context.height, 0);
+            let tip = store.tip().id(&spec.network);
+            drop(pinned);
+            drop(snapshot);
+            drop(db);
+            drop(store);
+
+            let reopened = open(mode)?;
+            assert_eq!(reopened.tip().id(&spec.network), tip);
+            research_jmt::check_view_root(&reopened)?;
+            drop(reopened);
+            let audit = audit_cell_state(home.path(), spec.network.clone(), &tip)?;
+            assert_eq!(audit["jmt_fixed_root"], mode.fixed_jmt_root());
+            let evidence = (headers, audit["proof_digest"].clone());
+            if let Some(reference) = &reference {
+                assert_eq!(&evidence, reference);
+                assert!(open(CellStorage::VersionedJmt).is_err());
+            } else {
+                reference = Some(evidence);
+                assert!(open(CellStorage::FixedRootJmt).is_err());
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(any(feature = "native-jmt-observed-retirement", feature = "native-jmt-mutation-memo"))]
     #[test]
     fn jmt_leaf_observations_match_the_record_read_control() -> Result<()> {
@@ -4690,7 +4798,7 @@ mod pipeline_store_tests {
         // order. JMT relocates that leaf before the deletion is processed.
         spec.development_cells.push((old.clone(), cell.clone()));
         let open = || Store::open_configured(
-            home.path(), &spec, Retention::Archive, false, None, true,
+            home.path(), &spec, Retention::Archive, false, None, CellStorage::VersionedJmt,
         );
         let mut store = open()?;
         let context = |view: &Store, time| {

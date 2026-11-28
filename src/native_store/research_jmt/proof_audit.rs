@@ -14,7 +14,7 @@ use jmt::{
 use sha2::{Digest, Sha256};
 use stem_ledger::patricia::{Key, Namespace, Patricia, Proof};
 
-use super::{CellAuditProofOptions, key};
+use super::{CellAuditProofOptions, read_key};
 use crate::native_store::{STATE_NODE, STATE_RECORD, node_storage, state_key};
 
 type Query = (Key, Option<Key>);
@@ -132,6 +132,7 @@ struct JmtReader<'a> {
     storage: &'a ProofStorage<'a>,
     cells: &'a Patricia,
     version: Version,
+    fixed_root: bool,
     limit: usize,
     nodes: RefCell<HashMap<NodeKey, Node>>,
     values: RefCell<Option<HashMap<Key, Option<Key>>>>,
@@ -148,7 +149,7 @@ impl TreeReader for JmtReader<'_> {
         }
         let fetched: Option<Node> = self
             .storage
-            .read(key(node)?, ReadKind::Node)?
+            .read(read_key(node, self.fixed_root, self.version)?, ReadKind::Node)?
             .as_deref()
             .map(borsh::from_slice)
             .transpose()?;
@@ -218,11 +219,13 @@ pub(super) fn jmt(
     root: Key,
     queries: &[Query],
     options: CellAuditProofOptions,
+    fixed_root: bool,
 ) -> Result<ProofStats> {
     let mut reader = JmtReader {
         storage,
         cells,
         version,
+        fixed_root,
         limit: 0,
         nodes: RefCell::default(),
         values: RefCell::default(),

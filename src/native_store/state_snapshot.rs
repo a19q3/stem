@@ -95,7 +95,7 @@ impl Store {
         trusted_app_hash: &Byte32,
         consensus: &[(Vec<u8>, Vec<u8>)],
     ) -> Result<()> {
-        ensure!(!self.research_jmt, "snapshot installation is outside the JMT comparison");
+        ensure!(!self.cell_storage.is_jmt(), "snapshot installation is outside the JMT comparison");
         ensure!(
             self.branch.is_empty()
                 && self.tip.context.height == 0

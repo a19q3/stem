@@ -456,3 +456,37 @@ The compile-checked mutation fixture compares zero, one and four cached
 nodes, exercises eviction, leaf retirement, a speculative ancestor,
 and exact roots and write batches. Runtime, replay and performance
 qualification are pending.
+
+### Fixed JMT root storage for empty Cell changes
+
+With the same `native-research-jmt` build, use `STEM_RESEARCH_JMT=1` for
+the versioned layout and `STEM_RESEARCH_JMT=fixed-root` for the candidate.
+Initialize a fresh database for each layout from the same genesis and
+signed corpus. The layouts have distinct database markers and require
+their corresponding mode on reopen.
+
+The candidate stores the encoded root node at a fixed physical key.
+An empty Cell delta verifies the parent root and reuses it without
+adding any JMT node writes to the batch. A nonempty delta replaces the
+root in the same durable batch as the Header and Tip, without the
+delete of a height-specific root key. Non-root nodes keep their
+versioned keys and existing reclamation rules. The JMT algorithm still
+uses the Header height as the logical version. Readers accept a root
+request only for their exact view height. A pinned database snapshot
+sees the root at acquisition, and speculative descendants read the
+latest applicable root write from their parent branch.
+
+Use the proof audit's `jmt_fixed_root` field to confirm the layout.
+Compare exact Headers and proof digests after reopening both stores.
+Keep Live Cell indexing, mutation memo, retirement mode, RocksDB
+configuration, and worker budget identical for the comparison. Measure
+the `cell_trie` logical batch bytes separately for empty and nonempty
+Cell deltas, then compare WAL and SST bytes, finality, recovery and
+proof verification. The expected savings are concentrated in blocks
+without Cell changes. Sustained churn still rewrites the root and
+retains the non-root storage costs of the versioned layout.
+
+The regression fixture covers empty and nonempty branches, deletion of
+the last Cells, overwrite while a reader pins the old root, layout
+selection on reopen, and matching Headers and proofs. Compilation checks
+the fixture. Runtime, replay and performance qualification are pending.
