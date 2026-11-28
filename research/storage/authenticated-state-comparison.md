@@ -178,7 +178,10 @@ sizes and other features fixed across the original resident layout,
 `native-verified-cell-nodes`, and `native-verified-cell-journal`. The
 [generated journal comparison](resident-patricia.md#generated-cell-node-journals)
 separates traversal, serialized WAL preparation and publication. The
-read-only audit reads durable nodes in every arm. Run the paired
+additional `native-compact-patricia-journal` arm keeps those settings
+fixed and changes the generated Patricia journal representation.
+Record its peak RSS and preparation separately. The read-only audit
+reads durable nodes in every arm. Run the paired
 comparison in both orders and compare actual offer, common confirmation,
 finality latency, backlog, RSS and the RocksDB metrics. Record genesis IDs
 and signed workload digests separately. Chain-specific Cell origins and
