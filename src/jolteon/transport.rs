@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use bytes::Buf;
 use prost::Message;
-use stem_stake::Hash32;
+use stem_stake::{Hash32, jolteon::Point};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -24,6 +24,7 @@ use super::{
         AUTHENTICATED_PEER, Authentication, CHALLENGE_BYTES, MAX_SIGNED_ENDPOINT_BYTES,
         SIGNED_CHALLENGE_BYTES,
     },
+    trace::{Reception, Tag, Trace},
     wire::{self, Frame},
 };
 
@@ -38,8 +39,21 @@ pub struct Incoming {
     pub reply: Option<oneshot::Sender<Vec<u8>>>,
     pub submit_received_at: Option<Instant>,
     pub control_received_at: Option<Instant>,
+    pub trace_read: Option<(Instant, usize)>,
     pub peer_key: Option<Hash32>,
     pub signed_endpoint: Option<Arc<Vec<u8>>>,
+}
+
+impl Incoming {
+    pub(super) fn reception(&self) -> Option<Reception> {
+        let (read, bytes) = self.trace_read?;
+        Some(Reception {
+            read,
+            bytes,
+            queued: self.control_received_at?,
+            handling: Instant::now(),
+        })
+    }
 }
 
 pub(super) struct Inbox {
@@ -96,9 +110,15 @@ impl Inbox {
     }
 }
 
+struct Outbound {
+    frame: Arc<Vec<u8>>,
+    kind: u32,
+    tag: Option<Tag>,
+}
+
 struct PeerQueues {
-    control: mpsc::Sender<Arc<Vec<u8>>>,
-    relay: mpsc::Sender<Arc<Vec<u8>>>,
+    control: mpsc::Sender<Outbound>,
+    relay: mpsc::Sender<Outbound>,
     tasks: [JoinHandle<()>; 2],
 }
 
@@ -112,10 +132,19 @@ impl PeerQueues {
         let (relay, relay_in) = mpsc::channel(QUEUE);
         // Independent streams also keep TCP backpressure off the control path.
         let tasks = [
-            tokio::spawn(send(address, control_in, traffic.clone(), endpoint_identity.clone())),
+            tokio::spawn(send(
+                address,
+                control_in,
+                traffic.clone(),
+                endpoint_identity.clone(),
+            )),
             tokio::spawn(send(address, relay_in, traffic.clone(), endpoint_identity)),
         ];
-        Self { control, relay, tasks }
+        Self {
+            control,
+            relay,
+            tasks,
+        }
     }
 }
 
@@ -138,6 +167,46 @@ pub struct Traffic {
     pub sent: AtomicU64,
     pub received: AtomicU64,
     pub dropped: AtomicU64,
+    pub(super) trace: Option<Trace>,
+    kinds: [KindTraffic; wire::QUERY as usize + 1],
+}
+
+#[derive(Default)]
+struct KindTraffic {
+    sent_frames: AtomicU64,
+    sent_bytes: AtomicU64,
+    received_frames: AtomicU64,
+    received_bytes: AtomicU64,
+    enqueue_drops: AtomicU64,
+    write_drops: AtomicU64,
+}
+
+impl Traffic {
+    fn kind(&self, kind: u32) -> Option<&KindTraffic> {
+        self.trace.as_ref()?;
+        self.kinds.get(kind as usize)
+    }
+
+    pub(super) fn by_kind(&self) -> Option<Vec<serde_json::Value>> {
+        self.trace.as_ref()?;
+        Some(
+            self.kinds
+                .iter()
+                .enumerate()
+                .map(|(kind, row)| {
+                    serde_json::json!({
+                        "kind": kind,
+                        "sent_frames": row.sent_frames.load(Ordering::Relaxed),
+                        "sent_bytes": row.sent_bytes.load(Ordering::Relaxed),
+                        "received_frames": row.received_frames.load(Ordering::Relaxed),
+                        "received_bytes": row.received_bytes.load(Ordering::Relaxed),
+                        "enqueue_drops": row.enqueue_drops.load(Ordering::Relaxed),
+                        "write_drops": row.write_drops.load(Ordering::Relaxed),
+                    })
+                })
+                .collect(),
+        )
+    }
 }
 
 pub struct Network {
@@ -154,6 +223,7 @@ impl Network {
         addresses: &[SocketAddr],
         epoch: u64,
         authentication: Option<Authentication>,
+        trace: Option<Trace>,
     ) -> Result<(Self, Inbox)> {
         let (control_sender, control) = mpsc::channel(INBOUND_QUEUE);
         let (application_sender, application) = mpsc::channel(INBOUND_QUEUE);
@@ -162,12 +232,19 @@ impl Network {
             application: application_sender,
         };
         let listener = TcpListener::bind(addresses[usize::from(own)]).await?;
-        let traffic = Arc::new(Traffic::default());
+        let traffic = Arc::new(Traffic {
+            trace,
+            ..Traffic::default()
+        });
         let counters = traffic.clone();
         let authentication = authentication.map(Arc::new);
         let inbound_authentication = authentication.clone();
-        let additional_peers = authentication.as_ref().map_or(0, |_| 3 * stem_stake::jolteon::MAX_MEMBERS);
-        let limit = Arc::new(Semaphore::new(4 * (addresses.len() + additional_peers) + 64));
+        let additional_peers = authentication
+            .as_ref()
+            .map_or(0, |_| 3 * stem_stake::jolteon::MAX_MEMBERS);
+        let limit = Arc::new(Semaphore::new(
+            4 * (addresses.len() + additional_peers) + 64,
+        ));
         tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let Ok(permit) = limit.clone().try_acquire_owned() else {
@@ -185,7 +262,9 @@ impl Network {
         let peers = addresses
             .iter()
             .enumerate()
-            .map(|(index, &addr)| (index != usize::from(own)).then(|| PeerQueues::connect(addr, &traffic, None)))
+            .map(|(index, &addr)| {
+                (index != usize::from(own)).then(|| PeerQueues::connect(addr, &traffic, None))
+            })
             .collect();
         Ok((
             Self {
@@ -254,8 +333,24 @@ impl Network {
     }
 
     pub(super) fn broadcast_frame(&self, kind: u32, msg: Arc<Vec<u8>>) {
-        for peer in self.peers.iter().flatten() {
-            self.enqueue(peer, kind, msg.clone());
+        self.broadcast_tagged(kind, msg, None);
+    }
+
+    pub(super) fn broadcast_point(&self, kind: u32, point: Point, body: Vec<u8>) {
+        self.broadcast_tagged(kind, self.frame(self.epoch, kind, body), Some(point));
+    }
+
+    fn broadcast_tagged(&self, kind: u32, msg: Arc<Vec<u8>>, point: Option<Point>) {
+        for (id, peer) in self.peers.iter().enumerate() {
+            if let Some(peer) = peer {
+                let tag = point.map(|point| Tag {
+                    epoch: self.epoch,
+                    point,
+                    kind,
+                    peer: id as u16,
+                });
+                self.enqueue(peer, kind, msg.clone(), tag);
+            }
         }
     }
 
@@ -265,7 +360,30 @@ impl Network {
 
     pub fn send_at(&self, epoch: u64, peer: u16, kind: u32, body: Vec<u8>) {
         if let Some(Some(peer)) = self.peers.get(usize::from(peer)) {
-            self.enqueue(peer, kind, self.frame(epoch, kind, body));
+            self.enqueue(peer, kind, self.frame(epoch, kind, body), None);
+        }
+    }
+
+    pub(super) fn send_point_at(
+        &self,
+        epoch: u64,
+        peer: u16,
+        kind: u32,
+        point: Point,
+        body: Vec<u8>,
+    ) {
+        if let Some(Some(queue)) = self.peers.get(usize::from(peer)) {
+            self.enqueue(
+                queue,
+                kind,
+                self.frame(epoch, kind, body),
+                Some(Tag {
+                    epoch,
+                    point,
+                    kind,
+                    peer,
+                }),
+            );
         }
     }
 
@@ -278,19 +396,33 @@ impl Network {
             {
                 let message = frame
                     .get_or_insert_with(|| self.frame(self.epoch, wire::RELAY_TX, body.clone()));
-                self.enqueue(peer, wire::RELAY_TX, message.clone());
+                self.enqueue(peer, wire::RELAY_TX, message.clone(), None);
             }
         }
     }
 
-    fn enqueue(&self, peer: &PeerQueues, kind: u32, frame: Arc<Vec<u8>>) {
+    fn enqueue(&self, peer: &PeerQueues, kind: u32, frame: Arc<Vec<u8>>, tag: Option<Tag>) {
         let queue = if kind == wire::RELAY_TX {
             &peer.relay
         } else {
             &peer.control
         };
-        if queue.try_send(frame).is_err() {
+        let queued = self
+            .traffic
+            .trace
+            .as_ref()
+            .zip(tag)
+            .map(|(trace, tag)| (trace, tag, Instant::now(), frame.len() + 4));
+        if queue.try_send(Outbound { frame, kind, tag }).is_err() {
             self.traffic.dropped.fetch_add(1, Ordering::Relaxed);
+            if let Some(row) = self.traffic.kind(kind) {
+                row.enqueue_drops.fetch_add(1, Ordering::Relaxed);
+            }
+            if let Some((trace, tag, time, bytes)) = queued {
+                trace.wire(tag, "tx_queue_drop", time, bytes);
+            }
+        } else if let Some((trace, tag, time, bytes)) = queued {
+            trace.wire(tag, "tx_queued", time, bytes);
         }
     }
 }
@@ -310,10 +442,17 @@ async fn receive(
             wire::SUBMIT_IDLE
         };
         let raw = timeout(frame_timeout, read(&mut stream)).await??;
+        let bytes = raw.len() + 4;
+        let trace_read = traffic.trace.as_ref().map(|_| (Instant::now(), bytes));
         traffic
             .received
             .fetch_add(4 + raw.len() as u64, Ordering::Relaxed);
         let mut frame: Frame = wire::canonical_bytes(raw.into())?;
+        if let Some(row) = traffic.kind(frame.kind) {
+            row.received_frames.fetch_add(1, Ordering::Relaxed);
+            row.received_bytes
+                .fetch_add(bytes as u64, Ordering::Relaxed);
+        }
         let first_frame = std::mem::replace(&mut first, false);
         if submissions != 0 {
             ensure!(
@@ -349,6 +488,7 @@ async fn receive(
                     reply: Some(sender),
                     submit_received_at,
                     control_received_at: None,
+                    trace_read: None,
                     peer_key: None,
                     signed_endpoint: None,
                 })
@@ -400,6 +540,7 @@ async fn receive(
                 reply: None,
                 submit_received_at: None,
                 control_received_at,
+                trace_read,
                 peer_key,
                 signed_endpoint,
             })
@@ -409,12 +550,17 @@ async fn receive(
 
 async fn send(
     address: SocketAddr,
-    mut frames: mpsc::Receiver<Arc<Vec<u8>>>,
+    mut frames: mpsc::Receiver<Outbound>,
     traffic: Arc<Traffic>,
     endpoint_identity: Option<(Hash32, Arc<Authentication>)>,
 ) {
     let mut socket = None;
-    while let Some(frame) = frames.recv().await {
+    while let Some(Outbound { frame, kind, tag }) = frames.recv().await {
+        let bytes = frame.len() + 4;
+        let trace = traffic.trace.as_ref().zip(tag);
+        if let Some((trace, tag)) = trace {
+            trace.wire(tag, "tx_dequeued", Instant::now(), bytes);
+        }
         if socket.is_none() {
             socket = timeout(Duration::from_millis(200), TcpStream::connect(address))
                 .await
@@ -429,15 +575,40 @@ async fn send(
                 }
             }
         }
-        if let Some(stream) = &mut socket
-            && matches!(timeout(IO_TIMEOUT, write(stream, &frame)).await, Ok(Ok(())))
-        {
+        let written = if let Some(stream) = &mut socket {
+            if let Some((trace, tag)) = trace {
+                trace.wire(tag, "tx_write_begin", Instant::now(), bytes);
+            }
+            matches!(timeout(IO_TIMEOUT, write(stream, &frame)).await, Ok(Ok(())))
+        } else {
+            false
+        };
+        if let Some((trace, tag)) = trace {
+            trace.wire(
+                tag,
+                if written {
+                    "tx_kernel_write_done"
+                } else {
+                    "tx_write_drop"
+                },
+                Instant::now(),
+                bytes,
+            );
+        }
+        if written {
             traffic
                 .sent
                 .fetch_add(4 + frame.len() as u64, Ordering::Relaxed);
+            if let Some(row) = traffic.kind(kind) {
+                row.sent_frames.fetch_add(1, Ordering::Relaxed);
+                row.sent_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            }
         } else {
             socket = None;
             traffic.dropped.fetch_add(1, Ordering::Relaxed);
+            if let Some(row) = traffic.kind(kind) {
+                row.write_drops.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -547,6 +718,7 @@ mod tests {
             reply: None,
             submit_received_at: None,
             control_received_at: None,
+            trace_read: None,
             peer_key: None,
             signed_endpoint: None,
         };
@@ -627,7 +799,8 @@ mod tests {
     async fn relay_backpressure_leaves_a_separate_control_socket() -> Result<()> {
         let peer = TcpListener::bind("127.0.0.1:0").await?;
         let local = "127.0.0.1:0".parse()?;
-        let (network, _inbox) = Network::listen(0, &[local, peer.local_addr()?], 3, None).await?;
+        let (network, _inbox) =
+            Network::listen(0, &[local, peer.local_addr()?], 3, None, None).await?;
         let payload = vec![1; stem_ledger::MAX_TRANSACTION_BYTES];
         network.send(1, wire::RELAY_TX, payload.clone());
         let (_unread_relay, _) = timeout(Duration::from_secs(2), peer.accept()).await??;

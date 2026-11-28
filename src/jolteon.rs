@@ -42,6 +42,7 @@ mod proposal_pipeline;
 mod recovery;
 mod relay_attribution;
 pub mod snapshot;
+mod trace;
 mod transport;
 mod wire;
 
@@ -64,6 +65,7 @@ const MAX_MEMPOOL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROPOSAL_BYTES: u64 = 16 * 1024 * 1024;
 const RELAY_RETRIES_PER_TICK: usize = 8;
 const MAX_VERIFICATION_CACHE_ENTRIES: usize = 131_072;
+const ANNOUNCE_INTERVAL: Duration = Duration::from_millis(350);
 
 #[cfg(any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"))]
 type CommitWindow = Arc<std::sync::OnceLock<(Instant, Duration)>>;
@@ -88,6 +90,9 @@ pub struct Config {
     pub discovery_address: Option<SocketAddr>,
     pub view_timeout_ms: u64,
     pub proposal_interval_ms: u64,
+    /// Minimum spacing between proactive full proposal broadcasts.
+    #[serde(default)]
+    pub proposal_retry_interval_ms: Option<u64>,
     #[serde(default = "worker_count")]
     pub vm_workers: usize,
     /// Local successful script verifications retained by the LRU.
@@ -99,6 +104,9 @@ pub struct Config {
     /// Track first and repeated local relay admissions for a controlled workload.
     #[serde(default)]
     pub measure_relay_admission: bool,
+    /// Create a bounded local proposal and vote timing trace.
+    #[serde(default)]
+    pub consensus_trace_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -225,6 +233,7 @@ struct Replica {
     since: Instant,
     timeout: Duration,
     proposal_interval: Duration,
+    proposal_retry: Option<ProposalRetry>,
     backoff: u32,
     announced: Instant,
     handoff_requested: Option<Instant>,
@@ -250,6 +259,19 @@ struct Replica {
     timeout_views: VecDeque<u64>,
     last_untimely_view: u64,
     recovery: Recovery,
+}
+
+struct ProposalRetry {
+    interval: Duration,
+    last: Option<(u64, Point, Instant)>,
+}
+
+impl ProposalRetry {
+    fn due(&self, epoch: u64, point: Point, now: Instant) -> bool {
+        self.last.is_none_or(|(last_epoch, last_point, sent)| {
+            (epoch, point) != (last_epoch, last_point) || now.duration_since(sent) >= self.interval
+        })
+    }
 }
 
 pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
@@ -329,6 +351,17 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
             && config.proposal_interval_ms < config.view_timeout_ms / 2
             && (1..=64).contains(&config.vm_workers),
         "invalid replica timing or VM worker configuration"
+    );
+    let proposal_retry = config.proposal_retry_interval_ms.map(|ms| ProposalRetry {
+        interval: Duration::from_millis(ms),
+        last: None,
+    });
+    ensure!(
+        proposal_retry.as_ref().is_none_or(|retry| {
+            (ANNOUNCE_INTERVAL..=Duration::from_millis(config.view_timeout_ms))
+                .contains(&retry.interval)
+        }),
+        "proposal retry interval must be between the announce interval and view timeout"
     );
 
     let identity = journal_identity(&genesis_committee, public);
@@ -450,8 +483,12 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
         .enable_all()
         .build()?
         .block_on(async {
+            let trace = config.consensus_trace_path.as_deref()
+                .map(|path| trace::Trace::open(path, directory.own))
+                .transpose()
+                .context("open local consensus trace")?;
             let (net, mut incoming) =
-                Network::listen(directory.own, &addresses, committee.epoch(), auth).await?;
+                Network::listen(directory.own, &addresses, committee.epoch(), auth, trace).await?;
             #[cfg(feature = "jolteon-admission-pipeline")]
             let (pipeline, mut admission_done) = admission_pipeline::Pipeline::start()?;
             let workers = Arc::new(rayon::ThreadPoolBuilder::new()
@@ -490,6 +527,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 pending,
                 timeout: Duration::from_millis(config.view_timeout_ms),
                 proposal_interval: Duration::from_millis(config.proposal_interval_ms),
+                proposal_retry,
                 backoff: 0,
                 #[cfg(not(all(
                     feature = "jolteon-candidate-pipeline",
@@ -580,6 +618,38 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
 }
 
 impl Replica {
+    fn trace_at(&self, point: Point, stage: &'static str, when: Instant, peer: Option<u16>) {
+        if let Some(trace) = &self.net.traffic.trace {
+            trace.local(self.committee.epoch(), point, stage, when, peer);
+        }
+    }
+
+    fn trace_now(&self, point: Point, stage: &'static str, peer: Option<u16>) {
+        if self.net.traffic.trace.is_some() {
+            self.trace_at(point, stage, Instant::now(), peer);
+        }
+    }
+
+    fn trace_reception(
+        &self,
+        point: Point,
+        kind: u32,
+        peer: u16,
+        reception: Option<trace::Reception>,
+    ) {
+        if let (Some(trace), Some(timing)) = (&self.net.traffic.trace, reception) {
+            timing.record(
+                trace,
+                trace::Tag {
+                    epoch: self.committee.epoch(),
+                    point,
+                    kind,
+                    peer,
+                },
+            );
+        }
+    }
+
     fn save(&self, proposal: Option<(Point, &wire::Proposal)>) -> Result<()> {
         let mut records = vec![(STATE.to_vec(), self.journal.encode_to_vec())];
         if let Some((point, proposal)) = proposal {
@@ -628,6 +698,7 @@ impl Replica {
             self.journal.high = quorum.encode();
             self.high = quorum;
             self.save(None)?;
+            self.trace_now(self.high.point, "quorum_durable", None);
             self.enter();
         }
         Ok(())
@@ -718,8 +789,17 @@ impl Replica {
         ))
     }
 
-    fn admit_proposal(&mut self, proposal: wire::Proposal, peer: u16) -> Result<()> {
+    fn admit_proposal(
+        &mut self,
+        proposal: wire::Proposal,
+        peer: u16,
+        reception: Option<trace::Reception>,
+    ) -> Result<()> {
         let (point, checked, tc) = self.check_proposal(proposal)?;
+        self.trace_reception(point, wire::PROPOSAL, peer, reception);
+        if reception.is_some() {
+            self.trace_now(point, "proposal_checked", Some(peer));
+        }
         if point.view <= self.finalized.view {
             return Ok(());
         }
@@ -1228,8 +1308,10 @@ impl Replica {
         if !seal && !self.observe_time(point.view, time) {
             return Ok(());
         }
+        self.trace_now(point, "vote_ready", None);
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &self.candidates[&point].proposal.wire)))?;
+        self.trace_now(point, "vote_durable", None);
         self.dispatch_vote(point)
     }
 
@@ -1252,13 +1334,16 @@ impl Replica {
         let body = [point.encode().as_slice(), &share.encode()].concat();
         let collector = self.committee.leader(point.view)?;
         let next = self.committee.leader(point.view.saturating_add(1))?;
+        self.trace_now(point, "vote_dispatch", Some(member));
+        let epoch = self.committee.epoch();
         if let Some(peer) = self.routes[usize::from(collector)] {
-            self.net.send(peer, wire::VOTE, body.clone());
+            self.net
+                .send_point_at(epoch, peer, wire::VOTE, point, body.clone());
         }
         if next != collector
             && let Some(peer) = self.routes[usize::from(next)]
         {
-            self.net.send(peer, wire::VOTE, body);
+            self.net.send_point_at(epoch, peer, wire::VOTE, point, body);
         }
         if member == collector || member == next {
             self.accept_vote(point, share)?;
@@ -1308,10 +1393,13 @@ impl Replica {
         if point.view <= self.high.point.view {
             return Ok(());
         }
+        self.trace_now(point, "vote_counted", Some(share.member));
         let votes = self.votes.entry(point).or_default();
         votes.insert(share.member, share.signature);
-        if let Ok(qc) = self.committee.assemble_quorum(point, votes) {
-            self.net.broadcast(wire::QUORUM, qc.encode());
+        let quorum = self.committee.assemble_quorum(point, votes);
+        if let Ok(qc) = quorum {
+            self.trace_now(point, "quorum_assembled", Some(share.member));
+            self.net.broadcast_point(wire::QUORUM, point, qc.encode());
             self.learn_quorum(qc)?;
         }
         Ok(())
@@ -1533,15 +1621,24 @@ impl Replica {
                 .to_vec(),
             seal,
         };
-        self.admit_proposal(proposal.clone(), self.directory.own)?;
+        self.trace_now(point, "proposal_prepared", None);
+        self.admit_proposal(proposal.clone(), self.directory.own, None)?;
         self.candidates
             .get_mut(&point)
             .context("local proposal was not admitted")?
             .execution = execution;
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &proposal)))?;
-        self.net.broadcast(wire::PROPOSAL, proposal.encode_to_vec());
+        self.trace_now(point, "proposal_durable", None);
+        self.broadcast_proposal(point, proposal.encode_to_vec());
         self.dispatch_vote(point)
+    }
+
+    fn broadcast_proposal(&mut self, point: Point, body: Vec<u8>) {
+        if let Some(retry) = &mut self.proposal_retry {
+            retry.last = Some((self.committee.epoch(), point, Instant::now()));
+        }
+        self.net.broadcast_point(wire::PROPOSAL, point, body);
     }
 
     async fn tick(&mut self, inbox: &mut transport::Inbox) -> Result<()> {
@@ -1562,7 +1659,7 @@ impl Replica {
         } else if self.since.elapsed() >= self.proposal_interval {
             self.propose()?;
         }
-        if self.announced.elapsed() >= Duration::from_millis(350) {
+        if self.announced.elapsed() >= ANNOUNCE_INTERVAL {
             self.announced = Instant::now();
             #[cfg(feature = "jolteon-certificate-experiment")]
             self.certificate_experiment.quorum_frame.send(
@@ -1595,13 +1692,17 @@ impl Replica {
             if !self.journal.vote.is_empty() {
                 let vote = Point::decode(&self.journal.vote)?;
                 if vote.view == self.view {
-                    if let Some(raw) = self
-                        .store
-                        .consensus_record(&proposal_key(self.committee.epoch(), vote))
-                        .context(StorageFault)?
+                    if self
+                        .proposal_retry
+                        .as_ref()
+                        .is_none_or(|retry| retry.due(self.committee.epoch(), vote, Instant::now()))
+                        && let Some(raw) = self
+                            .store
+                            .consensus_record(&proposal_key(self.committee.epoch(), vote))
+                            .context(StorageFault)?
                         && Some(self.committee.leader(vote.view)?) == self.member
                     {
-                        self.net.broadcast(wire::PROPOSAL, raw);
+                        self.broadcast_proposal(vote, raw);
                     }
                     self.dispatch_vote(vote)?;
                 }
@@ -1673,6 +1774,7 @@ impl Replica {
     }
 
     fn handle(&mut self, event: Incoming) -> Result<()> {
+        let reception = event.reception();
         if let Some(received) = event.control_received_at {
             self.execution.control_queue.observe(received.elapsed());
         }
@@ -1716,7 +1818,8 @@ impl Replica {
                 .consensus_record(&proposal_key(frame.epoch, point))
                 .context(StorageFault)?
             {
-                self.net.send_at(frame.epoch, peer, wire::PROPOSAL, raw);
+                self.net
+                    .send_point_at(frame.epoch, peer, wire::PROPOSAL, point, raw);
             }
             return Ok(());
         }
@@ -1754,18 +1857,23 @@ impl Replica {
                     self.handoff_tip = Some(seal);
                 }
             }
-            wire::PROPOSAL => self.admit_proposal(wire::canonical_bytes(frame.body)?, peer)?,
+            wire::PROPOSAL => {
+                self.admit_proposal(wire::canonical_bytes(frame.body)?, peer, reception)?
+            }
             wire::REPLAY => self.accept_replay(peer, &frame.body)?,
             wire::VOTE => {
                 let (point, share) = frame
                     .body
                     .split_at_checked(Point::SIZE)
                     .context("truncated vote")?;
-                self.accept_vote(Point::decode(point)?, Share::decode(share)?)?;
+                let point = Point::decode(point)?;
+                self.trace_reception(point, wire::VOTE, peer, reception);
+                self.accept_vote(point, Share::decode(share)?)?;
             }
             wire::QUORUM => {
                 let qc = self.qc(&frame.body)?;
                 let point = qc.point;
+                self.trace_reception(point, wire::QUORUM, peer, reception);
                 self.learn_quorum(qc)?;
                 if point.view > self.finalized.view && !self.candidates.contains_key(&point) {
                     self.request(point, Some(peer));
@@ -1915,6 +2023,8 @@ impl Replica {
                     "mempool_max_bytes": self.mempool_max_bytes,
                     "admission": self.admission,
                     "relay_attribution": self.relay_attribution.as_ref().map(|m| m.metrics()),
+                    "consensus_trace": self.net.traffic.trace.as_ref().map(trace::Trace::status),
+                    "wire_traffic_by_kind": self.net.traffic.by_kind(),
                     "execution": self.execution,
                     "verification_cache": self.store.verification_cache_stats(),
                     "live_cell_index": self.store.live_cell_index_status(),
@@ -2072,7 +2182,7 @@ fn now_ms() -> Result<u64> {
 
 #[cfg(test)]
 mod time_tests {
-    use super::timely;
+    use super::{Duration, Instant, Point, ProposalRetry, timely};
 
     #[test]
     fn fresh_vote_window_is_bounded_in_both_directions() {
@@ -2084,5 +2194,32 @@ mod time_tests {
         assert!(!timely(151_001, now));
         assert!(timely(0, 0));
         assert!(timely(u64::MAX, u64::MAX));
+    }
+
+    #[test]
+    fn proposal_retry_spacing_applies_only_to_the_same_epoch_and_point() {
+        let now = Instant::now();
+        let point = Point {
+            view: 9,
+            parent_view: 8,
+            header: [1; 32],
+        };
+        let mut retry = ProposalRetry {
+            interval: Duration::from_secs(1),
+            last: None,
+        };
+        assert!(retry.due(2, point, now));
+        retry.last = Some((2, point, now));
+        assert!(!retry.due(2, point, now + Duration::from_millis(999)));
+        assert!(retry.due(2, point, now + retry.interval));
+        assert!(retry.due(3, point, now));
+        assert!(retry.due(
+            2,
+            Point {
+                header: [2; 32],
+                ..point
+            },
+            now
+        ));
     }
 }

@@ -167,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn repeated_frames_match_canonical_encoding() {
-        let (net, _inbox) = Network::listen(0, &["127.0.0.1:0".parse().unwrap()], 3, None)
+        let (net, _inbox) = Network::listen(0, &["127.0.0.1:0".parse().unwrap()], 3, None, None)
             .await
             .unwrap();
         let mut cache = FrameCache::default();

@@ -251,7 +251,7 @@ mod tests {
         let key = [2; 32];
         let incoming = Member { key, power: 3 };
         let addresses = ["127.0.0.1:0".parse()?];
-        let (mut network, _inbox) = Network::listen(0, &addresses, 0, None).await?;
+        let (mut network, _inbox) = Network::listen(0, &addresses, 0, None, None).await?;
         let mut discovery = Discovery::new(None, addresses.len(), Vec::new());
         assert!(!discovery.eligible(&key, &[]));
         assert!(discovery.eligible(&key, std::slice::from_ref(&incoming)));

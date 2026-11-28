@@ -230,6 +230,9 @@ impl Replica {
                     jobs.commit_overlap_applied = jobs.commit_overlap_applied.saturating_add(1);
                     jobs.commit_overlap_us = jobs.commit_overlap_us.saturating_add(overlap.as_micros() as u64);
                 }
+                self.trace_at(binding.target, "candidate_work_begin", work.0, None);
+                self.trace_at(binding.target, "candidate_work_end", work.0 + work.1, None);
+                self.trace_now(binding.target, "candidate_applied", None);
             }
             Err(error) => {
                 // Keep a deterministic invalid candidate from consuming the one job every tick.

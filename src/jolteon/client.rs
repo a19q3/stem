@@ -227,6 +227,10 @@ pub struct Status {
     pub mempool_max_bytes: Option<usize>,
     pub admission: Option<AdmissionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consensus_trace: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_traffic_by_kind: Option<Vec<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_attribution: Option<super::RelayAttributionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_pipeline: Option<AdmissionPipelineMetrics>,

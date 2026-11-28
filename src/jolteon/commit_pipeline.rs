@@ -142,9 +142,16 @@ impl Replica {
         }
         // An exact already-journaled parent needs no quorum or timeout write.
         // Cache the verified proposal without entering a vote or changing view.
+        let reception = event.reception();
         let result = self
             .check_proposal(proposal)
-            .and_then(|(point, checked, _)| self.cache_proposal(point, checked, peer));
+            .and_then(|(point, checked, _)| {
+                self.trace_reception(point, wire::PROPOSAL, peer, reception);
+                if reception.is_some() {
+                    self.trace_now(point, "proposal_checked", Some(peer));
+                }
+                self.cache_proposal(point, checked, peer)
+            });
         if result.is_err() {
             self.rejected = self.rejected.saturating_add(1);
         }
