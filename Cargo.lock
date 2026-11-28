@@ -3830,6 +3830,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "smallvec",
  "stem-bridge-wire",
  "stem-ledger",
  "stem-stake",

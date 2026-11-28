@@ -245,9 +245,15 @@ impl Executed {
     }
 }
 
+#[cfg(feature = "native-compact-cell-trial-edits")]
+pub(super) type TrialCellEdits = smallvec::SmallVec<[super::CellEdit; 4]>;
+
 struct Effects {
     receipt: Receipt,
+    #[cfg(not(feature = "native-compact-cell-trial-edits"))]
     cells: LiveChanges,
+    #[cfg(feature = "native-compact-cell-trial-edits")]
+    cells: TrialCellEdits,
     remaining: Budget,
 }
 
@@ -556,6 +562,8 @@ impl Store {
     ) -> Result<Effects> {
         let mut remaining = slot;
         let mut work = self.overlay(None);
+        #[cfg(feature = "native-compact-cell-trial-edits")]
+        let mut cells = TrialCellEdits::new();
         let receipt = self.stage_transaction(
             tx,
             block,
@@ -569,10 +577,16 @@ impl Store {
             },
             None,
             Some(view),
+            #[cfg(feature = "native-compact-cell-trial-edits")]
+            Some(&mut cells),
         )?;
+        #[cfg(feature = "native-compact-cell-trial-edits")]
+        debug_assert!(work.live.is_empty());
+        #[cfg(not(feature = "native-compact-cell-trial-edits"))]
+        let cells = work.live;
         Ok(Effects {
             receipt,
-            cells: work.live,
+            cells,
             remaining,
         })
     }

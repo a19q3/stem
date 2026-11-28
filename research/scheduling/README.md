@@ -100,6 +100,25 @@ CXXFLAGS='-include cstdint' cargo test --locked --release -p stem-vm --test nati
 taskset -c 0-31 /usr/bin/time -v /path/to/native-test-binary measure_resolved_job_schedules --ignored --nocapture
 ```
 
+## Inline Cell changes from worker trials
+
+The optional `native-compact-cell-trial-edits` feature keeps up to two
+validated output edits inline and returns up to four combined edits from
+an ordinary Cell worker without allocating a per-trial tree. Larger
+transactions spill both buffers as needed. Workers only hand back edits
+after verification. The ordered coordinator applies input deletions and
+output creations to the same block overlay after it has accepted the
+dependencies and actual resource charges.
+
+Compare this feature in isolation with either fixed windows or rolling
+Leader and Follower execution. The serial, Leader and Follower fixture
+includes a transaction whose edits exceed both inline buffers. For a
+performance comparison, include cache-hot payments and contracts with
+several outputs, and record CPU time, allocations, worker preparation
+time and memory. Inline buffers enlarge each work result while reducing
+small allocations. The builds and fixtures are compile-checked. Runtime
+and replay evidence are pending.
+
 ## Rolling Leader preparation
 
 The `native-rolling-leader-execution` feature extends the bounded
