@@ -6,6 +6,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | --- | --- | --- |
 | Cell execution and material sharing | `1a50505` | Fixed-window or rolling Follower, parallel Leader, and immutable transaction material [Execution notes](scheduling/README.md) |
 | Rolling Leader | `native-rolling-leader-execution` | Bounded worker refill while preserving greedy selection [Comparison notes](scheduling/README.md#rolling-leader-preparation) |
+| Inline worker Cell edits | `native-compact-cell-trial-edits` | Return small validated effects without an intermediate tree [Comparison notes](scheduling/README.md#inline-cell-changes-from-worker-trials) |
 | Reuse parent-spend rejections | `native-reuse-parent-spend-rejections` | Avoid re-resolving an exact parent spend after a failed Leader trial [Comparison notes](scheduling/README.md#reusing-a-parallel-rejection-for-an-exact-parent-spend) |
 | Reuse after ordered Cell settlement | `native-reuse-ordered-cell-writes` | Keep matching speculative consumers after an ordinary producer falls back [Comparison notes](scheduling/README.md#reusing-ordered-cell-writes) |
 | Incremental Cell projection | `native-incremental-cell-projection` | Publish declaration prefixes as rolling tasks are submitted [Comparison notes](scheduling/README.md#incremental-projection-in-the-rolling-schedulers) |
@@ -61,6 +62,7 @@ cells=native-rolling-cell-execution,native-leader-dependency-execution,native-ex
 dependencies=native-shared-cell-deps
 inline_resolution=native-inline-cell-resolution
 rolling_leader=native-rolling-leader-execution
+compact_trial_edits=native-compact-cell-trial-edits
 parent_spend_reuse=native-reuse-parent-spend-rejections
 ordered_cells=native-reuse-ordered-cell-writes
 incremental_projection=native-incremental-cell-projection
@@ -109,6 +111,7 @@ build cell-execution --features "$cells"
 build shared-dependencies --features "$cells,$dependencies"
 build inline-resolution --features "$cells,$inline_resolution"
 build rolling-leader --features "$cells,$rolling_leader"
+build compact-trial-edits --features "$cells,$rolling_leader,$compact_trial_edits"
 build parent-spend-reuse --features "$cells,$rolling_leader,$parent_spend_reuse"
 build ordered-cell-writes --features "$cells,$rolling_leader,$ordered_cells"
 build incremental-projection --features "$cells,$rolling_leader,$incremental_projection"
@@ -146,7 +149,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

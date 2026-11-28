@@ -70,6 +70,7 @@ native-reuse-ordered-cell-writes = []
 native-incremental-cell-projection = []
 native-reclaim-cell-projection = ["native-incremental-cell-projection", "native-reuse-ordered-cell-writes"]
 native-execution-material-cache = ["stem-ledger/execution-material-cache"]
+native-compact-cell-trial-edits = ["dep:smallvec"]
 
 [dependencies]
 anyhow.workspace = true
@@ -97,6 +98,7 @@ reqwest.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
+smallvec = { version = "1.15", optional = true }
 tendermint-proto = "=0.40.4"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

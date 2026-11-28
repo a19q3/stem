@@ -133,6 +133,8 @@ impl Store {
                         |resolved, limit| self.cache.verify(resolved, limit, false),
                         None,
                         Some(canonical),
+                        #[cfg(feature = "native-compact-cell-trial-edits")]
+                        None,
                     )?;
                     (receipt, ProposalStep::Ordered)
                 };

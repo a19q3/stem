@@ -733,7 +733,12 @@ pub struct PinnedCellCacheStatus {
     pub capacity_flushes: u64,
 }
 
+type CellEdit = (OutPoint, Option<LiveCell>);
 type LiveChanges = BTreeMap<OutPoint, Option<LiveCell>>;
+#[cfg(feature = "native-compact-cell-trial-edits")]
+type CellOutputEdits = smallvec::SmallVec<[CellEdit; 2]>;
+#[cfg(not(feature = "native-compact-cell-trial-edits"))]
+type CellOutputEdits = Vec<CellEdit>;
 
 pub struct Prepared {
     parent: Byte32,
@@ -2793,6 +2798,8 @@ impl Store {
             (Some(receipt), _) => Ok(receipt),
             (None, Some(view)) => self.stage_transaction(
                 tx, block, origin, budget, overlay, None, verify, None, Some(view),
+                #[cfg(feature = "native-compact-cell-trial-edits")]
+                None,
             ),
             (None, None) => self.stage(tx, block, origin, budget, overlay, material, verify),
         };
@@ -2980,6 +2987,8 @@ impl Store {
             verify,
             None,
             None,
+            #[cfg(feature = "native-compact-cell-trial-edits")]
+            None,
         )
     }
 
@@ -3023,6 +3032,8 @@ impl Store {
                             extra_bytes: if index == 0 { extra_bytes } else { 0 },
                         }),
                         None,
+                        #[cfg(feature = "native-compact-cell-trial-edits")]
+                        None,
                     )
                     .with_context(|| format!("Lineage batch member {index}"))?;
                 receipt.fee = receipt
@@ -3060,6 +3071,8 @@ impl Store {
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
         batch: Option<LineageBatchMember<'_>>,
         preceding: Option<&PrecedingCells<'_>>,
+        #[cfg(feature = "native-compact-cell-trial-edits")]
+        trial_edits: Option<&mut cell_execution::TrialCellEdits>,
     ) -> Result<Receipt> {
         self.check_preparation_cancelled()?;
         let context = block.candidate();
@@ -3327,7 +3340,7 @@ impl Store {
                     }),
                 ))
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<CellOutputEdits>>()?;
         let fee = resolved.fee();
         let deletion_bytes = resolved.inputs().len() as u64 * OutPoint::TOTAL_SIZE as u64;
         charge(
@@ -3409,6 +3422,8 @@ impl Store {
                             verify,
                             None,
                             preceding,
+                            #[cfg(feature = "native-compact-cell-trial-edits")]
+                            trial_edits,
                         );
                     }
                 }
@@ -3457,6 +3472,14 @@ impl Store {
             member.journal.live.write(live, cell_changes);
             member.journal.lineages.write(lineages, lineage_changes);
         } else {
+            #[cfg(feature = "native-compact-cell-trial-edits")]
+            if let Some(edits) = trial_edits {
+                // Trials have a private overlay and only publish after adoption.
+                edits.extend(cell_changes);
+            } else {
+                live.extend(cell_changes);
+            }
+            #[cfg(not(feature = "native-compact-cell-trial-edits"))]
             live.extend(cell_changes);
             lineages.extend(lineage_changes);
             if let Some(change) = keeper_change {
@@ -4608,6 +4631,37 @@ mod pipeline_store_tests {
                 scan.rolling_cells.projected_transactions,
                 if cfg!(feature = "native-incremental-cell-projection") { 3 } else { 4 },
             );
+
+            #[cfg(feature = "native-compact-cell-trial-edits")]
+            {
+                // Three inputs and outputs spill both inline buffers.
+                let wide = sign(Transaction::new(
+                    vec![CellDep::new_builder().out_point(code_point.clone()).build()],
+                    vec![],
+                    [0, 1, 3].map(|index| CellInput::new(points[index].clone(), None)).to_vec(),
+                    vec![reserve.clone(); 3],
+                    vec![],
+                )?)?;
+                let wide_run = [wide, fourth.clone()];
+                let (expected, reference) =
+                    serial_pool.install(|| store.build_proposal(wide_run.iter(), 1001, 16 * 1024))?;
+                let mut scan = ProposalScan::default();
+                let (selected, leader) = workers.install(|| {
+                    store.build_proposal_measured(wide_run.iter(), 1001, 16 * 1024, &mut scan, None)
+                })?;
+                assert_eq!(selected.len(), wide_run.len());
+                assert_eq!(
+                    selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                    expected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                );
+                assert_eq!(scan.rolling_cells.reused, 2);
+                let follower = workers.install(|| store.prepare(&selected, 1001, true))?;
+                for prepared in [leader, follower] {
+                    assert_eq!(prepared.header(), reference.header());
+                    assert_eq!(prepared.receipts(), reference.receipts());
+                    assert_same_batch_writes(&prepared.batch, &reference.batch);
+                }
+            }
 
             // A stop consumes only the ordered entry that reported it.
             let block = BlockContext::after(
