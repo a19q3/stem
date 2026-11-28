@@ -27,6 +27,7 @@ native-commitment-pipeline = []
 native-cell-subtree-parallel = ["stem-ledger/parallel-patricia"]
 native-candidate-cell-prefetch = []
 native-lineage-ready-prefix = []
+native-lineage-dependency-lookahead = []
 native-work-stealing = []
 
 [dependencies]

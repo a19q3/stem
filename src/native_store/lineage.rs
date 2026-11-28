@@ -22,6 +22,9 @@ use stem_vm::executor;
 
 use super::{Budget, Header, Proof, Store};
 
+#[cfg(feature = "native-lineage-dependency-lookahead")]
+mod lookahead;
+
 pub(super) type Heads = BTreeMap<Byte32, Option<Head>>;
 
 pub(super) fn changes(

@@ -138,6 +138,9 @@ pub struct LineageSchedule {
     pub parallel_waves: u64,
     pub parallel_commands: u64,
     pub serial_commands: u64,
+    pub lookahead_commands: u64,
+    pub lookahead_reused: u64,
+    pub lookahead_fallbacks: u64,
 }
 
 impl LineageSchedule {
@@ -149,6 +152,9 @@ impl LineageSchedule {
         self.parallel_waves = self.parallel_waves.saturating_add(other.parallel_waves);
         self.parallel_commands = self.parallel_commands.saturating_add(other.parallel_commands);
         self.serial_commands = self.serial_commands.saturating_add(other.serial_commands);
+        self.lookahead_commands = self.lookahead_commands.saturating_add(other.lookahead_commands);
+        self.lookahead_reused = self.lookahead_reused.saturating_add(other.lookahead_reused);
+        self.lookahead_fallbacks = self.lookahead_fallbacks.saturating_add(other.lookahead_fallbacks);
     }
 }
 
@@ -1611,6 +1617,17 @@ impl Store {
             let lineage = segment[0].has_lineage_command();
             let mut prefetch_remaining = 0usize;
             while !segment.is_empty() {
+                #[cfg(feature = "native-lineage-dependency-lookahead")]
+                if lineage && width > 1 {
+                    let count = self.prepare_lineage_lookahead(
+                        segment, &block, &origin, width, &mut budget, &mut overlay,
+                        &mut receipts, &mut fees, &mut lineage_schedule,
+                    )?;
+                    if count != 0 {
+                        segment = &segment[count..];
+                        continue;
+                    }
+                }
                 if prefetch_cells && !lineage && prefetch_remaining == 0 {
                     prefetch_remaining = segment.len().min(32);
                     self.prefetch_candidate_cells(&segment[..prefetch_remaining], &mut overlay);
