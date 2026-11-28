@@ -183,6 +183,10 @@ impl Replica {
                     if let Some(elapsed) = timing.cell_node_publication {
                         metrics.cell_node_publication.observe(elapsed);
                     }
+                    #[cfg(feature = "jolteon-resident-cell-publication")]
+                    if let Some(elapsed) = timing.live_cell_publication {
+                        metrics.live_cell_publication.observe(elapsed);
+                    }
                     break timing.cell_node_publication.is_some();
                 }
                 event = inbox.recv_live(), if inbox.can_defer() => {

@@ -2021,6 +2021,10 @@ impl Replica {
         let tip = self.store.tip();
         match kind {
             wire::STATUS => {
+                #[cfg(feature = "jolteon-resident-cell-publication")]
+                let live_cell_index = self.store.try_live_cell_index_status();
+                #[cfg(not(feature = "jolteon-resident-cell-publication"))]
+                let live_cell_index = self.store.live_cell_index_status();
                 let status = json!({
                     "height": tip.context.height, "epoch": self.committee.epoch(), "view": self.view,
                     "high_view": self.high.point.view, "member": self.member,
@@ -2043,7 +2047,7 @@ impl Replica {
                     "admission": self.admission,
                     "execution": self.execution,
                     "verification_cache": self.store.verification_cache_stats(),
-                    "live_cell_index": self.store.live_cell_index_status(),
+                    "live_cell_index": live_cell_index,
                     "pinned_cell_cache": self.store.pinned_cell_cache_status(),
                     "cell_node_index": self.store.cell_node_index_status(),
                 });
