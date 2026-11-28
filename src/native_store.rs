@@ -197,6 +197,7 @@ pub struct CellStreamStats {
     pub jobs: u64,
     pub reused: u64,
     pub fallbacks: u64,
+    pub ordered_declarations: u64,
     pub refilled_jobs: u64,
     pub discarded_jobs: u64,
     pub peak_outstanding: u64,
@@ -230,6 +231,9 @@ impl CellStreamStats {
         self.jobs = self.jobs.saturating_add(other.jobs);
         self.reused = self.reused.saturating_add(other.reused);
         self.fallbacks = self.fallbacks.saturating_add(other.fallbacks);
+        self.ordered_declarations = self
+            .ordered_declarations
+            .saturating_add(other.ordered_declarations);
         self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
         self.discarded_jobs = self.discarded_jobs.saturating_add(other.discarded_jobs);
         self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
@@ -3284,6 +3288,23 @@ impl Store {
             || changes.protocol_result.clone(),
             |command| stem_ledger::lineage::Outcome::from_applied(command.executed).encode(),
         );
+        #[cfg(feature = "native-reuse-ordered-cell-writes")]
+        let published_declaration = preceding
+            .and_then(|view| view.ordered_writes)
+            .filter(|_| {
+                // Ordinary resolution takes the original inputs and outputs
+                // and derives the output ID from that same transaction. No
+                // protocol stage may substitute or suppress a declared edit.
+                materialized.is_none()
+                    && operation.is_none()
+                    && batch.is_none()
+                    && reference_cycles == 0
+                    && keeper_change.is_none()
+                    && tx.keeper_schedule().is_none()
+                    && tx.messages().len() == 0
+                    && lineage_changes.is_empty()
+                    && changes.omit_outputs.is_empty()
+            });
         let cell_changes = concrete
             .inputs()
             .map(|input| (input.previous_output, None))
@@ -3302,6 +3323,10 @@ impl Store {
             }
         }
         *budget = next;
+        #[cfg(feature = "native-reuse-ordered-cell-writes")]
+        if let Some(published) = published_declaration {
+            published.set(true);
+        }
         Ok(Receipt {
             fee,
             cycles: cycles + keeper_cycles + reference_cycles,
@@ -4285,13 +4310,13 @@ mod pipeline_store_tests {
             spec.development_cells.push((point.clone(), group));
             point
         };
-        let sign = |tx: Transaction| -> Result<Transaction> {
+        let sign_for = |tx: Transaction, state: &Spec| -> Result<Transaction> {
             let digest = tx.signing_digest(
-                &spec.network,
+                &state.network,
                 0,
                 &lock,
                 |wanted| {
-                    Ok(spec.development_cells.iter()
+                    Ok(state.development_cells.iter()
                         .find(|(point, _)| point == wanted)
                         .map_or_else(|| reserve.clone(), |(_, cell)| cell.clone()))
                 },
@@ -4303,6 +4328,7 @@ mod pipeline_store_tests {
                 seal: Bytes::copy_from_slice(&key.sign_recoverable(&digest.unpack())?.serialize()),
             }])
         };
+        let sign = |tx| sign_for(tx, &spec);
         let payment = |point: &OutPoint, dep: CellDep| {
             sign(Transaction::new(
                 vec![dep],
@@ -4368,6 +4394,84 @@ mod pipeline_store_tests {
             assert_eq!(outcome, (1, true));
             assert_eq!(calls, 1);
             assert_eq!((stats.jobs, stats.discarded_jobs), (3, 2));
+        }
+        #[cfg(all(
+            feature = "native-reuse-ordered-cell-writes",
+            feature = "native-rolling-leader-execution"
+        ))]
+        {
+            // The unavailable second input invalidates the first candidate,
+            // which had projected a spend of the replacement's input.
+            let rejected = sign(Transaction::new(
+                vec![CellDep::new_builder().out_point(code_point.clone()).build()],
+                vec![],
+                vec![
+                    CellInput::new(points[0].clone(), None),
+                    CellInput::new(points[2].clone(), None),
+                ],
+                vec![reserve.clone()],
+                vec![],
+            )?)?;
+            let child = signed(&OutPoint::new(first.id(&spec.network), 0))?;
+            let run = [&rejected, &first, &child];
+            let mut scan = ProposalScan::default();
+            let (selected, proposal) = workers.install(|| {
+                store.build_proposal_measured(run, 1001, 16 * 1024, &mut scan, None)
+            })?;
+            let expected = [first.clone(), child];
+            assert_eq!(
+                selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                expected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+            );
+            let serial = store.prepare(&expected, 1001, false)?;
+            assert_eq!(proposal.header(), serial.header());
+            assert_eq!(proposal.receipts(), serial.receipts());
+            assert_same_batch_writes(&proposal.batch, &serial.batch);
+            let stats = scan.rolling_cells;
+            assert_eq!((stats.jobs, stats.fallbacks, stats.reused, stats.ordered_declarations), (3, 2, 1, 1));
+        }
+        #[cfg(all(
+            feature = "native-reuse-ordered-cell-writes",
+            feature = "native-rolling-cell-execution"
+        ))]
+        {
+            // The producer exceeds only the per-trial speculative read cap.
+            // The ordinary ordered budget can accept its result.
+            let large_path = tempfile::tempdir()?;
+            let mut large_spec = self::spec();
+            large_spec.development_cells = spec.development_cells.clone();
+            let data_cell = Cell::new(
+                1_000_000_000_000_000,
+                lock.clone(),
+                vec![],
+                Bytes::from(vec![0; 1536 * 1024]),
+            )?;
+            let mut deps = vec![CellDep::new_builder().out_point(code_point.clone()).build()];
+            for index in 0..3 {
+                let point = OutPoint::new([46; 32].pack(), index);
+                deps.push(CellDep::new_builder().out_point(point.clone()).build());
+                large_spec.development_cells.push((point, data_cell.clone()));
+            }
+            let producer = sign_for(
+                Transaction::new(
+                    deps,
+                    vec![],
+                    vec![CellInput::new(points[0].clone(), None)],
+                    vec![reserve.clone()],
+                    vec![],
+                )?,
+                &large_spec,
+            )?;
+            let child = signed(&OutPoint::new(producer.id(&large_spec.network), 0))?;
+            let candidate = [producer, child, third.clone(), fourth.clone()];
+            let store = Store::open(large_path.path(), &large_spec, Retention::Archive)?;
+            let serial = store.prepare(&candidate, 1001, false)?;
+            let prepared = workers.install(|| store.prepare(&candidate, 1001, true))?;
+            assert_eq!(prepared.header(), serial.header());
+            assert_eq!(prepared.receipts(), serial.receipts());
+            assert_same_batch_writes(&prepared.batch, &serial.batch);
+            let stats = prepared.cell_stream();
+            assert_eq!((stats.jobs, stats.fallbacks, stats.reused, stats.ordered_declarations), (4, 1, 3, 1));
         }
         #[cfg(feature = "native-rolling-cell-execution")]
         {
