@@ -7,10 +7,12 @@ use anyhow::{Context, Result, bail, ensure};
 
 use crate::protocol::{Certificate, Operation};
 use ckb_hash::{blake2b_256, new_blake2b};
+#[cfg(feature = "shared-dep-group-members")]
+use ckb_types::packed::OutPointVec;
 use ckb_types::{
     bytes::Bytes,
     core::{DepType, ScriptHashType},
-    packed::{Byte32, CellDep, OutPoint, Script},
+    packed::{Byte32, CellDep, OutPoint, OutPointVecReader, Script},
     prelude::*,
 };
 
@@ -288,6 +290,22 @@ impl Cell {
 
     pub fn data(&self) -> Bytes {
         self.encoded.data().raw_data()
+    }
+
+    /// Interpret the entire Data field as the CKB Dep Group encoding.
+    pub fn dep_group_members(&self) -> Result<impl ExactSizeIterator<Item = OutPoint> + '_> {
+        #[cfg(feature = "shared-dep-group-members")]
+        {
+            let data = self.data();
+            OutPointVecReader::from_slice(&data)?;
+            // The packed iterator slices the verified buffer for each member.
+            Ok(OutPointVec::new_unchecked(data).into_iter())
+        }
+        #[cfg(not(feature = "shared-dep-group-members"))]
+        {
+            let members = OutPointVecReader::from_slice(self.encoded.as_reader().data().raw_data())?;
+            Ok((0..members.len()).map(move |index| members.get_unchecked(index).to_entity()))
+        }
     }
 
     #[cfg(not(feature = "lazy-cell-digests"))]

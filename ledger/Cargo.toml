@@ -16,6 +16,7 @@ segmented-verified-journal = ["compact-verified-journal"]
 execution-material-cache = []
 inline-cell-resolution = []
 lazy-cell-digests = []
+shared-dep-group-members = []
 
 [dependencies]
 anyhow.workspace = true

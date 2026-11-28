@@ -8,11 +8,7 @@ use std::{
     time::Instant,
 };
 
-use ckb_types::{
-    core::DepType,
-    packed::{OutPoint, OutPointVecReader},
-    prelude::*,
-};
+use ckb_types::{core::DepType, packed::OutPoint};
 #[cfg(not(feature = "native-batched-cell-prefetch"))]
 use rayon::prelude::*;
 use stem_ledger::{LiveCell, Transaction};
@@ -139,8 +135,7 @@ impl DependencyReads {
             let Some(Some(record)) = cells.get(id) else {
                 continue;
             };
-            let data = record.cell.data();
-            let Ok(outpoints) = OutPointVecReader::from_slice(&data) else {
+            let Ok(outpoints) = record.cell.dep_group_members() else {
                 continue;
             };
             // These are lookup hints. The execution resolver will expand the
@@ -148,8 +143,7 @@ impl DependencyReads {
             if outpoints.len() > MAX_HINTS {
                 continue;
             }
-            for member in outpoints.iter() {
-                let point = member.to_entity();
+            for point in outpoints {
                 if planned.insert(point.clone()) {
                     members.push(point);
                     if planned.len() == MAX_HINTS {

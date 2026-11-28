@@ -1930,7 +1930,7 @@ impl Store {
     fn remember_committed_live_cell(&self, point: &OutPoint, cell: Option<&LiveCell>) {
         // Candidate rows must never enter the shared committed cache.
         match cell {
-            Some(cell) => self.live_cache.insert(point.clone(), cell.clone()),
+            Some(cell) => self.live_cache.insert(point, cell.clone()),
             None => {
                 #[cfg(feature = "native-pinned-cell-absence-cache")]
                 self.live_cache.remember_absence(point);

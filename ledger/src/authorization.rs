@@ -4,7 +4,7 @@ use anyhow::{Result, ensure};
 use ckb_hash::{Blake2b, new_blake2b};
 use ckb_types::{
     core::DepType,
-    packed::{Byte32, OutPoint, OutPointVecReader, Script},
+    packed::{Byte32, OutPoint, Script},
     prelude::*,
 };
 
@@ -151,12 +151,10 @@ fn resolve_dependencies<T: AsRef<Cell>>(
                 code.push(record);
             }
             DepType::DepGroup => {
-                let data = record.as_ref().data();
-                let members = OutPointVecReader::from_slice(&data)?;
-                ensure!(!members.is_empty(), "empty Dep Group");
+                let members = record.as_ref().dep_group_members()?;
+                ensure!(members.len() != 0, "empty Dep Group");
                 commit(&(members.len() as u64).to_le_bytes());
-                for member in members.iter() {
-                    let point = member.to_entity();
+                for point in members {
                     ensure!(
                         !consumed.contains(&point),
                         "Dep Group member is consumed by this transaction"
@@ -358,6 +356,31 @@ mod tests {
 
     use super::*;
     use crate::CellInput;
+
+    #[cfg(feature = "shared-dep-group-members")]
+    #[test]
+    fn dep_group_members_slice_only_verified_cell_data() -> Result<()> {
+        let point = |index| OutPoint::new([29; 32].pack(), index);
+        let expected = vec![point(9), point(2), point(17)];
+        let group = |data| Cell::new(1_000_000_000, Script::default(), vec![], data);
+        let data = OutPointVec::new_builder().set(expected.clone()).build().as_bytes();
+        let record = group(data.clone())?;
+        let members = record.dep_group_members()?.collect::<Vec<_>>();
+        assert_eq!(members, expected);
+        let base = record.data().as_ptr();
+        for (index, member) in members.iter().enumerate() {
+            assert_eq!(
+                member.as_slice().as_ptr(),
+                base.wrapping_add(4 + index * OutPoint::TOTAL_SIZE)
+            );
+        }
+        assert!(group(data.slice(..data.len() - 1))?.dep_group_members().is_err());
+        assert_eq!(
+            group(OutPointVec::default().as_bytes())?.dep_group_members()?.len(),
+            0
+        );
+        Ok(())
+    }
 
     #[test]
     fn expanded_dependencies_keep_read_order_and_reject_conflicting_outpoints() -> Result<()> {

@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Mutex};
 use std::hash::{BuildHasher, RandomState};
 
 use ckb_types::packed::OutPoint;
-#[cfg(feature = "native-sharded-live-cache")]
+#[cfg(any(feature = "native-sharded-live-cache", feature = "native-inline-live-cache-keys"))]
 use ckb_types::prelude::Entity;
 use stem_ledger::{LiveCell, Origin};
 
@@ -23,9 +23,21 @@ const SHARDS: usize = if cfg!(feature = "native-sharded-live-cache") {
 const SHARD_BYTES: usize = MAX_BYTES / SHARDS;
 const SHARD_ITEMS: usize = MAX_ITEMS / SHARDS;
 
+#[cfg(feature = "native-inline-live-cache-keys")]
+type CacheKey = [u8; OutPoint::TOTAL_SIZE];
+#[cfg(not(feature = "native-inline-live-cache-keys"))]
+type CacheKey = OutPoint;
+
+fn cache_key(point: &OutPoint) -> Option<&CacheKey> {
+    #[cfg(feature = "native-inline-live-cache-keys")]
+    return point.as_slice().try_into().ok();
+    #[cfg(not(feature = "native-inline-live-cache-keys"))]
+    Some(point)
+}
+
 #[derive(Default)]
 struct Shard {
-    records: HashMap<OutPoint, LiveCell>,
+    records: HashMap<CacheKey, LiveCell>,
     bytes: usize,
     capacity_flushes: u64,
     #[cfg(feature = "native-pinned-cell-absence-cache")]
@@ -87,8 +99,9 @@ impl LiveCache {
     }
 
     pub(super) fn lookup(&self, point: &OutPoint) -> Option<Option<LiveCell>> {
+        let key = cache_key(point)?;
         let shard = self.shards[self.shard_for(point)].lock().expect("Live Cell cache shard");
-        if let Some(cell) = shard.records.get(point) {
+        if let Some(cell) = shard.records.get(key) {
             return Some(Some(cell.clone()));
         }
         #[cfg(feature = "native-pinned-cell-absence-cache")]
@@ -107,15 +120,18 @@ impl LiveCache {
         }
     }
 
-    pub(super) fn insert(&self, point: OutPoint, cell: LiveCell) {
+    pub(super) fn insert(&self, point: &OutPoint, cell: LiveCell) {
+        let Some(key) = cache_key(point) else {
+            return;
+        };
         let bytes = Self::record_bytes(&cell);
         if bytes > SHARD_BYTES {
             return;
         }
-        let mut shard = self.shards[self.shard_for(&point)]
+        let mut shard = self.shards[self.shard_for(point)]
             .lock()
             .expect("Live Cell cache shard");
-        if shard.records.contains_key(&point) {
+        if shard.records.contains_key(key) {
             return;
         }
         if shard.bytes + bytes > SHARD_BYTES || shard.records.len() == SHARD_ITEMS {
@@ -123,7 +139,7 @@ impl LiveCache {
             shard.capacity_flushes = shard.capacity_flushes.saturating_add(1);
         }
         shard.bytes += bytes;
-        shard.records.insert(point, cell);
+        shard.records.insert(key.to_owned(), cell);
     }
 
     pub(super) fn invalidate<'a>(&self, points: impl Iterator<Item = &'a OutPoint>) {
@@ -137,10 +153,13 @@ impl LiveCache {
             return;
         }
         for point in points {
+            let Some(key) = cache_key(point) else {
+                continue;
+            };
             let shard = &mut shards[self.shard_for(point)];
             #[cfg(feature = "native-pinned-cell-absence-cache")]
             shard.absences.remove(point);
-            if let Some(cell) = shard.records.remove(point) {
+            if let Some(cell) = shard.records.remove(key) {
                 shard.bytes -= Self::record_bytes(&cell);
             }
         }
@@ -208,14 +227,14 @@ mod tests {
         let sentinel = point(0);
         let preserved_shard = cache.shard_for(&sentinel);
         let overloaded_shard = (preserved_shard + 1) % SHARDS;
-        cache.insert(sentinel.clone(), cell.clone());
+        cache.insert(&sentinel, cell.clone());
         let collisions: Vec<_> = (1..)
             .map(point)
             .filter(|point| cache.shard_for(point) == overloaded_shard)
             .take(SHARD_ITEMS + 1)
             .collect();
         for point in &collisions {
-            cache.insert(point.clone(), cell.clone());
+            cache.insert(point, cell.clone());
         }
         let last = collisions.last().expect("overloaded shard entries");
         assert!(cache.lookup(&collisions[0]).is_none());

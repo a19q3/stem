@@ -28,6 +28,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
 | Rolling dependency hints | `native-rolling-dependency-hints` | Refresh parent lookup plans when the dependency mix changes [Resolver notes](follower-preparation/README.md#refreshing-dependency-hints-during-rolling-preparation) |
 | Batched Cell prefetch | `native-batched-cell-prefetch` | Use pinned MultiGet for bounded exact-view Cell prefetch [Resolver notes](follower-preparation/README.md#batched-rocksdb-reads-for-cell-prefetch) |
+| Sliced Dep Group members | `native-shared-dep-group-members` | Share verified member bytes through the consensus resolver and hint planner [Resolver notes](follower-preparation/README.md#slicing-verified-dep-group-members) |
 | Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
 | Pinned Cell cache inheritance | `native-pinned-cell-cache-inheritance` | Reuse unchanged decoded records using the candidate’s prepared OutPoint index [Comparison notes](storage/live-cell-index.md#sharing-unchanged-rows-across-a-durable-transition) |
 | Pinned Cell absence cache | `native-pinned-cell-absence-cache` | Reuse successful misses on the same exact durable snapshot [Comparison notes](storage/live-cell-index.md#retaining-confirmed-misses-in-pinned-cell-snapshots) |
@@ -81,6 +82,8 @@ cells=native-rolling-cell-execution,native-leader-dependency-execution,native-ex
 dependencies=native-shared-cell-deps
 rolling_dependency_hints=native-rolling-dependency-hints
 batched_prefetch=native-batched-cell-prefetch
+inline_live_cache_keys=native-inline-live-cache-keys
+dep_group_members=native-shared-dep-group-members
 inline_resolution=native-inline-cell-resolution
 owned_cell_reads=native-owned-live-cell-reads
 lazy_cell_digests=native-lazy-cell-digests
@@ -152,6 +155,8 @@ build rolling-dependency-hints-control --features "$cells,$rolling_leader,$depen
 build rolling-dependency-hints --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints"
 build batched-prefetch-control --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints"
 build batched-prefetch --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints,$batched_prefetch"
+build dep-members-control --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints,$inline_live_cache_keys"
+build dep-members-sliced --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints,$inline_live_cache_keys,$dep_group_members"
 build inline-resolution --features "$cells,$inline_resolution"
 build owned-cell-reads --features "$owned_cell_reads"
 build lazy-cell-digests --features "$lazy_cell_digests"

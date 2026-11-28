@@ -303,6 +303,12 @@ rows and read or decode errors fall back to the original resolver.
 The input and dependency read limits are still charged by canonical
 execution. Earlier accepted and projected writes retain precedence.
 
+The earlier fixed-block comparison above found that one coordinator
+`multi_get_opt` over the same window regressed both cold and partially
+cached wall time. Keep parallel point reads as the baseline. This arm
+uses bounded pinned batches and also targets shared Dep Group hints.
+That difference needs its own matched measurement before adoption.
+
 Compare the `batched-prefetch-control` and `batched-prefetch` builds on
 the same payment and mixed-contract corpora, exact parent snapshots,
 RocksDB cache, resident index settings and worker budget. Separately
@@ -316,3 +322,36 @@ covers cold point reads, absence, an oversized record, speculative
 creation and spending, and an old snapshot after a durable commit.
 Compilation passed. Runtime regressions, replay and performance
 measurements remain pending.
+
+## Slicing verified Dep Group members
+
+With `native-shared-dep-group-members`, the ledger validates the full
+CKB OutPointVec in the resolved Cell's Data, then slices the retained
+bytes for each 36-byte OutPoint. Both canonical authorization and the
+Leader and Follower prefetch planner use this parser. Each transaction
+still loads its dependency at the actual position, resolves members in
+encoded order, rejects duplicates and consumed members, and charges
+the same logical reads and bytes. Authorization commits the same field
+bytes in the same order.
+
+`native-inline-live-cache-keys` stores the full OutPoint directly in
+decoded Live Cell cache buckets. This independently selectable layout
+is required by the slicing arm so a cached member key cannot retain
+its source Cell or transaction buffer past preparation. Snapshots,
+sharding, invalidation and entry and byte caps continue through their
+existing paths.
+
+Compare the `dep-members-control` and `dep-members-sliced` builds, with
+the inline decoded cache keys enabled in both. Use shared groups with
+several members, groups consumed or introduced by an earlier
+transaction, mixed direct dependencies and ordinary payment controls.
+Check exact Header, receipts, logical charges and authorization replay.
+Measure resolver CPU and wall time, allocation counts and peak RSS.
+Slices replace copies for each visited member, and the shared Bytes
+buffer still has reference-count traffic. Single-member groups and
+Code-only workloads may see little benefit. Compare the inline cache
+keys independently with and without `native-inline-live-cache-keys`
+to separate any bucket-layout effects. Compilation covers matching
+member byte pointers and malformed data as well as the existing
+canonical read-order and conflict fixture. Runtime, replay and
+performance qualification are pending.
