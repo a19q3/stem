@@ -236,6 +236,9 @@ pub struct DependencyReadStats {
     pub bytes: u64,
     pub hits: u64,
     pub build_us: u64,
+    pub rolling_samples: u64,
+    pub rolling_rebuilds: u64,
+    pub rolling_carried: u64,
 }
 
 impl DependencyReadStats {
@@ -245,6 +248,9 @@ impl DependencyReadStats {
         self.bytes = self.bytes.saturating_add(other.bytes);
         self.hits = self.hits.saturating_add(other.hits);
         self.build_us = self.build_us.saturating_add(other.build_us);
+        self.rolling_samples = self.rolling_samples.saturating_add(other.rolling_samples);
+        self.rolling_rebuilds = self.rolling_rebuilds.saturating_add(other.rolling_rebuilds);
+        self.rolling_carried = self.rolling_carried.saturating_add(other.rolling_carried);
     }
 }
 
@@ -2235,8 +2241,10 @@ impl Store {
                 .is_none_or(|cell| LiveCache::record_bytes(cell) <= max_record_bytes)
                 .then(|| cell.clone());
         }
+        // A failed resident read must reach the canonical resolver. Do not
+        // turn a lower-tier result into a hint that could mask that error.
         if let Some(index) = &self.live_index
-            && let Some(cell) = index.lookup(point).ok().flatten()
+            && let Some(cell) = index.lookup(point).ok()?
         {
             return cell
                 .as_ref()
@@ -4936,6 +4944,55 @@ mod pipeline_store_tests {
             assert_same_batch_writes(&serial.batch, &parallel.batch);
             let reads = parallel.cell_stream().dependency_reads;
             assert_eq!((reads.planned, reads.cached, reads.hits), (2, 2, 8));
+
+            #[cfg(all(
+                feature = "native-rolling-dependency-hints",
+                feature = "native-rolling-cell-execution",
+                feature = "native-rolling-leader-execution"
+            ))]
+            {
+                let count = 68;
+                let path = tempfile::tempdir()?;
+                let mut mixed_spec = self::spec();
+                mixed_spec.development_cells = spec.development_cells.clone();
+                mixed_spec.limits.transaction_count = count;
+                mixed_spec.limits.block_cycles = u64::from(count) * mixed_spec.limits.transaction_cycles;
+                mixed_spec.limits.cell_reads = u64::from(count) * 4;
+                mixed_spec.development_cells.extend((0..count).map(|index| {
+                    (OutPoint::new([50; 32].pack(), index), reserve.clone())
+                }));
+                let code_dep = CellDep::new_builder().out_point(code_point.clone()).build();
+                let mixed = (0..count).map(|index| {
+                    let dep = if index < 64 { &code_dep } else { &group };
+                    sign_for(Transaction::new(
+                        vec![dep.clone()],
+                        vec![],
+                        vec![CellInput::new(OutPoint::new([50; 32].pack(), index), None)],
+                        vec![reserve.clone()],
+                        vec![],
+                    )?, &mixed_spec)
+                }).collect::<Result<Vec<_>>>()?;
+                let store = Store::open(path.path(), &mixed_spec, Retention::Archive)?;
+                let reference = store.prepare(&mixed, 1001, false)?;
+                let follower = workers.install(|| store.prepare(&mixed, 1001, true))?;
+                let mut scan = ProposalScan::default();
+                let (selected, leader) = workers.install(|| {
+                    store.build_proposal_measured(mixed.iter(), 1001, 128 * 1024, &mut scan, None)
+                })?;
+                assert_eq!(
+                    selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                    mixed.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                );
+                for reads in [follower.cell_stream().dependency_reads, scan.dependency_reads] {
+                    assert_eq!((reads.rolling_samples, reads.rolling_rebuilds, reads.rolling_carried), (1, 1, 1));
+                    assert_eq!(reads.hits, 72);
+                }
+                for prepared in [leader, follower] {
+                    assert_eq!(prepared.header(), reference.header());
+                    assert_eq!(prepared.receipts(), reference.receipts());
+                    assert_same_batch_writes(&prepared.batch, &reference.batch);
+                }
+            }
 
             let spend_group = signed(&group_point)?;
             let mut conflicting = vec![spend_group.clone()];

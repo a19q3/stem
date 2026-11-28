@@ -22,6 +22,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Shared proposal bytes | `jolteon-share-proposal-bytes` | Reuse canonical proposal bodies and periodic direct transport frames [Comparison notes](dissemination/README.md#reusing-the-direct-proposal-body-and-frame) |
 | Inline Cell resolution bookkeeping | `native-inline-cell-resolution` | Keep small OutPoint sets and a sole Script Group outside heap-backed indexes [Comparison notes](follower-preparation/README.md#inline-cell-resolution-bookkeeping) |
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
+| Rolling dependency hints | `native-rolling-dependency-hints` | Refresh parent lookup plans when the dependency mix changes [Resolver notes](follower-preparation/README.md#refreshing-dependency-hints-during-rolling-preparation) |
 | Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
 | Sharded decoded Live Cell cache | `native-sharded-live-cache` | Separate locks and capacity flushes across the same total allowance [Comparison notes](storage/live-cell-index.md#sharded-decoded-live-cell-caches) |
 | Prior durable Live Cell view | `native-live-cell-parent-index` | Keep overlapping workers on resident reads through one tip advance [Index comparison notes](storage/live-cell-index.md#keeping-the-prior-durable-header-resident) |
@@ -61,6 +62,7 @@ export CARGO_TARGET_DIR="$scratch/target"
 export CXXFLAGS='-include cstdint'
 cells=native-rolling-cell-execution,native-leader-dependency-execution,native-execution-material-cache
 dependencies=native-shared-cell-deps
+rolling_dependency_hints=native-rolling-dependency-hints
 inline_resolution=native-inline-cell-resolution
 rolling_leader=native-rolling-leader-execution
 tail_cycle_shares=native-leader-tail-cycle-shares
@@ -111,6 +113,8 @@ build() {
 build baseline
 build cell-execution --features "$cells"
 build shared-dependencies --features "$cells,$dependencies"
+build rolling-dependency-hints-control --features "$cells,$rolling_leader,$dependencies"
+build rolling-dependency-hints --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints"
 build inline-resolution --features "$cells,$inline_resolution"
 build rolling-leader --features "$cells,$rolling_leader"
 build tail-cycle-shares --features "$cells,$rolling_leader,$tail_cycle_shares"
@@ -152,7 +156,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
