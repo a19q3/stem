@@ -167,6 +167,33 @@ work, and channel handoffs can cost more than the fixed barrier on warm
 payments. Runtime correctness, worker utilization and throughput
 remain to be measured.
 
+### Sharing the Leader's remaining cycles
+
+When the remaining block budget covers fewer than two full transaction
+cycle limits, the optional `native-leader-tail-cycle-shares` feature lets
+rolling Leader workers continue preparing ordinary Cells. It divides the
+unreserved cycles among open positions, up to the worker count and the
+existing queue bound. The coordinator retains a reservation until the
+position settles. If an ordered retry spends more than its trial's
+reservation, new jobs wait until there is room under the reduced balance.
+
+A successful worker still has to meet the ordered dependency and
+resource checks. An unsuccessful worker takes the original ordered
+path, which uses the actual remaining budget. This preserves the
+cycle-rejection stop rule. Follower preparation and the protocol's
+cycle limits use their existing paths.
+
+Compare against the same rolling Leader with the feature off. Hold
+worker count, proposal cadence, caches and all other block limits fixed.
+Use a cycle-limited workload of low-cost payments and a heterogeneous
+workload whose expensive transactions often exceed their shares. Record
+`tail_cycle_share_jobs`, `tail_cycle_share_reused`, worker and ordered
+preparation time, resource usage and finality. Small shares can trigger
+duplicate work on mixed contracts. The compiled fixtures compare
+selected bytes, receipts and durable batch contents for both useful
+parallel work and an ordered retry that can succeed after a share
+runs out. Runtime, replay and performance evidence are pending.
+
 ### Reusing ordered Cell writes
 
 The rolling schedulers track which earlier projected positions a worker

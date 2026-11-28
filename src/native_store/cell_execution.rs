@@ -402,6 +402,17 @@ impl Store {
         width.saturating_mul(4).min(MAX_WINDOW).min(funded)
     }
 
+    #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
+    fn rolling_cell_depth(&self, width: usize, budget: Budget, leader: bool) -> usize {
+        let depth = self.cell_window_limit(width, budget);
+        if cfg!(feature = "native-leader-tail-cycle-shares") && leader && depth < 2 {
+            let cycles = usize::try_from(budget.cycles).unwrap_or(usize::MAX);
+            width.min(MAX_WINDOW).min(cycles)
+        } else {
+            depth
+        }
+    }
+
     fn reserve_proposal_cell(&self, tx: &Transaction, remaining: &mut (u64, u64)) -> bool {
         let len = tx.as_slice().len();
         let entry = super::proposal_entry_bytes(len);
@@ -424,7 +435,7 @@ impl Store {
         width: usize,
     ) -> Vec<Transaction> {
         let mut run = Vec::new();
-        if self.cell_window_limit(width, budget).min(available) < 2 {
+        if self.rolling_cell_depth(width, budget, true).min(available) < 2 {
             return run;
         }
         let limit = available.min(4 * MAX_WINDOW);
