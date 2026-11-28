@@ -6,6 +6,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | --- | --- | --- |
 | Cell execution and material sharing | `1a50505` | Fixed-window or rolling Follower, parallel Leader, and immutable transaction material [Execution notes](scheduling/README.md) |
 | Rolling Leader | `native-rolling-leader-execution` | Bounded worker refill while preserving greedy selection [Comparison notes](scheduling/README.md#rolling-leader-preparation) |
+| Exact certified prefix | `jolteon-exact-prefix-pipeline` | Reuse pinned successor jobs across consecutive certified writes [Comparison notes](execution-pipeline/README.md#reusing-work-across-an-exact-certified-prefix) |
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
 | Resident Lock and TypeSet sharing | `a19ba05` | Inline and interned resident Live Cells at the same memory limit [Layout notes](storage/live-cell-index.md#resident-lock-and-typeset-sharing) |
 | Lineage and Keeper | `45028dc` | Independent Head lookahead and one-shot wake preparation [Keeper notes](../BENCHMARKS.md#parallel-preparation-of-independent-due-commands) |
@@ -29,6 +30,7 @@ export CXXFLAGS='-include cstdint'
 cells=native-rolling-cell-execution,native-leader-dependency-execution,native-execution-material-cache
 dependencies=native-shared-cell-deps
 rolling_leader=native-rolling-leader-execution
+exact_prefix=jolteon-exact-prefix-pipeline
 contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
 publication=jolteon-resident-node-publication
 verified_nodes=native-verified-cell-nodes
@@ -47,12 +49,13 @@ build baseline
 build cell-execution --features "$cells"
 build shared-dependencies --features "$cells,$dependencies"
 build rolling-leader --features "$cells,$rolling_leader"
+build exact-prefix --features "$exact_prefix"
 build contract-execution --features "$contracts"
 build publication --features "$publication"
 build verified-nodes --features "$verified_nodes"
 build verified-journal --features "$verified_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$rolling_leader,$contracts,$publication,$verified_journal,$certificates"
+build combined --features "$cells,$dependencies,$rolling_leader,$exact_prefix,$contracts,$publication,$verified_journal,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

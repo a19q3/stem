@@ -130,6 +130,8 @@ impl CommitmentMetrics {
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
 pub struct CommitMetrics {
     pub acknowledged: u64,
+    #[serde(default)]
+    pub overlap_eligible_writes: u64,
     pub descendants: u64,
     pub status_replies: u64,
     pub deferred_events: u64,
@@ -154,6 +156,8 @@ pub struct ProposalMetrics {
     pub commit_overlap_us: u64,
     #[serde(default)]
     pub rebased: u64,
+    #[serde(default)]
+    pub rebased_blocks: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
@@ -167,6 +171,8 @@ pub struct CandidateMetrics {
     pub already_running: u64,
     #[serde(default)]
     pub rebased: u64,
+    #[serde(default)]
+    pub rebased_blocks: u64,
     #[serde(default)]
     pub commit_overlap_applied: u64,
     #[serde(default)]

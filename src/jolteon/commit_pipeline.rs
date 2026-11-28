@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use stem_stake::jolteon::Point;
 use tokio::sync::{mpsc, oneshot};
 
-use super::{CommitWindow, Incoming, Replica, can_vote_at, transport::Inbox, wire};
+use super::{CommitWindow, Incoming, Replica, can_vote_at, record_commit_span, transport::Inbox, wire};
 use crate::native_store::{CertifiedWriteTiming, Prepared};
 
 struct Write {
@@ -30,7 +30,7 @@ impl Writer {
                 let result = (job.persist)();
                 let elapsed = start.elapsed();
                 if let Some(window) = job.window {
-                    let _ = window.set((start, elapsed));
+                    record_commit_span(&window, (start, elapsed));
                 }
                 if job.done.send(result).is_err() {
                     break;
@@ -65,12 +65,11 @@ impl Replica {
         records: Vec<(Vec<u8>, Vec<u8>)>,
         retired: Vec<Range<Vec<u8>>>,
         descendants: Option<(&[Point], &[Arc<Prepared>])>,
+        window: Option<CommitWindow>,
     ) -> Result<()> {
         let write = self
             .store
             .certified_write(Arc::clone(&prepared), records, retired)?;
-        let window = (cfg!(feature = "jolteon-cross-block-pipeline") && descendants.is_some())
-            .then(CommitWindow::default);
         let mut persistence = self.commit_writer.submit(write, window.clone())?;
         if let Some((branch, ancestors)) = descendants {
             self.prepare_commit_descendant(branch, ancestors, window.clone())?;
@@ -118,6 +117,9 @@ impl Replica {
         self.store.install_durable_tip(&prepared, node_publication_done);
         let metrics = &mut self.execution.commit_jobs;
         metrics.acknowledged = metrics.acknowledged.saturating_add(1);
+        if window.is_some() {
+            metrics.overlap_eligible_writes = metrics.overlap_eligible_writes.saturating_add(1);
+        }
         Ok(())
     }
 
@@ -196,5 +198,29 @@ impl Replica {
             commits.descendants = commits.descendants.saturating_add(1);
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "jolteon-exact-prefix-pipeline"))]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn overlap_counts_only_the_individual_certified_writes() {
+        let timeline = CommitWindow::default();
+        let start = Instant::now();
+        let ms = Duration::from_millis;
+        record_commit_span(&timeline, (start, ms(5)));
+        record_commit_span(&timeline, (start + ms(10), ms(7)));
+        assert_eq!(
+            super::super::commit_overlap(Some(&timeline), (start + ms(2), ms(11))),
+            ms(6),
+        );
+        assert_eq!(
+            super::super::commit_overlap(Some(&timeline), (start + ms(6), ms(3))),
+            Duration::ZERO,
+        );
     }
 }
