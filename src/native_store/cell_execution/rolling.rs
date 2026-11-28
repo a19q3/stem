@@ -27,7 +27,7 @@ use super::{
 use super::{IncrementalProjection, declared_writes};
 #[cfg(feature = "native-incremental-cell-projection")]
 use std::sync::RwLock;
-use crate::native_store::{CellStreamStats, ProposalStep};
+use crate::native_store::{CellStreamStats, ProposalStep, ProposalTrial};
 #[cfg(feature = "native-rolling-leader-execution")]
 use crate::native_store::{ProposalProgress, ProposalScan};
 #[cfg(feature = "native-rolling-leader-execution")]
@@ -73,23 +73,6 @@ impl ReadyCell {
         overlay: &mut Overlay,
     ) -> Option<Receipt> {
         self.effects.adopt(self.slot, budget, overlay)
-    }
-}
-
-// The coordinator can reach an entry after its speculative budget runs out,
-// or recheck a trial whose result or dependencies could not be adopted.
-pub(in crate::native_store) enum CellAttempt {
-    Ordered,
-    Recheck,
-    Ready(ReadyCell),
-}
-
-impl CellAttempt {
-    fn adopt(self, budget: &mut Budget, overlay: &mut Overlay) -> Option<Receipt> {
-        match self {
-            Self::Ready(work) => work.adopt(budget, overlay),
-            Self::Ordered | Self::Recheck => None,
-        }
     }
 }
 
@@ -154,8 +137,11 @@ impl Store {
             false,
             #[cfg(feature = "native-shared-cell-deps")]
             dependency_reads,
-            |tx, ready, budget, overlay, canonical| {
-                let reused = ready.adopt(budget, overlay);
+            |tx, trial, budget, overlay, canonical| {
+                let reused = match trial {
+                    ProposalTrial::Ready(work) => work.adopt(budget, overlay),
+                    _ => None,
+                };
                 let (receipt, step) = if let Some(receipt) = reused {
                     (receipt, ProposalStep::Reused)
                 } else {
@@ -210,7 +196,7 @@ impl Store {
                     overlay,
                     progress,
                     scan,
-                    None::<fn(&mut Budget, &mut Overlay) -> Option<Receipt>>,
+                    ProposalTrial::<fn(&mut Budget, &mut Overlay) -> Option<Receipt>>::Ordered,
                     None,
                 )?;
                 return Ok(Some(matches!(step, ProposalStep::Stop)));
@@ -233,10 +219,10 @@ impl Store {
             true,
             #[cfg(feature = "native-shared-cell-deps")]
             window.shared_reads(),
-            |tx, ready, budget, overlay, canonical| {
-                let adoption = (!matches!(ready, CellAttempt::Ordered)).then_some(
-                    move |budget: &mut Budget, overlay: &mut Overlay| ready.adopt(budget, overlay),
-                );
+            |tx, trial, budget, overlay, canonical| {
+                let trial = trial.map(|work| {
+                    move |budget: &mut Budget, overlay: &mut Overlay| work.adopt(budget, overlay)
+                });
                 self.stage_proposal_entry(
                     tx,
                     block,
@@ -245,7 +231,7 @@ impl Store {
                     overlay,
                     progress,
                     scan,
-                    adoption,
+                    trial,
                     Some(canonical),
                 )
             },
@@ -270,7 +256,7 @@ impl Store {
         >,
         mut settle: impl FnMut(
             &Transaction,
-            CellAttempt,
+            ProposalTrial<ReadyCell>,
             &mut Budget,
             &mut Overlay,
             &PrecedingCells<'_>,
@@ -433,7 +419,7 @@ impl Store {
                             break;
                         }
                         submitted += 1;
-                        CellAttempt::Ordered
+                        ProposalTrial::Ordered
                     } else {
                         let Some((_, slot, outcome)) = ready[prefix % depth].take() else {
                             let completion = next_completion(&receiver);
@@ -443,19 +429,18 @@ impl Store {
                             in_flight -= 1;
                             continue;
                         };
-                        let trial = outcome.unwrap_or_else(|panic| panic::resume_unwind(panic));
-                        trial
-                            .ok()
-                            .filter(|trial| trial.sources.published(&published))
-                            .map_or(CellAttempt::Recheck, |trial| {
-                                CellAttempt::Ready(ReadyCell {
-                                    effects: trial.effects,
-                                    slot,
-                                })
-                            })
+                        match outcome.unwrap_or_else(|panic| panic::resume_unwind(panic)) {
+                            Ok(trial) if trial.sources.published(&published) => {
+                                ProposalTrial::Ready(ReadyCell { effects: trial.effects, slot })
+                            }
+                            Err(error) if finish_ordered_suffix => ProposalTrial::failed(error),
+                            _ => ProposalTrial::Recheck,
+                        }
                     };
-                    let had_trial = !matches!(work, CellAttempt::Ordered);
+                    let had_trial = !matches!(work, ProposalTrial::Ordered);
                     let step = settle(&transactions[prefix], work, budget, overlay, &canonical)?;
+                    #[cfg(feature = "native-reuse-parent-spend-rejections")]
+                    let had_trial = had_trial && !matches!(step, ProposalStep::RejectedParentSpend);
                     if matches!(step, ProposalStep::Reused) {
                         stats.reused += 1;
                         published[prefix] = true;

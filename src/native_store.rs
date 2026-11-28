@@ -150,6 +150,7 @@ pub struct ProposalScan {
     pub parallel_cell_jobs: u64,
     pub parallel_cell_reused: u64,
     pub parallel_cell_fallback: u64,
+    pub parallel_parent_rejections_reused: u64,
     pub parallel_cell_us: u64,
     pub rolling_cells: CellStreamStats,
     pub dependency_reads: DependencyReadStats,
@@ -308,10 +309,21 @@ impl ProposalScan {
         self.parallel_cell_jobs = self.parallel_cell_jobs.saturating_add(scan.parallel_cell_jobs);
         self.parallel_cell_reused = self.parallel_cell_reused.saturating_add(scan.parallel_cell_reused);
         self.parallel_cell_fallback = self.parallel_cell_fallback.saturating_add(scan.parallel_cell_fallback);
+        self.parallel_parent_rejections_reused = self
+            .parallel_parent_rejections_reused
+            .saturating_add(scan.parallel_parent_rejections_reused);
         self.parallel_cell_us = self.parallel_cell_us.saturating_add(scan.parallel_cell_us);
         self.rolling_cells.record(scan.rolling_cells);
         self.dependency_reads.record(scan.dependency_reads);
         self.keeper_wakes.record(scan.keeper_wakes);
+    }
+
+    fn record_parent_spend(&mut self, priority: u64, elapsed: Duration) {
+        self.spent_in_parent = self.spent_in_parent.saturating_add(1);
+        self.priority_spent_in_parent = self.priority_spent_in_parent.saturating_add(priority);
+        self.spent_in_parent_us = self.spent_in_parent_us.saturating_add(
+            u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX),
+        );
     }
 }
 
@@ -780,7 +792,38 @@ enum ProposalStep {
     Reused,
     Ordered,
     Skipped,
+    #[cfg(feature = "native-reuse-parent-spend-rejections")]
+    RejectedParentSpend,
     Stop,
+}
+
+enum ProposalTrial<T> {
+    Ordered,
+    Recheck,
+    Ready(T),
+    #[cfg(feature = "native-reuse-parent-spend-rejections")]
+    Missing(OutPoint),
+}
+
+impl<T> ProposalTrial<T> {
+    fn failed(_error: anyhow::Error) -> Self {
+        #[cfg(feature = "native-reuse-parent-spend-rejections")]
+        if let Ok(MissingLiveCell(point)) = _error.downcast() {
+            return Self::Missing(point);
+        }
+        Self::Recheck
+    }
+
+    #[cfg(feature = "native-rolling-leader-execution")]
+    fn map<U>(self, ready: impl FnOnce(T) -> U) -> ProposalTrial<U> {
+        match self {
+            Self::Ordered => ProposalTrial::Ordered,
+            Self::Recheck => ProposalTrial::Recheck,
+            Self::Ready(result) => ProposalTrial::Ready(ready(result)),
+            #[cfg(feature = "native-reuse-parent-spend-rejections")]
+            Self::Missing(point) => ProposalTrial::Missing(point),
+        }
+    }
 }
 
 struct ProposalSelection {
@@ -2643,14 +2686,18 @@ impl Store {
                 break;
             };
             let fixed = &mut window;
-            let adoption = trial.map(|result| {
-                move |budget: &mut Budget, overlay: &mut Overlay| {
-                    result.ok().and_then(|work| fixed.adopt(work, budget, overlay))
+            let trial = match trial {
+                Some(Ok(work)) => {
+                    ProposalTrial::Ready(move |budget: &mut Budget, overlay: &mut Overlay| {
+                        fixed.adopt(work, budget, overlay)
+                    })
                 }
-            });
+                Some(Err(error)) => ProposalTrial::failed(error),
+                None => ProposalTrial::Ordered,
+            };
             let step = self.stage_proposal_entry(
                 item.borrow(), &block, &origin, &mut budget, &mut overlay, &mut progress,
-                scan, adoption, None,
+                scan, trial, None,
             )?;
             if matches!(step, ProposalStep::Stop) {
                 break;
@@ -2676,7 +2723,7 @@ impl Store {
         overlay: &mut Overlay,
         progress: &mut ProposalProgress,
         scan: &mut ProposalScan,
-        adopt: Option<impl FnOnce(&mut Budget, &mut Overlay) -> Option<Receipt>>,
+        trial: ProposalTrial<impl FnOnce(&mut Budget, &mut Overlay) -> Option<Receipt>>,
         canonical: Option<&PrecedingCells<'_>>,
     ) -> Result<ProposalStep> {
         self.check_preparation_cancelled()?;
@@ -2703,15 +2750,34 @@ impl Store {
             && tx.keeper_action().is_none()
             && tx.keeper_schedule().is_none()
             && tx.lineage_batch().is_none();
-        let receipt = adopt.and_then(|adopt| {
-            let receipt = adopt(budget, overlay);
+        // For ordinary worker trials without Header Deps, the first input
+        // precedes any other state read. Reuse its rejection only when the
+        // canonical prefix leaves the exact parent tombstone authoritative.
+        #[cfg(feature = "native-reuse-parent-spend-rejections")]
+        if let ProposalTrial::Missing(point) = &trial
+            && tx.header_deps().len() == 0
+            && tx.inputs().next().is_some_and(|input| &input.previous_output == point)
+            && !overlay.live.contains_key(point)
+            && canonical.is_none_or(|view| view.get(point, |_| ()).is_none())
+            && matches!(self.branch_cell(point), Some(None))
+        {
+            scan.record_parent_spend(priority, started.elapsed());
+            scan.parallel_parent_rejections_reused =
+                scan.parallel_parent_rejections_reused.saturating_add(1);
+            return Ok(ProposalStep::RejectedParentSpend);
+        }
+        let had_trial = !matches!(trial, ProposalTrial::Ordered);
+        let receipt = match trial {
+            ProposalTrial::Ready(adopt) => adopt(budget, overlay),
+            _ => None,
+        };
+        if had_trial {
             if receipt.is_some() {
                 scan.parallel_cell_reused = scan.parallel_cell_reused.saturating_add(1);
             } else {
                 scan.parallel_cell_fallback = scan.parallel_cell_fallback.saturating_add(1);
             }
-            receipt
-        });
+        }
         let reused = receipt.is_some();
         let verify = |resolved, limit| self.cache.verify(resolved, limit, true);
         let staged = match (receipt, canonical) {
@@ -2754,11 +2820,7 @@ impl Store {
                         scan.spent_in_proposal = scan.spent_in_proposal.saturating_add(1);
                         scan.priority_spent_in_proposal = scan.priority_spent_in_proposal.saturating_add(priority);
                     } else if matches!(self.branch_cell(point), Some(None)) {
-                        scan.spent_in_parent = scan.spent_in_parent.saturating_add(1);
-                        scan.priority_spent_in_parent = scan.priority_spent_in_parent.saturating_add(priority);
-                        scan.spent_in_parent_us = scan.spent_in_parent_us.saturating_add(
-                            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-                        );
+                        scan.record_parent_spend(priority, started.elapsed());
                     }
                 }
                 return Ok(ProposalStep::Skipped);
@@ -4683,13 +4745,39 @@ mod pipeline_store_tests {
         #[cfg(feature = "native-leader-dependency-execution")]
         assert_eq!(
             (scan.parallel_cell_jobs, scan.parallel_cell_reused, scan.parallel_cell_fallback),
-            (3, 1, 2)
+            (3, 1, if cfg!(feature = "native-reuse-parent-spend-rejections") { 1 } else { 2 })
         );
+        #[cfg(feature = "native-reuse-parent-spend-rejections")]
+        assert_eq!(scan.parallel_parent_rejections_reused, 1);
         #[cfg(feature = "jolteon-aged-proposal-selection")]
         assert_eq!(
             (scan.priority_inspected, scan.priority_selected, scan.priority_spent_in_parent, scan.priority_spent_in_proposal),
             (3, 1, 1, 0)
         );
+
+        #[cfg(feature = "native-reuse-parent-spend-rejections")]
+        {
+            // The same signed transaction is eligible on a sibling where its
+            // explicit input is still live.
+            let sibling = Arc::new(store.prepare(&[], 1001, false)?);
+            let run = [first.clone(), second.clone()];
+            let mut scan = ProposalScan::default();
+            store.on_branch(&[sibling], |view| {
+                let (selected, built) = workers.install(|| {
+                    view.build_proposal_measured(run.iter(), 1002, 4096, &mut scan, None)
+                })?;
+                let reference = view.prepare(&run, 1002, false)?;
+                assert_eq!(
+                    selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                    run.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                );
+                assert_eq!(built.header(), reference.header());
+                assert_eq!(built.receipts(), reference.receipts());
+                assert_same_batch_writes(&built.batch, &reference.batch);
+                assert_eq!(scan.parallel_parent_rejections_reused, 0);
+                Ok(())
+            })?;
+        }
 
         spec.limits.transaction_cycles = expected.receipts()[0].cycles + 1;
         spec.limits.block_cycles = spec.limits.transaction_cycles;
