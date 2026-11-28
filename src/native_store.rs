@@ -158,6 +158,8 @@ pub struct ProposalScan {
     pub lineage: LineageSchedule,
     pub dependency_reads: DependencyReadStats,
     pub keeper_wakes: KeeperWakeMetrics,
+    /// Due commands reused from selection when finishing a Leader proposal.
+    pub keeper_prefix_reused: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -332,6 +334,9 @@ impl ProposalScan {
         self.lineage.record(scan.lineage);
         self.dependency_reads.record(scan.dependency_reads);
         self.keeper_wakes.record(scan.keeper_wakes);
+        self.keeper_prefix_reused = self
+            .keeper_prefix_reused
+            .saturating_add(scan.keeper_prefix_reused);
     }
 
     fn record_parent_spend(&mut self, priority: u64, elapsed: Duration) {
@@ -929,6 +934,7 @@ impl<T> ProposalTrial<T> {
 
 struct ProposalSelection {
     transactions: Vec<Transaction>,
+    keeper_commands: Vec<Transaction>,
     context: HeaderContext,
     overlay: Overlay,
     receipts: Vec<Receipt>,
@@ -2573,14 +2579,21 @@ impl Store {
         scan.selection_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let ProposalSelection {
             transactions,
+            mut keeper_commands,
             mut context,
             mut overlay,
             receipts,
             reusable,
         } = selection?;
         let prepared = if reusable {
-            context.transaction_root =
-                Tree::transactions(self.network.clone(), &transactions)?.root();
+            let keeper_count = keeper_commands.len();
+            let execution = if keeper_count == 0 {
+                &transactions
+            } else {
+                keeper_commands.extend_from_slice(&transactions);
+                &keeper_commands
+            };
+            context.transaction_root = Tree::transactions(self.network.clone(), execution)?.root();
             let origin = Origin::new(&self.network, &context);
             for record in overlay.live.values_mut().flatten() {
                 record.origin = origin.clone();
@@ -2589,7 +2602,11 @@ impl Store {
                 .iter()
                 .try_fold(0u64, |sum, receipt| sum.checked_add(receipt.fee))
                 .context("block fee overflow")?;
-            self.finish_block(context, overlay, &transactions, receipts, 0, fees, true)?
+            let mut prepared =
+                self.finish_block(context, overlay, execution, receipts, keeper_count, fees, true)?;
+            prepared.lineage_schedule.keeper_wakes = scan.keeper_wakes;
+            scan.keeper_prefix_reused = keeper_count as u64;
+            prepared
         } else {
             self.prepare(&transactions, timestamp_ms, true)?
         };
@@ -2621,7 +2638,7 @@ impl Store {
         let mut progress = ProposalProgress {
             transactions: Vec::new(),
             receipts,
-            reusable: due.commands.is_empty(),
+            reusable: due.can_rebind_proposal(),
             wire_bytes: max_bytes,
             cycle_rejections: 0,
             cycle_scan_limit,
@@ -2712,6 +2729,7 @@ impl Store {
         scan.dependency_reads.record(window.dependency_stats());
         Ok(ProposalSelection {
             transactions: progress.transactions,
+            keeper_commands: due.commands,
             context: block.into_candidate(),
             overlay,
             receipts: progress.receipts,
