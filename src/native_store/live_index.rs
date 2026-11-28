@@ -116,10 +116,10 @@ impl InlineRecords {
         self.payload_bytes + self.rows.allocation_size()
     }
 
-    fn remove(&mut self, point: &ResidentKey) {
-        if let Some(cell) = self.rows.remove(point) {
-            self.payload_bytes -= Self::payload(&cell);
-        }
+    fn remove(&mut self, point: &ResidentKey) -> Option<LiveCell> {
+        let cell = self.rows.remove(point)?;
+        self.payload_bytes -= Self::payload(&cell);
+        Some(cell)
     }
 
     fn insert(
@@ -219,13 +219,11 @@ impl Records {
         }
     }
 
-    fn remove(&mut self, point: &OutPoint) {
-        let Some(point) = resident_key_ref(point) else {
-            return;
-        };
+    fn remove(&mut self, point: &OutPoint) -> Option<ResidentCell> {
+        let point = resident_key_ref(point)?;
         match self {
-            Self::Inline(records) => records.remove(point),
-            Self::Interned(records) => records.remove(point),
+            Self::Inline(records) => records.remove(point).map(ResidentCell::Inline),
+            Self::Interned(records) => records.remove(point).map(ResidentCell::Interned),
         }
     }
 
@@ -264,36 +262,65 @@ struct Previous {
 impl Previous {
     fn capture(
         header: Key,
-        records: &Records,
+        records: &mut Records,
         changes: &LiveChanges,
         limit: usize,
     ) -> Option<Self> {
-        let budget = limit.checked_sub(records.bytes())?;
+        // Anchor the journal budget to the table before removing any rows.
+        let budget = limit.checked_sub(records.bytes());
+        let mut previous = budget.and_then(|budget| Self::reserve(header, changes.len(), budget));
+        let budget = budget.unwrap_or_default();
+        for point in changes.keys() {
+            #[cfg(feature = "native-live-cell-move-previous")]
+            let old = records.remove(point);
+            #[cfg(not(feature = "native-live-cell-move-previous"))]
+            let old = {
+                previous.as_ref()?;
+                records.get(point)
+            };
+            if let Some(journal) = &mut previous
+                && !journal.record(point, old, budget)
+            {
+                // Publish either a complete journal or no older generation.
+                // The moving variant must still erase the remaining rows.
+                previous = None;
+            }
+        }
+        previous.map(|mut journal| {
+            // The live map orders the output index numerically. This lookup
+            // compares its fixed-width key byte-for-byte.
+            journal.edits.sort_unstable_by_key(|(point, _)| *point);
+            journal
+        })
+    }
+
+    fn reserve(header: Key, count: usize, budget: usize) -> Option<Self> {
         let row_size = size_of::<BeforeImage>();
-        if changes.len().checked_mul(row_size)? > budget {
+        if count.checked_mul(row_size)? > budget {
             return None;
         }
         let mut edits = Vec::new();
-        edits.try_reserve_exact(changes.len()).ok()?;
-        let mut bytes = edits.capacity().checked_mul(row_size)?;
+        edits.try_reserve_exact(count).ok()?;
+        let bytes = edits.capacity().checked_mul(row_size)?;
+        (bytes <= budget).then_some(Self { header, edits, bytes })
+    }
+
+    fn record(&mut self, point: &OutPoint, old: Option<ResidentCell>, budget: usize) -> bool {
+        // Also charge shared buffers in full. An overwritten row or its
+        // descriptors might only be owned by this generation afterward.
+        let Some(bytes) = self
+            .bytes
+            .checked_add(old.as_ref().map_or(0, ResidentCell::retained_bytes))
+        else {
+            return false;
+        };
         if bytes > budget {
-            return None;
+            return false;
         }
-        for point in changes.keys() {
-            let old = records.get(point);
-            // Also charge shared buffers in full. An overwritten row or its
-            // descriptors might only be owned by this generation afterward.
-            bytes = bytes.checked_add(old.as_ref().map_or(0, ResidentCell::retained_bytes))?;
-            if bytes > budget {
-                return None;
-            }
-            let key = point.as_slice().try_into().expect("packed OutPoint width");
-            edits.push((key, old));
-        }
-        // The live map orders the output index numerically. This lookup
-        // compares its fixed-width key byte-for-byte.
-        edits.sort_unstable_by_key(|(point, _)| *point);
-        Some(Self { header, edits, bytes })
+        let key = point.as_slice().try_into().expect("packed OutPoint width");
+        self.edits.push((key, old));
+        self.bytes = bytes;
+        true
     }
 
     fn lookup(&self, records: &Records, point: &OutPoint) -> Option<ResidentCell> {
@@ -607,15 +634,16 @@ impl IndexView {
             drop(state.previous.take());
             state
                 .records
-                .as_ref()
+                .as_mut()
                 .filter(|_| !exhausted)
                 .and_then(|records| {
-                    Previous::capture(state.header, records, changes, self.index.limit_bytes)
+                    Previous::capture(self.header, records, changes, self.index.limit_bytes)
                 })
         };
         if !exhausted && let Some(records) = &mut state.records {
+            #[cfg(not(feature = "native-live-cell-move-previous"))]
             for point in changes.keys() {
-                records.remove(point);
+                drop(records.remove(point));
             }
             for (point, change) in changes {
                 let Some(cell) = change else {
@@ -710,5 +738,34 @@ impl IndexView {
             previous_header_bytes,
             previous_header_lookups,
         }
+    }
+}
+
+#[cfg(all(test, feature = "native-live-cell-move-previous"))]
+mod tests {
+    use ckb_types::packed::Script;
+
+    use super::*;
+
+    #[test]
+    fn journal_budget_failure_still_removes_the_remaining_rows() -> Result<()> {
+        let points = [0, 1, 256].map(|index| OutPoint::new([7; 32].pack(), index));
+        let row = LiveCell {
+            cell: Cell::new(20_000_000_000, Script::default(), vec![], Bytes::new())?,
+            origin: Origin { height: 0, timestamp_ms: 0, context_id: Byte32::default() },
+        };
+        let changes = points.iter().cloned().map(|point| (point, None)).collect();
+        for layout in [LiveCellIndexLayout::Inline, LiveCellIndexLayout::InternedScripts] {
+            let mut records = Records::new(layout);
+            for point in &points {
+                assert!(records.insert(Cow::Borrowed(point), row.clone(), 1 << 20, true));
+            }
+            let first = records.get(&points[0]).unwrap().retained_bytes();
+            let limit = records.bytes() + points.len() * size_of::<BeforeImage>() + first;
+            assert!(Previous::capture([7; 32], &mut records, &changes, limit).is_none());
+            assert_eq!(records.len(), 0);
+            assert_eq!(records.distinct_descriptors(), 0);
+        }
+        Ok(())
     }
 }

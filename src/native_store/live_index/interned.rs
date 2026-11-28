@@ -115,14 +115,14 @@ impl InternedRecords {
         self.rows.get(point).cloned()
     }
 
-    pub(super) fn remove(&mut self, point: &ResidentKey) {
-        if let Some(row) = self.rows.remove(point) {
-            self.payload -= Row::cost(row.body.len());
-            self.descriptors.release(&row.lock);
-            if let Some(types) = row.types {
-                self.descriptors.release(&types);
-            }
+    pub(super) fn remove(&mut self, point: &ResidentKey) -> Option<Row> {
+        let row = self.rows.remove(point)?;
+        self.payload -= Row::cost(row.body.len());
+        self.descriptors.release(&row.lock);
+        if let Some(types) = &row.types {
+            self.descriptors.release(types);
         }
+        Some(row)
     }
 
     pub(super) fn insert(&mut self, point: ResidentKey, cell: &LiveCell, limit: usize) -> bool {
@@ -227,9 +227,9 @@ mod tests {
         assert!(records.insert(second(), &second_cell, 1 << 20));
         assert_eq!(records.distinct_descriptors(), 2);
         let retained = records.get(&second()).expect("resident row");
-        records.remove(&first());
+        drop(records.remove(&first()));
         assert_eq!(records.distinct_descriptors(), 2);
-        records.remove(&second());
+        drop(records.remove(&second()));
         assert_eq!(records.distinct_descriptors(), 0);
         assert_eq!(records.descriptors.payload, 0);
         assert!(records.get(&second()).is_none());
