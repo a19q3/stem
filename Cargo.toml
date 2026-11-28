@@ -28,6 +28,10 @@ native-cell-subtree-parallel = ["stem-ledger/parallel-patricia"]
 native-candidate-cell-prefetch = []
 native-lineage-ready-prefix = []
 native-work-stealing = []
+native-dependency-execution = []
+native-leader-dependency-execution = []
+native-rolling-cell-execution = ["native-dependency-execution"]
+native-execution-material-cache = ["stem-ledger/execution-material-cache"]
 
 [dependencies]
 anyhow.workspace = true

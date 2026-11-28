@@ -33,6 +33,7 @@ use stem_stake::jolteon::{COMMITTEE_RECORD, CommitteeChange};
 use stem_vm::VerificationCache;
 
 mod bridge;
+mod cell_execution;
 mod cell_query;
 pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
@@ -58,6 +59,7 @@ use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
 mod test_contract;
 
 use bridge::{Bridge, BridgeChanges, StagedBridge};
+use cell_execution::{MAX_SPECULATIVE_READ_BYTES, PrecedingCells, ProposalWindow};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
 use staking::{StagedStake, StakeInputs, Staking};
 pub use staking::{StakeGenesis, stake_registry_policy};
@@ -128,6 +130,12 @@ pub struct ProposalScan {
     pub priority_spent_in_parent: u64,
     pub priority_spent_in_proposal: u64,
     pub priority_cycle_rejections: u64,
+    /// Workers may run ahead of the canonical scan. Count jobs separately
+    /// from results used or candidates that required ordered staging.
+    pub parallel_cell_jobs: u64,
+    pub parallel_cell_reused: u64,
+    pub parallel_cell_fallback: u64,
+    pub parallel_cell_us: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -138,6 +146,30 @@ pub struct LineageSchedule {
     pub parallel_waves: u64,
     pub parallel_commands: u64,
     pub serial_commands: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct CellStreamStats {
+    pub runs: u64,
+    pub jobs: u64,
+    pub reused: u64,
+    pub fallbacks: u64,
+    pub refilled_jobs: u64,
+    pub peak_outstanding: u64,
+    pub elapsed_us: u64,
+}
+
+impl CellStreamStats {
+    pub(crate) fn record(&mut self, other: Self) {
+        self.runs = self.runs.saturating_add(other.runs);
+        self.jobs = self.jobs.saturating_add(other.jobs);
+        self.reused = self.reused.saturating_add(other.reused);
+        self.fallbacks = self.fallbacks.saturating_add(other.fallbacks);
+        self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
+        self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
+        self.elapsed_us = self.elapsed_us.saturating_add(other.elapsed_us);
+    }
 }
 
 impl LineageSchedule {
@@ -174,6 +206,10 @@ impl ProposalScan {
         self.priority_spent_in_parent = self.priority_spent_in_parent.saturating_add(scan.priority_spent_in_parent);
         self.priority_spent_in_proposal = self.priority_spent_in_proposal.saturating_add(scan.priority_spent_in_proposal);
         self.priority_cycle_rejections = self.priority_cycle_rejections.saturating_add(scan.priority_cycle_rejections);
+        self.parallel_cell_jobs = self.parallel_cell_jobs.saturating_add(scan.parallel_cell_jobs);
+        self.parallel_cell_reused = self.parallel_cell_reused.saturating_add(scan.parallel_cell_reused);
+        self.parallel_cell_fallback = self.parallel_cell_fallback.saturating_add(scan.parallel_cell_fallback);
+        self.parallel_cell_us = self.parallel_cell_us.saturating_add(scan.parallel_cell_us);
     }
 }
 
@@ -551,6 +587,7 @@ pub struct Prepared {
     batch: Batch,
     commitments: CommitmentTiming,
     lineage_schedule: LineageSchedule,
+    cell_stream: CellStreamStats,
 }
 
 pub(crate) struct CommitmentTiming {
@@ -648,6 +685,10 @@ impl Prepared {
 
     pub(crate) fn lineage_schedule(&self) -> LineageSchedule {
         self.lineage_schedule
+    }
+
+    pub(crate) fn cell_stream(&self) -> CellStreamStats {
+        self.cell_stream
     }
 
     /// CometBFT expects results only for transactions submitted with the proposal.
@@ -1560,16 +1601,10 @@ impl Store {
             "block transaction count exceeded"
         );
         let mut overlay = self.overlay(self.stage_stake()?);
-        let with_due = (!due.commands.is_empty()).then(|| {
-            due.commands
-                .iter()
-                .chain(transactions)
-                .cloned()
-                .collect::<Vec<_>>()
-        });
-        let execution = with_due.as_deref().unwrap_or(transactions);
-        let total_bytes = execution
+        let total_bytes = due
+            .commands
             .iter()
+            .chain(transactions)
             .try_fold(0u64, |total, tx| {
                 total.checked_add(tx.as_slice().len() as u64)
             })
@@ -1578,6 +1613,21 @@ impl Store {
             total_bytes <= budget.bytes,
             "block transaction bytes exceeded"
         );
+        #[cfg(feature = "native-execution-material-cache")]
+        let materialized: Vec<_> = transactions
+            .iter()
+            .map(|tx| tx.with_execution_material(&self.network))
+            .collect();
+        #[cfg(feature = "native-execution-material-cache")]
+        let transactions = materialized.as_slice();
+        let with_due = (!due.commands.is_empty()).then(|| {
+            due.commands
+                .iter()
+                .chain(transactions)
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let execution = with_due.as_deref().unwrap_or(transactions);
         let block = BlockContext::after(
             &self.network,
             &self.tip,
@@ -1603,6 +1653,8 @@ impl Store {
             && width > 1
             && !self.live_index.as_ref().is_some_and(IndexView::resident);
         let mut lineage_schedule = LineageSchedule::default();
+        #[cfg(feature = "native-rolling-cell-execution")]
+        let mut cell_stream = CellStreamStats::default();
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
         for mut segment in transactions
@@ -1611,6 +1663,28 @@ impl Store {
             let lineage = segment[0].has_lineage_command();
             let mut prefetch_remaining = 0usize;
             while !segment.is_empty() {
+                if cfg!(feature = "native-dependency-execution") && width > 1 && !lineage {
+                    #[cfg(feature = "native-rolling-cell-execution")]
+                    let count = self.prepare_cell_run(
+                        segment, &block, &origin, width, &mut budget, &mut overlay,
+                        &mut receipts, &mut fees, &mut cell_stream,
+                    )?;
+                    #[cfg(not(feature = "native-rolling-cell-execution"))]
+                    let count = 0;
+                    let count = if count == 0 {
+                        self.prepare_cell_window(
+                            segment, &block, &origin, width, &mut budget, &mut overlay,
+                            &mut receipts, &mut fees,
+                        )?
+                    } else {
+                        count
+                    };
+                    if count != 0 {
+                        segment = &segment[count..];
+                        prefetch_remaining = prefetch_remaining.saturating_sub(count);
+                        continue;
+                    }
+                }
                 if prefetch_cells && !lineage && prefetch_remaining == 0 {
                     prefetch_remaining = segment.len().min(32);
                     self.prefetch_candidate_cells(&segment[..prefetch_remaining], &mut overlay);
@@ -1724,6 +1798,10 @@ impl Store {
             parallel,
         )?;
         prepared.lineage_schedule = lineage_schedule;
+        #[cfg(feature = "native-rolling-cell-execution")]
+        {
+            prepared.cell_stream = cell_stream;
+        }
         Ok(prepared)
     }
 
@@ -1873,6 +1951,7 @@ impl Store {
                 execution: execution_time,
             },
             lineage_schedule: LineageSchedule::default(),
+            cell_stream: CellStreamStats::default(),
         })
     }
 
@@ -2115,13 +2194,45 @@ impl Store {
         let mut reusable = due.commands.is_empty();
         let mut selected = Vec::new();
         let mut cycle_rejections = 0;
-        for item in transactions {
+        let width = if cfg!(feature = "native-leader-dependency-execution") {
+            rayon::current_num_threads()
+        } else {
+            1
+        };
+        #[cfg(feature = "native-execution-material-cache")]
+        let transactions = transactions
+            .into_iter()
+            .map(|item| item.borrow().with_execution_material(&self.network));
+        let mut transactions = transactions.into_iter().peekable();
+        let mut window = ProposalWindow::new();
+        loop {
             if selected.len() + due.commands.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
                 || wire_bytes == 0
             {
                 break;
             }
+            let next = if width > 1 {
+                let available =
+                    self.limits.transaction_count as usize - selected.len() - due.commands.len();
+                window.next(
+                    &mut transactions,
+                    self,
+                    &block,
+                    &origin,
+                    &overlay,
+                    budget,
+                    wire_bytes,
+                    available,
+                    width,
+                    scan,
+                )?
+            } else {
+                transactions.next().map(|item| (item, None))
+            };
+            let Some((item, trial)) = next else {
+                break;
+            };
             let priority = u64::from(
                 cfg!(feature = "jolteon-aged-proposal-selection") && scan.inspected < scan.priority_candidates,
             );
@@ -2133,7 +2244,7 @@ impl Store {
             if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
                 continue;
             }
-            let entry_bytes = (1 + prost::length_delimiter_len(len) + len) as u64;
+            let entry_bytes = proposal_entry_bytes(len);
             let Some(next_wire) = wire_bytes.checked_sub(entry_bytes) else {
                 continue;
             };
@@ -2146,15 +2257,31 @@ impl Store {
                 && tx.keeper_action().is_none()
                 && tx.keeper_schedule().is_none()
                 && tx.lineage_batch().is_none();
-            match self.stage(
-                tx,
-                &block,
-                &origin,
-                &mut budget,
-                &mut overlay,
-                None,
-                |resolved, limit| self.cache.verify(resolved, limit, true),
-            ) {
+            let receipt = trial.and_then(|trial| {
+                let adopted = trial
+                    .ok()
+                    .and_then(|work| window.adopt(work, &mut budget, &mut overlay));
+                if adopted.is_some() {
+                    scan.parallel_cell_reused = scan.parallel_cell_reused.saturating_add(1);
+                } else {
+                    scan.parallel_cell_fallback = scan.parallel_cell_fallback.saturating_add(1);
+                }
+                adopted
+            });
+            let staged = if let Some(receipt) = receipt {
+                Ok(receipt)
+            } else {
+                self.stage(
+                    tx,
+                    &block,
+                    &origin,
+                    &mut budget,
+                    &mut overlay,
+                    None,
+                    |resolved, limit| self.cache.verify(resolved, limit, true),
+                )
+            };
+            match staged {
                 Ok(receipt) => {
                     scan.selected = scan.selected.saturating_add(1);
                     scan.priority_selected = scan.priority_selected.saturating_add(priority);
@@ -2326,6 +2453,7 @@ impl Store {
             staged_command,
             verify,
             None,
+            None,
         )
     }
 
@@ -2368,6 +2496,7 @@ impl Store {
                             journal: &mut journal,
                             extra_bytes: if index == 0 { extra_bytes } else { 0 },
                         }),
+                        None,
                     )
                     .with_context(|| format!("Lineage batch member {index}"))?;
                 receipt.fee = receipt
@@ -2404,6 +2533,7 @@ impl Store {
         staged_command: Option<lineage::Materialized>,
         verify: impl FnOnce(Arc<ResolvedTransaction>, u64) -> Result<u64>,
         batch: Option<LineageBatchMember<'_>>,
+        preceding: Option<&PrecedingCells<'_>>,
     ) -> Result<Receipt> {
         let context = block.candidate();
         let tx_bytes =
@@ -2483,13 +2613,34 @@ impl Store {
             Some(cell) => Ok(cell.clone()),
             None => self.live_cell(point),
         };
+        let preceding = if cfg!(any(
+            feature = "native-dependency-execution",
+            feature = "native-leader-dependency-execution"
+        )) {
+            preceding
+        } else {
+            None
+        };
+        let speculative = preceding.is_some_and(PrecedingCells::is_speculative);
         // Current candidate writes, including deletions, supersede all hints.
+        let staged = |point: &OutPoint| {
+            live.get(point)
+                .map(Option::as_ref)
+                .or_else(|| preceding.and_then(|view| view.get(point)))
+        };
+        let speculative_bytes = std::cell::Cell::new(0usize);
         let fresh = |point: &OutPoint| {
-            match live.get(point) {
-                Some(staged) => staged.clone(),
+            let record = match staged(point) {
+                Some(record) => record.cloned(),
                 None => lookup(point)?,
             }
-            .with_context(|| MissingLiveCell(point.clone()))
+            .with_context(|| MissingLiveCell(point.clone()))?;
+            if speculative {
+                let used = speculative_bytes.get().saturating_add(record.cell.as_slice().len());
+                ensure!(used <= MAX_SPECULATIVE_READ_BYTES, "large Cell reads need ordered execution");
+                speculative_bytes.set(used);
+            }
+            Ok(record)
         };
         let header = |hash: &Byte32| self.resolve_header(hash, context.height);
         let concrete = materialized
@@ -2560,14 +2711,22 @@ impl Store {
         };
         let keeper_cycles = keeper_change.as_ref().map_or(0, |change| change.cycles);
         let id = resolved.execution_id();
-        let lineage_changes = self
-            .lineage
-            .as_ref()
-            .map(|code| {
-                lineage::changes(self, code, lineages, &resolved, &id, &changes.omit_outputs)
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let lineage_changes = match &self.lineage {
+            Some(code) if speculative => {
+                ensure!(
+                    !resolved.groups().iter().any(|group| {
+                        group.kind == stem_ledger::ScriptGroupKind::Type
+                            && stem_ledger::lineage::is_marker(code, &group.script)
+                    }),
+                    "Lineage registry changes need ordered execution"
+                );
+                lineage::Heads::new()
+            }
+            Some(code) => {
+                lineage::changes(self, code, lineages, &resolved, &id, &changes.omit_outputs)?
+            }
+            None => lineage::Heads::new(),
+        };
         let lineage_reads = lineage_changes.len() as u64;
         let reads = resolved.cell_reads() as u64
             + resolved.l1_references().len() as u64
@@ -2602,7 +2761,7 @@ impl Store {
                 )?;
                 let point = OutPoint::new(id.clone(), u32::try_from(index)?);
                 ensure!(
-                    !live.contains_key(&point) && lookup(&point)?.is_none(),
+                    staged(&point).is_none() && lookup(&point)?.is_none(),
                     "duplicate output OutPoint"
                 );
                 Ok((
@@ -2694,6 +2853,7 @@ impl Store {
                             Some(refund),
                             verify,
                             None,
+                            preceding,
                         );
                     }
                 }
@@ -2886,6 +3046,10 @@ fn charge(remaining: &mut u64, amount: u64, name: &str) -> Result<()> {
         .checked_sub(amount)
         .with_context(|| format!("{name} exceeded"))?;
     Ok(())
+}
+
+fn proposal_entry_bytes(len: usize) -> u64 {
+    (1 + prost::length_delimiter_len(len) + len) as u64
 }
 
 fn as_key(id: &Byte32) -> Key {
@@ -3398,16 +3562,29 @@ mod pipeline_store_tests {
         let store = Store::open(path.path(), &spec, Retention::Archive)?;
         let parent = Arc::new(store.prepare(std::slice::from_ref(&first), 1001, false)?);
         let mut scan = ProposalScan { priority_candidates: 3, ..ProposalScan::default() };
-        let (selected, proposal) = store
-            .pinned_view()
-            .build_proposal(
-                &[parent.clone()],
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        #[cfg(feature = "native-rolling-cell-execution")]
+        {
+            let run = [first.clone(), second.clone(), third.clone(), fourth.clone()];
+            let serial = store.prepare(&run, 1001, false)?;
+            let pipelined = workers.install(|| store.prepare(&run, 1001, true))?;
+            assert_eq!(pipelined.header(), serial.header());
+            assert_eq!(pipelined.receipts(), serial.receipts());
+            assert_eq!(pipelined.batch.writes, serial.batch.writes);
+            let stats = pipelined.cell_stream();
+            assert_eq!((stats.runs, stats.jobs, stats.reused, stats.fallbacks), (1, 4, 4, 0));
+            assert_eq!(stats.peak_outstanding, 3);
+            assert_eq!(stats.refilled_jobs, 1);
+        }
+        let (selected, proposal) = workers
+            .install(|| store.pinned_view().build_proposal(
+                std::slice::from_ref(&parent),
                 vec![first.clone(), missing, second.clone(), second.clone()],
                 1002,
                 4096,
                 &mut scan,
                 false,
-            )?
+            ))?
             .context("missing proposal snapshot")?;
         let expected = store.on_branch(&[parent], |view| {
             view.prepare(std::slice::from_ref(&second), 1002, false)
@@ -3419,6 +3596,11 @@ mod pipeline_store_tests {
         assert_eq!(
             (scan.inspected, scan.selected, scan.spent_in_parent, scan.spent_in_proposal),
             (4, 1, 1, 1)
+        );
+        #[cfg(feature = "native-leader-dependency-execution")]
+        assert_eq!(
+            (scan.parallel_cell_jobs, scan.parallel_cell_reused, scan.parallel_cell_fallback),
+            (3, 1, 2)
         );
         #[cfg(feature = "jolteon-aged-proposal-selection")]
         assert_eq!(
