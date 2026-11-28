@@ -355,3 +355,40 @@ schedulers would have repeated that work. The regression cases for
 parent spends, a sibling, nonexistent inputs and same-block duplicates
 have been compile-checked. Runtime validation and performance measurements
 remain pending.
+
+### Masking rejected Leader Cell declarations
+
+The rolling Leader can leave a skipped candidate's projected writes
+visible until the next retirement interval or the end of the run. A
+later payment can see a speculative spend that never reached the
+accepted proposal. Its ordered recheck then repeats resolution and
+possibly execution.
+
+With `native-mask-rejected-cell-projections`, the coordinator marks a
+candidate's position as rejected after the canonical scan skips it.
+Subsequent reads under the existing projection lock select the newest
+unmasked declaration before their own position, or fall through to the
+canonical prefix or parent. A worker that read the old declaration
+still carries its source position. Its result cannot be adopted when
+that source was skipped, including a worker that read on both sides of
+the mask update. Rejected entries remain subject to the existing bulk
+retirement. The mask is indexed by positions within the bounded rolling
+Leader run and is allocated only after a rejection. Only the Leader
+marks rejections.
+
+Compare the same source with rolling Leader and incremental projection
+enabled in both arms, toggling only `native-mask-rejected-cell-projections`.
+Repeat with identical reclaim and bounded cycle-scan settings. Use the
+same ordered mempool snapshot, including a failed multi-input candidate
+whose first input is available to a later replacement, dependencies
+spanning the active window, and a low-conflict payment control. Check
+selected bytes, exact Headers, receipts and durable writes against serial
+construction. Report `masked_projection_positions`, worker fallbacks and
+reuse, Leader selection time, CPU and finality. The saved rechecks depend
+on when workers first read the rejected candidate. The extra projection
+lookup and write-lock acquisitions can offset the gain at low conflict
+or when workers have already completed their reads.
+
+Compile coverage includes successive masked edits on the same OutPoint
+and a replacement followed by its dependent spend. Runtime regressions,
+independent replay and performance measurements are pending.

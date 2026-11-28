@@ -168,8 +168,8 @@ impl PrecedingCells<'_> {
         if prefix.position == 0 {
             return base().map(use_record);
         }
-        let from_projection = |writes: &Writes, settled: Option<&LiveChanges>| {
-            let Some(edit) = prefix.previous(writes, point) else {
+        let from_projection = |edit: Option<&Write>, settled: Option<&LiveChanges>| {
+            let Some(edit) = edit else {
                 if let Some(record) = settled.and_then(|edits| edits.get(point)) {
                     return Some(use_record(record.as_ref()));
                 }
@@ -183,7 +183,9 @@ impl PrecedingCells<'_> {
             Some(use_record(edit.cell.as_ref()))
         };
         match prefix.writes {
-            Projection::Complete(writes) => from_projection(writes, None),
+            Projection::Complete(writes) => {
+                from_projection(prefix.previous(writes, point, |_| true), None)
+            }
             #[cfg(all(
                 feature = "native-incremental-cell-projection",
                 any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
@@ -194,17 +196,27 @@ impl PrecedingCells<'_> {
                 let settled = Some(&state.settled);
                 #[cfg(not(feature = "native-reclaim-cell-projection"))]
                 let settled = None;
-                from_projection(&state.writes, settled)
+                let edit = prefix.previous(&state.writes, point, |position| state.visible(position));
+                from_projection(edit, settled)
             }
         }
     }
 }
 
 impl ProjectedPrefix<'_> {
-    fn previous<'rows>(&self, writes: &'rows Writes, point: &OutPoint) -> Option<&'rows Write> {
+    fn previous<'rows>(
+        &self,
+        writes: &'rows Writes,
+        point: &OutPoint,
+        visible: impl Fn(usize) -> bool,
+    ) -> Option<&'rows Write> {
         let history = writes.get(point).filter(|history| history.first.position < self.position)?;
         let cutoff = history.later.partition_point(|edit| edit.position < self.position);
-        Some(cutoff.checked_sub(1).map_or(&history.first, |i| &history.later[i]))
+        history.later[..cutoff]
+            .iter()
+            .rev()
+            .chain(std::iter::once(&history.first))
+            .find(|edit| visible(edit.position))
     }
 }
 
