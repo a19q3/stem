@@ -15,6 +15,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Certificates and votes | `34e4743` | Shared direct frames and exact current-certificate reuse [Communication notes](certificates/README.md#sharing-certificates-and-direct-vote-frames) |
 | Resident Patricia publication | `0eba67f` | Publish on the certified writer after WAL sync or on the Replica when it installs the durable tip [Resident Patricia notes](storage/resident-patricia.md) |
 | Verified resident nodes | `native-verified-cell-nodes` | Authenticate decoded nodes at cache insertion and reuse them by content ID [Comparison notes](storage/resident-patricia.md#verified-decoded-resident-nodes) |
+| Compact write journal | `native-compact-write-journal` | Inline short row keys and index positions without copying keys [Comparison notes](storage/patricia-finishing/README.md#compact-prepared-write-journal) |
 | Generated Cell node journals | `native-verified-cell-journal` | Reuse generated nodes through speculative reads, WAL encoding and resident publication [Comparison notes](storage/resident-patricia.md#generated-cell-node-journals) |
 
 This integration adds `jolteon-resident-node-publication` as an independent control. Only the selected writer path updates the node index before its acknowledgement. The normal installer updates the Live Cell index and publishes nodes when the writer did not. The node-count and shard preallocation changes follow the same build option.
@@ -39,6 +40,7 @@ publication=jolteon-resident-node-publication
 parent_cells=native-live-cell-parent-index
 verified_nodes=native-verified-cell-nodes
 verified_journal=native-verified-cell-journal
+compact_journal=native-compact-write-journal
 certificates=jolteon-shared-certificate-path
 
 build() {
@@ -60,8 +62,9 @@ build publication --features "$publication"
 build prior-durable-cells --features "$parent_cells"
 build verified-nodes --features "$verified_nodes"
 build verified-journal --features "$verified_journal"
+build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$rolling_leader,$exact_prefix,$cancellation,$contracts,$publication,$parent_cells,$verified_journal,$certificates"
+build combined --features "$cells,$dependencies,$rolling_leader,$exact_prefix,$cancellation,$contracts,$publication,$parent_cells,$verified_journal,$compact_journal,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

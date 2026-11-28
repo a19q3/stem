@@ -258,6 +258,7 @@ impl NodeIndex {
         let prefix = [STATE_NODE, Namespace::Cells.tag()];
         self.advance_edits(|| {
             batch.writes.iter().filter_map(|(key, value)| {
+                let key: &[u8] = key.as_ref();
                 let id = <&Key>::try_from(key.strip_prefix(&prefix)?).ok()?;
                 Some((id, value.as_deref().map(NodeUpdate::Stored)))
             })

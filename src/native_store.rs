@@ -62,6 +62,10 @@ mod state_snapshot;
 mod storage_metrics;
 pub use storage_metrics::StorageSample;
 use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
+#[cfg(feature = "native-compact-write-journal")]
+mod write_journal;
+#[cfg(feature = "native-compact-write-journal")]
+use write_journal::{JournalIndex, JournalKey};
 #[cfg(all(test, feature = "jolteon-proposal-pipeline"))]
 #[path = "../contracts/test_support.rs"]
 mod test_contract;
@@ -3575,26 +3579,41 @@ impl std::ops::Deref for ReadValue<'_> {
     }
 }
 
-type Write = (Vec<u8>, Option<Vec<u8>>);
+#[cfg(not(feature = "native-compact-write-journal"))]
+type JournalKey = Vec<u8>;
+#[cfg(not(feature = "native-compact-write-journal"))]
+type JournalIndex = HashMap<Vec<u8>, usize>;
+
+type Write = (JournalKey, Option<Vec<u8>>);
 
 #[derive(Default)]
 struct Batch {
     writes: Vec<Write>,
-    index: OnceLock<HashMap<Vec<u8>, usize>>,
+    index: OnceLock<JournalIndex>,
     #[cfg(feature = "native-verified-cell-journal")]
     cell_nodes: Option<(usize, stem_ledger::patricia::VerifiedChanges)>,
 }
 
 impl Batch {
     fn lookup(&self, key: &[u8]) -> Option<&Option<Vec<u8>>> {
-        let index = self.index.get_or_init(|| {
-            self.writes
-                .iter()
-                .enumerate()
-                .map(|(position, (key, _))| (key.clone(), position))
-                .collect()
-        });
-        index.get(key).map(|&position| &self.writes[position].1)
+        #[cfg(feature = "native-compact-write-journal")]
+        let position = self
+            .index
+            .get_or_init(|| JournalIndex::build(&self.writes))
+            .position(&self.writes, key);
+        #[cfg(not(feature = "native-compact-write-journal"))]
+        let position = self
+            .index
+            .get_or_init(|| {
+                self.writes
+                    .iter()
+                    .enumerate()
+                    .map(|(position, (key, _))| (key.clone(), position))
+                    .collect()
+            })
+            .get(key)
+            .copied();
+        position.map(|position| &self.writes[position].1)
     }
 
     fn put(&mut self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
@@ -3602,11 +3621,11 @@ impl Batch {
     }
 
     fn put_owned(&mut self, key: impl AsRef<[u8]>, value: Vec<u8>) {
-        self.writes.push((key.as_ref().to_vec(), Some(value)));
+        self.writes.push((JournalKey::from(key.as_ref()), Some(value)));
     }
 
     fn delete(&mut self, key: impl AsRef<[u8]>) {
-        self.writes.push((key.as_ref().to_vec(), None));
+        self.writes.push((JournalKey::from(key.as_ref()), None));
     }
 }
 
@@ -3697,6 +3716,7 @@ fn append_journal_rows<'a>(
     proposals: &mut BTreeSet<&'a [u8]>,
 ) -> Result<()> {
     for (key, value) in rows {
+        let key: &[u8] = key.as_ref();
         if key.starts_with(b"jbody") {
             proposals.insert(&key[1..]);
         }

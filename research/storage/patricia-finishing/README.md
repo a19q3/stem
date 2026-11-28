@@ -81,3 +81,41 @@ python3 tools/jolteon_localnet.py --binary "$buffered_node" --alternate-binary "
 python3 "$study/reopen.py" --output "$run" --candidate "$buffered_node" --reference "$indexed_node" --archive reopen-repeat.json.xz
 node "$study/reopen.mjs" /path/to/built/wasm reopen-repeat.json.xz
 ```
+
+## Compact prepared write journal
+
+The default write journal allocates one key buffer per row. The first
+speculative lookup also builds a hash index with a copy of every key.
+The earlier 2,048-payment child recorded 11,700 node writes. This is
+a count for that fixture and does not establish how much allocation
+accounts for in the current critical path.
+
+Build with `native-compact-write-journal` to store keys up to 34 bytes in
+the journal row. This covers the namespace and content ID of all
+canonical Patricia nodes and state records. Longer keys use a heap
+buffer. The lookup table retains the position of the newest write and
+compares the full key in the immutable journal, including for
+tombstones. The certified writer consumes the same key bytes and the
+same ordered puts and deletes. This comparison also covers versioned
+JMT keys and the System journal. Generated Patricia journals still use
+their dedicated typed path when enabled.
+
+Use the [fixed parent and child fixture](#reproduction) with the same
+source, signed corpus, resident index settings and worker budget. Toggle
+only the new flag. Compare a committed parent, a speculative parent
+with its first lookup and repeated reads of the same prepared parent.
+Take per-thread CPU and wall measurements for preparation, write-batch
+construction and WAL sync. Record allocations and peak RSS across
+multiple pending candidates. Also compare the generated Cell node
+journal separately, since it already bypasses the general Cell node
+lookup. Repeat for the JMT experiment with the same corpus and budget.
+
+Compare the parent and child Headers, receipts, charged resources,
+durable keys and values, and proof bytes between same-engine arms.
+Include certified durability and reopen controls. The targeted
+regression checks inline and out-of-line keys, ordered writes, repeated
+keys, deletes and absent lookup. It has been compiled alongside the
+existing write and proof regression targets. Runtime tests and replay
+were deferred for this iteration. Inline entries are wider than a
+vector handle, so resident journal size and locality must be measured
+for the actual mix of key lengths before changing the default.
