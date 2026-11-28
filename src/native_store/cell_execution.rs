@@ -16,6 +16,12 @@ use std::{
     vec::IntoIter,
 };
 
+#[cfg(feature = "native-shared-cell-deps")]
+mod dependencies;
+#[cfg(feature = "native-shared-cell-deps")]
+use super::DependencyReadStats;
+#[cfg(feature = "native-shared-cell-deps")]
+pub(super) use dependencies::DependencyReads;
 #[cfg(feature = "native-rolling-cell-execution")]
 mod rolling;
 
@@ -88,6 +94,8 @@ fn record(writes: &mut Writes, point: OutPoint, edit: Write) {
 pub(super) struct PrecedingCells<'a> {
     base: &'a LiveChanges,
     projection: Option<ProjectedPrefix<'a>>,
+    #[cfg(feature = "native-shared-cell-deps")]
+    dependencies: dependencies::HintReader<'a>,
 }
 
 struct ProjectedPrefix<'a> {
@@ -105,6 +113,11 @@ enum Sources<'a> {
 impl PrecedingCells<'_> {
     pub(super) fn is_speculative(&self) -> bool {
         self.projection.is_some()
+    }
+
+    #[cfg(feature = "native-shared-cell-deps")]
+    pub(super) fn parent_hint(&self, point: &OutPoint) -> Option<&Option<LiveCell>> {
+        self.dependencies.get(point)
     }
 
     pub(super) fn get(&self, point: &OutPoint) -> Option<Option<&LiveCell>> {
@@ -174,6 +187,8 @@ pub(super) struct ProposalWindow<T> {
     ready: Zip<IntoIter<T>, IntoIter<Result<Executed>>>,
     slot: Budget,
     adopted: u32,
+    #[cfg(feature = "native-shared-cell-deps")]
+    dependency_reads: Option<DependencyReads>,
 }
 
 impl<T: Borrow<Transaction>> ProposalWindow<T> {
@@ -182,7 +197,16 @@ impl<T: Borrow<Transaction>> ProposalWindow<T> {
             ready: Vec::new().into_iter().zip(Vec::new()),
             slot: Budget::empty(),
             adopted: 0,
+            #[cfg(feature = "native-shared-cell-deps")]
+            dependency_reads: None,
         }
+    }
+
+    #[cfg(feature = "native-shared-cell-deps")]
+    pub(super) fn dependency_stats(&self) -> DependencyReadStats {
+        self.dependency_reads
+            .as_ref()
+            .map_or_else(DependencyReadStats::default, DependencyReads::stats)
     }
 
     pub(super) fn next(
@@ -224,8 +248,20 @@ impl<T: Borrow<Transaction>> ProposalWindow<T> {
             }
             let references: Vec<_> = items.iter().map(Borrow::borrow).collect();
             let started = Instant::now();
-            let results =
-                store.execute_cell_window(&references, block, origin, width, budget, overlay)?;
+            #[cfg(feature = "native-shared-cell-deps")]
+            let shared = self.dependency_reads.get_or_insert_with(|| {
+                DependencyReads::collect(store, references.iter().copied())
+            });
+            let results = store.execute_cell_window(
+                &references,
+                block,
+                origin,
+                width,
+                budget,
+                overlay,
+                #[cfg(feature = "native-shared-cell-deps")]
+                shared,
+            )?;
             scan.parallel_cell_us = scan
                 .parallel_cell_us
                 .saturating_add(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
@@ -294,6 +330,7 @@ impl Store {
         overlay: &mut Overlay,
         receipts: &mut Vec<Receipt>,
         fees: &mut u64,
+        #[cfg(feature = "native-shared-cell-deps")] dependency_reads: &mut Option<DependencyReads>,
     ) -> Result<usize> {
         let slot = *budget;
         let count = transactions
@@ -305,7 +342,21 @@ impl Store {
             return Ok(0);
         }
         let window = &transactions[..count];
-        let completed = self.execute_cell_window(window, block, origin, width, slot, overlay)?;
+        #[cfg(feature = "native-shared-cell-deps")]
+        let shared = dependency_reads.get_or_insert_with(|| {
+            let eligible = transactions.iter().take_while(|tx| self.has_declared_cell_writes(tx));
+            DependencyReads::collect(self, eligible)
+        });
+        let completed = self.execute_cell_window(
+            window,
+            block,
+            origin,
+            width,
+            slot,
+            overlay,
+            #[cfg(feature = "native-shared-cell-deps")]
+            shared,
+        )?;
 
         let mut adopted = 0;
         for (tx, prepared) in window.iter().zip(completed) {
@@ -341,6 +392,7 @@ impl Store {
         width: usize,
         slot: Budget,
         overlay: &Overlay,
+        #[cfg(feature = "native-shared-cell-deps")] shared: &DependencyReads,
     ) -> Result<Vec<Result<Executed>>> {
         let writes = project(&self.network, window, origin)?;
         Ok(window
@@ -355,6 +407,8 @@ impl Store {
                         position,
                         sources: Sources::Window(&dependencies),
                     }),
+                    #[cfg(feature = "native-shared-cell-deps")]
+                    dependencies: shared.reader(),
                 };
                 let effects = self.execute_cell_trial(
                     tx.borrow(),

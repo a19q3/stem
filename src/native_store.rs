@@ -136,6 +136,7 @@ pub struct ProposalScan {
     pub parallel_cell_reused: u64,
     pub parallel_cell_fallback: u64,
     pub parallel_cell_us: u64,
+    pub dependency_reads: DependencyReadStats,
     pub keeper_wakes: KeeperWakeMetrics,
 }
 
@@ -183,6 +184,27 @@ pub struct CellStreamStats {
     pub refilled_jobs: u64,
     pub peak_outstanding: u64,
     pub elapsed_us: u64,
+    pub dependency_reads: DependencyReadStats,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct DependencyReadStats {
+    pub planned: u64,
+    pub cached: u64,
+    pub bytes: u64,
+    pub hits: u64,
+    pub build_us: u64,
+}
+
+impl DependencyReadStats {
+    pub(crate) fn record(&mut self, other: Self) {
+        self.planned = self.planned.saturating_add(other.planned);
+        self.cached = self.cached.saturating_add(other.cached);
+        self.bytes = self.bytes.saturating_add(other.bytes);
+        self.hits = self.hits.saturating_add(other.hits);
+        self.build_us = self.build_us.saturating_add(other.build_us);
+    }
 }
 
 impl CellStreamStats {
@@ -194,6 +216,7 @@ impl CellStreamStats {
         self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
         self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
         self.elapsed_us = self.elapsed_us.saturating_add(other.elapsed_us);
+        self.dependency_reads.record(other.dependency_reads);
     }
 }
 
@@ -239,6 +262,7 @@ impl ProposalScan {
         self.parallel_cell_reused = self.parallel_cell_reused.saturating_add(scan.parallel_cell_reused);
         self.parallel_cell_fallback = self.parallel_cell_fallback.saturating_add(scan.parallel_cell_fallback);
         self.parallel_cell_us = self.parallel_cell_us.saturating_add(scan.parallel_cell_us);
+        self.dependency_reads.record(scan.dependency_reads);
         self.keeper_wakes.record(scan.keeper_wakes);
     }
 }
@@ -1711,8 +1735,10 @@ impl Store {
             && width > 1
             && !self.live_index.as_ref().is_some_and(IndexView::resident);
         let mut lineage_schedule = LineageSchedule { keeper_wakes, ..LineageSchedule::default() };
-        #[cfg(feature = "native-rolling-cell-execution")]
+        #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-shared-cell-deps"))]
         let mut cell_stream = CellStreamStats::default();
+        #[cfg(feature = "native-shared-cell-deps")]
+        let mut dependency_reads = None;
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
         for mut segment in transactions
@@ -1737,6 +1763,8 @@ impl Store {
                     let count = self.prepare_cell_run(
                         segment, &block, &origin, width, &mut budget, &mut overlay,
                         &mut receipts, &mut fees, &mut cell_stream,
+                        #[cfg(feature = "native-shared-cell-deps")]
+                        &mut dependency_reads,
                     )?;
                     #[cfg(not(feature = "native-rolling-cell-execution"))]
                     let count = 0;
@@ -1744,6 +1772,8 @@ impl Store {
                         self.prepare_cell_window(
                             segment, &block, &origin, width, &mut budget, &mut overlay,
                             &mut receipts, &mut fees,
+                            #[cfg(feature = "native-shared-cell-deps")]
+                            &mut dependency_reads,
                         )?
                     } else {
                         count
@@ -1867,7 +1897,11 @@ impl Store {
             parallel,
         )?;
         prepared.lineage_schedule = lineage_schedule;
-        #[cfg(feature = "native-rolling-cell-execution")]
+        #[cfg(feature = "native-shared-cell-deps")]
+        if let Some(reads) = dependency_reads {
+            cell_stream.dependency_reads = reads.stats();
+        }
+        #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-shared-cell-deps"))]
         {
             prepared.cell_stream = cell_stream;
         }
@@ -1897,17 +1931,16 @@ impl Store {
         points.retain(|point| !overlay.live.contains_key(point));
         let reads: Vec<_> = points
             .into_par_iter()
-            .filter_map(|point| self.prefetch_cell(&point).map(|cell| (point, cell)))
+            .filter_map(|point| self.prefetch_cell(&point, 16 * 1024).map(|cell| (point, cell)))
             .collect();
         overlay.prefetched_cells.extend(reads);
     }
 
-    fn prefetch_cell(&self, point: &OutPoint) -> Option<Option<LiveCell>> {
-        const MAX_RECORD_BYTES: usize = 16 * 1024;
+    fn prefetch_cell(&self, point: &OutPoint, max_record_bytes: usize) -> Option<Option<LiveCell>> {
         if let Some(cell) = self.branch_cell(point) {
             return cell
                 .as_ref()
-                .is_none_or(|cell| LiveCache::record_bytes(cell) <= MAX_RECORD_BYTES)
+                .is_none_or(|cell| LiveCache::record_bytes(cell) <= max_record_bytes)
                 .then(|| cell.clone());
         }
         if let Some(index) = &self.live_index
@@ -1915,11 +1948,11 @@ impl Store {
         {
             return cell
                 .as_ref()
-                .is_none_or(|cell| LiveCache::record_bytes(cell) <= MAX_RECORD_BYTES)
+                .is_none_or(|cell| LiveCache::record_bytes(cell) <= max_record_bytes)
                 .then_some(cell);
         }
         if let Some(cell) = self.cached_live_cell(point) {
-            return (LiveCache::record_bytes(&cell) <= MAX_RECORD_BYTES).then_some(Some(cell));
+            return (LiveCache::record_bytes(&cell) <= max_record_bytes).then_some(Some(cell));
         }
         // Keep tentative records local to the candidate and skip oversized
         // values before decoding. An I/O error is retried in canonical order.
@@ -1929,7 +1962,7 @@ impl Store {
             .ok()?;
         match bytes {
             None => Some(None),
-            Some(bytes) if bytes.len() <= MAX_RECORD_BYTES => {
+            Some(bytes) if bytes.len() <= max_record_bytes => {
                 Self::decode_live_cell(point, &bytes).ok().map(Some)
             }
             Some(_) => None,
@@ -2413,6 +2446,8 @@ impl Store {
                 }
             }
         }
+        #[cfg(feature = "native-shared-cell-deps")]
+        scan.dependency_reads.record(window.dependency_stats());
         Ok(ProposalSelection {
             transactions: selected,
             context: block.into_candidate(),
@@ -2695,10 +2730,6 @@ impl Store {
             });
         }
 
-        let lookup = |point: &OutPoint| match prefetched_cells.get(point) {
-            Some(cell) => Ok(cell.clone()),
-            None => self.live_cell(point),
-        };
         let preceding = if cfg!(any(
             feature = "native-dependency-execution",
             feature = "native-leader-dependency-execution"
@@ -2706,6 +2737,16 @@ impl Store {
             preceding
         } else {
             None
+        };
+        let lookup = |point: &OutPoint| {
+            #[cfg(feature = "native-shared-cell-deps")]
+            if let Some(record) = preceding.and_then(|view| view.parent_hint(point)) {
+                return Ok(record.clone());
+            }
+            match prefetched_cells.get(point) {
+                Some(cell) => Ok(cell.clone()),
+                None => self.live_cell(point),
+            }
         };
         let speculative = preceding.is_some_and(PrecedingCells::is_speculative);
         // Current candidate writes, including deletions, supersede all hints.
@@ -3684,19 +3725,26 @@ mod pipeline_store_tests {
             (points[3].clone(), reserve.clone()),
             (points[4].clone(), reserve.clone()),
         ];
-        let signed = |point: &OutPoint| -> Result<Transaction> {
-            let tx = Transaction::new(
-                vec![CellDep::new_builder().out_point(code_point.clone()).build()],
-                vec![],
-                vec![CellInput::new(point.clone(), None)],
-                vec![reserve.clone()],
-                vec![],
-            )?;
+        #[cfg(feature = "native-shared-cell-deps")]
+        let group_point = {
+            let point = OutPoint::new([2; 32].pack(), 0);
+            let members = ckb_types::packed::OutPointVec::new_builder()
+                .set(vec![code_point.clone()])
+                .build();
+            let group = Cell::new(reserve.capacity(), lock.clone(), vec![], members.as_bytes())?;
+            spec.development_cells.push((point.clone(), group));
+            point
+        };
+        let sign = |tx: Transaction| -> Result<Transaction> {
             let digest = tx.signing_digest(
                 &spec.network,
                 0,
                 &lock,
-                |wanted| Ok(if wanted == &code_point { code.clone() } else { reserve.clone() }),
+                |wanted| {
+                    Ok(spec.development_cells.iter()
+                        .find(|(point, _)| point == wanted)
+                        .map_or_else(|| reserve.clone(), |(_, cell)| cell.clone()))
+                },
                 |_| anyhow::bail!("unexpected Header Dep"),
             )?;
             tx.with_witnesses(vec![GroupWitness {
@@ -3704,6 +3752,18 @@ mod pipeline_store_tests {
                 proof_data: Bytes::new(),
                 seal: Bytes::copy_from_slice(&key.sign_recoverable(&digest.unpack())?.serialize()),
             }])
+        };
+        let payment = |point: &OutPoint, dep: CellDep| {
+            sign(Transaction::new(
+                vec![dep],
+                vec![],
+                vec![CellInput::new(point.clone(), None)],
+                vec![reserve.clone()],
+                vec![],
+            )?)
+        };
+        let signed = |point: &OutPoint| {
+            payment(point, CellDep::new_builder().out_point(code_point.clone()).build())
         };
         let first = signed(&points[0])?;
         let second = signed(&points[1])?;
@@ -3726,6 +3786,55 @@ mod pipeline_store_tests {
             assert_eq!((stats.runs, stats.jobs, stats.reused, stats.fallbacks), (1, 4, 4, 0));
             assert_eq!(stats.peak_outstanding, 3);
             assert_eq!(stats.refilled_jobs, 1);
+            #[cfg(feature = "native-shared-cell-deps")]
+            assert_eq!((stats.dependency_reads.cached, stats.dependency_reads.hits), (1, 4));
+        }
+        #[cfg(all(feature = "native-shared-cell-deps", feature = "native-dependency-execution"))]
+        {
+            use ckb_types::core::DepType;
+
+            let group = CellDep::new_builder()
+                .out_point(group_point.clone())
+                .dep_type(DepType::DepGroup)
+                .build();
+            let payments = [0, 1, 3, 4].map(|i| payment(&points[i], group.clone()));
+            let payments = payments.into_iter().collect::<Result<Vec<_>>>()?;
+            let serial = store.prepare(&payments, 1001, false)?;
+            let parallel = workers.install(|| store.prepare(&payments, 1001, true))?;
+            assert_eq!(serial.header(), parallel.header());
+            assert_eq!(serial.receipts(), parallel.receipts());
+            assert_same_batch_writes(&serial.batch, &parallel.batch);
+            let reads = parallel.cell_stream().dependency_reads;
+            assert_eq!((reads.planned, reads.cached, reads.hits), (2, 2, 8));
+
+            let spend_group = signed(&group_point)?;
+            let mut conflicting = vec![spend_group.clone()];
+            conflicting.extend(payments.iter().cloned());
+            assert!(
+                workers.install(|| store.prepare(&conflicting, 1001, true))
+                    .err().is_some_and(|err| err.is::<MissingLiveCell>())
+            );
+            let parent = Arc::new(store.prepare(std::slice::from_ref(&spend_group), 1001, false)?);
+            store.on_branch(std::slice::from_ref(&parent), |view| {
+                assert!(
+                    workers.install(|| view.prepare(&payments, 1002, true))
+                        .err().is_some_and(|err| err.is::<MissingLiveCell>())
+                );
+                Ok(())
+            })?;
+            #[cfg(feature = "native-leader-dependency-execution")]
+            {
+                let mut scan = ProposalScan::default();
+                let (selected, proposed) = workers.install(|| store.build_proposal_measured(
+                    conflicting.iter(), 1001, 16 * 1024, &mut scan, None,
+                ))?;
+                assert_eq!(selected.len(), 1);
+                assert_eq!(selected[0].as_slice(), spend_group.as_slice());
+                assert_eq!(proposed.header(), parent.header());
+                assert_eq!(proposed.receipts(), parent.receipts());
+                assert_same_batch_writes(&proposed.batch, &parent.batch);
+                assert_eq!(scan.dependency_reads.cached, 2);
+            }
         }
         let (selected, proposal) = workers
             .install(|| store.pinned_view().build_proposal(

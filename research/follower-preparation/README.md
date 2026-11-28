@@ -122,3 +122,50 @@ Work Stealing reduced cold process CPU from 451.83–452.10 ms to 433.67 ms. Col
 All 320 preparations in this comparison matched the independent serial oracle on the Header, receipts and cycles. The alternate reader patches were experimental and the report records their results.
 
 The final release workspace run with all Cargo features passed 543 tests across 26 suites. Thirty explicitly ignored fixtures were outside that run. The network and offline experiments above were run separately.
+
+## Shared dependency reads
+
+The `native-shared-cell-deps` candidate gives the dependency-scheduled
+Leader and Follower a read-only cache of frequently reused Cell Deps.
+Each proposal build or candidate preparation creates one cache lazily
+when its first ordinary parallel window or run begins. Later windows
+reuse that cache against the same underlying parent view. Legacy paths
+and protocol transactions continue to use their normal lookup path.
+
+The plan samples up to 64 eligible transactions and 1,024 declarations.
+It selects repeated Code and Dep Group OutPoints by frequency and uses
+any remaining slots to prefetch members of shared groups. It attempts
+at most 32 distinct OutPoints at 128 KiB per retained record. Read or
+decode errors and oversized records take the canonical lookup path.
+Committed disk reads use pinned point reads so oversized values can be
+skipped before materialization. The cache never inserts speculative
+values into the global Live Cell cache.
+
+Resolution still checks ordered writes and tombstones ahead of the
+cached parent values. It expands the actual Dep Group for the current
+transaction, checks every member and charges the original logical reads,
+bytes and cycles. Group contents used in planning are lookup hints.
+The Leader and Follower still verify the transaction and apply its
+effects in canonical order. Candidate and proposal counters report
+planned and cached points, retained record bytes, served lookups and
+build time. Cached absence counts as a retained lookup result.
+A served lookup can replace a resident or branch read, so the counter
+does not directly measure RocksDB reads avoided.
+
+Use the same source and signed workload with and without
+`native-shared-cell-deps`. Enable `native-dependency-execution` and
+`native-leader-dependency-execution` in both arms. Hold
+`native-rolling-cell-execution` and all resident index settings fixed.
+Compare independent payments, shared Dep Groups and mixed Type Groups
+with distinct dependencies. Report exact Headers, receipts, charged
+resources and old-branch rejection alongside matched phase time, CPU,
+RocksDB activity and peak RSS. The first sample may miss later contracts,
+and the extra table and sampling can cost more than they save on runs
+with little dependency reuse. Measure disk and resident-index runs
+separately.
+
+The compile-checked regressions compare the parallel and serial paths
+for shared direct and group dependencies. They also cover a group
+consumed earlier in the same block or on the speculative parent,
+including Leader selection under a dependency conflict. Runtime
+regressions and performance measurements remain pending.
