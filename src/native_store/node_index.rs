@@ -1,8 +1,6 @@
 //! Bounded in-memory backing for immutable, content-addressed Cell Patricia nodes.
 
 use std::{
-    hash::RandomState,
-    mem::size_of,
     sync::{
         RwLock,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -13,17 +11,27 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{ReadOptions, prelude::*};
 use ckb_types::prelude::*;
-use hashbrown::HashMap;
-use stem_ledger::patricia::{Key, Namespace};
-use stem_stake::patricia::Commitment;
+#[cfg(feature = "native-verified-cell-nodes")]
+use stem_ledger::patricia::VerifiedNodes;
+use stem_ledger::patricia::{Key, Namespace, Patricia};
+#[cfg(not(feature = "native-verified-cell-nodes"))]
+use {hashbrown::HashMap, std::hash::RandomState, stem_stake::patricia::Commitment};
 
 use super::{
     Batch, STATE_NODE, Store, TIP,
-    node_storage::{self, CanonicalNode},
+    node_storage::{self, CanonicalNode, NodeRead},
 };
 
 const SHARDS: usize = 64;
+#[cfg(feature = "native-verified-cell-nodes")]
+type Rows = VerifiedNodes;
+#[cfg(not(feature = "native-verified-cell-nodes"))]
 type Rows = HashMap<Key, CanonicalNode, RandomState>;
+
+#[cfg(feature = "native-verified-cell-nodes")]
+const ENTRY_BYTES: usize = VerifiedNodes::entry_size();
+#[cfg(not(feature = "native-verified-cell-nodes"))]
+const ENTRY_BYTES: usize = std::mem::size_of::<(Key, CanonicalNode)>();
 
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 pub struct CellNodeIndexStatus {
@@ -36,11 +44,32 @@ pub struct CellNodeIndexStatus {
     pub misses: u64,
 }
 
-#[derive(Default)]
 struct Shard {
     rows: RwLock<Rows>,
     hits: AtomicU64,
     misses: AtomicU64,
+}
+
+impl Shard {
+    fn empty(_cells: &Patricia) -> Self {
+        #[cfg(feature = "native-verified-cell-nodes")]
+        let rows = Rows::new(_cells.clone());
+        #[cfg(not(feature = "native-verified-cell-nodes"))]
+        let rows = Rows::default();
+        Self {
+            rows: RwLock::new(rows),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+        }
+    }
+}
+
+fn insert(rows: &mut Rows, id: Key, node: CanonicalNode) -> Result<()> {
+    #[cfg(feature = "native-verified-cell-nodes")]
+    rows.insert(id, node.as_ref())?;
+    #[cfg(not(feature = "native-verified-cell-nodes"))]
+    rows.insert(id, node);
+    Ok(())
 }
 
 /// Node IDs authenticate their canonical bytes. A retained node can be used by
@@ -70,7 +99,7 @@ impl NodeIndex {
     pub(super) fn recover(store: &Store, limit_bytes: usize) -> Result<Self> {
         let started = Instant::now();
         let mut index = Self {
-            shards: std::array::from_fn(|_| Shard::default()),
+            shards: std::array::from_fn(|_| Shard::empty(&store.cells)),
             active: AtomicBool::new(true),
             bytes: AtomicUsize::new(0),
             #[cfg(feature = "jolteon-resident-node-publication")]
@@ -104,6 +133,7 @@ impl NodeIndex {
             }
         }
 
+        #[cfg(not(feature = "native-verified-cell-nodes"))]
         let commitment = Commitment::new(store.network.unpack(), Namespace::Cells);
         #[cfg(feature = "jolteon-resident-node-publication")]
         let mut loaded = 0;
@@ -112,15 +142,16 @@ impl NodeIndex {
             let id = id_from_key(key)?;
             let encoded = cursor.value().context("missing committed Cell node")?;
             let node = node_storage::canonical(encoded)?;
+            #[cfg(not(feature = "native-verified-cell-nodes"))]
             ensure!(
                 commitment.node_hash(node.as_ref()) == id,
                 "corrupt committed Cell node"
             );
-            index.shards[slot(&id)]
+            let rows = index.shards[slot(&id)]
                 .rows
                 .get_mut()
-                .expect("Cell node shard")
-                .insert(id, node);
+                .expect("Cell node shard");
+            insert(rows, id, node).context("corrupt committed Cell node")?;
             #[cfg(feature = "jolteon-resident-node-publication")]
             {
                 loaded += 1;
@@ -156,7 +187,7 @@ impl NodeIndex {
         };
         let estimate = buckets
             .max(8)
-            .saturating_mul(size_of::<(Key, CanonicalNode)>() + 1)
+            .saturating_mul(ENTRY_BYTES + 1)
             .saturating_add(64);
         let bytes = self.bytes.load(Ordering::Relaxed);
         let old = rows.allocation_size();
@@ -173,12 +204,17 @@ impl NodeIndex {
         used <= self.limit_bytes
     }
 
-    pub(super) fn lookup(&self, id: &Key) -> Option<CanonicalNode> {
+    pub(super) fn lookup(&self, id: &Key) -> Option<NodeRead> {
         if !self.active.load(Ordering::Acquire) {
             return None;
         }
         let shard = &self.shards[slot(id)];
-        let result = shard.rows.read().expect("Cell node shard").get(id).cloned();
+        let rows = shard.rows.read().expect("Cell node shard");
+        #[cfg(feature = "native-verified-cell-nodes")]
+        let result = rows.get(id);
+        #[cfg(not(feature = "native-verified-cell-nodes"))]
+        let result = rows.get(id).cloned();
+        drop(rows);
         let counter = if result.is_some() {
             &shard.hits
         } else {
@@ -225,11 +261,12 @@ impl NodeIndex {
                 if let Some(encoded) = encoded {
                     let count = rows.len() + 1;
                     if let Ok(node) = node_storage::canonical(encoded)
-                        && ((cfg!(feature = "jolteon-resident-node-publication") && count <= rows.capacity())
+                        && ((cfg!(feature = "jolteon-resident-node-publication")
+                            && count <= rows.capacity())
                             || rows.contains_key(id)
                             || self.reserve(&mut rows, count))
+                        && insert(&mut rows, *id, node).is_ok()
                     {
-                        rows.insert(*id, node);
                         continue;
                     }
                     drop(rows);
@@ -250,7 +287,13 @@ impl NodeIndex {
     pub(super) fn retire(&self) -> usize {
         self.active.store(false, Ordering::Release);
         for shard in &self.shards {
-            *shard.rows.write().expect("Cell node shard") = Rows::default();
+            let mut rows = shard.rows.write().expect("Cell node shard");
+            #[cfg(feature = "native-verified-cell-nodes")]
+            rows.release();
+            #[cfg(not(feature = "native-verified-cell-nodes"))]
+            {
+                *rows = Rows::default();
+            }
         }
         self.bytes.store(0, Ordering::Relaxed);
         #[cfg(feature = "jolteon-resident-node-publication")]

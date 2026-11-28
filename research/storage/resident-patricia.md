@@ -165,3 +165,44 @@ Use `--cell-node-index-mib 768` for the measured node index, and add
 `--live-cell-index-mib 1536` to reproduce the combined arm. Watch the two
 `active` status fields and account separately for each cache. Host size,
 workload and retention policy affect the operational memory budget.
+
+## Verified decoded resident nodes
+
+The `native-verified-cell-nodes` candidate stores decoded immutable Cell
+nodes in the resident index. The index checks the canonical encoding and
+content hash during recovery and during publication of committed inserts.
+A cache hit during traversal carries its content ID and network/namespace
+domain. The traversal validates that binding and reuses the decoded node.
+Disk reads, speculative overrides and staged edits keep the ordinary
+hash and encoding checks. Retired entries still fall back to the reader's
+pinned RocksDB snapshot. Proof generation encodes cached nodes using the
+same canonical representation and independent proof verification still
+checks every node hash.
+
+Each shard stores one domain for its whole table. Index budgeting uses
+the decoded entry width and the actual table allocation sizes. Stored
+RocksDB rows, the atomic WAL operation, Header commitments and proofs
+use the existing formats.
+
+The earlier fixed-size churn study recorded 39,607 median node requests
+per edit, with every resident request resolving from memory. The new
+path removes repeated cryptographic work from those resident hits.
+It also adds content authentication to publishing new rows, currently
+under each shard's write lock. Measure the read savings alongside
+publication time, write-lock contention and fallback rate. Proof
+generation re-encodes the decoded rows, so compare it separately.
+
+Use a same-source Release build with this feature off and on. Use the
+same signed corpus, `--cell-node-index-mib`, RocksDB cache, worker count
+and Live Cell settings. Include payments and mixed Type Groups, and
+collect matched fixed-block traversal timings before comparing the
+network runs. Vary `jolteon-resident-node-publication` separately to
+measure which side of the durable acknowledgement absorbs the extra
+publish work. Compare exact encoded Header, receipts, proof paths,
+charged cycles and node journals with the byte-reader control.
+
+The compiled regressions cover mismatched node IDs and domains,
+malformed nodes, mixed resident and raw reads, ordered reclamation,
+exact proof bytes and fallback to an older pinned snapshot. This
+candidate has build evidence. Runtime correctness and the net change
+in traversal, publication and proof costs remain to be measured.

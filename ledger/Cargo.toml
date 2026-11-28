@@ -8,12 +8,14 @@ publish = false
 
 [features]
 parallel-patricia = ["dep:rayon"]
+verified-patricia-cache = ["dep:hashbrown"]
 execution-material-cache = []
 
 [dependencies]
 anyhow.workspace = true
 ckb-hash.workspace = true
 ckb-types.workspace = true
+hashbrown = { version = "0.17", optional = true, default-features = false, features = ["inline-more"] }
 lru.workspace = true
 rayon = { workspace = true, optional = true }
 stem-stake = { path = "../stake", default-features = false }
