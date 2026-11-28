@@ -594,6 +594,8 @@ pub struct Store {
     live_cache: Arc<LiveCache>,
     #[cfg(feature = "native-shared-pinned-cell-cache")]
     pinned_cell_cache: Arc<pinned_cell_cache::PinnedCellCache>,
+    #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+    previous_pinned_cells: Option<Arc<pinned_cell_cache::PreviousRows>>,
     live_index: Option<IndexView>,
     cell_nodes: Option<Arc<NodeIndex>>,
     #[cfg(feature = "native-hot-cell-node-cache")]
@@ -731,7 +733,16 @@ impl PinnedView {
         view.branch.clear();
         #[cfg(feature = "native-shared-pinned-cell-cache")]
         {
-            view.live_cache = view.pinned_cell_cache.acquire(&view.tip, &view.network);
+            let cache = view.pinned_cell_cache.acquire(
+                &view.tip,
+                &view.network,
+                branch[..skip].last().map(Arc::as_ref),
+            );
+            view.live_cache = cache.cells;
+            #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+            {
+                view.previous_pinned_cells = cache.previous;
+            }
         }
         if skip != 0 {
             // Rebased reads use a different committed Cell image from the
@@ -778,6 +789,10 @@ pub struct PinnedCellCacheStatus {
     pub absence_entries: usize,
     #[serde(default)]
     pub absence_hits: u64,
+    #[serde(default)]
+    pub inherited_generations: u64,
+    #[serde(default)]
+    pub inheritance_hits: u64,
 }
 
 type CellEdit = (OutPoint, Option<LiveCell>);
@@ -1417,6 +1432,8 @@ impl Store {
             live_cache: Arc::default(),
             #[cfg(feature = "native-shared-pinned-cell-cache")]
             pinned_cell_cache: Arc::default(),
+            #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+            previous_pinned_cells: None,
             live_index: None,
             cell_nodes: None,
             #[cfg(feature = "native-hot-cell-node-cache")]
@@ -1654,6 +1671,8 @@ impl Store {
             live_cache: Arc::clone(&self.live_cache),
             #[cfg(feature = "native-shared-pinned-cell-cache")]
             pinned_cell_cache: Arc::clone(&self.pinned_cell_cache),
+            #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+            previous_pinned_cells: self.previous_pinned_cells.clone(),
             live_index: self.live_index.clone(),
             cell_nodes: self.cell_nodes.clone(),
             #[cfg(feature = "native-hot-cell-node-cache")]
@@ -1956,7 +1975,16 @@ impl Store {
         {
             return Ok(Some(cell));
         }
-        Ok(self.live_cache.lookup(point))
+        let local = self.live_cache.lookup(point);
+        #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+        if local.is_none()
+            && let Some(previous) = &self.previous_pinned_cells
+            && let Some(row) = previous.lookup(point)
+        {
+            self.remember_committed_live_cell(point, row.as_ref());
+            return Ok(Some(row));
+        }
+        Ok(local)
     }
 
     fn read_stored_live_cell(&self, point: &OutPoint, key: &[u8]) -> Result<Option<LiveCell>> {
@@ -4746,6 +4774,9 @@ mod pipeline_store_tests {
         let pin = store.pinned_view();
         pin.with_snapshot(|old| {
             assert!(old.live_cell(&points[0])?.is_some());
+            if cfg!(feature = "native-pinned-cell-cache-inheritance") {
+                assert!(old.live_cell(&points[2])?.is_some());
+            }
             store.pinned_view().with_snapshot(|peer| {
                 assert!(Arc::ptr_eq(&old.live_cache, &peer.live_cache));
                 assert!(peer.live_cache.lookup(&points[0]).flatten().is_some());
@@ -4774,10 +4805,80 @@ mod pipeline_store_tests {
         })?.context("missing advanced snapshot")?;
         let status = store.pinned_cell_cache_status().expect("enabled cache");
         assert_eq!(status.retained_height, Some(2));
-        assert_eq!(status.shared_acquisitions, 2);
+        let inherited = cfg!(feature = "native-pinned-cell-cache-inheritance");
+        assert_eq!(status.shared_acquisitions, 2 + u64::from(inherited));
+        assert_eq!(status.inherited_generations, u64::from(inherited));
         assert_eq!(status.generations, 2);
         assert_eq!(status.carried_forward, 1);
         assert_eq!(status.entries, 1);
+        Ok(())
+    }
+
+    #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+    #[test]
+    fn exact_prefix_rebase_inherits_only_untouched_rows_and_one_predecessor() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut chain = spec();
+        let point = |index| OutPoint::new([86; 32].pack(), index);
+        let cell = Cell::new(20_000_000_000, Default::default(), vec![], Default::default())?;
+        chain.development_cells = (0..3).map(|index| (point(index), cell.clone())).collect();
+        let mut store = Store::open(home.path(), &chain, Retention::Archive)?;
+        let original = store.pinned_view();
+        let context = HeaderContext::after(
+            store.network(),
+            store.tip(),
+            1001,
+            Tree::transactions(store.network().clone(), &[])?.root(),
+        )?;
+        let mut overlay = store.overlay(None);
+        overlay.live.insert(point(0), None);
+        overlay.live.insert(point(3), Some(LiveCell {
+            cell,
+            origin: Origin::new(store.network(), &context),
+        }));
+        let first = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
+        original.with_snapshot(|old| {
+            for index in 0..3 {
+                assert!(old.live_cell(&point(index))?.is_some());
+            }
+            assert!(old.live_cell(&point(3))?.is_none());
+            assert!(old.live_cell(&point(4))?.is_none());
+            let write = store.certified_write(Arc::clone(&first), vec![], vec![])?;
+            let timing = write(&mut CertifiedWriteCache::default())?;
+            assert_eq!(store.tip(), old.tip());
+            original.with_branch_snapshot(std::slice::from_ref(&first), true, |fresh, suffix| {
+                assert!(suffix.is_empty());
+                assert_eq!(fresh.tip(), first.header());
+                assert!(fresh.live_cache.lookup(&point(1)).is_none());
+                assert!(fresh.live_cell(&point(1))?.is_some());
+                assert!(fresh.live_cache.lookup(&point(1)).flatten().is_some());
+                assert!(fresh.live_cell(&point(0))?.is_none());
+                assert!(fresh.live_cell(&point(3))?.is_some());
+                assert!(fresh.live_cell(&point(4))?.is_none());
+                Ok(())
+            })?.context("missing exact rebased snapshot")?;
+            let status = store.pinned_cell_cache_status().unwrap();
+            assert_eq!(status.inherited_generations, 1);
+            assert_eq!(status.inheritance_hits, 1 + u64::from(cfg!(feature = "native-pinned-cell-absence-cache")));
+            store.install_durable_tip(&first, timing.cell_node_publication.is_some());
+            assert!(old.live_cell(&point(0))?.is_some());
+            assert!(old.live_cell(&point(3))?.is_none());
+
+            let second = store.prepare(&[], 1002, false)?;
+            store.pinned_view().with_snapshot(|middle| {
+                assert!(middle.live_cache.lookup(&point(2)).is_none());
+                store.commit(second)?;
+                store.pinned_view().with_snapshot(|latest| {
+                    let previous = latest.previous_pinned_cells.as_ref().unwrap();
+                    assert!(previous.lookup(&point(1)).flatten().is_some());
+                    assert!(previous.lookup(&point(2)).is_none());
+                    assert!(latest.live_cell(&point(2))?.is_some());
+                    Ok(())
+                })?.context("missing next generation")?;
+                Ok(())
+            })?.context("missing middle generation")?;
+            Ok(())
+        })?.context("missing original snapshot")?;
         Ok(())
     }
 
