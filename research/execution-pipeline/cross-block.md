@@ -80,11 +80,12 @@ A mixed-version late-completion run delayed the first construction on each focus
 
 ## Build and replay
 
-The feature stays opt-in. The measured focused configuration is:
+The focused configuration now ships in the default build. Its explicit feature
+selection is:
 
 ```sh
-cargo build --release --locked \
-  --features native-candidate-cell-prefetch,jolteon-cross-block-pipeline --bin stem
+cargo build --release --locked --no-default-features \
+  --features native-cell-subtree-parallel,native-candidate-cell-prefetch,jolteon-cross-block-pipeline --bin stem
 ```
 
 For a scheduling-only control, substitute `jolteon-commit-pipeline,jolteon-proposal-pipeline` for the cross-block feature. Omit the pipeline flags for the synchronous Cell-prefetch reference. For the integrated control, add `jolteon-admission-pipeline,native-commitment-pipeline,native-work-stealing,jolteon-certificate-experiment` to the paced configuration. Use the current checkout's release `native_store` test executable for the [driver and independent verifier](../storage/external/README.md#measure-and-replay), including the current Status fields. For the mature snapshot, use the [fixed funding fixture](../saturation/README.md#实验条件与复现) and stop all four validators after funding and before dispatch. Reopen independent copies for each arm and verify the funded Header and paid count before starting the timed offer.

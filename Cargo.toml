@@ -9,7 +9,11 @@ repository = "https://github.com/a19q3/stem"
 publish = false
 
 [features]
-default = ["native-cell-subtree-parallel"]
+default = [
+    "native-cell-subtree-parallel",
+    "native-candidate-cell-prefetch",
+    "jolteon-cross-block-pipeline",
+]
 comet-benchmark = []
 jolteon-certificate-experiment = []
 jolteon-admission-pipeline = []

@@ -15,6 +15,12 @@ go -C tools/proof build -mod=readonly -o ../../target/stem-tools/stem-proof .
 go build -o target/stem-tools/stem-loadgen tools/loadgen/main.go
 ```
 
+The default build includes parallel Cell subtrees, bounded candidate Cell
+prefetch and Jolteon's certified-write and successor pipeline. To build the
+synchronous reference with the same Cell optimizations, use
+`cargo build --locked --release -p stem --no-default-features --features native-cell-subtree-parallel,native-candidate-cell-prefetch`.
+[Matched load and restart evidence](research/execution-pipeline/cross-block.md)
+
 ## Start a native replica
 
 The Stem genesis JSON requires `chain_id`, a 32-byte `network_id`, `genesis_time_ms`, storage-bond terms, and explicit byte, cycle, read and write limits. A stake-backed genesis supplies `stake.trust` and `stake.observations` from CKB guardians, a signing window, and snapshot limits. The trust file contains the complete CKB JSON `registry_type`, guardian set, snapshot context and Stem election limits. Genesis derives the Registry hash, minimum bond and epoch length from that Script and checks the signed observations. The `development_validators` and `development_cells` fields are for fixture networks. A bridged spec pins the CKB genesis and anchor, initial vault OutPoints, wrapped code, payout Lock templates, and the bridge guardian set. Each lane supplies the complete CKB JSON `vault_type`.
