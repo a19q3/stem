@@ -197,6 +197,7 @@ pub struct CellStreamStats {
     pub projection_us: u64,
     pub peak_projection_edits: u64,
     pub retired_projection_edits: u64,
+    pub masked_projection_positions: u64,
     pub projection_reclaim_us: u64,
     pub projection_barriers: u64,
     pub first_submit_us: u64,
@@ -250,6 +251,9 @@ impl CellStreamStats {
         self.peak_projection_edits = self.peak_projection_edits.max(other.peak_projection_edits);
         self.retired_projection_edits = self.retired_projection_edits
             .saturating_add(other.retired_projection_edits);
+        self.masked_projection_positions = self
+            .masked_projection_positions
+            .saturating_add(other.masked_projection_positions);
         self.projection_reclaim_us = self.projection_reclaim_us
             .saturating_add(other.projection_reclaim_us);
         self.projection_barriers = self.projection_barriers.saturating_add(other.projection_barriers);
@@ -811,6 +815,18 @@ enum ProposalStep {
     #[cfg(feature = "native-reuse-parent-spend-rejections")]
     RejectedParentSpend,
     Stop,
+}
+
+#[cfg(feature = "native-mask-rejected-cell-projections")]
+impl ProposalStep {
+    fn rejected(&self) -> bool {
+        match self {
+            Self::Skipped => true,
+            #[cfg(feature = "native-reuse-parent-spend-rejections")]
+            Self::RejectedParentSpend => true,
+            _ => false,
+        }
+    }
 }
 
 enum ProposalTrial<T> {
@@ -4477,7 +4493,19 @@ mod pipeline_store_tests {
             assert_eq!(proposal.receipts(), serial.receipts());
             assert_same_batch_writes(&proposal.batch, &serial.batch);
             let stats = scan.rolling_cells;
-            assert_eq!((stats.jobs, stats.fallbacks, stats.reused, stats.ordered_declarations), (3, 2, 1, 1));
+            #[cfg(not(feature = "native-mask-rejected-cell-projections"))]
+            assert_eq!(
+                (stats.jobs, stats.fallbacks, stats.reused, stats.ordered_declarations),
+                (3, 2, 1, 1)
+            );
+            #[cfg(feature = "native-mask-rejected-cell-projections")]
+            {
+                assert_eq!((stats.jobs, stats.masked_projection_positions), (3, 1));
+                // The replacement may start on either side of rejection.
+                assert!((1..=2).contains(&stats.fallbacks));
+                assert_eq!(stats.reused + stats.fallbacks, 3);
+                assert_eq!(stats.ordered_declarations + 1, stats.fallbacks);
+            }
         }
         #[cfg(all(
             feature = "native-reuse-ordered-cell-writes",

@@ -439,6 +439,17 @@ impl Store {
                     };
                     let had_trial = !matches!(work, ProposalTrial::Ordered);
                     let step = settle(&transactions[prefix], work, budget, overlay, &canonical)?;
+                    #[cfg(feature = "native-mask-rejected-cell-projections")]
+                    if finish_ordered_suffix
+                        && prefix + 1 < count
+                        && !cancelled.load(Ordering::Relaxed)
+                        && step.rejected()
+                    {
+                        // Later reads can see past this candidate immediately.
+                        // Jobs that saw it earlier still fail the source check.
+                        writes.write().expect("Cell projection").reject(prefix);
+                        stats.masked_projection_positions += 1;
+                    }
                     #[cfg(feature = "native-reuse-parent-spend-rejections")]
                     let had_trial = had_trial && !matches!(step, ProposalStep::RejectedParentSpend);
                     if matches!(step, ProposalStep::Reused) {
