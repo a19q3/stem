@@ -1018,6 +1018,12 @@ impl Prepared {
     }
 }
 
+#[cfg(feature = "jolteon-share-proposal-bytes")]
+pub(crate) type ConsensusValue = bytes::Bytes;
+#[cfg(not(feature = "jolteon-share-proposal-bytes"))]
+pub(crate) type ConsensusValue = Vec<u8>;
+pub(crate) type ConsensusRecord = (Vec<u8>, ConsensusValue);
+
 impl Store {
     pub fn open(path: &Path, spec: &Spec, retention: Retention) -> Result<Self> {
         Self::open_with_storage_metrics(path, spec, retention, false)
@@ -1285,7 +1291,7 @@ impl Store {
             put_nodes(&mut batch, Namespace::System, system_nodes);
             batch.put(MARKER, [STORAGE_LAYOUT, genesis_id.as_slice()].concat());
             put_tip(&mut batch, &network, &genesis, &history);
-            sync_with_consensus(
+            sync_with_consensus::<ConsensusValue>(
                 &db,
                 &batch,
                 None,
@@ -1545,7 +1551,7 @@ impl Store {
         Ok(self.read(index_key(b'j', key))?.map(|value| value.to_vec()))
     }
 
-    pub(crate) fn persist_consensus(&self, records: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+    pub(crate) fn persist_consensus(&self, records: &[ConsensusRecord]) -> Result<()> {
         ensure!(self.branch.is_empty(), "cannot persist a speculative view");
         sync_with_consensus(
             &self.db,
@@ -3473,7 +3479,7 @@ impl Store {
     pub(crate) fn commit_certified(
         &mut self,
         prepared: &Prepared,
-        records: &[(Vec<u8>, Vec<u8>)],
+        records: &[ConsensusRecord],
         retired: &[Range<Vec<u8>>],
     ) -> Result<()> {
         self.check_commit_parent(prepared)?;
@@ -3532,7 +3538,7 @@ impl Store {
     pub(crate) fn certified_write(
         &self,
         prepared: Arc<Prepared>,
-        records: Vec<(Vec<u8>, Vec<u8>)>,
+        records: Vec<ConsensusRecord>,
         retired: Vec<Range<Vec<u8>>>,
     ) -> Result<impl FnOnce(&mut CertifiedWriteCache) -> Result<CertifiedWriteTiming> + Send + 'static> {
         self.check_commit_parent(&prepared)?;
@@ -3847,11 +3853,11 @@ struct WritePrefix {
     reused_buffer: bool,
 }
 
-fn sync_with_consensus(
+fn sync_with_consensus<V: AsRef<[u8]>>(
     db: &DB,
     batch: &Batch,
     live: Option<(&Patricia, &LiveChanges)>,
-    records: &[(Vec<u8>, Vec<u8>)],
+    records: &[(Vec<u8>, V)],
     retired: &[Range<Vec<u8>>],
     measured: Option<(&StorageMetrics, Purpose)>,
 ) -> Result<()> {
@@ -3925,11 +3931,11 @@ fn assemble_write_prefix<'a>(
     ))
 }
 
-fn persist_write<'a>(
+fn persist_write<'a, V: AsRef<[u8]>>(
     db: &DB,
     prefix: WritePrefix,
     mut proposals: BTreeSet<&'a [u8]>,
-    records: &'a [(Vec<u8>, Vec<u8>)],
+    records: &'a [(Vec<u8>, V)],
     retired: &[Range<Vec<u8>>],
     measured: Option<(&StorageMetrics, Purpose)>,
 ) -> Result<WriteBatch> {
@@ -3940,7 +3946,7 @@ fn persist_write<'a>(
         // repeated-key ordering within this batch, and always write journal state.
         if key.starts_with(b"body")
             && proposals.insert(key.as_slice())
-            && db.get(&storage_key)?.as_deref() == Some(value.as_slice())
+            && db.get(&storage_key)?.as_deref() == Some(value.as_ref())
         {
             continue;
         }
@@ -5036,7 +5042,10 @@ mod pipeline_store_tests {
         let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
         let pinned = store.pinned_view();
         let prepared = Arc::new(store.prepare(&[], 1001, false)?);
-        let records = vec![(b"state".to_vec(), b"next journal".to_vec())];
+        let records = vec![
+            (b"state".to_vec(), b"next journal".to_vec().into()),
+            (b"body/test".to_vec(), b"canonical proposal".to_vec().into()),
+        ];
         let write = store.certified_write(Arc::clone(&prepared), records.clone(), vec![])?;
         assert!(store.header(1)?.is_none());
         assert!(store.consensus_record(b"state")?.is_none());
@@ -5057,12 +5066,17 @@ mod pipeline_store_tests {
             let _ = timing;
             assert!(view.header(1)?.is_none());
             assert!(view.consensus_record(b"state")?.is_none());
+            assert!(view.consensus_record(b"body/test")?.is_none());
             Ok(view.tip().clone())
         })?;
         assert_eq!(snapshot.as_ref(), Some(store.tip()));
         store.install_durable_tip(&prepared, false);
         assert_eq!(store.tip(), prepared.header());
         assert!(store.certified_write(prepared, Vec::new(), Vec::new()).is_err());
+        assert_eq!(
+            store.consensus_record(b"body/test")?.as_deref(),
+            Some(b"canonical proposal".as_slice()),
+        );
         drop(store);
         drop(pinned);
         let reopened = Store::open(home.path(), &spec, Retention::Archive)?;
@@ -5115,10 +5129,10 @@ mod pipeline_store_tests {
         };
         let marker = b"writer-test".to_vec();
         assert!(!write(
-            &mut store, &mut cache, 1001, vec![(marker.clone(), b"first".to_vec())],
+            &mut store, &mut cache, 1001, vec![(marker.clone(), b"first".to_vec().into())],
         )?);
         assert!(cache.spare.as_ref().is_some_and(WriteBatch::is_empty));
-        store.persist_consensus(&[(marker.clone(), b"second".to_vec())])?;
+        store.persist_consensus(&[(marker.clone(), b"second".to_vec().into())])?;
 
         assert!(write(&mut store, &mut cache, 1002, Vec::new())?);
         assert!(cache.spare.as_ref().is_some_and(WriteBatch::is_empty));

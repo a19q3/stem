@@ -80,6 +80,8 @@ pub struct ExecutionMetrics {
     #[serde(default)]
     pub proposal_jobs: ProposalMetrics,
     #[serde(default)]
+    pub proposal_retry_frame_hits: u64,
+    #[serde(default)]
     pub proposal_scan: ProposalScan,
     #[serde(default)]
     pub proposal_commitments: CommitmentMetrics,

@@ -24,7 +24,7 @@ use stem_stake::{
     },
 };
 
-use crate::native_store::{Prepared, Store};
+use crate::native_store::{ConsensusValue, Prepared, Store};
 
 #[cfg(feature = "jolteon-admission-pipeline")]
 mod admission_pipeline;
@@ -202,7 +202,7 @@ impl std::fmt::Display for StorageFault {
 impl std::error::Error for StorageFault {}
 
 struct Checked {
-    wire: wire::Proposal,
+    wire: wire::ProposalBody,
     header: Header,
     parent: VerifiedQuorum,
 }
@@ -260,6 +260,8 @@ struct Replica {
     proposal_interval: Duration,
     backoff: u32,
     announced: Instant,
+    #[cfg(feature = "jolteon-share-proposal-bytes")]
+    announced_proposal: Option<(u64, Point, Arc<Vec<u8>>)>,
     handoff_requested: Option<Instant>,
     handoff_tip: Option<VerifiedQuorum>,
     pending: Option<CommitteeChange>,
@@ -392,7 +394,7 @@ pub fn run(mut store: Store, key: SigningKey, config: Config, initialize: bool) 
                 history_window,
                 ..Default::default()
             };
-            store.persist_consensus(&[(STATE.to_vec(), journal.encode_to_vec())])?;
+            store.persist_consensus(&[(STATE.to_vec(), journal.encode_to_vec().into())])?;
             journal
         }
     };
@@ -518,6 +520,8 @@ pub fn run(mut store: Store, key: SigningKey, config: Config, initialize: bool) 
                 view: 0,
                 since: Instant::now(),
                 announced: Instant::now(),
+                #[cfg(feature = "jolteon-share-proposal-bytes")]
+                announced_proposal: None,
                 handoff_requested: None,
                 handoff_tip,
                 pending,
@@ -614,12 +618,12 @@ pub fn run(mut store: Store, key: SigningKey, config: Config, initialize: bool) 
 }
 
 impl Replica {
-    fn save(&self, proposal: Option<(Point, &wire::Proposal)>) -> Result<()> {
-        let mut records = vec![(STATE.to_vec(), self.journal.encode_to_vec())];
+    fn save(&self, proposal: Option<(Point, &wire::ProposalBody)>) -> Result<()> {
+        let mut records = vec![(STATE.to_vec(), self.journal.encode_to_vec().into())];
         if let Some((point, proposal)) = proposal {
             records.push((
                 proposal_key(self.committee.epoch(), point),
-                proposal.encode_to_vec(),
+                proposal.record(),
             ));
         }
         self.store.persist_consensus(&records).context(StorageFault)
@@ -630,6 +634,10 @@ impl Replica {
         let next = self.high.point.view.max(transition).saturating_add(1);
         if next > self.view {
             self.view = next;
+            #[cfg(feature = "jolteon-share-proposal-bytes")]
+            {
+                self.announced_proposal = None;
+            }
             self.since = Instant::now();
             if transition >= self.high.point.view && transition != 0 {
                 self.backoff = (self.backoff + 1).min(3);
@@ -720,7 +728,7 @@ impl Replica {
 
     fn check_proposal(
         &mut self,
-        proposal: wire::Proposal,
+        proposal: wire::ProposalBody,
     ) -> Result<(Point, Checked, Option<TimeoutCertificate>)> {
         let header = Header::decode(&proposal.header)?;
         ensure!(
@@ -783,7 +791,7 @@ impl Replica {
         ))
     }
 
-    fn admit_proposal(&mut self, proposal: wire::Proposal, peer: u16) -> Result<()> {
+    fn admit_proposal(&mut self, proposal: wire::ProposalBody, peer: u16) -> Result<()> {
         let (point, checked, tc) = self.check_proposal(proposal)?;
         if point.view <= self.finalized.view {
             return Ok(());
@@ -873,7 +881,7 @@ impl Replica {
                     .consensus_record(&proposal_key(self.committee.epoch(), point))
                     .context(StorageFault)?
                 {
-                    let proposal = wire::canonical_bytes(raw.into())?;
+                    let proposal = wire::ProposalBody::decode(raw.into())?;
                     let (actual, checked, _) = self.check_proposal(proposal)?;
                     ensure!(actual == point, "wrong persisted candidate");
                     self.candidates.insert(
@@ -1080,14 +1088,14 @@ impl Replica {
             for point in &branch[commit_count..] {
                 durable.push((
                     proposal_key(old_epoch, *point),
-                    self.candidates[point].proposal.wire.encode_to_vec(),
+                    self.candidates[point].proposal.wire.record(),
                 ));
             }
             handoff
         } else {
             durable.push((
                 proposal_key(old_epoch, high.point),
-                child.wire.encode_to_vec(),
+                child.wire.record(),
             ));
             FinalityProof {
                 parent_header: self.candidates[&parent].proposal.wire.header.clone(),
@@ -1113,7 +1121,7 @@ impl Replica {
                 .checked_add(proposal.transactions.len() as u64)
                 .context("transaction counter overflow")?;
             let mut records = vec![
-                (proposal_key(old_epoch, *point), proposal.encode_to_vec()),
+                (proposal_key(old_epoch, *point), proposal.record()),
                 (
                     finality_key(height),
                     wire::Finalized {
@@ -1122,7 +1130,8 @@ impl Replica {
                         handoff: successor.is_some(),
                         view: point.view,
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec()
+                    .into(),
                 ),
             ];
             records.append(&mut durable);
@@ -1140,13 +1149,13 @@ impl Replica {
                     proposal_floor: journal.proposal_floor,
                     ..Default::default()
                 };
-                records.push((handoff_key(old_epoch), proof.clone()));
+                records.push((handoff_key(old_epoch), proof.clone().into()));
                 let announced = known_handoff_key(old_epoch);
                 let mut end = announced.clone();
                 end.push(0);
                 retired.push(announced..end);
             }
-            records.push((STATE.to_vec(), journal.encode_to_vec()));
+            records.push((STATE.to_vec(), journal.encode_to_vec().into()));
             let started = Instant::now();
             #[cfg(feature = "jolteon-commit-pipeline")]
             self.write_certified(
@@ -1387,7 +1396,7 @@ impl Replica {
                 ]
                 .concat();
                 self.store
-                    .persist_consensus(&[(key, raw)])
+                    .persist_consensus(&[(key, raw.into())])
                     .context(StorageFault)?;
             }
             return Ok(());
@@ -1639,6 +1648,7 @@ impl Replica {
                 .to_vec(),
             seal,
         };
+        let proposal = wire::ProposalBody::local(proposal)?;
         self.admit_proposal(proposal.clone(), self.directory.own)?;
         self.candidates
             .get_mut(&point)
@@ -1646,8 +1656,45 @@ impl Replica {
             .execution = execution;
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &proposal)))?;
-        self.net.broadcast(wire::PROPOSAL, proposal.encode_to_vec());
+        self.broadcast_durable_proposal(point, proposal.record());
         self.dispatch_vote(point)
+    }
+
+    // The caller has synced this body with its vote or read it from the journal.
+    fn broadcast_durable_proposal(&mut self, _point: Point, body: ConsensusValue) {
+        #[cfg(not(feature = "jolteon-share-proposal-bytes"))]
+        self.net.broadcast(wire::PROPOSAL, body);
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        {
+            let epoch = self.committee.epoch();
+            let frame = self.net.frame(epoch, wire::PROPOSAL, body);
+            self.net.broadcast_frame(wire::PROPOSAL, Arc::clone(&frame));
+            self.announced_proposal = Some((epoch, _point, frame));
+        }
+    }
+
+    fn announce_voted_proposal(&mut self, vote: Point) -> Result<()> {
+        if Some(self.committee.leader(vote.view)?) != self.member {
+            return Ok(());
+        }
+        let epoch = self.committee.epoch();
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        if let Some((prior_epoch, prior_point, frame)) = &self.announced_proposal
+            && (*prior_epoch, *prior_point) == (epoch, vote)
+        {
+            self.net.broadcast_frame(wire::PROPOSAL, Arc::clone(frame));
+            self.execution.proposal_retry_frame_hits =
+                self.execution.proposal_retry_frame_hits.saturating_add(1);
+            return Ok(());
+        }
+        if let Some(raw) = self
+            .store
+            .consensus_record(&proposal_key(epoch, vote))
+            .context(StorageFault)?
+        {
+            self.broadcast_durable_proposal(vote, raw.into());
+        }
+        Ok(())
     }
 
     async fn tick(&mut self, inbox: &mut transport::Inbox) -> Result<()> {
@@ -1722,14 +1769,7 @@ impl Replica {
             if !self.journal.vote.is_empty() {
                 let vote = Point::decode(&self.journal.vote)?;
                 if vote.view == self.view {
-                    if let Some(raw) = self
-                        .store
-                        .consensus_record(&proposal_key(self.committee.epoch(), vote))
-                        .context(StorageFault)?
-                        && Some(self.committee.leader(vote.view)?) == self.member
-                    {
-                        self.net.broadcast(wire::PROPOSAL, raw);
-                    }
+                    self.announce_voted_proposal(vote)?;
                     self.dispatch_vote(vote)?;
                 }
             }
@@ -1876,12 +1916,12 @@ impl Replica {
                 if self.handoff_tip.is_none() {
                     let (_, _, seal) = self.committee.verify_handoff(&frame.body)?;
                     self.store
-                        .persist_consensus(&[(known_handoff_key(epoch), frame.body.to_vec())])
+                        .persist_consensus(&[(known_handoff_key(epoch), frame.body.to_vec().into())])
                         .context(StorageFault)?;
                     self.handoff_tip = Some(seal.into());
                 }
             }
-            wire::PROPOSAL => self.admit_proposal(wire::canonical_bytes(frame.body)?, peer)?,
+            wire::PROPOSAL => self.admit_proposal(wire::ProposalBody::decode(frame.body)?, peer)?,
             wire::REPLAY => self.accept_replay(peer, &frame.body)?,
             wire::VOTE => {
                 let (point, share) = frame
