@@ -94,6 +94,12 @@ pub struct Config {
     /// Local successful script verifications retained by the LRU.
     #[serde(default)]
     pub verification_cache_entries: Option<usize>,
+    /// Independent local result-cache LRU shards. The default is one.
+    #[serde(default)]
+    pub verification_cache_shards: Option<usize>,
+    /// Sample VM result and cost-estimate lock wait and hold times.
+    #[serde(default)]
+    pub verification_cache_lock_sampling: bool,
 }
 
 #[derive(Deserialize)]
@@ -248,14 +254,18 @@ struct Replica {
     recovery: Recovery,
 }
 
-pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
+pub fn run(mut store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
     if let Some(entries) = config.verification_cache_entries {
         ensure!(
             (1..=MAX_VERIFICATION_CACHE_ENTRIES).contains(&entries),
             "invalid verification cache entry limit"
         );
-        store.resize_verification_cache(entries);
     }
+    store.configure_verification_cache(
+        config.verification_cache_entries,
+        config.verification_cache_shards.unwrap_or(1),
+        config.verification_cache_lock_sampling,
+    )?;
     let genesis_members = members(&store)?;
     let genesis_committee = Committee::new(
         store.network().unpack(),

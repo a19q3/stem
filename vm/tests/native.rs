@@ -227,17 +227,19 @@ fn block_context_uses_committed_parent_time_and_partitions_cache() -> Result<()>
         // including their creation origins, are identical.
         assert_eq!(accepted.script_cache_key(), rejected.script_cache_key());
         assert_ne!(accepted.parent_id(), rejected.parent_id());
-        let cache = VerificationCache::new(4);
         let expected = verify(accepted.clone(), CYCLE_LIMIT, false)?;
-        pool.install(|| -> Result<()> {
-            assert_eq!(cache.verify(accepted.clone(), CYCLE_LIMIT, true)?, expected);
-            assert!(cache.verify(rejected, CYCLE_LIMIT, true).is_err());
-            assert_eq!(cache.verify(accepted, expected, true)?, expected);
-            Ok(())
-        })?;
-        let stats = cache.stats();
-        assert_eq!((stats.hits, stats.misses, stats.wrong_parent), (1, 2, 1));
-        assert_eq!((stats.entries, stats.capacity), (1, 4));
+        for shards in [1, 4] {
+            let cache = VerificationCache::for_genesis_with_layout(4, false, shards, false)?;
+            pool.install(|| -> Result<()> {
+                assert_eq!(cache.verify(accepted.clone(), CYCLE_LIMIT, true)?, expected);
+                assert!(cache.verify(rejected.clone(), CYCLE_LIMIT, true).is_err());
+                assert_eq!(cache.verify(accepted.clone(), expected, true)?, expected);
+                Ok(())
+            })?;
+            let stats = cache.stats();
+            assert_eq!((stats.hits, stats.misses, stats.wrong_parent), (1, 2, 1));
+            assert_eq!((stats.entries, stats.capacity, stats.shards), (1, 4, shards));
+        }
     }
     Ok(())
 }

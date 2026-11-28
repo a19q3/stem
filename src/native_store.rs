@@ -79,6 +79,7 @@ const HEADER_ID: u8 = b'i';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
 const MAX_CELL_PROOF_BATCH: usize = 1024;
+const DEFAULT_VERIFICATION_CACHE_ENTRIES: usize = 4096;
 pub(crate) const JOLTEON_CYCLE_SCAN_LIMIT: Option<u64> =
     if cfg!(feature = "jolteon-bounded-cycle-scan") {
         Some(64)
@@ -1066,13 +1067,32 @@ impl Store {
             live_cache: Arc::default(),
             live_index: None,
             cell_nodes: None,
-            cache: Arc::new(VerificationCache::for_genesis(4096, spec.vm_crypto_v1)),
+            cache: Arc::new(VerificationCache::for_genesis(
+                DEFAULT_VERIFICATION_CACHE_ENTRIES,
+                spec.vm_crypto_v1,
+            )),
             branch: Vec::new(),
         })
     }
 
-    pub(crate) fn resize_verification_cache(&self, entries: usize) {
-        self.cache.resize_verified(entries);
+    pub(crate) fn configure_verification_cache(
+        &mut self,
+        entries: Option<usize>,
+        shards: usize,
+        sample_locks: bool,
+    ) -> Result<()> {
+        if shards != 1 || sample_locks {
+            self.cache = Arc::new(VerificationCache::for_genesis_with_layout(
+                DEFAULT_VERIFICATION_CACHE_ENTRIES,
+                self.cache.crypto_v1_enabled(),
+                shards,
+                sample_locks,
+            )?);
+        }
+        if let Some(entries) = entries {
+            self.cache.resize_verified(entries);
+        }
+        Ok(())
     }
 
     pub(crate) fn verification_cache_stats(&self) -> stem_vm::VerificationCacheStats {
