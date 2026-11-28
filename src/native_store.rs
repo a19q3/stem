@@ -35,6 +35,8 @@ use stem_vm::VerificationCache;
 mod bridge;
 mod cell_execution;
 mod cell_query;
+#[cfg(feature = "native-owned-live-cell-reads")]
+mod cell_read;
 mod cell_write;
 pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
@@ -1816,7 +1818,7 @@ impl Store {
             .db
             .get_opt(self.live_cell_key(point), &self.read_options)
             .context(StateReadFault)?
-            .map(|bytes| Self::decode_live_cell(point, &bytes))
+            .map(|bytes| Self::decode_live_cell_value(point, bytes))
             .transpose()?;
         if let Some(cell) = &found {
             self.live_cache.insert(point.clone(), cell.clone());
@@ -1840,8 +1842,22 @@ impl Store {
         state_key(STATE_RECORD, Namespace::Cells, &id)
     }
 
+    fn decode_live_cell_value(point: &OutPoint, bytes: DBVector) -> Result<LiveCell> {
+        #[cfg(feature = "native-owned-live-cell-reads")]
+        return Self::check_live_cell_record(point, cell_read::decode_owned(bytes));
+        #[cfg(not(feature = "native-owned-live-cell-reads"))]
+        Self::decode_live_cell(point, &bytes)
+    }
+
     fn decode_live_cell(point: &OutPoint, bytes: &[u8]) -> Result<LiveCell> {
-        let (stored_point, record) = record::decode_cell(bytes).context(StateReadFault)?;
+        Self::check_live_cell_record(point, record::decode_cell(bytes))
+    }
+
+    fn check_live_cell_record(
+        point: &OutPoint,
+        decoded: Result<(OutPoint, LiveCell)>,
+    ) -> Result<LiveCell> {
+        let (stored_point, record) = decoded.context(StateReadFault)?;
         if &stored_point != point {
             return Err(
                 anyhow::anyhow!("Live Cell key differs from its record").context(StateReadFault)

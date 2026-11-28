@@ -1,7 +1,7 @@
 //! Canonical Live Cell records and their Patricia proof binding.
 
 use anyhow::{Context, Result};
-use ckb_types::{packed::OutPoint, prelude::Entity};
+use ckb_types::{bytes::Bytes, packed::OutPoint, prelude::Entity};
 
 use crate::{
     Cell, LiveCell, Origin,
@@ -44,6 +44,13 @@ pub fn decode_cell(bytes: &[u8]) -> Result<(OutPoint, LiveCell)> {
             origin,
         },
     ))
+}
+
+/// Validate an owned canonical record, retaining the existing Cell body buffer.
+pub fn decode_cell_bytes(bytes: Bytes) -> Result<(OutPoint, LiveCell)> {
+    let (point, origin, cell) = decode_cell_prefix(&bytes)?;
+    let cell = Cell::from_bytes(bytes.slice_ref(cell))?;
+    Ok((point, LiveCell { cell, origin }))
 }
 
 /// Decode the fixed record fields and borrow the Cell body for validation by
