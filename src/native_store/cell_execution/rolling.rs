@@ -19,6 +19,8 @@ use std::{
 use super::Context;
 #[cfg(feature = "native-rolling-leader-execution")]
 use super::ProposalWindow;
+#[cfg(feature = "native-reuse-rolling-parent-reads")]
+use super::ParentReads;
 #[cfg(feature = "native-rolling-dependency-hints")]
 use super::dependencies::{DependencyReads, SAMPLE_TRANSACTIONS};
 #[cfg(not(feature = "native-incremental-cell-projection"))]
@@ -63,7 +65,13 @@ struct Trial {
     sources: SourcePositions,
 }
 
-type Completion = (usize, Budget, thread::Result<Result<Trial>>);
+struct Completion {
+    position: usize,
+    slot: Budget,
+    outcome: thread::Result<Result<Trial>>,
+    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+    parent_reads: ParentReads,
+}
 
 pub(in crate::native_store) struct ReadyCell {
     effects: Effects,
@@ -287,6 +295,8 @@ impl Store {
         let prior = &base;
         #[cfg(feature = "native-reuse-ordered-cell-writes")]
         let ordered_writes = Cell::new(false);
+        #[cfg(feature = "native-reuse-rolling-parent-reads")]
+        let retry_reads = RefCell::new(ParentReads::default());
         let canonical = PrecedingCells {
             base: prior,
             projection: None,
@@ -296,6 +306,8 @@ impl Store {
             ordered_writes: Some(&ordered_writes),
             #[cfg(feature = "native-shared-cell-deps")]
             dependencies: shared.reader(),
+            #[cfg(feature = "native-reuse-rolling-parent-reads")]
+            parent_reads: self.pinned_parent_reads.then_some(&retry_reads),
         };
         let (sender, receiver) = mpsc::channel();
         let cancelled = &AtomicBool::new(false);
@@ -394,6 +406,8 @@ impl Store {
                             }
                             // A panic must still occupy its completion slot
                             // while the coordinator can need that result.
+                            #[cfg(feature = "native-reuse-rolling-parent-reads")]
+                            let parent_reads = RefCell::new(ParentReads::default());
                             let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
                                 let sources = RefCell::new(SourcePositions::default());
                                 let view = PrecedingCells {
@@ -414,6 +428,8 @@ impl Store {
                                     dependencies: shared.reader(),
                                     #[cfg(feature = "native-rolling-dependency-hints")]
                                     dependencies: shared.reader_from(&hints),
+                                    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+                                    parent_reads: self.pinned_parent_reads.then_some(&parent_reads),
                                 };
                                 let effects = self.execute_cell_trial(
                                     tx,
@@ -430,7 +446,13 @@ impl Store {
                                     sources: sources.into_inner(),
                                 })
                             }));
-                            let _ = send.send((position, slot, outcome));
+                            let _ = send.send(Completion {
+                                position,
+                                slot,
+                                outcome,
+                                #[cfg(feature = "native-reuse-rolling-parent-reads")]
+                                parent_reads: parent_reads.into_inner(),
+                            });
                         });
                         if position == 0 {
                             stats.first_submit_us = stats.first_submit_us.saturating_add(
@@ -455,20 +477,23 @@ impl Store {
                         submitted += 1;
                         ProposalTrial::Ordered
                     } else {
-                        let Some((_, slot, outcome)) = ready[prefix % depth].take() else {
+                        let Some(completion) = ready[prefix % depth].take() else {
                             let completion = worker_completion::next(&receiver);
-                            let index = completion.0 % depth;
+                            let index = completion.position % depth;
                             debug_assert!(ready[index].is_none());
                             ready[index] = Some(completion);
                             in_flight -= 1;
                             continue;
                         };
+                        #[cfg(feature = "native-reuse-rolling-parent-reads")]
+                        retry_reads.replace(completion.parent_reads);
+                        let slot = completion.slot;
                         #[cfg(feature = "native-leader-tail-cycle-shares")]
                         if finish_ordered_suffix {
                             reserved_cycles -= slot.cycles.min(self.limits.transaction_cycles);
                             tail_slot = slot.cycles < self.limits.transaction_cycles;
                         }
-                        match outcome.unwrap_or_else(|panic| panic::resume_unwind(panic)) {
+                        match completion.outcome.unwrap_or_else(|panic| panic::resume_unwind(panic)) {
                             Ok(trial) if trial.sources.published(&published) => {
                                 ProposalTrial::Ready(ReadyCell { effects: trial.effects, slot })
                             }
@@ -477,7 +502,14 @@ impl Store {
                         }
                     };
                     let had_trial = !matches!(work, ProposalTrial::Ordered);
-                    let step = settle(&transactions[prefix], work, budget, overlay, &canonical)?;
+                    let step = settle(&transactions[prefix], work, budget, overlay, &canonical);
+                    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+                    {
+                        let reads = retry_reads.take();
+                        stats.retry_parent_records += reads.len() as u64;
+                        stats.retry_parent_hits += reads.hits;
+                    }
+                    let step = step?;
                     #[cfg(feature = "native-mask-rejected-cell-projections")]
                     if finish_ordered_suffix
                         && prefix + 1 < count

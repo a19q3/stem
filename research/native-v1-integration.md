@@ -6,6 +6,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | --- | --- | --- |
 | Cell execution and material sharing | `1a50505` | Fixed-window or rolling Follower, parallel Leader, and immutable transaction material [Execution notes](scheduling/README.md) |
 | Rolling Leader | `native-rolling-leader-execution` | Bounded worker refill while preserving greedy selection [Comparison notes](scheduling/README.md#rolling-leader-preparation) |
+| Rolling retry parent reads | `native-reuse-rolling-parent-reads` | Carry bounded exact-parent results through ordered retry [Comparison notes](scheduling/README.md#reusing-parent-reads-during-ordered-retry) |
 | Leader tail cycle shares | `native-leader-tail-cycle-shares` | Keep low-cost candidates parallel when remaining cycles fund fewer than two full reservations [Comparison notes](scheduling/README.md#sharing-the-leaders-remaining-cycles) |
 | Inline worker Cell edits | `native-compact-cell-trial-edits` | Return small validated effects without an intermediate tree [Comparison notes](scheduling/README.md#inline-cell-changes-from-worker-trials) |
 | Reuse parent-spend rejections | `native-reuse-parent-spend-rejections` | Avoid re-resolving an exact parent spend after a failed Leader trial [Comparison notes](scheduling/README.md#reusing-a-parallel-rejection-for-an-exact-parent-spend) |
@@ -81,6 +82,8 @@ inline_resolution=native-inline-cell-resolution
 owned_cell_reads=native-owned-live-cell-reads
 lazy_cell_digests=native-lazy-cell-digests
 rolling_leader=native-rolling-leader-execution
+pinned_rolling=jolteon-candidate-pipeline,jolteon-proposal-pipeline
+retry_parent_reads=native-reuse-rolling-parent-reads
 tail_cycle_shares=native-leader-tail-cycle-shares
 compact_trial_edits=native-compact-cell-trial-edits
 parent_spend_reuse=native-reuse-parent-spend-rejections
@@ -147,6 +150,8 @@ build inline-resolution --features "$cells,$inline_resolution"
 build owned-cell-reads --features "$owned_cell_reads"
 build lazy-cell-digests --features "$lazy_cell_digests"
 build rolling-leader --features "$cells,$rolling_leader"
+build rolling-retry-control --features "$cells,$rolling_leader,$pinned_rolling"
+build rolling-retry-parent-reads --features "$cells,$rolling_leader,$pinned_rolling,$retry_parent_reads"
 build tail-cycle-shares --features "$cells,$rolling_leader,$tail_cycle_shares"
 build compact-trial-edits --features "$cells,$rolling_leader,$compact_trial_edits"
 build parent-spend-reuse --features "$cells,$rolling_leader,$parent_spend_reuse"
@@ -201,7 +206,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$compact_prepared_cells,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$pinned_inheritance,$pinned_absences,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$retry_parent_reads,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$compact_prepared_cells,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$pinned_inheritance,$pinned_absences,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
