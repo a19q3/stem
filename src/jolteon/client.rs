@@ -113,6 +113,9 @@ pub struct CommitmentMetrics {
     pub cell_tree: LatencyHistogram,
     #[serde(default)]
     pub cell_batch: LatencyHistogram,
+    #[cfg(feature = "native-research-jmt")]
+    #[serde(default)]
+    pub jmt_reads: crate::native_store::JmtMutationReads,
     pub system: LatencyHistogram,
     pub execution: LatencyHistogram,
 }
@@ -124,6 +127,8 @@ impl CommitmentMetrics {
         self.cell_keys.observe(timing.cell_phases.keys);
         self.cell_tree.observe(timing.cell_phases.tree);
         self.cell_batch.observe(timing.cell_phases.batch);
+        #[cfg(feature = "native-research-jmt")]
+        self.jmt_reads.record(timing.cell_phases.jmt_reads);
         self.system.observe(timing.system);
         self.execution.observe(timing.execution);
     }

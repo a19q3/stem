@@ -2,6 +2,9 @@
 
 use std::{cell::Cell, collections::BinaryHeap, path::Path, time::Instant};
 
+#[cfg(feature = "native-jmt-mutation-memo")]
+use std::cell::RefCell;
+
 use anyhow::{Context, Result, bail, ensure};
 use ckb_db::internal::{Options, ReadOnlyDB, ReadOptions, prelude::*};
 use ckb_types::packed::Byte32;
@@ -19,13 +22,14 @@ use stem_ledger::{
 };
 
 use super::{
-    Batch, HEADER, JMT_NODE, MARKER, MAX_CELL_PROOF_BATCH, STATE_RECORD, STORAGE_LAYOUT, Spec,
+    Batch, HEADER, JMT_NODE, JmtMutationReads, MARKER, MAX_CELL_PROOF_BATCH, STATE_RECORD, STORAGE_LAYOUT, Spec,
     Store, TIP, index_key, state_key,
 };
 
 mod proof_audit;
 
 pub(super) const LAYOUT: &[u8] = b"Stem research JMT 0.12 only\0";
+pub(super) const MUTATION_MEMO_NODES: usize = 1024;
 
 fn key(node: &NodeKey) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(51);
@@ -40,22 +44,65 @@ enum Reader<'a> {
     Branch {
         store: &'a Store,
         retirement: Option<&'a Retirement>,
+        reads: Cell<JmtMutationReads>,
+        #[cfg(feature = "native-jmt-mutation-memo")]
+        memo: Option<RefCell<lru::LruCache<NodeKey, Node>>>,
     },
+}
+
+impl<'a> Reader<'a> {
+    fn branch(store: &'a Store, retirement: Option<&'a Retirement>, _memo_nodes: usize) -> Self {
+        Self::Branch {
+            store,
+            retirement,
+            reads: Cell::default(),
+            #[cfg(feature = "native-jmt-mutation-memo")]
+            memo: (_memo_nodes != 0).then(|| RefCell::new(lru::LruCache::new(_memo_nodes))),
+        }
+    }
+
+    fn reads(&self) -> JmtMutationReads {
+        match self {
+            Self::Branch { reads, .. } => reads.get(),
+            Self::Empty => JmtMutationReads::default(),
+        }
+    }
 }
 
 impl TreeReader for Reader<'_> {
     fn get_node_option(&self, node: &NodeKey) -> Result<Option<Node>> {
-        let slot = key(node)?;
-        match self {
-            Self::Empty => Ok(None),
-            Self::Branch { store, retirement } => {
-                let result = store.read(slot)?.as_deref().map(borsh::from_slice).transpose()?;
-                if let (Some(retirement), Some(Node::Leaf(leaf))) = (retirement, &result) {
-                    retirement.observe(leaf.key_hash().0);
-                }
-                Ok(result)
-            }
+        let Self::Branch {
+            store,
+            retirement,
+            reads,
+            #[cfg(feature = "native-jmt-mutation-memo")]
+            memo,
+        } = self else {
+            return Ok(None);
+        };
+        let mut counts = reads.get();
+        counts.requests += 1;
+        #[cfg(feature = "native-jmt-mutation-memo")]
+        if let Some(memo) = memo
+            && let Some(found) = memo.borrow_mut().get(node).cloned()
+        {
+            counts.memo_hits += 1;
+            reads.set(counts);
+            return Ok(Some(found));
         }
+        let result = store.read(key(node)?)?.as_deref().map(borsh::from_slice).transpose()?;
+        counts.backing_reads += 1;
+        if let (Some(retirement), Some(Node::Leaf(leaf))) = (retirement, &result) {
+            retirement.observe(leaf.key_hash().0);
+        }
+        #[cfg(feature = "native-jmt-mutation-memo")]
+        if let (Some(memo), Some(found)) = (memo, &result) {
+            let mut memo = memo.borrow_mut();
+            memo.put(node.clone(), found.clone());
+            counts.peak_nodes = counts.peak_nodes.max(memo.len() as u64);
+        }
+        reads.set(counts);
+        Ok(result)
     }
 
     fn get_value_option(&self, _: Version, _: KeyHash) -> Result<Option<Vec<u8>>> {
@@ -84,10 +131,13 @@ pub(super) fn bootstrap(allocations: Vec<(Key, Key)>) -> Result<(RootHash, TreeU
 }
 
 pub(super) fn check_view_root(store: &Store) -> Result<()> {
-    let reader = Reader::Branch { store, retirement: None };
+    check_reader_root(store, &Reader::branch(store, None, 0))
+}
+
+fn check_reader_root(store: &Store, reader: &Reader<'_>) -> Result<()> {
     let version = store.tip.context.height;
     ensure!(
-        Sha256Jmt::new(&reader).get_root_hash(version)?.0.as_slice()
+        Sha256Jmt::new(reader).get_root_hash(version)?.0.as_slice()
             == store.tip.state.cell_root.as_slice(),
         "JMT nodes differ from the state view root at height {version}"
     );
@@ -99,20 +149,19 @@ pub(super) fn update(
     changes: &[(Key, Option<Key>)],
     version: u64,
     observe_retirement: bool,
+    memo_nodes: usize,
 ) -> Result<Update> {
-    check_view_root(store)?;
     let retirement = observe_retirement.then(|| Retirement::plan(changes));
-    let reader = Reader::Branch {
-        store,
-        retirement: retirement.as_ref(),
-    };
+    let reader = Reader::branch(store, retirement.as_ref(), memo_nodes);
+    check_reader_root(store, &reader)?;
     let (root, edits) = Sha256Jmt::new(&reader).put_value_set(
         changes
             .iter()
             .map(|(id, value)| (KeyHash(*id), value.map(|value| value.to_vec()))),
         version,
     )?;
-    Ok(Update { root, edits, retirement })
+    let reads = reader.reads();
+    Ok(Update { root, edits, retirement, reads })
 }
 
 struct Retirement {
@@ -140,6 +189,7 @@ impl Retirement {
 
 pub(super) struct Update {
     pub(super) root: RootHash,
+    pub(super) reads: JmtMutationReads,
     edits: TreeUpdateBatch,
     retirement: Option<Retirement>,
 }

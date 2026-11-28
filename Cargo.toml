@@ -91,6 +91,7 @@ native-execution-material-cache = ["stem-ledger/execution-material-cache"]
 native-compact-cell-trial-edits = ["dep:smallvec"]
 native-research-jmt = ["dep:borsh", "dep:jmt"]
 native-jmt-observed-retirement = ["native-research-jmt"]
+native-jmt-mutation-memo = ["native-research-jmt", "dep:lru"]
 
 [dependencies]
 anyhow.workspace = true

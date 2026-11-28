@@ -852,6 +852,28 @@ pub(crate) struct CellCommitmentTiming {
     pub(crate) keys: Duration,
     pub(crate) tree: Duration,
     pub(crate) batch: Duration,
+    #[cfg(feature = "native-research-jmt")]
+    pub(crate) jmt_reads: JmtMutationReads,
+}
+
+#[cfg(feature = "native-research-jmt")]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct JmtMutationReads {
+    pub requests: u64,
+    pub backing_reads: u64,
+    pub memo_hits: u64,
+    pub peak_nodes: u64,
+}
+
+#[cfg(feature = "native-research-jmt")]
+impl JmtMutationReads {
+    pub(crate) fn record(&mut self, other: Self) {
+        self.requests = self.requests.saturating_add(other.requests);
+        self.backing_reads = self.backing_reads.saturating_add(other.backing_reads);
+        self.memo_hits = self.memo_hits.saturating_add(other.memo_hits);
+        self.peak_nodes = self.peak_nodes.max(other.peak_nodes);
+    }
 }
 
 #[cfg(feature = "jolteon-commit-pipeline")]
@@ -2758,13 +2780,20 @@ impl Store {
                 .height
                 .checked_add(1)
                 .context("JMT version overflow")?;
+            let memo_nodes = if cfg!(feature = "native-jmt-mutation-memo") {
+                research_jmt::MUTATION_MEMO_NODES
+            } else {
+                0
+            };
             let update = research_jmt::update(
                 self,
                 &cell_changes,
                 version,
                 cfg!(feature = "native-jmt-observed-retirement"),
+                memo_nodes,
             )?;
             let root = update.root;
+            let jmt_reads = update.reads;
             let tree_done = Instant::now();
             update.write(self, batch, &cell_changes, version)?;
             return Ok((
@@ -2774,6 +2803,7 @@ impl Store {
                     keys: keyed.duration_since(started),
                     tree: tree_done.duration_since(keyed),
                     batch: tree_done.elapsed(),
+                    jmt_reads,
                 },
             ));
         }
@@ -2835,6 +2865,8 @@ impl Store {
                 keys: keyed.duration_since(started),
                 tree: tree_done.duration_since(keyed),
                 batch: tree_done.elapsed(),
+                #[cfg(feature = "native-research-jmt")]
+                jmt_reads: JmtMutationReads::default(),
             },
         ))
     }
@@ -4638,7 +4670,7 @@ mod pipeline_store_tests {
         Ok(())
     }
 
-    #[cfg(feature = "native-jmt-observed-retirement")]
+    #[cfg(any(feature = "native-jmt-observed-retirement", feature = "native-jmt-mutation-memo"))]
     #[test]
     fn jmt_leaf_observations_match_the_record_read_control() -> Result<()> {
         let home = tempfile::tempdir()?;
@@ -4672,17 +4704,28 @@ mod pipeline_store_tests {
             }).collect::<Vec<_>>();
             changes.sort_unstable_by_key(|(id, _)| *id);
             let version = view.tip.context.height + 1;
-            let update = |observed| -> Result<_> {
-                let update = research_jmt::update(view, &changes, version, observed)?;
-                let root = update.root;
+            let update = |observed, memo_nodes| -> Result<_> {
+                let update = research_jmt::update(view, &changes, version, observed, memo_nodes)?;
+                let (root, reads) = (update.root, update.reads);
                 let mut batch = Batch::default();
                 update.write(view, &mut batch, &changes, version)?;
-                Ok((root, batch))
+                Ok((root, batch, reads))
             };
-            let (expected, reference) = update(false)?;
-            let (actual, observed) = update(true)?;
+            let (expected, reference, _) = update(false, 0)?;
+            let (actual, observed, uncached) = update(true, 0)?;
             assert_eq!(actual, expected);
             assert_same_batch_writes(&reference, &observed);
+            #[cfg(feature = "native-jmt-mutation-memo")]
+            for limit in [1, 4] {
+                let (root, batch, reads) = update(true, limit)?;
+                assert_eq!(root, expected);
+                assert_same_batch_writes(&reference, &batch);
+                assert_eq!(reads.requests, uncached.requests);
+                assert_eq!(reads.requests, reads.backing_reads + reads.memo_hits);
+                assert!(reads.memo_hits > 0 && reads.peak_nodes <= limit as u64);
+            }
+            #[cfg(not(feature = "native-jmt-mutation-memo"))]
+            assert_eq!(uncached.requests, uncached.backing_reads);
             let delete = |point| state_key(STATE_RECORD, Namespace::Cells, &key(point));
             assert!(matches!(observed.lookup(&delete(&old)), Some(None)));
             assert!(observed.lookup(&delete(&absent)).is_none());

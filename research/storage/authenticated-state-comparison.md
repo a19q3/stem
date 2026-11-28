@@ -421,3 +421,38 @@ records already reside in the RocksDB cache. For identical transitions,
 verify exact JMT Header, receipts, encoded batch bytes and proof digest
 before interpreting the performance results. Runtime qualification
 and measurements remain pending.
+
+### Reusing decoded JMT nodes during mutation
+
+On the isolated JMT branch, `native-jmt-mutation-memo` retains up to
+1,024 decoded nodes per update in a local LRU keyed by full version and
+nibble path. The parent-root check and updater read the same exact Store
+view, so the updater can reuse the root node checked against the parent
+Header. The upstream JMT edit cache still owns newly generated nodes.
+The memo stores successful parent reads and expires at the end of the
+update. A leaf used by observed retirement is marked when loaded, before
+that leaf can serve a memo hit. Parent branches and durable snapshots
+use the ordinary Store read precedence.
+
+This is a JMT-only mutation ablation. Keep the same RocksDB cache,
+resident Live Cell index, observed-retirement flag, signed corpus, worker
+count, block envelope, and sync policy in both builds. Add
+`native-jmt-mutation-memo` to the candidate and set
+`STEM_RESEARCH_JMT=1` for both arms. The `jmt_reads` fields in the Leader
+and Follower commitment metrics record reader requests, `backing_reads`
+through the Store, `memo_hits`, and the largest retained node count per
+update. Store reads include speculative journals and database lookups.
+Use the RocksDB statistics for the physical-read comparison.
+
+Report mutation and batch wall time, CPU, and peak RSS alongside finality,
+proof verification and recovery. Cache hits still clone decoded nodes for
+the upstream reader API. LRU bookkeeping and reserving the table on small
+updates can outweigh the avoided reads and Borsh decoding. Record the
+measured memory of the optional memo before comparing with a tuned
+Patricia configuration. The existing common durable-write, layout and
+proof audit paths apply to both JMT arms.
+
+The compile-checked mutation fixture compares zero, one and four cached
+nodes, exercises eviction, leaf retirement, a speculative ancestor,
+and exact roots and write batches. Runtime, replay and performance
+qualification are pending.
