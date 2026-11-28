@@ -234,6 +234,10 @@ impl Store {
             let limit = index.retire();
             self.live_index = Some(super::IndexView::recover(self, limit)?);
         }
+        if let Some(index) = self.cell_nodes.take() {
+            let limit = index.retire();
+            self.cell_nodes = Some(Arc::new(super::NodeIndex::recover(self, limit)?));
+        }
         Ok(())
     }
 

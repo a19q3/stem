@@ -20,6 +20,7 @@ pub(super) fn compact(mut node: Vec<u8>) -> Vec<u8> {
     node
 }
 
+#[derive(Clone)]
 pub(super) struct CanonicalNode {
     bytes: [u8; BRANCH_BYTES],
     len: usize,

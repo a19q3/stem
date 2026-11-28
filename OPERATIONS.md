@@ -53,6 +53,20 @@ index's table and owned records. Allow separate memory for the RocksDB
 block cache, trial execution, pinned readers and allocator overhead. Restart
 with the option to rebuild the index.
 
+Set `--cell-node-index-mib MIB` to enable the optional index of decoded,
+content-addressed Cell Patricia nodes. It verifies each cached node against
+its canonical hash. Candidate writes take precedence. A node shared by
+multiple roots can use the same cached bytes, and a cache miss uses the
+reader's RocksDB snapshot. The index applies edits after the normal durable
+write while proofs and consensus use the same canonical encoding.
+
+Status reports `cell_node_index.active`, the indexed node count, table
+bytes, budget, startup verification time, hits and misses. The index is
+independent of the Live Cell index and the RocksDB block cache. A budget
+failure retires the index. The replica continues reading authenticated
+nodes from RocksDB. Include the configured indexes and RocksDB cache when
+sizing a replica's memory.
+
 ```sh
 stem run --initialize --home /srv/stem/app --genesis /srv/stem/stem.json \
   --configuration /srv/stem/replicas.json --key-file /srv/stem/validator.key

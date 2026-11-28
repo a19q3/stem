@@ -898,6 +898,7 @@ fn resident_live_cell_index_matches_branches_commit_and_reopen() -> Result<()> {
     let reference = Store::open(reference_path.path(), &fixture.spec, Retention::Archive)?;
     let budget = std::num::NonZeroUsize::new(4).unwrap();
     indexed.enable_live_cell_index(budget)?;
+    indexed.enable_cell_node_index(budget)?;
     let initial = indexed.live_cell_index_status().unwrap();
     assert!(initial.active);
 
@@ -941,10 +942,13 @@ fn resident_live_cell_index_matches_branches_commit_and_reopen() -> Result<()> {
     assert_eq!(measured.entries, initial.entries);
     assert!(measured.accounted_bytes <= measured.limit_bytes);
     assert!(measured.hits > 0 && measured.absent > 0);
+    let nodes = indexed.cell_node_index_status().unwrap();
+    assert!(nodes.active && nodes.hits > 0 && nodes.accounted_bytes <= nodes.limit_bytes);
     drop(indexed);
 
     let mut reopened = Store::open(indexed_path.path(), &fixture.spec, Retention::Archive)?;
     reopened.enable_live_cell_index(budget)?;
+    reopened.enable_cell_node_index(budget)?;
     assert_eq!(reopened.tip(), oracle.header());
     assert!(reopened.live_cell(&output)?.is_none());
     let (after, after_proof) = reopened.prove_cell(&successor)?;

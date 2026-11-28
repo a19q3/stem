@@ -44,6 +44,9 @@ pub use stem_ledger::lineage::LineageProof;
 mod live_index;
 pub use live_index::LiveCellIndexStatus;
 use live_index::IndexView;
+mod node_index;
+pub use node_index::CellNodeIndexStatus;
+use node_index::NodeIndex;
 mod node_storage;
 mod staking;
 mod state_snapshot;
@@ -384,6 +387,7 @@ pub struct Store {
     branch: Vec<Arc<Prepared>>,
     live_cache: Arc<Mutex<LiveCache>>,
     live_index: Option<IndexView>,
+    cell_nodes: Option<Arc<NodeIndex>>,
 }
 
 #[cfg(any(
@@ -960,6 +964,7 @@ impl Store {
             fees: spec.fees,
             live_cache: Arc::default(),
             live_index: None,
+            cell_nodes: None,
             cache: Arc::new(VerificationCache::for_genesis(4096, spec.vm_crypto_v1)),
             branch: Vec::new(),
         })
@@ -990,6 +995,21 @@ impl Store {
 
     pub fn live_cell_index_status(&self) -> Option<LiveCellIndexStatus> {
         self.live_index.as_ref().map(IndexView::status)
+    }
+
+    /// Enable the optional bounded Cell Patricia node index.
+    pub fn enable_cell_node_index(&mut self, limit_mib: NonZeroUsize) -> Result<()> {
+        ensure!(
+            self.branch.is_empty() && self.cell_nodes.is_none(),
+            "Cell node index already configured or view is speculative"
+        );
+        let bytes = limit_mib.get().checked_mul(1 << 20).context("Cell node index budget overflow")?;
+        self.cell_nodes = Some(Arc::new(NodeIndex::recover(self, bytes)?));
+        Ok(())
+    }
+
+    pub fn cell_node_index_status(&self) -> Option<CellNodeIndexStatus> {
+        self.cell_nodes.as_deref().map(NodeIndex::status)
     }
 
     pub fn tip(&self) -> &Header {
@@ -1088,6 +1108,7 @@ impl Store {
             branch: branch.to_vec(),
             live_cache: Arc::clone(&self.live_cache),
             live_index: self.live_index.clone(),
+            cell_nodes: self.cell_nodes.clone(),
         }
     }
 
@@ -1103,12 +1124,17 @@ impl Store {
         PinnedView(view)
     }
 
+    fn candidate_value(&self, key: &[u8]) -> Option<Option<&[u8]>> {
+        self.branch
+            .iter()
+            .rev()
+            .find_map(|prepared| prepared.batch.lookup(key).map(Option::as_deref))
+    }
+
     fn read(&self, key: impl AsRef<[u8]>) -> Result<Option<ReadValue<'_>>> {
         let key = key.as_ref();
-        for prepared in self.branch.iter().rev() {
-            if let Some(value) = prepared.batch.lookup(key) {
-                return Ok(value.as_deref().map(ReadValue::Candidate));
-            }
+        if let Some(value) = self.candidate_value(key) {
+            return Ok(value.map(ReadValue::Candidate));
         }
         Ok(self
             .db
@@ -1496,7 +1522,16 @@ impl Store {
     }
 
     fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<node_storage::CanonicalNode>> {
-        self.read(state_key(STATE_NODE, namespace, id))?
+        let key = state_key(STATE_NODE, namespace, id);
+        if let Some(value) = self.candidate_value(&key) {
+            return value.map(node_storage::canonical).transpose();
+        }
+        if namespace == Namespace::Cells
+            && let Some(node) = self.cell_nodes.as_ref().and_then(|index| index.lookup(id))
+        {
+            return Ok(Some(node));
+        }
+        self.db.get_opt(key, &self.read_options)?
             .as_deref()
             .map(node_storage::canonical)
             .transpose()
@@ -2766,6 +2801,9 @@ impl Store {
         if let Some(index) = &mut self.live_index {
             index.advance(prepared.next.id(&self.network).unpack(), &prepared.live);
         }
+        if let Some(index) = &self.cell_nodes {
+            index.advance(&prepared.batch);
+        }
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
         self.stake_inputs = Arc::clone(&prepared.stake_inputs);
@@ -3174,6 +3212,71 @@ mod pipeline_store_tests {
         let status = store.live_cell_index_status().unwrap();
         assert_eq!(status.fallbacks, 1);
         assert_eq!(status.entries, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn cell_node_index_recovers_checked_bytes_and_preserves_pinned_reads() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let point = OutPoint::new([37; 32].pack(), 0);
+        spec.development_cells.push((
+            point,
+            Cell::new(20_000_000_000, ckb_types::packed::Script::default(), vec![], bytes::Bytes::new())?,
+        ));
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        let root: Key = store.tip.state.cell_root.unpack();
+        let key = state_key(STATE_NODE, Namespace::Cells, &root);
+        let original = store.db.get(key)?.context("missing test root")?.to_vec();
+        let mut corrupt = original.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        store.db.put(key, corrupt)?;
+        let budget = NonZeroUsize::new(1).unwrap();
+        assert!(store.enable_cell_node_index(budget).unwrap_err().to_string().contains("corrupt committed Cell node"));
+        store.db.put(key, original)?;
+        store.enable_cell_node_index(budget)?;
+        let index = store.cell_nodes.as_ref().unwrap();
+        let snapshot = store.db.snapshot();
+        let mut options = ReadOptions::default();
+        options.set_snapshot(&snapshot);
+        let mut pinned = store.read_view(&[]);
+        pinned.read_options = Arc::new(options);
+        let cached = pinned.node(Namespace::Cells, &root)?.context("missing index hit")?;
+        let mut retired = Batch::default();
+        retired.delete(key);
+        store.db.delete(key)?;
+        index.advance(&retired);
+        assert!(store.node(Namespace::Cells, &root)?.is_none());
+        let old = pinned.node(Namespace::Cells, &root)?.context("missing old snapshot node")?;
+        assert_eq!(cached.as_ref(), old.as_ref());
+        let status = store.cell_node_index_status().unwrap();
+        assert_eq!((status.hits, status.misses), (1, 2));
+        Ok(())
+    }
+
+    #[test]
+    fn cell_node_index_budget_preserves_authenticated_database_reads() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let cell = Cell::new(
+            20_000_000_000,
+            ckb_types::packed::Script::default(),
+            vec![],
+            bytes::Bytes::new(),
+        )?;
+        let txid = [38; 32].pack();
+        for index in 0..4096 {
+            spec.development_cells.push((OutPoint::new(txid.clone(), index), cell.clone()));
+        }
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        store.enable_cell_node_index(NonZeroUsize::new(1).unwrap())?;
+        let status = store.cell_node_index_status().unwrap();
+        assert!(!status.active && status.accounted_bytes == 0 && status.nodes == 0);
+        let point = OutPoint::new(txid, 4095);
+        let (found, proof) = store.prove_cell(&point)?;
+        let root: Key = store.tip().state.cell_root.unpack();
+        assert!(record::verify_cell(&store.cells, &root, &point, found.as_ref(), &proof));
+        assert_eq!(found.context("missing database-backed proof")?.cell.as_slice(), cell.as_slice());
         Ok(())
     }
 

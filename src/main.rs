@@ -112,6 +112,9 @@ enum Command {
         /// Memory budget for the verified Live Cell index, in MiB.
         #[arg(long, value_name = "MIB")]
         live_cell_index_mib: Option<NonZeroUsize>,
+        /// Memory budget for the verified Cell Patricia node index, in MiB.
+        #[arg(long, value_name = "MIB")]
+        cell_node_index_mib: Option<NonZeroUsize>,
     },
     /// Export the trusted genesis and initial Jolteon committee for light clients.
     JolteonTrust {
@@ -323,6 +326,7 @@ fn main() -> Result<()> {
             storage_metrics,
             rocksdb_block_cache_mib,
             live_cell_index_mib,
+            cell_node_index_mib,
         } => {
             let spec = native_spec::load(&genesis)?;
             let config = bridge_cli::read_json_limited(&configuration, 64 * 1024)?;
@@ -344,6 +348,9 @@ fn main() -> Result<()> {
             )?;
             if let Some(limit) = live_cell_index_mib {
                 store.enable_live_cell_index(limit)?;
+            }
+            if let Some(limit) = cell_node_index_mib {
+                store.enable_cell_node_index(limit)?;
             }
             stem::jolteon::run(store, key, config, initialize)
         }
