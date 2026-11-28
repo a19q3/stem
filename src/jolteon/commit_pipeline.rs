@@ -3,7 +3,7 @@ use std::{
     ops::Range,
     sync::Arc,
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -11,11 +11,11 @@ use stem_stake::jolteon::Point;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{CommitWindow, Incoming, Replica, can_vote_at, transport::Inbox, wire};
-use crate::native_store::Prepared;
+use crate::native_store::{CertifiedWriteTiming, Prepared};
 
 struct Write {
-    persist: Box<dyn FnOnce() -> Result<()> + Send>,
-    done: oneshot::Sender<Result<Duration>>,
+    persist: Box<dyn FnOnce() -> Result<CertifiedWriteTiming> + Send>,
+    done: oneshot::Sender<Result<CertifiedWriteTiming>>,
     window: Option<CommitWindow>,
 }
 
@@ -32,7 +32,6 @@ impl Writer {
                 if let Some(window) = job.window {
                     let _ = window.set((start, elapsed));
                 }
-                let result = result.map(|()| elapsed);
                 if job.done.send(result).is_err() {
                     break;
                 }
@@ -43,9 +42,9 @@ impl Writer {
 
     fn submit(
         &self,
-        persist: impl FnOnce() -> Result<()> + Send + 'static,
+        persist: impl FnOnce() -> Result<CertifiedWriteTiming> + Send + 'static,
         window: Option<CommitWindow>,
-    ) -> Result<oneshot::Receiver<Result<Duration>>> {
+    ) -> Result<oneshot::Receiver<Result<CertifiedWriteTiming>>> {
         let (done, completion) = oneshot::channel();
         self.0
             .try_send(Write {
@@ -88,14 +87,18 @@ impl Replica {
             tokio::select! {
                 biased;
                 result = &mut persistence => {
-                    let elapsed = result.context("certified writer stopped")??;
-                    self.execution.commit_jobs.persistence.observe(elapsed);
+                    let timing = result.context("certified writer stopped")??;
+                    let metrics = &mut self.execution.commit_jobs;
+                    metrics.persistence.observe(timing.persistence);
+                    if let Some(elapsed) = timing.cell_node_publication {
+                        metrics.cell_node_publication.observe(elapsed);
+                    }
                     break;
                 }
                 event = inbox.recv_live(), if inbox.can_defer() => {
                     let event = event.context("replica transport stopped during commit")?;
                     if event.reply.is_some() && event.frame.kind == wire::STATUS {
-                        // STATUS reads only the last installed in-memory state.
+                        // The consensus status reports the last installed tip.
                         self.handle(event)?;
                         let metrics = &mut self.execution.commit_jobs;
                         metrics.status_replies = metrics.status_replies.saturating_add(1);

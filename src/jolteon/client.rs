@@ -135,6 +135,8 @@ pub struct CommitMetrics {
     pub deferred_events: u64,
     #[serde(default)]
     pub persistence: LatencyHistogram,
+    #[serde(default)]
+    pub cell_node_publication: LatencyHistogram,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]

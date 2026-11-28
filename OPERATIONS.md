@@ -57,8 +57,10 @@ Set `--cell-node-index-mib MIB` to enable the optional index of decoded,
 content-addressed Cell Patricia nodes. It verifies each cached node against
 its canonical hash. Candidate writes take precedence. A node shared by
 multiple roots can use the same cached bytes, and a cache miss uses the
-reader's RocksDB snapshot. The index applies edits after the normal durable
-write while proofs and consensus use the same canonical encoding.
+reader's RocksDB snapshot. The certified writer applies index edits after durability and before
+acknowledgement. Proofs and consensus use the same canonical encoding.
+Execution status reports persistence and Cell node publication durations
+separately.
 
 Status reports `cell_node_index.active`, the indexed node count, table
 bytes, budget, startup verification time, hits and misses. The index is

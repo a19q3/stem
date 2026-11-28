@@ -634,6 +634,12 @@ pub(crate) struct CellCommitmentTiming {
     pub(crate) batch: Duration,
 }
 
+#[cfg(feature = "jolteon-commit-pipeline")]
+pub(crate) struct CertifiedWriteTiming {
+    pub(crate) persistence: Duration,
+    pub(crate) cell_node_publication: Option<Duration>,
+}
+
 struct Overlay {
     live: LiveChanges,
     prefetched_cells: HashMap<OutPoint, Option<LiveCell>>,
@@ -2977,6 +2983,9 @@ impl Store {
             retired,
             self.metrics.as_deref().map(|m| (m, Purpose::Finality)),
         )?;
+        if let Some(index) = &self.cell_nodes {
+            index.advance(&prepared.batch);
+        }
         self.install_durable_tip(prepared);
         Ok(())
     }
@@ -2996,12 +3005,14 @@ impl Store {
         prepared: Arc<Prepared>,
         records: Vec<(Vec<u8>, Vec<u8>)>,
         retired: Vec<Range<Vec<u8>>>,
-    ) -> Result<impl FnOnce() -> Result<()> + Send + 'static> {
+    ) -> Result<impl FnOnce() -> Result<CertifiedWriteTiming> + Send + 'static> {
         self.check_commit_parent(&prepared)?;
         let db = Arc::clone(&self.db);
         let cells = self.cells.clone();
         let metrics = self.metrics.clone();
+        let cell_nodes = self.cell_nodes.clone();
         Ok(move || {
+            let started = Instant::now();
             sync_with_consensus(
                 &db,
                 &prepared.batch,
@@ -3009,16 +3020,24 @@ impl Store {
                 &records,
                 &retired,
                 metrics.as_deref().map(|m| (m, Purpose::Finality)),
-            )
+            )?;
+            let persistence = started.elapsed();
+            let cell_node_publication = cell_nodes.as_ref().map(|index| {
+                let started = Instant::now();
+                // Readers of old node IDs still have their RocksDB snapshots.
+                index.advance(&prepared.batch);
+                started.elapsed()
+            });
+            Ok(CertifiedWriteTiming {
+                persistence,
+                cell_node_publication,
+            })
         })
     }
 
     pub(crate) fn install_durable_tip(&mut self, prepared: &Prepared) {
         if let Some(index) = &mut self.live_index {
             index.advance(prepared.next.id(&self.network).unpack(), &prepared.live);
-        }
-        if let Some(index) = &self.cell_nodes {
-            index.advance(&prepared.batch);
         }
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
@@ -3875,13 +3894,19 @@ mod pipeline_store_tests {
         assert_eq!(serial.header().encode(), parallel.header().encode());
         #[cfg(all(feature = "native-cell-subtree-parallel", feature = "jolteon-commit-pipeline"))]
         {
+            let mut store = store;
+            store.enable_cell_node_index(NonZeroUsize::new(8).unwrap())?;
             let pinned = store.pinned_view();
+            let next: Key = parallel.header().state.cell_root.unpack();
             let write = store.certified_write(Arc::new(parallel), Vec::new(), Vec::new())?;
             let from_snapshot = pinned
                 .with_snapshot(|old| {
-                    std::thread::spawn(write)
+                    let timing = std::thread::spawn(write)
                         .join()
                         .map_err(|_| anyhow::anyhow!("certified write panicked"))??;
+                    assert!(timing.cell_node_publication.is_some());
+                    assert_eq!(store.tip(), old.tip());
+                    assert!(store.cell_nodes.as_ref().unwrap().lookup(&next).is_some());
                     pool.install(|| build(old, true))
                 })?
                 .context("missing snapshot for the old parent")?;
