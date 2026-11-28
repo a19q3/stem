@@ -1900,7 +1900,7 @@ impl Store {
         let root = as_key(&self.tip.state.cell_root);
         #[cfg(feature = "native-batched-patricia-proofs")]
         let proofs = if keys.len() > 1 {
-            self.cells.prove_many_batched(root, &keys, |ids| self.cell_proof_nodes(ids))?
+            self.cells.prove_many_batched(root, &keys, |ids| self.cell_nodes_many(ids))?
         } else {
             self.cells.edit(root, |id| self.node(Namespace::Cells, id)).prove_many(&keys)?
         };
@@ -2040,8 +2040,8 @@ impl Store {
         Ok(None)
     }
 
-    #[cfg(feature = "native-batched-patricia-proofs")]
-    fn cell_proof_nodes(&self, ids: &[Key]) -> Result<Vec<Option<node_storage::NodeRead>>> {
+    #[cfg(any(feature = "native-batched-patricia-proofs", feature = "native-patricia-frontier-edit"))]
+    fn cell_nodes_many(&self, ids: &[Key]) -> Result<Vec<Option<node_storage::NodeRead>>> {
         let mut nodes: Vec<_> = (0..ids.len()).map(|_| None).collect();
         let mut missing = Vec::new();
         let mut keys = Vec::new();
@@ -2521,9 +2521,26 @@ impl Store {
         };
         #[cfg(feature = "native-verified-cell-journal")]
         let (cell_root, tree_done) = {
-            let (root, journal) = self.cells.batch_update_verified(
+            #[cfg(feature = "native-patricia-frontier-edit")]
+            let updated = if parallel {
+                self.cells.batch_update_verified_frontier(
+                    root,
+                    reader,
+                    |ids| {
+                        self.check_preparation_cancelled()?;
+                        self.cell_nodes_many(ids)
+                    },
+                    &cell_changes,
+                    previous,
+                )
+            } else {
+                self.cells.batch_update_verified(root, reader, &cell_changes, previous, false)
+            };
+            #[cfg(not(feature = "native-patricia-frontier-edit"))]
+            let updated = self.cells.batch_update_verified(
                 root, reader, &cell_changes, previous, parallel,
-            )?;
+            );
+            let (root, journal) = updated?;
             let tree_done = Instant::now();
             batch.cell_nodes = Some((batch.writes.len(), journal));
             (root, tree_done)

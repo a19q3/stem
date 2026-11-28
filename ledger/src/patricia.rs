@@ -17,6 +17,8 @@ pub use stem_stake::patricia::{Key, Namespace};
 
 #[cfg(feature = "batched-patricia-proofs")]
 mod batched_proof;
+#[cfg(feature = "patricia-frontier-edit")]
+mod frontier_edit;
 mod node_value;
 use node_value::checked_node;
 pub use node_value::NodeValue;
@@ -335,42 +337,97 @@ where
         previous: &mut Vec<PreviousValue>,
     ) -> Result<Key> {
         let old = self.load_optional(root)?;
+        self.update_parallel_loaded(old, changes, depth, workers, previous)
+    }
+
+    fn update_parallel_loaded(
+        &mut self,
+        old: Option<(Key, Node)>,
+        changes: &[(Key, Option<Key>)],
+        depth: usize,
+        workers: usize,
+        previous: &mut Vec<PreviousValue>,
+    ) -> Result<Key> {
         if workers >= 2
-            && let Some((id, Node::Branch { prefix, bits, children })) = &old
-            && usize::from(*bits) >= depth
-            && canonical_prefix(&changes[0].0, *bits) == *prefix
-            && canonical_prefix(&changes.last().expect("nonempty partition").0, *bits) == *prefix
+            && let Some((fork, edits)) = matching_fork(&old, changes, depth, MIN_PARALLEL_CHANGES)
         {
-            let (left, right) = split_changes(changes, *bits);
-            if left.len().min(right.len()) >= MIN_PARALLEL_CHANGES {
-                let child_depth = usize::from(*bits) + 1;
-                let left_workers = workers / 2;
-                let (tree, read) = (self.tree, self.read);
-                let update_child = |root, edits: &[_], budget, prior: &mut Vec<PreviousValue>| {
-                    let mut child = Nodes { tree, read, writes: Writes::with_capacity(0) };
-                    let next = child.update_parallel(root, edits, child_depth, budget, prior)?;
-                    Ok::<_, anyhow::Error>((next, child.writes))
-                };
-                let mut right_previous = Vec::new();
-                let (left, right) = rayon::join(
-                    || update_child(children[0], left, left_workers, previous),
-                    || update_child(children[1], right, workers - left_workers, &mut right_previous),
-                );
-                let (left, left_writes) = left?;
-                let (right, right_writes) = right?;
-                previous.append(&mut right_previous);
-                // Valid child prefixes are disjoint, including content IDs.
-                // Preserve the serial journal ordering before adding the parent.
-                self.writes = left_writes;
-                self.writes.append(right_writes);
-                return Ok(self.finish_branch(*id, prefix, *bits, *children, [left, right]));
-            }
+            return self.join_fork(fork, workers, previous, |child, side, budget, prior| {
+                child.update_parallel(fork.children[side], edits[side], fork.depth(), budget, prior)
+            });
         }
         self.writes.reserve(changes.len());
         self.update(old, changes, depth, &mut |key, value, next| {
             previous.push((key, value, next));
         })
     }
+
+    fn join_fork(
+        &mut self,
+        fork: Fork,
+        workers: usize,
+        previous: &mut Vec<PreviousValue>,
+        apply: impl Fn(&mut Self, usize, usize, &mut Vec<PreviousValue>) -> Result<Key> + Sync,
+    ) -> Result<Key> {
+        let (tree, read) = (self.tree, self.read);
+        let apply_side = |side, budget, prior: &mut Vec<PreviousValue>| {
+            let mut child = Nodes { tree, read, writes: Writes::with_capacity(0) };
+            let root = apply(&mut child, side, budget, prior)?;
+            Ok::<_, anyhow::Error>((root, child.writes))
+        };
+        let mut right_previous = Vec::new();
+        let left_workers = workers / 2;
+        let (left, right) = rayon::join(
+            || apply_side(0, left_workers, previous),
+            || apply_side(1, workers - left_workers, &mut right_previous),
+        );
+        let (left, left_writes) = left?;
+        let (right, right_writes) = right?;
+        previous.append(&mut right_previous);
+        // Forks own disjoint journals. Join left before right for serial order.
+        self.writes = left_writes;
+        self.writes.append(right_writes);
+        Ok(self.finish_branch(fork.id, &fork.prefix, fork.bits, fork.children, [left, right]))
+    }
+}
+
+#[cfg(feature = "parallel-patricia")]
+#[derive(Clone, Copy)]
+struct Fork {
+    id: Key,
+    prefix: Key,
+    bits: u8,
+    children: [Key; 2],
+}
+
+#[cfg(feature = "parallel-patricia")]
+impl Fork {
+    fn depth(self) -> usize {
+        usize::from(self.bits) + 1
+    }
+}
+
+#[cfg(feature = "parallel-patricia")]
+fn matching_fork<'a>(
+    old: &Option<(Key, Node)>,
+    changes: &'a [(Key, Option<Key>)],
+    depth: usize,
+    minimum: usize,
+) -> Option<(Fork, [&'a [(Key, Option<Key>)]; 2])> {
+    let Some((id, Node::Branch { prefix, bits, children })) = old else {
+        return None;
+    };
+    if changes.len() < 2 * minimum
+        || usize::from(*bits) < depth
+        || canonical_prefix(&changes.first()?.0, *bits) != *prefix
+        || canonical_prefix(&changes.last()?.0, *bits) != *prefix
+    {
+        return None;
+    }
+    let (left, right) = split_changes(changes, *bits);
+    (left.len().min(right.len()) >= minimum).then_some((
+        Fork { id: *id, prefix: *prefix, bits: *bits, children: *children },
+        [left, right],
+    ))
 }
 
 impl NodeWrites for BTreeMap<Key, Option<Vec<u8>>> {

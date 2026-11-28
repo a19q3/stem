@@ -196,6 +196,35 @@ Each of the 144 measured edits matched the canonical root and exact node writes 
 
 The experiment retained its patch and raw samples outside the repository. The executable SHA-256 is `637ce66750643cbf7987ef4c27f65f3ad4a4886295c3df532fde3ff2d4d7ac80` and the sample JSON SHA-256 is `07a8ba85f481b5f3d62158c1136608d5a189dfc10ead495d2cfef02cad746860`.
 
+## Editing directly from batched node reads
+
+`native-patricia-frontier-edit` gives large parallel Cell updates a
+bounded batch of authenticated upper-branch reads. Requests use the
+same branch, resident and committed-snapshot lookup path as the
+batched proof reader. The editor retains each checked node and its
+change slice, then uses those nodes to settle the planned branches.
+It passes already-checked subtree roots to the ordinary editor at
+terminal pieces. This skips the second lookup and authentication of
+planned nodes from the earlier prefetch experiment.
+
+The experiment retains up to 511 pieces and issues at most 64 node
+IDs per read. A branch with fewer than eight edits in either child,
+or a diverging compressed prefix, uses the existing editor below
+that point. The original threshold still governs parallel joins.
+Each worker produces a separate journal, with left work joined
+before right and the parent. The serial callback order for touched
+leaves is preserved. The compiled differential fixture checks every
+node edit and callback, and rejects repeated reads of planned nodes.
+
+Compare the option over `native-verified-cell-journal` with the same
+worker count, caches, node journal and authenticated state. Use
+payments, clustered mixed contracts and skewed edit sets at fixed
+block sizes. Record call count, node reads, tree CPU and wall time,
+allocations, committed batch equality and reopened proofs. Planning
+the upper levels serially can delay the first child work, and the
+frontier adds buffered nodes even with full residency. Runtime and
+independent replay are pending.
+
 ## Original in-memory experiment
 
 ```sh
