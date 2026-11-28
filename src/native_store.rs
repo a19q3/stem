@@ -49,6 +49,8 @@ mod node_index;
 pub use node_index::CellNodeIndexStatus;
 use node_index::NodeIndex;
 mod node_storage;
+#[cfg(feature = "native-shared-pinned-cell-cache")]
+mod pinned_cell_cache;
 #[cfg(feature = "jolteon-cancel-stale-execution")]
 mod preparation;
 #[cfg(feature = "jolteon-cancel-stale-execution")]
@@ -534,6 +536,8 @@ pub struct Store {
     cache: Arc<VerificationCache>,
     branch: Vec<Arc<Prepared>>,
     live_cache: Arc<Mutex<LiveCache>>,
+    #[cfg(feature = "native-shared-pinned-cell-cache")]
+    pinned_cell_cache: Arc<pinned_cell_cache::PinnedCellCache>,
     live_index: Option<IndexView>,
     cell_nodes: Option<Arc<NodeIndex>>,
     #[cfg(feature = "jolteon-cancel-stale-execution")]
@@ -666,21 +670,39 @@ impl PinnedView {
         let mut view = self.0.read_view(&branch[..skip]);
         // The accepted prefix is already in the snapshot.
         view.branch.clear();
+        #[cfg(feature = "native-shared-pinned-cell-cache")]
+        {
+            view.live_cache = view.pinned_cell_cache.acquire(&view.tip, &view.network);
+        }
         if skip != 0 {
             // Rebased reads use a different committed Cell image from the
             // original pin, even if the same PinnedView is opened again.
-            view.live_cache = Arc::default();
+            #[cfg(not(feature = "native-shared-pinned-cell-cache"))]
+            {
+                view.live_cache = Arc::default();
+            }
             if let Some(index) = &mut view.live_index {
                 index.at_header(view.tip.id(&view.network).unpack());
             }
         }
         // The private view and its options are dropped before the snapshot.
-        // Its Live Cell cache and committed stake inputs are private to this view.
+        // Cell caches belong to the verified snapshot's committed Header.
         view.read_options = Arc::new(options);
         let result = task(&view, &branch[skip..])?;
         view.check_preparation_cancelled()?;
         Ok(Some(result))
     }
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+pub struct PinnedCellCacheStatus {
+    pub retained_height: Option<u64>,
+    pub entries: usize,
+    pub record_bytes: usize,
+    pub shared_acquisitions: u64,
+    pub private_acquisitions: u64,
+    pub generations: u64,
+    pub carried_forward: u64,
 }
 
 #[derive(Default)]
@@ -1242,6 +1264,8 @@ impl Store {
             limits: spec.limits,
             fees: spec.fees,
             live_cache: Arc::default(),
+            #[cfg(feature = "native-shared-pinned-cell-cache")]
+            pinned_cell_cache: Arc::default(),
             live_index: None,
             cell_nodes: None,
             cache: Arc::new(VerificationCache::for_genesis(
@@ -1283,6 +1307,13 @@ impl Store {
             .as_ref()
             .map(|metrics| metrics.sample())
             .transpose()
+    }
+
+    pub(crate) fn pinned_cell_cache_status(&self) -> Option<PinnedCellCacheStatus> {
+        #[cfg(feature = "native-shared-pinned-cell-cache")]
+        return Some(self.pinned_cell_cache.status());
+        #[cfg(not(feature = "native-shared-pinned-cell-cache"))]
+        None
     }
 
     /// Recover the optional, bounded resident index against the durable root.
@@ -1415,6 +1446,8 @@ impl Store {
             cache: self.cache.clone(),
             branch: branch.to_vec(),
             live_cache: Arc::clone(&self.live_cache),
+            #[cfg(feature = "native-shared-pinned-cell-cache")]
+            pinned_cell_cache: Arc::clone(&self.pinned_cell_cache),
             live_index: self.live_index.clone(),
             cell_nodes: self.cell_nodes.clone(),
             #[cfg(feature = "jolteon-cancel-stale-execution")]
@@ -1429,7 +1462,10 @@ impl Store {
     ))]
     pub(crate) fn pinned_view(&self) -> PinnedView {
         let mut view = self.read_view(&[]);
-        view.live_cache = Arc::default();
+        #[cfg(not(feature = "native-shared-pinned-cell-cache"))]
+        {
+            view.live_cache = Arc::default();
+        }
         view.stake_inputs = Arc::default();
         PinnedView(view)
     }
@@ -3435,6 +3471,8 @@ impl Store {
     }
 
     pub(crate) fn install_durable_tip(&mut self, prepared: &Prepared, node_publication_done: bool) {
+        #[cfg(feature = "native-shared-pinned-cell-cache")]
+        self.pinned_cell_cache.advance(prepared, &self.network);
         if let Some(index) = &mut self.live_index {
             index.advance(prepared.next.id(&self.network).unpack(), &prepared.live);
         }
@@ -3919,6 +3957,73 @@ mod pipeline_store_tests {
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "native-shared-pinned-cell-cache")]
+    #[test]
+    fn pinned_cache_shares_one_header_and_keeps_overlapping_snapshots_isolated() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let points = [0, 1, 2].map(|index| OutPoint::new([61; 32].pack(), index));
+        let cell = Cell::new(
+            20_000_000_000,
+            ckb_types::packed::Script::default(),
+            vec![],
+            bytes::Bytes::new(),
+        )?;
+        spec.development_cells.extend(
+            points.iter().map(|point| (point.clone(), cell.clone())),
+        );
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        let delete = |store: &Store, point: &OutPoint, time| {
+            let mut overlay = store.overlay(None);
+            overlay.live.insert(point.clone(), None);
+            let context = HeaderContext::after(
+                &spec.network,
+                store.tip(),
+                time,
+                Tree::transactions(spec.network.clone(), &[])?.root(),
+            )?;
+            store.finish_block(context, overlay, &[], vec![], 0, 0, false)
+        };
+
+        let first = delete(&store, &points[0], 1001)?;
+        let pin = store.pinned_view();
+        pin.with_snapshot(|old| {
+            assert!(old.live_cell(&points[0])?.is_some());
+            store.pinned_view().with_snapshot(|peer| {
+                assert!(Arc::ptr_eq(&old.live_cache, &peer.live_cache));
+                assert!(peer.cached_live_cell(&points[0]).is_some());
+                Ok(())
+            })?.context("missing shared snapshot")?;
+
+            store.commit(first)?;
+            store.pinned_view().with_snapshot(|fresh| {
+                assert!(!Arc::ptr_eq(&old.live_cache, &fresh.live_cache));
+                assert!(fresh.live_cell(&points[0])?.is_none());
+                assert!(fresh.live_cell(&points[1])?.is_some());
+                assert!(fresh.live_cell(&points[2])?.is_some());
+                Ok(())
+            })?.context("missing fresh snapshot")?;
+            assert!(old.live_cell(&points[0])?.is_some());
+            Ok(())
+        })?.context("missing original snapshot")?;
+
+        let second = delete(&store, &points[1], 1002)?;
+        store.commit(second)?;
+        store.pinned_view().with_snapshot(|fresh| {
+            assert!(fresh.cached_live_cell(&points[1]).is_none());
+            assert!(fresh.live_cell(&points[1])?.is_none());
+            assert!(fresh.cached_live_cell(&points[2]).is_some());
+            Ok(())
+        })?.context("missing advanced snapshot")?;
+        let status = store.pinned_cell_cache_status().expect("enabled cache");
+        assert_eq!(status.retained_height, Some(2));
+        assert_eq!(status.shared_acquisitions, 2);
+        assert_eq!(status.generations, 2);
+        assert_eq!(status.carried_forward, 1);
+        assert_eq!(status.entries, 1);
         Ok(())
     }
 

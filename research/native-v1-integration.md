@@ -18,6 +18,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Pre-quorum Leader construction | `jolteon-pre-quorum-proposal` | Prepare after the local parent vote while the next view waits for its exact QC [Comparison notes](execution-pipeline/cross-block.md#preparing-the-next-proposal-while-its-parent-is-being-certified) |
 | Shared proposal snapshot | `jolteon-shared-proposal-snapshot` | Move ordered mempool traversal from the Replica to the Leader worker [Comparison notes](execution-pipeline/cross-block.md#sharing-the-ordered-mempool-snapshot-with-the-leader-worker) |
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
+| Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
 | Prior durable Live Cell view | `native-live-cell-parent-index` | Keep overlapping workers on resident reads through one tip advance [Index comparison notes](storage/live-cell-index.md#keeping-the-prior-durable-header-resident) |
 | Fixed-width resident OutPoints | `native-inline-outpoint-index` | Keep full packed keys in table buckets [Index comparison notes](storage/live-cell-index.md#fixed-width-resident-outpoint-keys) |
 | Resident Lock and TypeSet sharing | `a19ba05` | Inline and interned resident Live Cells at the same memory limit [Layout notes](storage/live-cell-index.md#resident-lock-and-typeset-sharing) |
@@ -61,6 +62,7 @@ contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
 publication=jolteon-resident-node-publication
 prebuilt_state_write=jolteon-prebuilt-state-write
 parent_cells=native-live-cell-parent-index
+pinned_cache=native-shared-pinned-cell-cache
 inline_outpoints=native-inline-outpoint-index
 verified_nodes=native-verified-cell-nodes
 verified_journal=native-verified-cell-journal
@@ -98,6 +100,7 @@ build contract-execution --features "$contracts"
 build publication --features "$publication"
 build prebuilt-state-write --features "$prebuilt_state_write"
 build prior-durable-cells --features "$parent_cells"
+build shared-pinned-cells --features "$pinned_cache"
 build inline-outpoints --features "$inline_outpoints"
 build verified-nodes --features "$verified_nodes"
 build verified-journal --features "$verified_journal"
@@ -106,7 +109,7 @@ build node-publication-control --features "$verified_journal,$publication"
 build node-publication-stream --features "$verified_journal,$publication,$stream_node_publication"
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$publication,$prebuilt_state_write,$parent_cells,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$certificates"
+build combined --features "$cells,$dependencies,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$publication,$prebuilt_state_write,$parent_cells,$pinned_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

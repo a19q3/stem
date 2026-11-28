@@ -269,6 +269,8 @@ pub struct Status {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_cell_index: Option<crate::native_store::LiveCellIndexStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_cell_cache: Option<crate::native_store::PinnedCellCacheStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell_node_index: Option<crate::native_store::CellNodeIndexStatus>,
 }
 
