@@ -377,3 +377,29 @@ window, and descendant readers can still contend on the index lock
 or fall back to disk. Compare effective descendant reuse and finality
 before enabling the feature more broadly. Runtime, independent
 replay and recovery evidence are pending.
+
+### Letting pinned readers proceed during publication
+
+`native-pinned-index-try-read` lets an execution view use its
+validated RocksDB snapshot when the resident Live Cell index is
+write-locked. The view opts in only after its snapshot has been
+matched to the committed Header or rebased to an exact certified
+prefix. Branch edits still take precedence. On contention, the
+ordinary lookup can use the committed decoded cache for that view
+or the same RocksDB snapshot. Unpinned views keep blocking index reads.
+Both the preparation-time residency check and individual OutPoint
+lookups use the same lock policy.
+
+`live_cell_index.snapshot_contention_fallbacks` counts lookups that
+skipped a busy index. It is part of the existing fallback total.
+It can include served decoded-cache reads, so it is distinct from
+physical read counts. The compiled fixture holds the publication
+lock while both the old snapshot and an exact rebased snapshot
+resolve a spent and a created Cell.
+
+Compare with identical writer placement, index budgets, memory
+layout and worker count. Record contention, storage reads, useful
+descendant work, tail latency and finality. This path avoids waiting
+on publication, while disk fallbacks can cost more than a short
+wait or increase shared storage load. Runtime, replay and
+performance evidence are pending.
