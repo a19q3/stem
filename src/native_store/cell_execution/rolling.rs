@@ -1,5 +1,7 @@
 //! Prepare a plain Cell run with a bounded, refillable queue of VM jobs.
 
+#[cfg(feature = "native-reuse-ordered-cell-writes")]
+use std::cell::Cell;
 use std::{
     cell::RefCell,
     panic::{self, AssertUnwindSafe},
@@ -40,7 +42,7 @@ impl SourcePositions {
         }
     }
 
-    fn adopted(&self, positions: &[bool]) -> bool {
+    fn published(&self, positions: &[bool]) -> bool {
         self.first.is_none_or(|position| positions[position])
             && self.later.iter().all(|&position| positions[position])
     }
@@ -281,16 +283,20 @@ impl Store {
         // The coordinator applies accepted effects in a separate delta.
         let mut base = std::mem::take(&mut overlay.live);
         let prior = &base;
+        #[cfg(feature = "native-reuse-ordered-cell-writes")]
+        let ordered_writes = Cell::new(false);
         let canonical = PrecedingCells {
             base: prior,
             projection: None,
+            #[cfg(feature = "native-reuse-ordered-cell-writes")]
+            ordered_writes: Some(&ordered_writes),
             #[cfg(feature = "native-shared-cell-deps")]
             dependencies: shared.reader(),
         };
         let projected = &writes;
         let (sender, receiver) = mpsc::channel();
         let cancelled = &AtomicBool::new(false);
-        let mut adopted = vec![false; count];
+        let mut published = vec![false; count];
         let mut ready = (0..depth)
             .map(|_| None)
             .collect::<Vec<Option<Completion>>>();
@@ -327,6 +333,8 @@ impl Store {
                                         position,
                                         sources: Sources::Run(&sources),
                                     }),
+                                    #[cfg(feature = "native-reuse-ordered-cell-writes")]
+                                    ordered_writes: None,
                                     #[cfg(feature = "native-shared-cell-deps")]
                                     dependencies: shared.reader(),
                                 };
@@ -374,7 +382,7 @@ impl Store {
                         let trial = outcome.unwrap_or_else(|panic| panic::resume_unwind(panic));
                         trial
                             .ok()
-                            .filter(|trial| trial.sources.adopted(&adopted))
+                            .filter(|trial| trial.sources.published(&published))
                             .map_or(CellAttempt::Recheck, |trial| {
                                 CellAttempt::Ready(ReadyCell {
                                     effects: trial.effects,
@@ -386,9 +394,14 @@ impl Store {
                     let step = settle(&transactions[prefix], work, budget, overlay, &canonical)?;
                     if matches!(step, ProposalStep::Reused) {
                         stats.reused += 1;
-                        adopted[prefix] = true;
+                        published[prefix] = true;
                     } else if had_trial {
                         stats.fallbacks += 1;
+                    }
+                    #[cfg(feature = "native-reuse-ordered-cell-writes")]
+                    if ordered_writes.replace(false) {
+                        published[prefix] = true;
+                        stats.ordered_declarations += 1;
                     }
                     prefix += 1;
                     if matches!(step, ProposalStep::Stop) {

@@ -147,3 +147,44 @@ cycle scan behavior. The deeper lookahead can perform more speculative
 work, and channel handoffs can cost more than the fixed barrier on warm
 payments. Runtime correctness, worker utilization and throughput
 remain to be measured.
+
+### Reusing ordered Cell writes
+
+The rolling schedulers track which earlier projected positions a worker
+observed. Previously only an adopted worker result certified its
+declarations. A rejected candidate can force the next candidate to fall
+back, even when that replacement publishes the exact Cells its
+descendants already verified against. A Follower can also see this
+pattern when the ordinary producer needs more than the speculative read
+allowance and succeeds in order.
+
+Add `native-reuse-ordered-cell-writes` to the same rolling Leader and
+Follower configuration. After the ordered path authorizes a transaction,
+charges it and publishes its ordinary Cell writes, it can certify that
+position. This applies when ordinary resolution keeps the original
+inputs and outputs, including their transaction ID and candidate origin.
+The stage withholds confirmation for materialized commands, specialized
+Lineage, Keeper and message effects, and outputs omitted by bridge
+handling. Rejected or skipped entries leave their projections
+unconfirmed. A worker can still settle only after every source it used
+is certified and the current resource budget covers the actual charges.
+
+The `ordered_declarations` counters record successful certifications
+from ordered settlement in each rolling role. `fallbacks` still counts
+jobs that needed ordered handling. Compare `reused` between otherwise
+identical builds to see whether confirmations actually save later work.
+
+The compiled Leader fixture uses an unavailable input to reject a
+projected spend, then includes a replacement and its child. The
+Follower fixture gives the producer more than 4 MiB of dependency
+data, within the ordinary block limit. Both compare exact selection
+where applicable, Headers, receipts and writes against ordered
+execution. They also check the fallback and reuse counters. Compare
+the feature on and off using those fixtures, then use same-block
+chains alongside independent payments and mixed Type Groups with
+fixed caches and workers. Record total preparation, fallback and
+worker time, Cell-read counts, charged resources and finality. The
+benefit depends on useful consumers behind a successful fallback.
+Independent payments and complete worker adoption may see little
+change. Runtime regression, independent replay and timings are
+pending.

@@ -94,6 +94,9 @@ fn record(writes: &mut Writes, point: OutPoint, edit: Write) {
 pub(super) struct PrecedingCells<'a> {
     base: &'a LiveChanges,
     projection: Option<ProjectedPrefix<'a>>,
+    /// The ordered coordinator can certify its exact published Cell writes.
+    #[cfg(feature = "native-reuse-ordered-cell-writes")]
+    pub(super) ordered_writes: Option<&'a Cell<bool>>,
     #[cfg(feature = "native-shared-cell-deps")]
     dependencies: dependencies::HintReader<'a>,
 }
@@ -435,6 +438,8 @@ impl Store {
                         position,
                         sources: Sources::Window(&dependencies),
                     }),
+                    #[cfg(feature = "native-reuse-ordered-cell-writes")]
+                    ordered_writes: None,
                     #[cfg(feature = "native-shared-cell-deps")]
                     dependencies: shared.reader(),
                 };
