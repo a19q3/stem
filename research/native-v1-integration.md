@@ -56,12 +56,8 @@ Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, r
 
 The native test launcher accepts `STEM_TEST_REPLICA_BIN` and the storage settings `STEM_TEST_ROCKSDB_BLOCK_CACHE_MIB`, `STEM_TEST_LIVE_CELL_INDEX_MIB`, `STEM_TEST_CELL_NODE_INDEX_MIB` and `STEM_TEST_LIVE_CELL_INDEX_INTERN_SCRIPTS=1`. The same launcher passes these options for payment, market and Keeper trials. A manually started funded-replica trial uses the corresponding CLI options directly.
 
-| Workload | Existing control | Integrated evidence to collect |
-| --- | --- | --- |
-| Sustained payments | [Resident saturation](storage/resident-saturation.md) | Actual offer and admission, common confirmations, backlog slope, tail population, node CPU and peak RSS |
-| Heterogeneous Polytype | [Mixed Type Groups](storage/resident-patricia.md#mixed-type-group-control) | Identical group tiers and charges, preparation costs, worker and cache counters |
-| Hotspot AMM and multiple markets | [Lineage conflict fixtures](execution-pipeline/README.md#lineage-materialization-across-conflicts) · [AMM replay](lineage-engine/README.md) · [CLOB reserve oracle](clob/README.md) | Per-market Head versions, offered operations, fills, conserved inventory, fee-only rejections and independent oracle agreement |
-| Keeper | [Agenda and wake fixtures](../BENCHMARKS.md#keeper-agenda-decoding-and-wake-replay) | Height and timed obligations, wake lateness, retry accounting, reserved work and ordinary-payment finality |
-| Faults and recovery | [Certified commit](execution-pipeline/README.md#integrated-commit-faults-with-live-payments) · [Certificate restart](certificates/README.md#matched-reuse-with-two-stopped-leaders) | Archive replay, exact state and receipt proofs, verified finality and crash/reopen behavior |
-
-Use single-host matched runs. Raise actual offer to find each configuration's saturation shoulder and compare queue growth as well as confirmation rates. Existing 3,000 TPS qualification remains reference evidence. The [JMT engine comparisons](storage/authenticated-state-comparison.md) and isolated development-chain prototype at `f6a00fd` retain their own proof and root boundary. The native V1 build matrix uses canonical Patricia commitments.
+The VM result cache supports same-binary comparisons using replica
+configuration fields `verification_cache_entries`,
+`verification_cache_shards` and `verification_cache_lock_sampling`.
+The [cache comparison](evolve/README.md#vm-result-cache-concurrency)
+specifies the local launcher settings and lock telemetry.

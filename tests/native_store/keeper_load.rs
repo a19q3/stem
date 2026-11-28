@@ -527,13 +527,26 @@ pub(super) fn start_network_with_committee(
     let peers = keys.iter().zip(&addresses).map(|((key, _), address)|
         json!({"key": hex::encode(key.verifying_key().to_bytes()), "address": address})).collect::<Vec<_>>();
     let configuration = output.join("replicas.json");
-    fs::write(
-        &configuration,
-        serde_json::to_vec_pretty(&json!({
-            "peers": peers, "view_timeout_ms": options.timeout_ms,
-            "proposal_interval_ms": options.interval_ms, "vm_workers": options.vm_workers,
-        }))?,
-    )?;
+    let mut config = json!({
+        "peers": peers, "view_timeout_ms": options.timeout_ms,
+        "proposal_interval_ms": options.interval_ms, "vm_workers": options.vm_workers,
+    });
+    for (var, key) in [
+        ("STEM_TEST_VERIFICATION_CACHE_ENTRIES", "verification_cache_entries"),
+        ("STEM_TEST_VERIFICATION_CACHE_SHARDS", "verification_cache_shards"),
+    ] {
+        match std::env::var(var) {
+            Ok(value) => config[key] = json!(value.parse::<usize>().with_context(|| format!("invalid {var}"))?),
+            Err(std::env::VarError::NotPresent) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    match std::env::var("STEM_TEST_VERIFICATION_CACHE_LOCK_SAMPLING").as_deref() {
+        Ok("1") => config["verification_cache_lock_sampling"] = json!(true),
+        Ok("0") | Err(std::env::VarError::NotPresent) => {}
+        _ => anyhow::bail!("STEM_TEST_VERIFICATION_CACHE_LOCK_SAMPLING expects 0 or 1"),
+    }
+    fs::write(&configuration, serde_json::to_vec_pretty(&config)?)?;
     drop(listeners);
     let mut replicas = Vec::new();
     for (index, (key, _)) in keys.iter().enumerate() {
