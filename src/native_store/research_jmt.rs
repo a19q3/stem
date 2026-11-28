@@ -529,7 +529,9 @@ fn audit_cell_state_at(
                 header.context.height == current && header.id(&network) == parent,
                 "broken recovered Header ancestry"
             );
-            parent = header.context.parent;
+            if current > height {
+                parent = header.context.parent;
+            }
         }
         ensure!(
             &parent == expected_header,
