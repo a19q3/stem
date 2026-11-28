@@ -254,7 +254,7 @@ impl IndexView {
             cursor.next();
             Some(result)
         });
-        let root = store.cells.root_from_sorted_records(committed)?;
+        let root = store.rebuild_cell_root(committed)?;
         ensure!(
             root.as_slice() == store.tip.state.cell_root.as_slice(),
             "durable Live Cell records differ from authenticated Cell root"

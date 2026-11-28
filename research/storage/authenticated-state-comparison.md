@@ -146,3 +146,60 @@ Read earlier versions only using the corresponding pinned DB snapshot.
 Rebuild both roots independently from sorted records after process
 restart. The mutation, proof and recovery sections specify the common
 corpus, run order and counters required to compare results.
+
+## Replicated development comparison
+
+The `native-research-jmt` feature builds both engines into the same executable.
+Use a separate directory for each replica and engine. The JMT arm uses
+`STEM_RESEARCH_JMT=1`. The Patricia arm leaves that variable unset. Both use
+the existing finality journal and synchronous WAL. The database layout marker
+includes the engine and genesis identity. The trial is limited to development
+genesis without a CKB vault or Stake Registry. The JMT arm uses experimental
+Cell proofs, while its System tree, receipt hashing and finality proof format
+use the existing implementations.
+
+On initialization the JMT arm builds only JMT Cell nodes from the same
+canonical records as the Patricia arm. Both engines recompute the genesis
+commitment on reopen from the ordered allocation keys and value digests,
+without building a replacement node set or buffering the genesis Cell rows
+for writing. The JMT startup check also compares the stored root node at
+the committed height with the durable Header. Enabling the bounded Live Cell
+index independently checks the complete committed record stream against the
+selected engine's root.
+
+Build a single release binary with the same feature and worker settings for
+each round. Compare disk-backed resolution first, then enable the same
+Live Cell index budget in both arms. Hold the RocksDB cache, VM workers,
+resource limits, cadence, network topology, seeds and signed workload
+constant. For this paired comparison omit the Patricia-specific resident
+node cache from both arms. Its production configuration is a separate
+optimized Patricia control with its memory budget recorded. Run the paired
+comparison in both orders and compare actual offer, common confirmation,
+finality latency, backlog, RSS and the RocksDB metrics. Record genesis IDs
+and signed workload digests separately. Chain-specific Cell origins and
+Header IDs differ across engines after genesis, so any corpus with Header
+Deps needs engine-specific references and a documented equivalent workload.
+
+Use the same research binary to audit a stopped replica, with the exact
+durable tip ID obtained from independently verified finality evidence:
+
+```sh
+cargo build --locked --release --features native-research-jmt --bin stem
+target/release/stem research-cell-audit --home "$replica_home" \
+    --genesis "$genesis_file" --expected-header "$verified_tip_id"
+```
+
+The audit opens RocksDB read-only. It independently folds all canonical
+Cell records into the selected root, then generates, encodes, decodes and
+verifies up to 512 membership paths and 512 absence paths. It reports
+the proof bytes and separate open, root rebuild, proof construction and
+verification timings. The Cell content digest covers the sorted keys and
+Cell bodies and excludes chain-specific origins. An identical transition
+trace can compare this digest across engines, while each arm still
+authenticates its exact canonical bytes and origin. The digest alone
+does not establish equivalent receipts, ordering, origins or resource charges.
+
+The replicated implementation and its restart regressions are compile-checked.
+The isolated measurements above remain the measured comparison. Replicated
+throughput, finality, recovery after interruption and proof costs on the
+same funded corpus await runtime qualification.

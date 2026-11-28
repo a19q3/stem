@@ -58,6 +58,8 @@ impl BatchBytes {
             [STATE_RECORD, 0, ..] => &mut self.live_cells,
             [STATE_RECORD, 1, ..] => &mut self.system_records,
             [STATE_NODE, 0, ..] => &mut self.cell_trie,
+            #[cfg(feature = "native-research-jmt")]
+            [super::JMT_NODE, ..] => &mut self.cell_trie,
             [STATE_NODE, 1, ..] => &mut self.system_trie,
             _ if key == HISTORY => &mut self.headers_and_history,
             _ => &mut self.other,

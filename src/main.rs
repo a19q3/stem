@@ -119,6 +119,17 @@ enum Command {
         #[arg(long, value_name = "MIB")]
         cell_node_index_mib: Option<NonZeroUsize>,
     },
+    #[cfg(feature = "native-research-jmt")]
+    /// Audit the recovered Cell records and proofs of a stopped research replica.
+    ResearchCellAudit {
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        genesis: PathBuf,
+        /// Exact finalized Header ID authenticated independently of the database.
+        #[arg(long)]
+        expected_header: String,
+    },
     /// Export the trusted genesis and initial Jolteon committee for light clients.
     JolteonTrust {
         #[arg(long)]
@@ -363,6 +374,31 @@ fn main() -> Result<()> {
                 store.enable_cell_node_index(limit)?;
             }
             stem::jolteon::run(store, key, config, initialize)
+        }
+        #[cfg(feature = "native-research-jmt")]
+        Command::ResearchCellAudit {
+            home,
+            genesis,
+            expected_header,
+        } => {
+            use ckb_types::{packed::Byte32, prelude::Entity};
+
+            let spec = native_spec::load(&genesis)?;
+            let bytes = hex::decode(
+                expected_header
+                    .strip_prefix("0x")
+                    .unwrap_or(&expected_header),
+            )?;
+            let expected_header = Byte32::from_slice(&bytes)?;
+            println!(
+                "{}",
+                stem::native_store::audit_cell_state(
+                    &home.join("db"),
+                    spec.network,
+                    &expected_header,
+                )?
+            );
+            Ok(())
         }
         Command::JolteonTrust { genesis } => {
             use ckb_types::prelude::Entity;

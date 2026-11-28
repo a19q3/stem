@@ -48,6 +48,10 @@ use live_index::IndexView;
 mod node_index;
 pub use node_index::CellNodeIndexStatus;
 use node_index::NodeIndex;
+#[cfg(feature = "native-research-jmt")]
+mod research_jmt;
+#[cfg(feature = "native-research-jmt")]
+pub use research_jmt::audit_cell_state;
 mod node_storage;
 mod staking;
 mod state_snapshot;
@@ -76,6 +80,8 @@ const HISTORY: &[u8] = b"\0stem/history";
 const EXECUTION: u8 = b'e';
 const HEADER: u8 = b'h';
 const HEADER_ID: u8 = b'i';
+#[cfg(feature = "native-research-jmt")]
+const JMT_NODE: u8 = b'J';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
 const MAX_CELL_PROOF_BATCH: usize = 1024;
@@ -454,6 +460,7 @@ pub struct Store {
     live_cache: Arc<Mutex<LiveCache>>,
     live_index: Option<IndexView>,
     cell_nodes: Option<Arc<NodeIndex>>,
+    research_jmt: bool,
 }
 
 #[cfg(any(
@@ -762,6 +769,24 @@ impl Store {
         measured: bool,
         cache_mib: Option<NonZeroUsize>,
     ) -> Result<Self> {
+        Self::open_configured(
+            path,
+            spec,
+            retention,
+            measured,
+            cache_mib,
+            std::env::var_os("STEM_RESEARCH_JMT").is_some(),
+        )
+    }
+
+    fn open_configured(
+        path: &Path,
+        spec: &Spec,
+        retention: Retention,
+        measured: bool,
+        cache_mib: Option<NonZeroUsize>,
+        research_jmt: bool,
+    ) -> Result<Self> {
         spec.validate_l1_policies()?;
         ensure!(
             spec.network != Byte32::default(),
@@ -840,11 +865,27 @@ impl Store {
         if measured {
             options.enable_statistics();
         }
+        ensure!(
+            !research_jmt || cfg!(feature = "native-research-jmt"),
+            "STEM_RESEARCH_JMT requires the native-research-jmt build"
+        );
+        #[cfg(feature = "native-research-jmt")]
+        let layout = if research_jmt {
+            ensure!(
+                spec.stake.is_none() && spec.bridge.is_none(),
+                "JMT trial requires an isolated development chain"
+            );
+            research_jmt::LAYOUT
+        } else {
+            STORAGE_LAYOUT
+        };
+        #[cfg(not(feature = "native-research-jmt"))]
+        let layout = STORAGE_LAYOUT;
         let db = DB::open(&options, path)?;
         let marker = db.get(MARKER)?;
         if let Some(marker) = &marker {
             ensure!(
-                marker.starts_with(STORAGE_LAYOUT),
+                marker.starts_with(layout),
                 "unsupported Stem database layout; open a fresh database"
             );
         }
@@ -861,13 +902,13 @@ impl Store {
         };
         let origin = Origin::new(&network, &context);
         let mut batch = Batch::default();
-        let mut cell_edit = cells.edit(cells.empty_root(), |_| Ok(None::<Vec<u8>>));
         if let Some(marker) = &spec.lineage_type {
             ensure!(
                 *marker != Byte32::default(),
                 "zero Lineage Type Script code hash"
             );
         }
+        let fresh = marker.is_none();
         let mut allocations = Vec::with_capacity(spec.development_cells.len());
         spec.development_cells
             .iter()
@@ -885,20 +926,45 @@ impl Store {
                     origin: origin.clone(),
                 };
                 let id = record::cell_key(&cells, point);
-                let record = record::encode_cell(point, &cell);
-                allocations.push((id, Some(cells.value_hash(&record))));
-                batch.put(state_key(STATE_RECORD, Namespace::Cells, &id), record);
+                allocations.push((id, record::cell_value(&cells, point, &cell)));
+                if fresh {
+                    batch.put_owned(
+                        state_key(STATE_RECORD, Namespace::Cells, &id),
+                        record::encode_cell(point, &cell),
+                    );
+                }
                 sum.checked_add(cell.cell.capacity())
                     .context("genesis Capacity overflow")
             })?;
         allocations.sort_unstable_by_key(|(key, _)| *key);
-        cell_edit
-            .set_batch(&allocations, |_, _, _| {})
-            .context("invalid genesis allocations")?;
+        ensure!(
+            allocations.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "duplicate genesis Cell key"
+        );
+        let cell_root = {
+            #[cfg(feature = "native-research-jmt")]
+            if research_jmt {
+                if fresh {
+                    let (root, nodes) = research_jmt::bootstrap(allocations)?;
+                    research_jmt::write(&mut batch, nodes, 0)?;
+                    root.0
+                } else {
+                    research_jmt::root_from_sorted(allocations.into_iter().map(Ok))?
+                }
+            } else {
+                Self::patricia_genesis(&cells, allocations, fresh, &mut batch)?
+            }
+            #[cfg(not(feature = "native-research-jmt"))]
+            Self::patricia_genesis(&cells, allocations, fresh, &mut batch)?
+        };
         let mut system_edit = system.edit(system.empty_root(), |_| Ok(None::<Vec<u8>>));
         let params = stem_ledger::protocol::genesis::network_parameters(
-            &spec.limits.encode(), &spec.fees.encode(), spec.capacity.bond_per_byte,
-            spec.capacity.state_overhead, &spec.chain_id, &validators,
+            &spec.limits.encode(),
+            &spec.fees.encode(),
+            spec.capacity.bond_per_byte,
+            spec.capacity.state_overhead,
+            &spec.chain_id,
+            &validators,
         )?;
         if spec.vm_crypto_v1 {
             let id = system.record_key(b"vm/crypto-abi");
@@ -973,18 +1039,17 @@ impl Store {
         let genesis = Header {
             context,
             state: StateCommitment {
-                cell_root: cell_edit.root().pack(),
+                cell_root: cell_root.pack(),
                 system_root: system_edit.root().pack(),
                 history_root: history.root(),
             },
             receipt_root: Receipt::root(&network, &[])?,
         };
         let genesis_id = genesis.id(&network);
-        let cell_nodes = cell_edit.into_writes();
         let system_nodes = system_edit.into_writes();
         let tip = if let Some(marker) = marker {
             ensure!(
-                &marker[STORAGE_LAYOUT.len()..] == genesis_id.as_slice(),
+                &marker[layout.len()..] == genesis_id.as_slice(),
                 "database network or genesis differs"
             );
             let tip = Header::decode(&db.get(TIP)?.context("missing Stem tip")?)?;
@@ -1004,9 +1069,8 @@ impl Store {
                     .is_none(),
                 "database is not empty"
             );
-            put_nodes(&mut batch, Namespace::Cells, cell_nodes);
             put_nodes(&mut batch, Namespace::System, system_nodes);
-            batch.put(MARKER, [STORAGE_LAYOUT, genesis_id.as_slice()].concat());
+            batch.put(MARKER, [layout, genesis_id.as_slice()].concat());
             put_tip(&mut batch, &network, &genesis, &history);
             sync_with_consensus(
                 &db,
@@ -1018,7 +1082,7 @@ impl Store {
             )?;
             genesis
         };
-        Ok(Self {
+        let store = Self {
             db: Arc::new(db),
             read_options: Arc::new(ReadOptions::default()),
             metrics,
@@ -1042,9 +1106,46 @@ impl Store {
             live_cache: Arc::default(),
             live_index: None,
             cell_nodes: None,
+            research_jmt,
             cache: Arc::new(VerificationCache::for_genesis(4096, spec.vm_crypto_v1)),
             branch: Vec::new(),
-        })
+        };
+        #[cfg(feature = "native-research-jmt")]
+        if research_jmt {
+            research_jmt::check_view_root(&store)?;
+        }
+        Ok(store)
+    }
+
+    fn patricia_genesis(
+        cells: &Patricia,
+        allocations: Vec<(Key, Key)>,
+        fresh: bool,
+        batch: &mut Batch,
+    ) -> Result<Key> {
+        if !fresh {
+            return cells.root_from_sorted_records(allocations.into_iter().map(Ok));
+        }
+        let changes = allocations
+            .into_iter()
+            .map(|(id, value)| (id, Some(value)))
+            .collect::<Vec<_>>();
+        let mut edit = cells.edit(cells.empty_root(), |_| Ok(None::<Vec<u8>>));
+        edit.set_batch(&changes, |_, _, _| {})?;
+        let root = edit.root();
+        put_nodes(batch, Namespace::Cells, edit.into_writes());
+        Ok(root)
+    }
+
+    fn rebuild_cell_root(
+        &self,
+        records: impl IntoIterator<Item = Result<(Key, Key)>>,
+    ) -> Result<Key> {
+        #[cfg(feature = "native-research-jmt")]
+        if self.research_jmt {
+            return research_jmt::root_from_sorted(records);
+        }
+        self.cells.root_from_sorted_records(records)
     }
 
     pub(crate) fn resize_verification_cache(&self, entries: usize) {
@@ -1084,6 +1185,7 @@ impl Store {
 
     /// Enable the optional bounded Cell Patricia node index.
     pub fn enable_cell_node_index(&mut self, limit_mib: NonZeroUsize) -> Result<()> {
+        ensure!(!self.research_jmt, "the Patricia node index is outside the JMT comparison");
         ensure!(
             self.branch.is_empty() && self.cell_nodes.is_none(),
             "Cell node index already configured or view is speculative"
@@ -1194,6 +1296,7 @@ impl Store {
             live_cache: Arc::clone(&self.live_cache),
             live_index: self.live_index.clone(),
             cell_nodes: self.cell_nodes.clone(),
+            research_jmt: self.research_jmt,
         }
     }
 
@@ -1528,6 +1631,7 @@ impl Store {
     }
 
     pub fn prove_cell(&self, point: &OutPoint) -> Result<(Option<LiveCell>, Proof)> {
+        ensure!(!self.research_jmt, "use the isolated JMT proof audit");
         let key = record::cell_key(&self.cells, point);
         let mut tree = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
             self.node(Namespace::Cells, id)
@@ -1537,6 +1641,7 @@ impl Store {
     }
 
     pub fn prove_cells(&self, points: &[OutPoint]) -> Result<Vec<(Option<LiveCell>, Proof)>> {
+        ensure!(!self.research_jmt, "use the isolated JMT proof audit");
         ensure!(
             points.len() <= MAX_CELL_PROOF_BATCH,
             "too many Live Cell proofs in one batch"
@@ -2032,6 +2137,34 @@ impl Store {
         }
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
         let keyed = Instant::now();
+        #[cfg(feature = "native-research-jmt")]
+        if self.research_jmt {
+            let version = self
+                .tip
+                .context
+                .height
+                .checked_add(1)
+                .context("JMT version overflow")?;
+            let (root, edits) = research_jmt::update(self, &cell_changes, version)?;
+            let tree_done = Instant::now();
+            for (id, value) in &cell_changes {
+                if value.is_none() {
+                    let key = state_key(STATE_RECORD, Namespace::Cells, id);
+                    if self.read(key)?.is_some() {
+                        batch.delete(key);
+                    }
+                }
+            }
+            research_jmt::write(batch, edits, version)?;
+            return Ok((
+                root.0.pack(),
+                CellCommitmentTiming {
+                    keys: keyed.duration_since(started),
+                    tree: tree_done.duration_since(keyed),
+                    batch: tree_done.elapsed(),
+                },
+            ));
+        }
         let root = as_key(&self.tip.state.cell_root);
         let reader = |id: &Key| self.node(Namespace::Cells, id);
         let previous = |id: Key, _, replacement: Option<Key>| {
@@ -3346,7 +3479,8 @@ fn sync_with_consensus(
         feature = "jolteon-candidate-pipeline",
         feature = "jolteon-proposal-pipeline",
         feature = "native-commitment-pipeline",
-        feature = "native-cell-subtree-parallel"
+        feature = "native-cell-subtree-parallel",
+        feature = "native-research-jmt"
     )
 ))]
 mod pipeline_store_tests {
@@ -3380,6 +3514,55 @@ mod pipeline_store_tests {
             },
             development_cells: Vec::new(),
         }
+    }
+
+    #[cfg(feature = "native-research-jmt")]
+    #[test]
+    fn storage_engines_reopen_at_their_exact_headers() -> Result<()> {
+        let mut spec = spec();
+        let point = OutPoint::new([37; 32].pack(), 0);
+        let cell = Cell::new(
+            20_000_000_000,
+            ckb_types::packed::Script::default(),
+            vec![],
+            bytes::Bytes::new(),
+        )?;
+        spec.development_cells.push((point.clone(), cell));
+        let budget = NonZeroUsize::new(1).unwrap();
+        let mut audits = Vec::new();
+        for jmt in [false, true] {
+            let home = tempfile::tempdir()?;
+            let open = |jmt| {
+                Store::open_configured(home.path(), &spec, Retention::Archive, false, None, jmt)
+            };
+            let mut store = open(jmt)?;
+            store.enable_live_cell_index(budget)?;
+            let genesis = store.tip().id(&spec.network);
+            let first = Arc::new(store.prepare(&[], 1001, false)?);
+            let second = store.on_branch(std::slice::from_ref(&first), |view| {
+                view.prepare(&[], 1002, false)
+            })?;
+            store.commit_certified(&first, &[], &[])?;
+            store.commit(second)?;
+            let tip = store.tip().id(&spec.network);
+            drop(store);
+            let mut reopened = open(jmt)?;
+            assert_eq!(reopened.tip().id(&spec.network), tip);
+            reopened.enable_live_cell_index(budget)?;
+            assert!(reopened.live_cell(&point)?.is_some());
+            drop(reopened);
+            assert!(open(!jmt).is_err());
+            assert!(audit_cell_state(home.path(), spec.network.clone(), &genesis).is_err());
+            audits.push(audit_cell_state(home.path(), spec.network.clone(), &tip)?);
+        }
+        assert_ne!(audits[0]["cell_root"], audits[1]["cell_root"]);
+        assert_eq!(audits[0]["content_digest_v1"], audits[1]["content_digest_v1"]);
+        for audit in audits {
+            assert_eq!(audit["height"], 2);
+            assert_eq!(audit["membership_queries"], 1);
+            assert_eq!(audit["absence_queries"], 512);
+        }
+        Ok(())
     }
 
     #[cfg(any(
