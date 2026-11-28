@@ -32,6 +32,37 @@ The index accounts for both hash tables and their growth, the shared descriptor 
 
 The compiled regressions cover exact typed Cell reconstruction, removal of the last sharing row, reads retaining a detached row, same-block branches, commit, reopen and snapshot replacement. Runtime tests and performance qualification are pending. Compare two runs of the same binary and budget by adding only the new flag. Keep the same funded directory copies, retention, node index, CPU set and load. Record process RSS, accounted bytes, descriptor cardinality, recovery time, Follower preparation, point-read tails and finality. Include repeated TypeSets and unique-argument controls. Reconstructing each resident read takes allocation and validation, and a low-reuse dictionary can increase both CPU and memory.
 
+## Fixed-width resident OutPoint keys
+
+The `native-inline-outpoint-index` build option uses the complete 36-byte
+packed OutPoint directly as the hash-table key for both Live Cell layouts.
+Lookups borrow those bytes from the caller. Publication copies them into the
+bucket without allocating a separate key buffer or cloning a packed key.
+Recovery still decodes the row and authenticates the original record set against
+the durable root before activating the table. The change is confined to the
+resident tables. Candidate tombstones, prior-Header before-images, the RocksDB
+format and canonical proof generation continue to use the same state rules.
+
+The memory budget charges the actual key-and-value bucket layout and table
+growth, and counts those 36 bytes once, in the bucket. The allowance for
+record buffers, origins and allocator overhead stays in place. Wider buckets
+can offset part of the key savings, especially when the table is sparse. The
+option does not change the separate representation used to decode durable
+records during recovery.
+
+For a matched comparison, build from the same revision with and without
+`native-inline-outpoint-index`. Enable the resident index in both arms with
+the same memory budget and run separately for inline and interned Cell values.
+Reuse the fixed candidate parents and signed transactions from the isolated
+access fixture, then compare at the same block resource limits and replica
+configuration during sustained churn. Record row count, accounted bytes,
+actual RSS, recovery time, index update and point-read latency, and preparation
+time. Compare the exact Header, ordered receipts and Cell proofs with the
+disk-backed control. The compile-checked prior-Header regression uses keys
+with the same transaction hash and low output-index byte. It distinguishes
+spent, created, unchanged and absent rows through branch, commit and reopen.
+Runtime validation and performance measurements are pending.
+
 ## Four local replicas
 
 The deployed native pipeline at `4e14599` is the comparison baseline. All

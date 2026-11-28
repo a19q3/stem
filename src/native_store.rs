@@ -4011,9 +4011,9 @@ mod pipeline_store_tests {
         let mut spec = spec();
         let txid = [41; 32].pack();
         let spent = OutPoint::new(txid.clone(), 1);
-        let created = OutPoint::new(txid.clone(), 256);
-        let unchanged = OutPoint::new(txid.clone(), 3);
-        let absent = OutPoint::new(txid, 4);
+        let created = OutPoint::new(txid.clone(), 257);
+        let unchanged = OutPoint::new(txid.clone(), 513);
+        let absent = OutPoint::new(txid, 769);
         let cell = Cell::new(
             20_000_000_000,
             ckb_types::packed::Script::default(),
