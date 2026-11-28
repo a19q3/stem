@@ -129,6 +129,12 @@ enum Command {
         /// Exact finalized Header ID authenticated independently of the database.
         #[arg(long)]
         expected_header: String,
+        /// Number of queries in one proof-generation batch.
+        #[arg(long)]
+        proof_batch_width: Option<usize>,
+        /// Maximum decoded JMT nodes retained per batch. Zero disables reuse.
+        #[arg(long, default_value_t = 0)]
+        jmt_proof_cache_nodes: usize,
     },
     /// Export the trusted genesis and initial Jolteon committee for light clients.
     JolteonTrust {
@@ -380,8 +386,17 @@ fn main() -> Result<()> {
             home,
             genesis,
             expected_header,
+            proof_batch_width,
+            jmt_proof_cache_nodes,
         } => {
             use ckb_types::{packed::Byte32, prelude::Entity};
+            use stem::native_store::CellAuditProofOptions;
+
+            let mut proof_options = CellAuditProofOptions::default();
+            if let Some(width) = proof_batch_width {
+                proof_options.batch_width = width;
+            }
+            proof_options.jmt_cache_nodes = jmt_proof_cache_nodes;
 
             let spec = native_spec::load(&genesis)?;
             let bytes = hex::decode(
@@ -392,10 +407,11 @@ fn main() -> Result<()> {
             let expected_header = Byte32::from_slice(&bytes)?;
             println!(
                 "{}",
-                stem::native_store::audit_cell_state(
+                stem::native_store::audit_cell_state_with_proofs(
                     &home.join("db"),
                     spec.network,
                     &expected_header,
+                    proof_options,
                 )?
             );
             Ok(())

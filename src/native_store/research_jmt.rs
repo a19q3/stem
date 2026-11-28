@@ -13,14 +13,16 @@ use jmt::{
 use sha2::{Digest, Sha256};
 use stem_ledger::{
     block::Header,
-    patricia::{Key, Namespace, Patricia, Proof},
+    patricia::{Key, Namespace, Patricia},
     record,
 };
 
 use super::{
-    Batch, JMT_NODE, MARKER, MAX_CELL_PROOF_BATCH, STATE_NODE, STATE_RECORD, STORAGE_LAYOUT, Store,
-    TIP, node_storage, state_key,
+    Batch, JMT_NODE, MARKER, MAX_CELL_PROOF_BATCH, STATE_RECORD, STORAGE_LAYOUT, Store, TIP,
+    state_key,
 };
+
+mod proof_audit;
 
 pub(super) const LAYOUT: &[u8] = b"Stem research JMT 0.12 only\0";
 
@@ -35,12 +37,6 @@ fn key(node: &NodeKey) -> Result<Vec<u8>> {
 enum Reader<'a> {
     Empty,
     Branch(&'a Store),
-    Durable {
-        database: &'a ReadOnlyDB,
-        options: &'a ReadOptions,
-        cells: &'a Patricia,
-        version: Version,
-    },
 }
 
 impl TreeReader for Reader<'_> {
@@ -50,34 +46,11 @@ impl TreeReader for Reader<'_> {
         match self {
             Self::Empty => Ok(None),
             Self::Branch(store) => store.read(slot)?.as_deref().map(decode).transpose(),
-            Self::Durable {
-                database, options, ..
-            } => database
-                .get_pinned_opt(slot, options)?
-                .as_deref()
-                .map(decode)
-                .transpose(),
         }
     }
 
-    fn get_value_option(&self, version: Version, id: KeyHash) -> Result<Option<Vec<u8>>> {
-        let Self::Durable {
-            database,
-            options,
-            cells,
-            version: pinned,
-        } = self
-        else {
-            bail!("JMT proof needs a durable state view");
-        };
-        ensure!(
-            version == *pinned,
-            "JMT value version differs from the view"
-        );
-        Ok(database
-            .get_pinned_opt(state_key(STATE_RECORD, Namespace::Cells, &id.0), options)?
-            .as_deref()
-            .map(|bytes| cells.value_hash(bytes).to_vec()))
+    fn get_value_option(&self, _: Version, _: KeyHash) -> Result<Option<Vec<u8>>> {
+        bail!("JMT mutation reader does not supply proof values")
     }
 
     fn get_rightmost_leaf(&self) -> Result<Option<(NodeKey, LeafNode)>> {
@@ -234,14 +207,22 @@ pub(super) fn root_from_sorted(
 
 const MEMBER_SAMPLES: usize = 512;
 
-#[derive(Default)]
-struct ProofStats {
-    bytes: usize,
-    generate: std::time::Duration,
-    verify: std::time::Duration,
+#[derive(Clone, Copy)]
+pub struct CellAuditProofOptions {
+    /// Number of queries sharing one proof-generation batch.
+    pub batch_width: usize,
+    /// Maximum decoded JMT nodes retained within one batch.
+    pub jmt_cache_nodes: usize,
 }
 
-type Query = (Key, Option<Key>);
+impl Default for CellAuditProofOptions {
+    fn default() -> Self {
+        Self {
+            batch_width: MAX_CELL_PROOF_BATCH,
+            jmt_cache_nodes: 0,
+        }
+    }
+}
 
 /// Audit a stopped replica at an independently authenticated Header ID.
 /// Open the recovered image read-only and compare the leaf stream with its
@@ -251,6 +232,29 @@ pub fn audit_cell_state(
     network: Byte32,
     expected_header: &Byte32,
 ) -> Result<serde_json::Value> {
+    audit_cell_state_with_proofs(
+        path,
+        network,
+        expected_header,
+        CellAuditProofOptions::default(),
+    )
+}
+
+pub fn audit_cell_state_with_proofs(
+    path: &Path,
+    network: Byte32,
+    expected_header: &Byte32,
+    proof_options: CellAuditProofOptions,
+) -> Result<serde_json::Value> {
+    ensure!(
+        (1..=MAX_CELL_PROOF_BATCH).contains(&proof_options.batch_width),
+        "audit batch width must be between 1 and {MAX_CELL_PROOF_BATCH}"
+    );
+    const MAX_JMT_CACHE_NODES: usize = 16_384;
+    ensure!(
+        proof_options.jmt_cache_nodes <= MAX_JMT_CACHE_NODES,
+        "audit node cache is limited to {MAX_JMT_CACHE_NODES} nodes"
+    );
     let opened = Instant::now();
     let database = ReadOnlyDB::open(&Options::default(), path)?;
     let open_us = opened.elapsed().as_micros();
@@ -339,21 +343,11 @@ pub fn audit_cell_state(
     }
 
     let version = tip.context.height;
+    let stored = proof_audit::ProofStorage::new(&database, &options);
     let stats = if is_jmt {
-        let reader = Reader::Durable {
-            database: &database,
-            options: &options,
-            cells: &cells,
-            version,
-        };
-        let tree = Sha256Jmt::new(&reader);
-        ensure!(
-            tree.get_root_hash(version)?.0 == root,
-            "stored JMT root differs from durable Header"
-        );
-        audit_jmt_proofs(tree, version, root, &queries)?
+        proof_audit::jmt(&stored, &cells, version, root, &queries, proof_options)?
     } else {
-        audit_patricia_proofs(&database, &options, &cells, root, &queries)?
+        proof_audit::patricia(&stored, &cells, root, &queries, proof_options.batch_width)?
     };
     Ok(serde_json::json!({
         "engine": if is_jmt { "sha256-jmt-0.12" } else { "compact-patricia" },
@@ -367,93 +361,18 @@ pub fn audit_cell_state(
         "live_cells": count,
         "membership_queries": members,
         "absence_queries": MEMBER_SAMPLES,
+        "proof_batch_width": proof_options.batch_width,
+        "jmt_proof_cache_limit_nodes": if is_jmt { proof_options.jmt_cache_nodes } else { 0 },
+        "jmt_proof_cache_peak_nodes": stats.peak_cached_nodes,
+        "jmt_proof_cache_hits": stats.cache_hits,
+        "proof_reads": stored.metrics(),
         "proof_bytes": stats.bytes,
+        "proof_digest": hex::encode(stats.digest.finalize()),
         "open_us": open_us,
         "rebuild_us": rebuild_us,
         "proof_generate_encode_us": stats.generate.as_micros(),
         "proof_decode_verify_us": stats.verify.as_micros()
     }))
-}
-
-fn audit_jmt_proofs(
-    tree: Sha256Jmt<'_, Reader<'_>>,
-    version: Version,
-    root: Key,
-    queries: &[Query],
-) -> Result<ProofStats> {
-    let mut stats = ProofStats::default();
-    for &(id, expected) in queries {
-        let started = Instant::now();
-        let (value, proof) = tree.get_with_proof(KeyHash(id), version)?;
-        let proof = borsh::to_vec(&proof)?;
-        stats.generate += started.elapsed();
-        let started = Instant::now();
-        ensure!(
-            value.as_deref() == expected.as_ref().map(Key::as_slice),
-            "incorrect JMT proof value"
-        );
-        let parsed: jmt::proof::SparseMerkleProof<Sha256> = borsh::from_slice(&proof)?;
-        parsed.verify(
-            RootHash(root),
-            KeyHash(id),
-            expected.as_ref().map(Key::as_slice),
-        )?;
-        stats.verify += started.elapsed();
-        stats.bytes += proof.len();
-    }
-    Ok(stats)
-}
-
-fn audit_patricia_proofs(
-    database: &ReadOnlyDB,
-    options: &ReadOptions,
-    cells: &Patricia,
-    root: Key,
-    queries: &[Query],
-) -> Result<ProofStats> {
-    let mut stats = ProofStats::default();
-    for group in queries.chunks(MAX_CELL_PROOF_BATCH) {
-        let started = Instant::now();
-        let mut tree = cells.edit(root, |id| {
-            let slot = state_key(STATE_NODE, Namespace::Cells, id);
-            database
-                .get_pinned_opt(slot, options)?
-                .as_deref()
-                .map(node_storage::canonical)
-                .transpose()
-        });
-        let keys: Vec<_> = group.iter().map(|&(id, _)| id).collect();
-        let paths = tree.prove_many(&keys)?;
-        let encoded = keys
-            .into_iter()
-            .zip(paths)
-            .map(|(id, (value, proof))| {
-                if let Some(digest) = value {
-                    let slot = state_key(STATE_RECORD, Namespace::Cells, &id);
-                    let raw = database
-                        .get_pinned_opt(slot, options)?
-                        .context("missing proven Patricia record")?;
-                    ensure!(
-                        cells.value_hash(&raw) == digest,
-                        "proven Patricia record changed"
-                    );
-                }
-                Ok((value, proof.encode()?))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        stats.generate += started.elapsed();
-        let started = Instant::now();
-        for (&(id, expected), (value, proof)) in group.iter().zip(encoded) {
-            ensure!(value == expected, "incorrect Patricia proof value");
-            ensure!(
-                cells.verify(&root, &id, expected.as_ref(), &Proof::decode(&proof)?),
-                "invalid Patricia proof"
-            );
-            stats.bytes += proof.len();
-        }
-        stats.verify += started.elapsed();
-    }
-    Ok(stats)
 }
 
 #[cfg(test)]

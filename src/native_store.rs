@@ -51,7 +51,7 @@ use node_index::NodeIndex;
 #[cfg(feature = "native-research-jmt")]
 mod research_jmt;
 #[cfg(feature = "native-research-jmt")]
-pub use research_jmt::audit_cell_state;
+pub use research_jmt::{CellAuditProofOptions, audit_cell_state, audit_cell_state_with_proofs};
 mod node_storage;
 #[cfg(feature = "jolteon-cancel-stale-execution")]
 mod preparation;
@@ -3802,7 +3802,9 @@ mod pipeline_store_tests {
             vec![],
             bytes::Bytes::new(),
         )?;
-        spec.development_cells.push((point.clone(), cell));
+        spec.development_cells.extend(
+            (0..32).map(|index| (OutPoint::new([37; 32].pack(), index), cell.clone())),
+        );
         let budget = NonZeroUsize::new(1).unwrap();
         let mut audits = Vec::new();
         for jmt in [false, true] {
@@ -3828,13 +3830,43 @@ mod pipeline_store_tests {
             drop(reopened);
             assert!(open(!jmt).is_err());
             assert!(audit_cell_state(home.path(), spec.network.clone(), &genesis).is_err());
-            audits.push(audit_cell_state(home.path(), spec.network.clone(), &tip)?);
+            let reference = audit_cell_state(home.path(), spec.network.clone(), &tip)?;
+            let audit = |cache| {
+                audit_cell_state_with_proofs(
+                    home.path(),
+                    spec.network.clone(),
+                    &tip,
+                    CellAuditProofOptions {
+                        batch_width: 12,
+                        jmt_cache_nodes: cache,
+                    },
+                )
+            };
+            let batched = audit(0)?;
+            assert_eq!(reference["proof_digest"], batched["proof_digest"]);
+            assert_eq!(reference["proof_bytes"], batched["proof_bytes"]);
+            assert_eq!(batched["proof_reads"]["cells"]["calls"], 32);
+            if jmt {
+                for limit in [1, 128] {
+                    let cached = audit(limit)?;
+                    assert_eq!(batched["proof_digest"], cached["proof_digest"]);
+                    assert_eq!(batched["proof_bytes"], cached["proof_bytes"]);
+                    assert_eq!(batched["proof_reads"]["cells"], cached["proof_reads"]["cells"]);
+                    let hits = cached["jmt_proof_cache_hits"].as_u64().unwrap();
+                    let reads = cached["proof_reads"]["nodes"]["calls"].as_u64().unwrap();
+                    let expected = batched["proof_reads"]["nodes"]["calls"].as_u64().unwrap();
+                    assert!(hits > 0);
+                    assert_eq!(expected, reads + hits);
+                    assert!(cached["jmt_proof_cache_peak_nodes"].as_u64().unwrap() <= limit as u64);
+                }
+            }
+            audits.push(reference);
         }
         assert_ne!(audits[0]["cell_root"], audits[1]["cell_root"]);
         assert_eq!(audits[0]["content_digest_v1"], audits[1]["content_digest_v1"]);
         for audit in audits {
             assert_eq!(audit["height"], 2);
-            assert_eq!(audit["membership_queries"], 1);
+            assert_eq!(audit["membership_queries"], 32);
             assert_eq!(audit["absence_queries"], 512);
         }
         Ok(())

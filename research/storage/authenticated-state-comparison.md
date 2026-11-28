@@ -208,3 +208,65 @@ The replicated implementation and its restart regressions are compile-checked.
 The isolated measurements above remain the measured comparison. Replicated
 throughput, finality, recovery after interruption and proof costs on the
 same funded corpus await runtime qualification.
+
+### Matched proof batch widths and JMT node reuse
+
+The earlier proof measurements compare shared-path Patricia with the
+upstream per-query JMT traversal. The research audit now offers a
+batch-local JMT reader with bounded decoded-node reuse. It indexes each
+node by the full JMT version and nibble path and retains up to the
+configured number of successfully decoded nodes. Once full, it reads
+remaining misses directly. The cache is emptied after each batch. The
+upstream JMT proof builder still owns traversal and encoding semantics,
+and its reader API clones the cached node on a hit. Cached reads can
+save database work and decoding while retaining hashing and clone costs.
+
+Set `--proof-batch-width` to the same value for both engines. The default
+width is 1,024. A width of 12 exercises batches of up to the ordinary
+Cell-proof RPC limit. The audit uses the same ordered membership and
+absence samples at either width. The JMT arm accepts
+`--jmt-proof-cache-nodes` from zero to 16,384. Zero selects the uncached
+reader and is the default. Patricia uses its existing shared-path
+traversal for each group.
+
+Use independently authenticated terminal Headers for both copies of the
+same stopped transition trace. Keep the executable, CPU placement,
+RocksDB read options and initial OS page-cache conditions fixed. Repeat
+the following with widths 12 and 1,024 and with the engine order reversed.
+Set `cache_nodes` to zero for the paired uncached comparison. For the JMT
+cache ablation, repeat on the same JMT image with several bounded values
+and record the allowance and peak RSS in addition to the proof timings.
+
+```sh
+/usr/bin/time -f 'peak_rss_kib=%M' "$stem" research-cell-audit \
+    --home "$patricia_home" --genesis "$genesis" \
+    --expected-header "$patricia_tip" --proof-batch-width "$width"
+/usr/bin/time -f 'peak_rss_kib=%M' "$stem" research-cell-audit \
+    --home "$jmt_home" --genesis "$genesis" \
+    --expected-header "$jmt_tip" --proof-batch-width "$width" \
+    --jmt-proof-cache-nodes "$cache_nodes"
+```
+
+Compare `proof_reads.nodes` and `proof_reads.cells` for RocksDB calls and
+returned value bytes. They count reads during proof construction and
+exclude the independent full-state rebuild, absence sampling and JMT
+root precheck. These are logical database calls and bytes. They cannot
+be used as physical SSD reads. Compare the reported cache hits and peak
+entries, proof byte totals, generation and verification wall time, and
+process RSS. State the extra JMT cache allowance in the optimized arm.
+An entry count does not measure the decoded node memory or allocator
+overhead. Include the same-memory uncached control when reporting
+cross-engine results.
+
+The SHA-256 proof digest covers the length-prefixed encoded proofs in
+query order. It must match across batch widths and cache settings for
+the same database. Each encoded path is still decoded and checked
+against the certified Cell root and expected presence or absence.
+Compare full Cell content digests across engines and verify their
+respective Headers independently. JMT and Patricia have different
+proof encodings.
+
+The compile-checked reopen regression exercises both engines, both
+batch widths, bounded caches including a one-node limit, exact proof
+digests and accounting of avoided database calls. No runtime
+performance or recovery results have been collected for this change.
