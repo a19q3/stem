@@ -1961,12 +1961,18 @@ impl Store {
             .iter()
             .map(|point| record::cell_key(&self.cells, point))
             .collect();
-        let mut tree = self.cells.edit(as_key(&self.tip.state.cell_root), |id| {
-            self.node(Namespace::Cells, id)
-        });
+        let root = as_key(&self.tip.state.cell_root);
+        #[cfg(feature = "native-batched-patricia-proofs")]
+        let proofs = if keys.len() > 1 {
+            self.cells.prove_many_batched(root, &keys, |ids| self.cell_proof_nodes(ids))?
+        } else {
+            self.cells.edit(root, |id| self.node(Namespace::Cells, id)).prove_many(&keys)?
+        };
+        #[cfg(not(feature = "native-batched-patricia-proofs"))]
+        let proofs = self.cells.edit(root, |id| self.node(Namespace::Cells, id)).prove_many(&keys)?;
         points
             .iter()
-            .zip(tree.prove_many(&keys)?)
+            .zip(proofs)
             .map(|(point, (actual, proof))| Ok((self.live_cell_for_proof(point, actual)?, proof)))
             .collect()
     }
@@ -2026,29 +2032,73 @@ impl Store {
 
     fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<node_storage::NodeRead>> {
         let key = state_key(STATE_NODE, namespace, id);
+        if let Some(row) = self.node_in_memory(namespace, id, &key)? {
+            return Ok(row);
+        }
+        self.read_stored_node(&key)
+    }
+
+    fn read_stored_node(&self, key: &[u8]) -> Result<Option<node_storage::NodeRead>> {
+        self.db.get_opt(key, &self.read_options)?
+            .as_deref()
+            .map(node_storage::read)
+            .transpose()
+    }
+
+    // Outer None requests a database read. An inner None is a branch tombstone.
+    fn node_in_memory(
+        &self,
+        namespace: Namespace,
+        id: &Key,
+        key: &[u8],
+    ) -> Result<Option<Option<node_storage::NodeRead>>> {
         for prepared in self.branch.iter().rev() {
             #[cfg(feature = "native-verified-cell-journal")]
             if namespace == Namespace::Cells
                 && let Some((_, changes)) = &prepared.batch.cell_nodes
             {
                 if let Some(value) = changes.get(id) {
-                    return Ok(value);
+                    return Ok(Some(value));
                 }
                 continue;
             }
-            if let Some(value) = prepared.batch.lookup(&key) {
-                return value.as_deref().map(node_storage::read).transpose();
+            if let Some(value) = prepared.batch.lookup(key) {
+                return value.as_deref().map(node_storage::read).transpose().map(Some);
             }
         }
         if namespace == Namespace::Cells
             && let Some(node) = self.cell_nodes.as_ref().and_then(|index| index.lookup(id))
         {
-            return Ok(Some(node));
+            return Ok(Some(Some(node)));
         }
-        self.db.get_opt(key, &self.read_options)?
-            .as_deref()
-            .map(node_storage::read)
-            .transpose()
+        Ok(None)
+    }
+
+    #[cfg(feature = "native-batched-patricia-proofs")]
+    fn cell_proof_nodes(&self, ids: &[Key]) -> Result<Vec<Option<node_storage::NodeRead>>> {
+        let mut nodes: Vec<_> = (0..ids.len()).map(|_| None).collect();
+        let mut missing = Vec::new();
+        let mut keys = Vec::new();
+        for (position, id) in ids.iter().enumerate() {
+            let key = state_key(STATE_NODE, Namespace::Cells, id);
+            if let Some(row) = self.node_in_memory(Namespace::Cells, id, &key)? {
+                nodes[position] = row;
+            } else {
+                missing.push(position);
+                keys.push(key);
+            }
+        }
+        if keys.len() < 4 {
+            for (position, key) in missing.into_iter().zip(keys) {
+                nodes[position] = self.read_stored_node(&key)?;
+            }
+        } else {
+            let values = self.db.multi_get_opt(keys, &self.read_options);
+            for (position, value) in missing.into_iter().zip(values) {
+                nodes[position] = value?.as_deref().map(node_storage::read).transpose()?;
+            }
+        }
+        Ok(nodes)
     }
 
     #[inline]
