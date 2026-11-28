@@ -2,7 +2,7 @@
 //! The block adopts worker results only in proposal order.
 
 use anyhow::{Context, Result};
-use ckb_types::packed::OutPoint;
+use ckb_types::packed::{Byte32, OutPoint};
 use rayon::prelude::*;
 use stem_ledger::{BlockContext, LiveCell, Origin, Transaction, block::Receipt};
 
@@ -41,37 +41,34 @@ struct History {
 
 type Writes = HashMap<OutPoint, History>;
 
+fn declared_writes<'a>(
+    network: &Byte32,
+    tx: &'a Transaction,
+    origin: &'a Origin,
+    position: usize,
+) -> impl Iterator<Item = Result<(OutPoint, Write)>> + use<'a> {
+    let id = tx.id(network);
+    let inputs = tx.inputs().map(move |input| {
+        Ok((input.previous_output, Write { position, cell: None }))
+    });
+    let outputs = tx.outputs().enumerate().map(move |(index, cell)| {
+        let point = OutPoint::new(id.clone(), u32::try_from(index)?);
+        let live = LiveCell { cell, origin: origin.clone() };
+        Ok((point, Write { position, cell: Some(live) }))
+    });
+    inputs.chain(outputs)
+}
+
 fn project<T: Borrow<Transaction>>(
-    network: &ckb_types::packed::Byte32,
+    network: &Byte32,
     transactions: &[T],
     origin: &Origin,
 ) -> Result<Writes> {
     let mut writes = Writes::with_capacity(transactions.len() * 2);
     for (position, tx) in transactions.iter().enumerate() {
-        let tx = tx.borrow();
-        for input in tx.inputs() {
-            record(
-                &mut writes,
-                input.previous_output,
-                Write {
-                    position,
-                    cell: None,
-                },
-            );
-        }
-        let id = tx.id(network);
-        for (index, cell) in tx.outputs().enumerate() {
-            record(
-                &mut writes,
-                OutPoint::new(id.clone(), u32::try_from(index)?),
-                Write {
-                    position,
-                    cell: Some(LiveCell {
-                        cell,
-                        origin: origin.clone(),
-                    }),
-                },
-            );
+        for edit in declared_writes(network, tx.borrow(), origin, position) {
+            let (point, edit) = edit?;
+            record(&mut writes, point, edit);
         }
     }
     Ok(writes)
@@ -101,8 +98,18 @@ pub(super) struct PrecedingCells<'a> {
     dependencies: dependencies::HintReader<'a>,
 }
 
+#[derive(Clone, Copy)]
+enum Projection<'a> {
+    Complete(&'a Writes),
+    #[cfg(all(
+        feature = "native-incremental-cell-projection",
+        any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
+    ))]
+    Incremental(&'a std::sync::RwLock<Writes>),
+}
+
 struct ProjectedPrefix<'a> {
-    writes: &'a Writes,
+    writes: Projection<'a>,
     position: usize,
     sources: Sources<'a>,
 }
@@ -123,25 +130,47 @@ impl PrecedingCells<'_> {
         self.dependencies.get(point)
     }
 
-    pub(super) fn get(&self, point: &OutPoint) -> Option<Option<&LiveCell>> {
-        if let Some(prefix) = &self.projection
-            && let Some(history) = prefix.writes.get(point)
-            && history.first.position < prefix.position
-        {
-            let cutoff = history
-                .later
-                .partition_point(|edit| edit.position < prefix.position);
-            let edit = cutoff
-                .checked_sub(1)
-                .map_or(&history.first, |i| &history.later[i]);
+    pub(super) fn get<T>(
+        &self,
+        point: &OutPoint,
+        use_record: impl FnOnce(Option<&LiveCell>) -> T,
+    ) -> Option<T> {
+        let base = || self.base.get(point).map(Option::as_ref);
+        let Some(prefix) = &self.projection else {
+            return base().map(use_record);
+        };
+        if prefix.position == 0 {
+            return base().map(use_record);
+        }
+        let from_projection = |writes: &Writes| {
+            let Some(edit) = prefix.previous(writes, point) else {
+                return base().map(use_record);
+            };
             match prefix.sources {
                 Sources::Window(mask) => mask.set(mask.get() | (1 << edit.position)),
                 #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
                 Sources::Run(sources) => sources.borrow_mut().record(edit.position),
             }
-            return Some(edit.cell.as_ref());
+            Some(use_record(edit.cell.as_ref()))
+        };
+        match prefix.writes {
+            Projection::Complete(writes) => from_projection(writes),
+            #[cfg(all(
+                feature = "native-incremental-cell-projection",
+                any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
+            ))]
+            Projection::Incremental(writes) => {
+                from_projection(&writes.read().expect("Cell projection"))
+            }
         }
-        self.base.get(point).map(Option::as_ref)
+    }
+}
+
+impl ProjectedPrefix<'_> {
+    fn previous<'rows>(&self, writes: &'rows Writes, point: &OutPoint) -> Option<&'rows Write> {
+        let history = writes.get(point).filter(|history| history.first.position < self.position)?;
+        let cutoff = history.later.partition_point(|edit| edit.position < self.position);
+        Some(cutoff.checked_sub(1).map_or(&history.first, |i| &history.later[i]))
     }
 }
 
@@ -434,7 +463,7 @@ impl Store {
                 let view = PrecedingCells {
                     base: &overlay.live,
                     projection: Some(ProjectedPrefix {
-                        writes: &writes,
+                        writes: Projection::Complete(&writes),
                         position,
                         sources: Sources::Window(&dependencies),
                     }),

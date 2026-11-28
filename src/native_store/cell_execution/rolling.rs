@@ -17,10 +17,16 @@ use std::{
 use super::Context;
 #[cfg(feature = "native-rolling-leader-execution")]
 use super::ProposalWindow;
+#[cfg(not(feature = "native-incremental-cell-projection"))]
+use super::project;
 use super::{
-    BlockContext, Budget, Effects, Origin, Overlay, PrecedingCells, ProjectedPrefix, Receipt,
-    Result, Sources, Store, Transaction, project,
+    BlockContext, Budget, Effects, Origin, Overlay, PrecedingCells, ProjectedPrefix, Projection,
+    Receipt, Result, Sources, Store, Transaction,
 };
+#[cfg(feature = "native-incremental-cell-projection")]
+use super::{Writes, declared_writes, record};
+#[cfg(feature = "native-incremental-cell-projection")]
+use std::sync::RwLock;
 use crate::native_store::{CellStreamStats, ProposalStep};
 #[cfg(feature = "native-rolling-leader-execution")]
 use crate::native_store::{ProposalProgress, ProposalScan};
@@ -275,7 +281,25 @@ impl Store {
         let count = transactions.len();
         let started = Instant::now();
         stats.runs += 1;
-        let writes = project(&self.network, transactions, origin)?;
+        #[cfg(not(feature = "native-incremental-cell-projection"))]
+        let writes = {
+            let projecting = Instant::now();
+            let writes = project(&self.network, transactions, origin)?;
+            stats.record_projection(count, projecting.elapsed());
+            writes
+        };
+        #[cfg(not(feature = "native-incremental-cell-projection"))]
+        let projected = Projection::Complete(&writes);
+        #[cfg(feature = "native-incremental-cell-projection")]
+        let writes = RwLock::new(Writes::with_capacity(depth.saturating_mul(2)));
+        #[cfg(feature = "native-incremental-cell-projection")]
+        let projected = Projection::Incremental(&writes);
+        #[cfg(feature = "native-incremental-cell-projection")]
+        let mut projected_prefix = 0;
+        #[cfg(feature = "native-incremental-cell-projection")]
+        let mut projection_elapsed = Duration::ZERO;
+        #[cfg(feature = "native-incremental-cell-projection")]
+        let mut declarations = Vec::new();
         #[cfg(feature = "native-shared-cell-deps")]
         let shared = &*dependency_reads
             .get_or_insert_with(|| super::DependencyReads::collect(self, transactions));
@@ -293,7 +317,6 @@ impl Store {
             #[cfg(feature = "native-shared-cell-deps")]
             dependencies: shared.reader(),
         };
-        let projected = &writes;
         let (sender, receiver) = mpsc::channel();
         let cancelled = &AtomicBool::new(false);
         let mut published = vec![false; count];
@@ -314,6 +337,25 @@ impl Store {
                         && in_flight < in_flight_limit
                     {
                         let position = submitted;
+                        #[cfg(feature = "native-incremental-cell-projection")]
+                        if projected_prefix < position {
+                            let projecting = Instant::now();
+                            for (offset, earlier) in
+                                transactions[projected_prefix..position].iter().enumerate()
+                            {
+                                let index = projected_prefix + offset;
+                                // Hash and materialize before taking the write lock.
+                                for edit in declared_writes(&self.network, earlier, origin, index) {
+                                    declarations.push(edit?);
+                                }
+                                let mut rows = writes.write().expect("Cell projection");
+                                for (point, edit) in declarations.drain(..) {
+                                    record(&mut rows, point, edit);
+                                }
+                            }
+                            projection_elapsed += projecting.elapsed();
+                            projected_prefix = position;
+                        }
                         let tx = &transactions[position];
                         let slot = *budget;
                         let send = sender.clone();
@@ -355,6 +397,11 @@ impl Store {
                             }));
                             let _ = send.send((position, slot, outcome));
                         });
+                        if position == 0 {
+                            stats.first_submit_us = stats.first_submit_us.saturating_add(
+                                u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                            );
+                        }
                         if submitted >= depth && submitted > prefix {
                             stats.refilled_jobs += 1;
                         }
@@ -418,6 +465,8 @@ impl Store {
         });
         #[cfg(feature = "native-shared-cell-deps")]
         drop(canonical);
+        #[cfg(feature = "native-incremental-cell-projection")]
+        stats.record_projection(projected_prefix, projection_elapsed);
         base.extend(std::mem::take(&mut overlay.live));
         overlay.live = base;
         stats.elapsed_us = stats
