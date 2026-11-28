@@ -745,6 +745,61 @@ mod lineage_batch;
 mod sponsored_lineage;
 
 #[test]
+#[cfg(feature = "native-candidate-cell-prefetch")]
+fn candidate_prefetch_respects_same_block_writes_and_parent_replacement() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 32;
+    let dir = tempfile::tempdir()?;
+    let store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+    assert!(store.live_cell(&fixture.spend)?.is_some());
+
+    let parent = fixture.signed(fixture.spend.clone(), None, FUND - FEE, None)?;
+    let sibling = fixture.signed(fixture.spend.clone(), None, FUND - 2 * FEE, None)?;
+    let mut point = OutPoint::new(parent.id(store.network()), 0);
+    let parent = std::sync::Arc::new(store.prepare(&[parent], TIME, false)?);
+    let sibling = std::sync::Arc::new(store.prepare(&[sibling], TIME, false)?);
+    let mut chain = Vec::new();
+    for index in 2..=11 {
+        let tx = fixture.signed(point, None, FUND - index * FEE, None)?;
+        point = OutPoint::new(tx.id(store.network()), 0);
+        chain.push(tx);
+    }
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    let prepare = |branch: &[_], block: &[Transaction], parallel| {
+        pool.install(|| store.on_branch(branch, |view| view.prepare(block, TIME + 1, parallel)))
+    };
+    let branch = [parent];
+    let oracle = prepare(&branch, &chain, false)?;
+    let candidate = prepare(&branch, &chain, true)?;
+    assert_eq!(oracle.header(), candidate.header());
+    assert_eq!(oracle.receipts(), candidate.receipts());
+
+    let mut double_spend = chain.clone();
+    double_spend[1] = fixture.signed(
+        chain[0].input(0).context("chain input")?.previous_output,
+        None,
+        FUND - 3 * FEE,
+        None,
+    )?;
+    for (branch, block) in [
+        (branch.as_slice(), double_spend.as_slice()),
+        (std::slice::from_ref(&sibling), chain.as_slice()),
+    ] {
+        let error = |parallel| {
+            prepare(branch, block, parallel)
+                .err()
+                .expect("conflicting candidate must fail")
+                .to_string()
+        };
+        assert_eq!(error(false), error(true));
+        assert!(error(true).contains("not a Live Cell"));
+    }
+    assert_eq!(store.tip().context.height, 0);
+    assert!(store.live_cell(&fixture.spend)?.is_some());
+    Ok(())
+}
+
+#[test]
 fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> Result<()> {
     let fixture = Fixture::new()?;
     let dir = tempfile::tempdir()?;

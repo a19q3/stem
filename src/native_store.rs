@@ -531,6 +531,7 @@ pub(crate) struct CellCommitmentTiming {
 
 struct Overlay {
     live: LiveChanges,
+    prefetched_cells: HashMap<OutPoint, Option<LiveCell>>,
     stake: Option<StagedStake>,
     bridge: Option<StagedBridge>,
     lineages: lineage::Heads,
@@ -1308,41 +1309,20 @@ impl Store {
     }
 
     pub fn live_cell(&self, point: &OutPoint) -> Result<Option<LiveCell>> {
-        for prepared in self.branch.iter().rev() {
-            if let Some(cell) = prepared.live.get(point) {
-                return Ok(cell.clone());
-            }
+        if let Some(cell) = self.branch_cell(point) {
+            return Ok(cell.clone());
         }
-        if let Some(cell) = self
-            .live_cache
-            .lock()
-            .expect("Live Cell cache")
-            .records
-            .get(point)
-            .cloned()
-        {
+        if let Some(cell) = self.cached_live_cell(point) {
             return Ok(Some(cell));
         }
-        let id = record::cell_key(&self.cells, point);
         // Only committed records enter this shared cache. The newest candidate
         // above is authoritative even when its value is a deletion.
         let found = self
             .db
-            .get_opt(
-                state_key(STATE_RECORD, Namespace::Cells, &id),
-                &self.read_options,
-            )
+            .get_opt(self.live_cell_key(point), &self.read_options)
             .context(StateReadFault)?
-            .map(|bytes| {
-                let (stored_point, record) = record::decode_cell(&bytes)?;
-                ensure!(
-                    &stored_point == point,
-                    "Live Cell key differs from its record"
-                );
-                Ok(record)
-            })
-            .transpose()
-            .context(StateReadFault)?;
+            .map(|bytes| Self::decode_live_cell(point, &bytes))
+            .transpose()?;
         if let Some(cell) = &found {
             self.live_cache
                 .lock()
@@ -1350,6 +1330,37 @@ impl Store {
                 .insert(point.clone(), cell.clone());
         }
         Ok(found)
+    }
+
+    fn branch_cell(&self, point: &OutPoint) -> Option<&Option<LiveCell>> {
+        self.branch
+            .iter()
+            .rev()
+            .find_map(|prepared| prepared.live.get(point))
+    }
+
+    fn cached_live_cell(&self, point: &OutPoint) -> Option<LiveCell> {
+        self.live_cache
+            .lock()
+            .expect("Live Cell cache")
+            .records
+            .get(point)
+            .cloned()
+    }
+
+    fn live_cell_key(&self, point: &OutPoint) -> [u8; 34] {
+        let id = record::cell_key(&self.cells, point);
+        state_key(STATE_RECORD, Namespace::Cells, &id)
+    }
+
+    fn decode_live_cell(point: &OutPoint, bytes: &[u8]) -> Result<LiveCell> {
+        let (stored_point, record) = record::decode_cell(bytes).context(StateReadFault)?;
+        if &stored_point != point {
+            return Err(
+                anyhow::anyhow!("Live Cell key differs from its record").context(StateReadFault)
+            );
+        }
+        Ok(record)
     }
 
     pub fn prove_cell(&self, point: &OutPoint) -> Result<(Option<LiveCell>, Proof)> {
@@ -1502,6 +1513,7 @@ impl Store {
         };
 
         let work_stealing = cfg!(feature = "native-work-stealing") && width > 1;
+        let prefetch_cells = cfg!(feature = "native-candidate-cell-prefetch") && width > 1;
         let mut lineage_schedule = LineageSchedule::default();
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
@@ -1509,7 +1521,12 @@ impl Store {
             .chunk_by(|left, right| left.has_lineage_command() == right.has_lineage_command())
         {
             let lineage = segment[0].has_lineage_command();
+            let mut prefetch_remaining = 0usize;
             while !segment.is_empty() {
+                if prefetch_cells && !lineage && prefetch_remaining == 0 {
+                    prefetch_remaining = segment.len().min(32);
+                    self.prefetch_candidate_cells(&segment[..prefetch_remaining], &mut overlay);
+                }
                 let mut count = width.min(segment.len());
                 if work_stealing && !lineage && segment.len() > width {
                     // Admit at most four waves, with the full cycle limit for
@@ -1549,6 +1566,7 @@ impl Store {
                 }
                 let (wave, rest) = segment.split_at(count);
                 segment = rest;
+                prefetch_remaining = prefetch_remaining.saturating_sub(count);
                 let mut commands = if parallel_commands {
                     let started = Instant::now();
                     let materials = wave
@@ -1606,6 +1624,7 @@ impl Store {
                         .context("receipt cycles overflow")?;
                 }
             }
+            overlay.prefetched_cells.clear();
         }
         let mut prepared = self.finish_block(
             block.into_candidate(),
@@ -1618,6 +1637,60 @@ impl Store {
         )?;
         prepared.lineage_schedule = lineage_schedule;
         Ok(prepared)
+    }
+
+    fn prefetch_candidate_cells(&self, transactions: &[Transaction], overlay: &mut Overlay) {
+        overlay.prefetched_cells.clear();
+        if transactions.len() < 8 {
+            return;
+        }
+        let mut points = Vec::with_capacity(transactions.len() * 2);
+        for tx in transactions {
+            let mut inputs = tx.inputs();
+            if inputs.len() == 1
+                && tx.outputs().len() == 1
+                && tx.operation().is_none()
+                && tx.keeper_action().is_none()
+                && tx.l1_reference_certificate().is_none()
+            {
+                points.push(inputs.next().expect("one input").previous_output);
+                points.push(OutPoint::new(tx.id(&self.network), 0));
+            }
+        }
+        points.sort_unstable();
+        points.dedup();
+        points.retain(|point| !overlay.live.contains_key(point));
+        let reads: Vec<_> = points
+            .into_par_iter()
+            .filter_map(|point| self.prefetch_cell(&point).map(|cell| (point, cell)))
+            .collect();
+        overlay.prefetched_cells.extend(reads);
+    }
+
+    fn prefetch_cell(&self, point: &OutPoint) -> Option<Option<LiveCell>> {
+        const MAX_RECORD_BYTES: usize = 16 * 1024;
+        if let Some(cell) = self.branch_cell(point) {
+            return cell
+                .as_ref()
+                .is_none_or(|cell| LiveCache::record_bytes(cell) <= MAX_RECORD_BYTES)
+                .then(|| cell.clone());
+        }
+        if let Some(cell) = self.cached_live_cell(point) {
+            return (LiveCache::record_bytes(&cell) <= MAX_RECORD_BYTES).then_some(Some(cell));
+        }
+        // Keep tentative records local to the candidate and skip oversized
+        // values before decoding. An I/O error is retried in canonical order.
+        let bytes = self
+            .db
+            .get_pinned_opt(self.live_cell_key(point), &self.read_options)
+            .ok()?;
+        match bytes {
+            None => Some(None),
+            Some(bytes) if bytes.len() <= MAX_RECORD_BYTES => {
+                Self::decode_live_cell(point, &bytes).ok().map(Some)
+            }
+            Some(_) => None,
+        }
     }
 
     fn finish_block(
@@ -2064,6 +2137,7 @@ impl Store {
     fn overlay(&self, stake: Option<StagedStake>) -> Overlay {
         Overlay {
             live: BTreeMap::new(),
+            prefetched_cells: HashMap::new(),
             stake,
             bridge: self.bridge.as_deref().map(Bridge::stage),
             lineages: BTreeMap::new(),
@@ -2256,6 +2330,7 @@ impl Store {
         );
         let Overlay {
             live,
+            prefetched_cells,
             stake,
             bridge,
             lineages,
@@ -2310,7 +2385,18 @@ impl Store {
             });
         }
 
-        let fresh = |point: &OutPoint| self.resolve_live(live, point);
+        let lookup = |point: &OutPoint| match prefetched_cells.get(point) {
+            Some(cell) => Ok(cell.clone()),
+            None => self.live_cell(point),
+        };
+        // Current candidate writes, including deletions, supersede all hints.
+        let fresh = |point: &OutPoint| {
+            match live.get(point) {
+                Some(staged) => staged.clone(),
+                None => lookup(point)?,
+            }
+            .with_context(|| MissingLiveCell(point.clone()))
+        };
         let header = |hash: &Byte32| self.resolve_header(hash, context.height);
         let concrete = materialized
             .as_ref()
@@ -2422,7 +2508,7 @@ impl Store {
                 )?;
                 let point = OutPoint::new(id.clone(), u32::try_from(index)?);
                 ensure!(
-                    !live.contains_key(&point) && self.live_cell(&point)?.is_none(),
+                    !live.contains_key(&point) && lookup(&point)?.is_none(),
                     "duplicate output OutPoint"
                 );
                 Ok((
