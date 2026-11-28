@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, ensure};
 use stem_stake::jolteon::{FinalityProof, Point, Quorum};
 
-use super::{MAX_BRANCH, Replica, StorageFault, finality_key, wire};
+use super::{MAX_BRANCH, Replica, StorageFault, VerifiedQuorum, finality_key, wire};
 
 const RETRY: Duration = Duration::from_millis(180);
 const PROOF_DEADLINE: Duration = Duration::from_secs(4);
@@ -28,7 +28,7 @@ pub(super) struct Recovery {
     pub(super) blocks: u64,
     request_at: Option<Instant>,
     next_peer: usize,
-    target: Option<(Quorum, Instant)>,
+    target: Option<(VerifiedQuorum, Instant)>,
     progressed: bool,
 }
 
@@ -63,7 +63,7 @@ impl Recovery {
 }
 
 impl Replica {
-    pub(super) fn finalization_head(&mut self) -> Option<Quorum> {
+    pub(super) fn finalization_head(&mut self) -> Option<VerifiedQuorum> {
         let latest = self.handoff_tip.as_ref().unwrap_or(&self.high);
         let tip = self.store.tip().context.height;
         let gap = self
@@ -163,6 +163,7 @@ impl Replica {
                     .is_some_and(|gap| (1..MAX_BRANCH as u64).contains(&gap)),
             "historical proof falls outside the requested replay window"
         );
+        let child: VerifiedQuorum = child.into();
         self.learn_quorum(child.clone())?;
         self.request(child.point, Some(peer));
         self.recovery.target = Some((child, Instant::now()));

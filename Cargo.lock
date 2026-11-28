@@ -3822,6 +3822,7 @@ dependencies = [
  "hex",
  "imbl",
  "jmt",
+ "lru",
  "prost",
  "rand 0.8.6",
  "rayon",

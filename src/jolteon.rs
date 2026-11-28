@@ -51,6 +51,11 @@ use mempool::Mempool;
 use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
+#[cfg(feature = "jolteon-retain-verified-quorums")]
+type VerifiedQuorum = Arc<Quorum>;
+#[cfg(not(feature = "jolteon-retain-verified-quorums"))]
+type VerifiedQuorum = Quorum;
+
 pub use client::LatencyHistogram as AdmissionLatency;
 pub use client::{
     AdmissionMetrics, AdmissionPipelineMetrics, Certificate, CertificateExperimentMetrics, Client,
@@ -199,7 +204,7 @@ impl std::error::Error for StorageFault {}
 struct Checked {
     wire: wire::Proposal,
     header: Header,
-    parent: Quorum,
+    parent: VerifiedQuorum,
 }
 
 struct Candidate {
@@ -246,7 +251,7 @@ struct Replica {
     #[cfg(feature = "jolteon-proposal-pipeline")]
     proposal_pipeline: proposal_pipeline::Pipeline,
     journal: wire::Journal,
-    high: Quorum,
+    high: VerifiedQuorum,
     certificate: Option<TimeoutCertificate>,
     finalized: Point,
     view: u64,
@@ -256,13 +261,13 @@ struct Replica {
     backoff: u32,
     announced: Instant,
     handoff_requested: Option<Instant>,
-    handoff_tip: Option<Quorum>,
+    handoff_tip: Option<VerifiedQuorum>,
     pending: Option<CommitteeChange>,
     candidates: BTreeMap<Point, Candidate>,
     preferred: BTreeMap<u64, Point>,
     votes: BTreeMap<Point, BTreeMap<u16, [u8; 64]>>,
     observed_votes: HashMap<(u64, u16), (Point, Share)>,
-    timeouts: BTreeMap<u64, BTreeMap<u16, (Quorum, Share)>>,
+    timeouts: BTreeMap<u64, BTreeMap<u16, (VerifiedQuorum, Share)>>,
     certificates: HashSet<Hash32>,
     #[cfg(any(
         feature = "jolteon-certificate-experiment",
@@ -420,7 +425,7 @@ pub fn run(mut store: Store, key: SigningKey, config: Config, initialize: bool) 
     };
     let handoff_tip = store
         .consensus_record(&known_handoff_key(committee.epoch()))?
-        .map(|raw| committee.verify_handoff(&raw).map(|(_, _, seal)| seal))
+        .map(|raw| committee.verify_handoff(&raw).map(|(_, _, seal)| seal.into()))
         .transpose()?;
     let routes = directory.routes(&active);
     let member = (!journal.observer_only)
@@ -507,7 +512,7 @@ pub fn run(mut store: Store, key: SigningKey, config: Config, initialize: bool) 
                 key,
                 net,
                 journal,
-                high,
+                high: high.into(),
                 certificate,
                 finalized,
                 view: 0,
@@ -636,7 +641,7 @@ impl Replica {
         }
     }
 
-    fn qc(&mut self, raw: &[u8]) -> Result<Quorum> {
+    fn qc(&mut self, raw: &[u8]) -> Result<VerifiedQuorum> {
         // Startup, learning and handoff install the authenticated high QC
         // alongside its canonical journal bytes.
         #[cfg(feature = "jolteon-shared-certificate-path")]
@@ -644,6 +649,10 @@ impl Replica {
             self.certificate_experiment.reuse_quorum(&self.high, &self.journal.high, raw)
         {
             return Ok(high);
+        }
+        #[cfg(feature = "jolteon-retain-verified-quorums")]
+        if let Some(quorum) = self.certificate_experiment.recent_quorum(raw) {
+            return Ok(quorum);
         }
         let quorum = Quorum::decode(raw, self.committee.size())?;
         let id = ckb_hash::blake2b_256(raw);
@@ -654,14 +663,21 @@ impl Replica {
             }
             self.certificates.insert(id);
         }
+        let quorum: VerifiedQuorum = quorum.into();
+        #[cfg(feature = "jolteon-retain-verified-quorums")]
+        self.certificate_experiment.remember_quorum(raw, &quorum);
         Ok(quorum)
     }
 
-    fn learn_quorum(&mut self, quorum: Quorum) -> Result<()> {
+    fn learn_quorum(&mut self, quorum: VerifiedQuorum) -> Result<()> {
         self.learn_quorum_body(quorum, None)
     }
 
-    fn learn_quorum_body(&mut self, quorum: Quorum, encoded: Option<Vec<u8>>) -> Result<()> {
+    fn learn_quorum_body(
+        &mut self,
+        quorum: VerifiedQuorum,
+        encoded: Option<Vec<u8>>,
+    ) -> Result<()> {
         debug_assert!(encoded.as_ref().is_none_or(|body| *body == quorum.encode()));
         if quorum.point.view == self.high.point.view {
             ensure!(
@@ -690,7 +706,7 @@ impl Replica {
         {
             return Ok(());
         }
-        self.learn_quorum(tc.high.clone())?;
+        self.learn_quorum(tc.high.clone().into())?;
         self.journal.certificate = encoded.unwrap_or_else(|| tc.encode());
         if self.timeout_views.len() == 256 {
             self.timeout_views.pop_front();
@@ -1170,7 +1186,7 @@ impl Replica {
                 .then(|| self.directory.member(&change.members))
                 .flatten();
             self.net.epoch = change.epoch;
-            self.high = committee.genesis_quorum();
+            self.high = committee.genesis_quorum().into();
             self.finalized = self.high.point;
             self.committee = committee;
             #[cfg(any(
@@ -1388,12 +1404,12 @@ impl Replica {
             {
                 let body = qc.encode();
                 self.certificate_experiment.quorum_frame.send(&self.net, wire::QUORUM, &body);
-                self.learn_quorum_body(qc, Some(body))?;
+                self.learn_quorum_body(qc.into(), Some(body))?;
             }
             #[cfg(not(feature = "jolteon-shared-certificate-path"))]
             {
                 self.net.broadcast(wire::QUORUM, qc.encode());
-                self.learn_quorum(qc)?;
+                self.learn_quorum(qc.into())?;
             }
         }
         Ok(())
@@ -1424,11 +1440,10 @@ impl Replica {
                 .values()
                 .map(|(high, _)| high)
                 .max_by_key(|high| high.point.view)
-                .unwrap()
-                .clone();
+                .expect("quorum has timeout votes");
             let tc = TimeoutCertificate {
                 view: report.view,
-                high,
+                high: Quorum::clone(high),
                 votes: votes
                     .values()
                     .map(|(high, share)| TimeoutVote {
@@ -1484,7 +1499,7 @@ impl Replica {
         self.accept_timeout(&raw)
     }
 
-    fn proposal_parent(&self) -> Result<Option<(Quorum, Vec<u8>)>> {
+    fn proposal_parent(&self) -> Result<Option<(VerifiedQuorum, Vec<u8>)>> {
         if self.handoff_tip.is_some()
             || self.recovery.active
             || Some(self.committee.leader(self.view)?) != self.member
@@ -1594,7 +1609,7 @@ impl Replica {
 
     fn publish_proposal(
         &mut self,
-        parent: Quorum,
+        parent: VerifiedQuorum,
         tc: Vec<u8>,
         header: Header,
         transactions: Vec<Transaction>,
@@ -1863,7 +1878,7 @@ impl Replica {
                     self.store
                         .persist_consensus(&[(known_handoff_key(epoch), frame.body.to_vec())])
                         .context(StorageFault)?;
-                    self.handoff_tip = Some(seal);
+                    self.handoff_tip = Some(seal.into());
                 }
             }
             wire::PROPOSAL => self.admit_proposal(wire::canonical_bytes(frame.body)?, peer)?,

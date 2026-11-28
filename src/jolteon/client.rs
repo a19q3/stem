@@ -235,6 +235,10 @@ pub struct CertificateExperimentMetrics {
     #[serde(default)]
     pub current_tc_hits: u64,
     #[serde(default)]
+    pub recent_qc_hits: u64,
+    #[serde(default)]
+    pub recent_qc_inserts: u64,
+    #[serde(default)]
     pub vote_frame_encodes_saved: u64,
 }
 
