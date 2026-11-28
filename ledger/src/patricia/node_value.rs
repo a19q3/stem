@@ -41,12 +41,20 @@ pub use verified::{GeneratedNode, NodeRead, VerifiedChanges, VerifiedNodes};
 
 #[cfg(feature = "verified-patricia-cache")]
 mod verified {
-    use std::{collections::BTreeMap, hash::RandomState};
+    #[cfg(not(feature = "compact-verified-journal"))]
+    use std::collections::BTreeMap;
+    use std::hash::RandomState;
 
     use hashbrown::{HashMap, TryReserveError};
     use stem_stake::patricia::MAX_NODE_BYTES;
 
     use super::*;
+    use crate::patricia::GeneratedJournal;
+
+    #[cfg(feature = "compact-verified-journal")]
+    type JournalRows = GeneratedJournal;
+    #[cfg(not(feature = "compact-verified-journal"))]
+    type JournalRows = BTreeMap<Key, Option<Node>>;
 
     enum Source<Raw> {
         Raw(Raw),
@@ -105,14 +113,18 @@ mod verified {
     #[derive(Debug, PartialEq, Eq)]
     pub struct VerifiedChanges {
         domain: Key,
-        rows: BTreeMap<Key, Option<Node>>,
+        rows: JournalRows,
     }
 
     impl VerifiedChanges {
         pub(in crate::patricia) fn from_update(
             tree: &Patricia,
-            rows: BTreeMap<Key, Option<Node>>,
+            rows: GeneratedJournal,
         ) -> Self {
+            #[cfg(feature = "compact-verified-journal")]
+            let rows = rows.finish();
+            #[cfg(not(feature = "compact-verified-journal"))]
+            let rows = rows.into_iter().collect();
             Self {
                 domain: tree.empty_root(),
                 rows,
@@ -121,13 +133,16 @@ mod verified {
 
         pub fn get<Raw>(&self, id: &Key) -> Option<Option<NodeRead<Raw>>> {
             let (id, node) = self.rows.get_key_value(id)?;
-            Some(self.generated(id, node.as_ref()).map(GeneratedNode::read))
+            #[cfg(not(feature = "compact-verified-journal"))]
+            let node = node.as_ref();
+            Some(self.generated(id, node).map(GeneratedNode::read))
         }
 
         pub fn iter(&self) -> impl Iterator<Item = (&Key, Option<GeneratedNode<'_>>)> {
-            self.rows
-                .iter()
-                .map(|(id, node)| (id, self.generated(id, node.as_ref())))
+            let rows = self.rows.iter();
+            #[cfg(not(feature = "compact-verified-journal"))]
+            let rows = rows.map(|(id, node)| (id, node.as_ref()));
+            rows.map(|(id, node)| (id, self.generated(id, node)))
         }
 
         fn generated<'a>(

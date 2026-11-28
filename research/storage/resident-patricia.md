@@ -248,3 +248,39 @@ the byte journal for mixed updates, exact Cell roots and proof paths.
 They also compare the durable compact bytes and reclaimed keys, and
 read the prior state from its pinned snapshot during certified write.
 Performance, memory impact and runtime parity remain to be measured.
+
+### Compact generated node journal
+
+The generated-journal control stores a decoded node slot alongside every
+content ID, including deletions. It builds a sorted BTreeMap after
+collecting the per-subtree edits. The `native-compact-patricia-journal`
+candidate builds the content IDs and tombstones in a separate vector
+from the generated nodes. A put stores an index into the node vector.
+A deletion stores only its content ID and empty slot. Subtree joins
+adjust the right-hand indexes and concatenate the vectors. One stable
+sort orders the lightweight entries and retains the last edit per ID.
+Ancestor reads use binary search on that index, and the writer and
+resident publication iterate the same sorted edits.
+
+The option changes the in-memory representation of the verified
+journal, including intermediate subtree output. The Patricia updater
+still hashes every generated node in canonical form. The domain and
+content ID checks, compact RocksDB encoding, durable write order and
+the synchronous WAL boundary follow the existing generated-journal
+path. The same layout backs serial and parallel updates. The
+compile-checked regressions cover subtree joins, absent IDs,
+tombstone precedence, exact previous-value callbacks, proof paths
+and byte-level durable parity.
+
+Compare `native-verified-cell-journal` against the same build with
+`native-compact-patricia-journal` added. Keep the worker, resident index,
+RocksDB cache, writer publication options and signed workloads fixed.
+Record allocations and peak RSS during subtree joins and at different
+in-flight branch depths. Measure Patricia edit and ordering time,
+speculative lookup, certified write time, and committed node
+publication. Compare the full node delta, proofs and durable bytes
+against the control and run the existing recovery and replay checks.
+Sorting can allocate temporary index storage, and binary search may
+change the cost of sparse reads. Compare peak memory as well as the
+retained journal footprint. Runtime validation and performance
+measurements remain pending.

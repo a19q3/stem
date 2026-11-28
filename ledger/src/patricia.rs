@@ -20,6 +20,12 @@ use node_value::checked_node;
 pub use node_value::NodeValue;
 #[cfg(feature = "verified-patricia-cache")]
 pub use node_value::{GeneratedNode, NodeRead, VerifiedChanges, VerifiedNodes};
+#[cfg(feature = "compact-verified-journal")]
+mod compact_journal;
+#[cfg(feature = "compact-verified-journal")]
+type GeneratedJournal = compact_journal::CompactJournal;
+#[cfg(all(feature = "verified-patricia-cache", not(feature = "compact-verified-journal")))]
+type GeneratedJournal = Vec<(Key, Option<Node>)>;
 
 #[derive(Clone, Debug)]
 pub struct Patricia {
@@ -123,16 +129,17 @@ impl Patricia {
         Read: FnMut(&Key) -> Result<Option<Value>>,
         Value: NodeValue,
     {
-        self.update_batch(root, read, changes, previous)
+        let (root, writes): (_, Vec<_>) = self.update_batch(root, read, changes, previous)?;
+        Ok((root, writes.into_iter().collect()))
     }
 
-    fn update_batch<Read, Value, Row: JournalRow>(
+    fn update_batch<Read, Value, Writes: BatchWrites>(
         &self,
         root: Key,
         read: Read,
         changes: &[(Key, Option<Key>)],
         previous: impl FnMut(Key, Key, Option<Key>),
-    ) -> Result<(Key, BTreeMap<Key, Option<Row>>)>
+    ) -> Result<(Key, Writes)>
     where
         Read: FnMut(&Key) -> Result<Option<Value>>,
         Value: NodeValue,
@@ -140,10 +147,10 @@ impl Patricia {
         let mut nodes = Nodes {
             tree: self,
             read,
-            writes: Vec::with_capacity(changes.len()),
+            writes: Writes::with_capacity(changes.len()),
         };
         let root = nodes.apply_batch(root, changes, previous)?;
-        Ok((root, nodes.writes.into_iter().collect()))
+        Ok((root, nodes.writes))
     }
 
     /// Update from a single immutable view. Parallel branches buffer their
@@ -160,17 +167,18 @@ impl Patricia {
         Read: Fn(&Key) -> Result<Option<Value>> + Sync,
         Value: NodeValue,
     {
-        self.update_batch_parallel(root, read, changes, previous)
+        let (root, writes): (_, Vec<_>) = self.update_batch_parallel(root, read, changes, previous)?;
+        Ok((root, writes.into_iter().collect()))
     }
 
     #[cfg(feature = "parallel-patricia")]
-    fn update_batch_parallel<Read, Value, Row: JournalRow + Send>(
+    fn update_batch_parallel<Read, Value, Writes: BatchWrites + Send>(
         &self,
         root: Key,
         read: Read,
         changes: &[(Key, Option<Key>)],
         mut previous: impl FnMut(Key, Key, Option<Key>),
-    ) -> Result<(Key, BTreeMap<Key, Option<Row>>)>
+    ) -> Result<(Key, Writes)>
     where
         Read: Fn(&Key) -> Result<Option<Value>> + Sync,
         Value: NodeValue,
@@ -180,13 +188,13 @@ impl Patricia {
             return self.update_batch(root, read, changes, previous);
         }
         check_change_order(changes)?;
-        let mut nodes = Nodes { tree: self, read: &read, writes: Vec::new() };
+        let mut nodes = Nodes { tree: self, read: &read, writes: Writes::with_capacity(0) };
         let mut prior = Vec::new();
         let next = nodes.update_parallel(root, changes, 0, workers, &mut prior)?;
         for (key, value, replacement) in prior {
             previous(key, value, replacement);
         }
-        Ok((next, nodes.writes.into_iter().collect()))
+        Ok((next, nodes.writes))
     }
 
     /// Retain the immutable nodes that were hashed in this edit for later reads and publication.
@@ -214,7 +222,7 @@ impl Patricia {
             let _ = parallel;
             self.update_batch(root, read, changes, previous)
         };
-        let (next, rows) = updated?;
+        let (next, rows): (_, GeneratedJournal) = updated?;
         Ok((next, VerifiedChanges::from_update(self, rows)))
     }
 
@@ -277,6 +285,16 @@ trait NodeWrites {
     fn record_delete(&mut self, id: Key);
 }
 
+trait BatchWrites: NodeWrites {
+    fn with_capacity(rows: usize) -> Self;
+
+    #[cfg(feature = "parallel-patricia")]
+    fn reserve(&mut self, rows: usize);
+
+    #[cfg(feature = "parallel-patricia")]
+    fn append(&mut self, other: Self);
+}
+
 trait JournalRow {
     fn new(node: Node, bytes: &[u8]) -> Self;
 }
@@ -287,7 +305,7 @@ impl JournalRow for Vec<u8> {
     }
 }
 
-#[cfg(feature = "verified-patricia-cache")]
+#[cfg(all(feature = "verified-patricia-cache", not(feature = "compact-verified-journal")))]
 impl JournalRow for Node {
     fn new(node: Node, _: &[u8]) -> Self {
         node
@@ -301,7 +319,7 @@ const MIN_PARALLEL_CHANGES: usize = 128;
 type PreviousValue = (Key, Key, Option<Key>);
 
 #[cfg(feature = "parallel-patricia")]
-impl<Read, Value, Row: JournalRow + Send> Nodes<'_, &Read, Vec<(Key, Option<Row>)>>
+impl<Read, Value, Writes: BatchWrites + Send> Nodes<'_, &Read, Writes>
 where
     Read: Fn(&Key) -> Result<Option<Value>> + Sync,
     Value: NodeValue,
@@ -327,7 +345,7 @@ where
                 let left_workers = workers / 2;
                 let (tree, read) = (self.tree, self.read);
                 let update_child = |root, edits: &[_], budget, prior: &mut Vec<PreviousValue>| {
-                    let mut child = Nodes { tree, read, writes: Vec::new() };
+                    let mut child = Nodes { tree, read, writes: Writes::with_capacity(0) };
                     let next = child.update_parallel(root, edits, child_depth, budget, prior)?;
                     Ok::<_, anyhow::Error>((next, child.writes))
                 };
@@ -342,7 +360,7 @@ where
                 // Valid child prefixes are disjoint, including content IDs.
                 // Preserve the serial journal ordering before adding the parent.
                 self.writes = left_writes;
-                self.writes.extend(right_writes);
+                self.writes.append(right_writes);
                 return Ok(self.finish_branch(*id, prefix, *bits, *children, [left, right]));
             }
         }
@@ -371,6 +389,22 @@ impl<Row: JournalRow> NodeWrites for Vec<(Key, Option<Row>)> {
     }
     fn record_delete(&mut self, id: Key) {
         self.push((id, None));
+    }
+}
+
+impl<Row: JournalRow> BatchWrites for Vec<(Key, Option<Row>)> {
+    fn with_capacity(rows: usize) -> Self {
+        Vec::with_capacity(rows)
+    }
+
+    #[cfg(feature = "parallel-patricia")]
+    fn reserve(&mut self, rows: usize) {
+        self.reserve(rows);
+    }
+
+    #[cfg(feature = "parallel-patricia")]
+    fn append(&mut self, other: Self) {
+        self.extend(other);
     }
 }
 
