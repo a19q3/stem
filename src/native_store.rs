@@ -780,6 +780,8 @@ pub struct Prepared {
     committee_change: Option<CommitteeChange>,
     stake_inputs: Arc<OnceLock<StakeInputs>>,
     live: LiveChanges,
+    #[cfg(feature = "native-prepared-live-cell-ownership")]
+    detached_live_records: bool,
     batch: Batch,
     commitments: CommitmentTiming,
     lineage_schedule: LineageSchedule,
@@ -989,6 +991,13 @@ struct LineageBatchMember<'a> {
 }
 
 impl Prepared {
+    fn live_records_detached(&self) -> bool {
+        #[cfg(feature = "native-prepared-live-cell-ownership")]
+        return self.detached_live_records;
+        #[cfg(not(feature = "native-prepared-live-cell-ownership"))]
+        false
+    }
+
     pub fn header(&self) -> &Header {
         &self.next
     }
@@ -2478,6 +2487,18 @@ impl Store {
             }
             batch.delete(index_key(EXECUTION, &pruned.to_be_bytes()));
         }
+        #[cfg(feature = "native-prepared-live-cell-ownership")]
+        let (live, detached_live_records) = {
+            let mut live = live;
+            if self.live_index.is_some() {
+                self.check_preparation_cancelled()?;
+            }
+            let detached = self
+                .live_index
+                .as_ref()
+                .is_some_and(|index| index.detach_inline_records(&mut live));
+            (live, detached)
+        };
         Ok(Prepared {
             parent: self.tip.id(&self.network),
             next,
@@ -2488,6 +2509,8 @@ impl Store {
             committee_change: system.committee_change,
             stake_inputs: system.stake_inputs,
             live,
+            #[cfg(feature = "native-prepared-live-cell-ownership")]
+            detached_live_records,
             batch,
             commitments: CommitmentTiming {
                 total: started.elapsed(),
@@ -3788,7 +3811,7 @@ impl Store {
             #[cfg(feature = "jolteon-resident-cell-publication")]
             let live_cell_publication = live_index.map(|(mut index, next)| {
                 let started = Instant::now();
-                index.advance(next, &prepared.live);
+                index.advance(next, &prepared.live, prepared.live_records_detached());
                 started.elapsed()
             });
             Ok(CertifiedWriteTiming {
@@ -3808,7 +3831,11 @@ impl Store {
         #[cfg(feature = "native-shared-pinned-cell-cache")]
         self.pinned_cell_cache.advance(prepared, &self.network);
         if let Some(index) = &mut self.live_index {
-            index.advance(prepared.next.id(&self.network).unpack(), &prepared.live);
+            index.advance(
+                prepared.next.id(&self.network).unpack(),
+                &prepared.live,
+                prepared.live_records_detached(),
+            );
         }
         if !node_publication_done && let Some(index) = &self.cell_nodes {
             index.advance(&prepared.batch);
@@ -4518,7 +4545,7 @@ mod pipeline_store_tests {
         let mut changes = LiveChanges::new();
         changes.insert(source.clone(), None);
         changes.insert(target.clone(), Some(new_cell));
-        index.advance([7; 32], &changes);
+        index.advance([7; 32], &changes, false);
         assert!(index.resident());
         assert!(matches!(index.lookup(&source)?, Some(None)));
         assert!(matches!(index.lookup(&target)?, Some(Some(_))));
@@ -5580,6 +5607,18 @@ mod pipeline_store_tests {
                 }));
             }
             let prepared = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
+            #[cfg(feature = "native-prepared-live-cell-ownership")]
+            {
+                assert_eq!(
+                    prepared.live_records_detached(),
+                    matches!(layout, LiveCellIndexLayout::Inline),
+                );
+                if prepared.live_records_detached() {
+                    let owned = prepared.live[&created[0]].as_ref().unwrap();
+                    assert_eq!(owned.cell.as_slice(), cell.as_slice());
+                    assert_ne!(owned.cell.as_slice().as_ptr(), cell.as_slice().as_ptr());
+                }
+            }
             let write = store.certified_write(Arc::clone(&prepared), Vec::new(), Vec::new())?;
             pinned.with_snapshot(|old| {
                 let timing = std::thread::spawn(move || write(&mut CertifiedWriteCache::default()))
@@ -5595,7 +5634,13 @@ mod pipeline_store_tests {
                 assert!(store.live_cell_index_status().unwrap().active);
                 assert!(old.live_cell(&spent)?.is_some());
                 assert!(store.live_cell(&spent)?.is_none());
-                assert!(store.live_cell(&created[0])?.is_some());
+                let published = store.live_cell(&created[0])?.context("published Cell missing")?;
+                assert_eq!(published.cell.as_slice(), cell.as_slice());
+                #[cfg(feature = "native-prepared-live-cell-ownership")]
+                if prepared.live_records_detached() {
+                    let owned = prepared.live[&created[0]].as_ref().unwrap();
+                    assert_eq!(published.cell.as_slice().as_ptr(), owned.cell.as_slice().as_ptr());
+                }
                 Ok(())
             })?.context("old snapshot unavailable")?;
 
