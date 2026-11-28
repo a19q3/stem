@@ -24,6 +24,14 @@ that process. The limit applies to index-owned allocations. The general page
 cache, RocksDB block cache, execution arena and a pinned reader's own handles
 have separate lifetimes and memory costs.
 
+## Resident Lock and TypeSet sharing
+
+Add `--live-cell-index-intern-scripts` alongside `--live-cell-index-mib` to test the compact resident representation. It retains one owned byte buffer per distinct Lock or nonempty TypeSet and releases that buffer after the final resident reference is removed. The remaining canonical bytes and origin belong to the Cell. Lookups copy the owned handles under the Header guard, then reconstruct and validate the canonical Cell outside the index lock. Recovery authenticates the complete original RocksDB record set against the Cell root, including when the compact index exceeds its budget. Snapshot installation retains the selected layout.
+
+The index accounts for both hash tables and their growth, the shared descriptor bytes, and per-record allocations. The status query reports `layout` and `descriptors` alongside the existing size and hit counters. Snapshot wire bytes, proofs and durable RocksDB records use the existing encoding. The [RocksDB dictionary results](README.md#compressed-layout-and-churn-screen) still support the inline writer.
+
+The compiled regressions cover exact typed Cell reconstruction, removal of the last sharing row, reads retaining a detached row, same-block branches, commit, reopen and snapshot replacement. Runtime tests and performance qualification are pending. Compare two runs of the same binary and budget by adding only the new flag. Keep the same funded directory copies, retention, node index, CPU set and load. Record process RSS, accounted bytes, descriptor cardinality, recovery time, Follower preparation, point-read tails and finality. Include repeated TypeSets and unique-argument controls. Reconstructing each resident read takes allocation and validation, and a low-reuse dictionary can increase both CPU and memory.
+
 ## Four local replicas
 
 The deployed native pipeline at `4e14599` is the comparison baseline. All

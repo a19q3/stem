@@ -42,7 +42,7 @@ pub use keeper::{KeeperPolicy, KeeperTimePolicy};
 mod lineage;
 pub use stem_ledger::lineage::LineageProof;
 mod live_index;
-pub use live_index::LiveCellIndexStatus;
+pub use live_index::{LiveCellIndexLayout, LiveCellIndexStatus};
 use live_index::IndexView;
 mod node_index;
 pub use node_index::CellNodeIndexStatus;
@@ -987,9 +987,17 @@ impl Store {
 
     /// Recover the optional, bounded resident index against the durable root.
     pub fn enable_live_cell_index(&mut self, limit_mib: NonZeroUsize) -> Result<()> {
+        self.enable_live_cell_index_with_layout(limit_mib, LiveCellIndexLayout::Inline)
+    }
+
+    pub fn enable_live_cell_index_with_layout(
+        &mut self,
+        limit_mib: NonZeroUsize,
+        layout: LiveCellIndexLayout,
+    ) -> Result<()> {
         ensure!(self.branch.is_empty() && self.live_index.is_none(), "Live Cell index already configured or view is speculative");
         let limit = limit_mib.get().checked_mul(1 << 20).context("Live Cell index budget overflow")?;
-        self.live_index = Some(IndexView::recover(self, limit)?);
+        self.live_index = Some(IndexView::recover(self, limit, layout)?);
         Ok(())
     }
 
@@ -1386,7 +1394,9 @@ impl Store {
         if let Some(cell) = self.branch_cell(point) {
             return Ok(cell.clone());
         }
-        if let Some(cell) = self.live_index.as_ref().and_then(|index| index.lookup(point)) {
+        if let Some(index) = &self.live_index
+            && let Some(cell) = index.lookup(point).context(StateReadFault)?
+        {
             return Ok(cell);
         }
         if let Some(cell) = self.cached_live_cell(point) {
@@ -1763,7 +1773,9 @@ impl Store {
                 .is_none_or(|cell| LiveCache::record_bytes(cell) <= MAX_RECORD_BYTES)
                 .then(|| cell.clone());
         }
-        if let Some(cell) = self.live_index.as_ref().and_then(|index| index.lookup(point)) {
+        if let Some(index) = &self.live_index
+            && let Some(cell) = index.lookup(point).ok().flatten()
+        {
             return cell
                 .as_ref()
                 .is_none_or(|cell| LiveCache::record_bytes(cell) <= MAX_RECORD_BYTES)

@@ -161,6 +161,26 @@ impl Cell {
         Self::from_entity(wire::Cell::from_slice(bytes)?)
     }
 
+    /// Validate an owned canonical buffer without taking another copy.
+    pub fn from_bytes(bytes: Bytes) -> Result<Self> {
+        ensure!(bytes.len() <= MAX_CELL_BYTES, "Cell exceeds byte limit");
+        wire::CellReader::verify(&bytes)?;
+        Self::from_entity(wire::Cell::new_unchecked(bytes))
+    }
+
+    /// Borrow the exact canonical prefix, Lock, TypeSet and length-prefixed Data.
+    /// An absent TypeSet contributes no bytes to the encoding.
+    pub fn canonical_parts(&self) -> [&[u8]; 4] {
+        let fields = self.encoded.as_reader();
+        let types = fields.type_scripts();
+        [
+            &self.as_slice()[..wire::Cell::HEADER_SIZE + wire::Uint64::TOTAL_SIZE],
+            fields.lock().as_slice(),
+            if types.is_empty() { &[] } else { types.as_slice() },
+            fields.data().as_slice(),
+        ]
+    }
+
     fn validated_entity(encoded: wire::Cell) -> Self {
         Self {
             encoded,

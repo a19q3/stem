@@ -7,7 +7,7 @@ use ckb_types::{
     packed::{CellDep, OutPoint, Script},
     prelude::*,
 };
-use stem::native_store::{Limits, Retention, Spec, Store};
+use stem::native_store::{Limits, LiveCellIndexLayout, Retention, Spec, Store};
 use stem_ledger::{
     CapacityPolicy, Cell, CellInput, GroupWitness, Since, Transaction,
     patricia::{Namespace, Patricia},
@@ -658,6 +658,10 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     let hash = archive.tip().app_hash(archive.network());
     let restore_path = tempfile::tempdir()?;
     let mut restore = Store::open(restore_path.path(), &fixture.spec, Retention::Recent(2))?;
+    restore.enable_live_cell_index_with_layout(
+        std::num::NonZeroUsize::new(4).unwrap(),
+        LiveCellIndexLayout::InternedScripts,
+    )?;
     assert!(restore.live_cell(&fixture.spend)?.is_some());
     let mut wrong_frontier = snapshot.clone();
     wrong_frontier.frontier[9] ^= 1;
@@ -668,6 +672,9 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     assert_eq!(*restore.tip(), genesis);
     assert!(restore.live_cell(&fixture.spend)?.is_some());
     restore.install_state(snapshot, &hash)?;
+    let layout = restore.live_cell_index_status().unwrap();
+    assert!(layout.active && layout.descriptors > 0);
+    assert!(matches!(layout.layout, LiveCellIndexLayout::InternedScripts));
     assert!(restore.live_cell(&fixture.spend)?.is_none());
     assert!(restore.prove_cell(&fixture.spend)?.0.is_none());
     assert_eq!(restore.tip(), archive.tip());
@@ -891,13 +898,20 @@ fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> R
 
 #[test]
 fn resident_live_cell_index_matches_branches_commit_and_reopen() -> Result<()> {
+    for layout in [LiveCellIndexLayout::Inline, LiveCellIndexLayout::InternedScripts] {
+        resident_live_cell_index_matches_layout(layout)?;
+    }
+    Ok(())
+}
+
+fn resident_live_cell_index_matches_layout(layout: LiveCellIndexLayout) -> Result<()> {
     let fixture = Fixture::new()?;
     let indexed_path = tempfile::tempdir()?;
     let reference_path = tempfile::tempdir()?;
     let mut indexed = Store::open(indexed_path.path(), &fixture.spec, Retention::Archive)?;
     let reference = Store::open(reference_path.path(), &fixture.spec, Retention::Archive)?;
     let budget = std::num::NonZeroUsize::new(4).unwrap();
-    indexed.enable_live_cell_index(budget)?;
+    indexed.enable_live_cell_index_with_layout(budget, layout)?;
     indexed.enable_cell_node_index(budget)?;
     let initial = indexed.live_cell_index_status().unwrap();
     assert!(initial.active);
@@ -947,7 +961,7 @@ fn resident_live_cell_index_matches_branches_commit_and_reopen() -> Result<()> {
     drop(indexed);
 
     let mut reopened = Store::open(indexed_path.path(), &fixture.spec, Retention::Archive)?;
-    reopened.enable_live_cell_index(budget)?;
+    reopened.enable_live_cell_index_with_layout(budget, layout)?;
     reopened.enable_cell_node_index(budget)?;
     assert_eq!(reopened.tip(), oracle.header());
     assert!(reopened.live_cell(&output)?.is_none());
