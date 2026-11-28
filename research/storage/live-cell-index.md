@@ -230,3 +230,43 @@ could regress runs that rarely query the previous Header.
 Regression targets were compiled for both memory layouts, exact old and
 new proofs, budget pressure, expiry after an additional durable write and
 reopening. Runtime qualification and independent replay remain pending.
+
+### Sharing the pinned Live Cell cache
+
+Leader, Follower and background admission pin their RocksDB reads to an
+exact durable Header. Previously each worker pin allocated its own
+decoded Cell cache. With `native-shared-pinned-cell-cache` these workers
+can acquire the same bounded cache after the snapshot has matched the
+full Header. A rebase through a certified prefix chooses the cache for
+the recovered durable Header. The speculative suffix still checks its
+own Cell changes first. The Replica's mutable committed cache stays
+separate from the bank.
+
+The bank retains one generation with the existing 4,096-record and
+16 MiB record-byte limits. A worker already reading an older snapshot
+can finish against its own cache handle. A later acquisition at an older
+height cannot evict a newer generation. During ordinary tip installation,
+if the bank is at the exact parent and no reader holds the cache, the
+installer invalidates the committed block's changed OutPoints and moves
+the remaining entries forward. During overlap with an older reader the
+next Header uses a new generation. Peak process memory can therefore
+include the retained bank and caches held by in-flight workers. This
+option caches positive committed records.
+
+Compare the default and `shared-pinned-cells` builds on the same
+disk-backed funded payment and mixed-contract fixtures. Repeat with
+the same verified resident index budget in both arms. Sample
+`pinned_cell_cache` in the status response for shared acquisitions,
+fresh generations, in-place transitions and retained record bytes.
+An acquisition only measures eligible sharing. Measure actual Cell
+resolution CPU and wall time, worker contention, RSS and finalized
+throughput, in addition to the standard replay. A resident index can
+serve these lookups first. The extra shared-cache lock can offset
+saved reads when worker lifetimes overlap heavily or the index serves
+most reads.
+
+The compiled regression warms two pins on one Header, overlaps an old
+pin with a commit and a new pin, and then advances an idle cache across
+another commit. It checks deleted records and reuse of an unchanged
+record. Runtime regressions, replay and performance comparisons remain
+pending.
