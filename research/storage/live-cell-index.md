@@ -500,3 +500,37 @@ the index size range. A two-branch fixture checks that a newer spend
 masks an indexed parent creation on only its own branch. Existing
 pipeline fixtures exercise ordered persistence and snapshot rebasing. Runtime, replay and performance results are
 pending.
+
+## Retaining confirmed misses in pinned Cell snapshots
+
+`native-pinned-cell-absence-cache` retains successful committed disk
+misses in the decoded cache of a validated, pinned Header. This covers
+repeated output existence checks on the same pinned view and reads
+repeated by admission, Leader, Follower or a canonical fallback.
+Current-block writes, speculative branches and the exact resident index
+keep their existing precedence. Prefetch can read cached absences;
+its own temporary disk results remain local to the candidate.
+
+Each pinned generation has at most 4,096 absence slots distributed
+among its cache shards. Shard arrays are allocated on first use and
+hold fixed-width OutPoints. A slot hit requires all OutPoint bytes to
+match. A collision replaces the slot. Positive decoded records keep
+their separate capacity. A generation carried forward after a durable
+write removes all changed OutPoints, including newly created Cells.
+Workers retaining older generations keep their original snapshots.
+
+Compare `shared-pinned-cells` and `pinned-cell-absences` at the same
+worker count, state, pipeline and resident budgets. Include repeated
+lookups, unique-transaction churn, resident-index hits and snapshot
+replacement during a certified write. Record `pinned_cell_cache`'s
+`absence_hits` and `absence_entries` for the retained cache, plus
+physical reads, candidate CPU, finality and peak RSS. Unique misses
+can add a cache-lock acquisition and slot replacement without yielding
+future hits. Generation changes can discard reusable entries. The
+previous coordinator MultiGet comparison favored the point reader.
+The new option keeps the point reader in both arms.
+
+The regression fixture checks a cached miss and a speculative creation,
+exclusive reuse across finalization, an overlapping old snapshot, and
+refreshing the exact new view. Runtime checks, independent replay and
+performance measurements are pending.

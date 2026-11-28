@@ -10,6 +10,9 @@ use ckb_types::packed::OutPoint;
 use ckb_types::prelude::Entity;
 use stem_ledger::{LiveCell, Origin};
 
+#[cfg(feature = "native-pinned-cell-absence-cache")]
+mod absence;
+
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ITEMS: usize = 4096;
 const SHARDS: usize = if cfg!(feature = "native-sharded-live-cache") {
@@ -25,9 +28,19 @@ struct Shard {
     records: HashMap<OutPoint, LiveCell>,
     bytes: usize,
     capacity_flushes: u64,
+    #[cfg(feature = "native-pinned-cell-absence-cache")]
+    absences: absence::Absences,
 }
 
 impl Shard {
+    fn is_empty(&self) -> bool {
+        #[cfg(feature = "native-pinned-cell-absence-cache")]
+        if self.absences.entries != 0 {
+            return false;
+        }
+        self.records.is_empty()
+    }
+
     fn clear(&mut self) {
         self.records.clear();
         self.bytes = 0;
@@ -37,11 +50,32 @@ impl Shard {
 #[derive(Default)]
 pub(super) struct LiveCache {
     shards: [Mutex<Shard>; SHARDS],
+    #[cfg(feature = "native-pinned-cell-absence-cache")]
+    pinned: bool,
     #[cfg(feature = "native-sharded-live-cache")]
     shard_hash: RandomState,
 }
 
+#[cfg(feature = "native-shared-pinned-cell-cache")]
+#[derive(Default)]
+pub(super) struct CacheTotals {
+    pub(super) entries: usize,
+    pub(super) record_bytes: usize,
+    pub(super) capacity_flushes: u64,
+    pub(super) absence_entries: usize,
+    pub(super) absence_hits: u64,
+}
+
 impl LiveCache {
+    #[cfg(feature = "native-shared-pinned-cell-cache")]
+    pub(super) fn pinned() -> Self {
+        Self {
+            #[cfg(feature = "native-pinned-cell-absence-cache")]
+            pinned: true,
+            ..Self::default()
+        }
+    }
+
     #[cfg(feature = "native-shared-pinned-cell-cache")]
     pub(super) const SHARDS: usize = SHARDS;
 
@@ -52,13 +86,25 @@ impl LiveCache {
         0
     }
 
-    pub(super) fn get(&self, point: &OutPoint) -> Option<LiveCell> {
-        self.shards[self.shard_for(point)]
-            .lock()
-            .expect("Live Cell cache shard")
-            .records
-            .get(point)
-            .cloned()
+    pub(super) fn lookup(&self, point: &OutPoint) -> Option<Option<LiveCell>> {
+        let shard = self.shards[self.shard_for(point)].lock().expect("Live Cell cache shard");
+        if let Some(cell) = shard.records.get(point) {
+            return Some(Some(cell.clone()));
+        }
+        #[cfg(feature = "native-pinned-cell-absence-cache")]
+        if self.pinned {
+            let mut shard = shard;
+            return shard.absences.contains(point).then_some(None);
+        }
+        None
+    }
+
+    #[cfg(feature = "native-pinned-cell-absence-cache")]
+    pub(super) fn remember_absence(&self, point: &OutPoint) {
+        if self.pinned {
+            let mut shard = self.shards[self.shard_for(point)].lock().expect("Live Cell cache shard");
+            shard.absences.insert(point);
+        }
     }
 
     pub(super) fn insert(&self, point: OutPoint, cell: LiveCell) {
@@ -87,11 +133,13 @@ impl LiveCache {
             .shards
             .each_ref()
             .map(|shard| shard.lock().expect("Live Cell cache shard"));
-        if shards.iter().all(|shard| shard.records.is_empty()) {
+        if shards.iter().all(|shard| shard.is_empty()) {
             return;
         }
         for point in points {
             let shard = &mut shards[self.shard_for(point)];
+            #[cfg(feature = "native-pinned-cell-absence-cache")]
+            shard.absences.remove(point);
             if let Some(cell) = shard.records.remove(point) {
                 shard.bytes -= Self::record_bytes(&cell);
             }
@@ -105,6 +153,10 @@ impl LiveCache {
             .map(|shard| shard.lock().expect("Live Cell cache shard"));
         for shard in &mut shards {
             shard.clear();
+            #[cfg(feature = "native-pinned-cell-absence-cache")]
+            {
+                shard.absences = absence::Absences::default();
+            }
         }
     }
 
@@ -113,17 +165,20 @@ impl LiveCache {
     }
 
     #[cfg(feature = "native-shared-pinned-cell-cache")]
-    pub(super) fn totals(&self) -> (usize, usize, u64) {
-        self.shards
-            .iter()
-            .fold((0, 0, 0), |(entries, bytes, flushes), shard| {
-                let shard = shard.lock().expect("Live Cell cache shard");
-                (
-                    entries + shard.records.len(),
-                    bytes + shard.bytes,
-                    flushes.saturating_add(shard.capacity_flushes),
-                )
-            })
+    pub(super) fn totals(&self) -> CacheTotals {
+        let mut totals = CacheTotals::default();
+        for shard in &self.shards {
+            let shard = shard.lock().expect("Live Cell cache shard");
+            totals.entries += shard.records.len();
+            totals.record_bytes += shard.bytes;
+            totals.capacity_flushes = totals.capacity_flushes.saturating_add(shard.capacity_flushes);
+            #[cfg(feature = "native-pinned-cell-absence-cache")]
+            {
+                totals.absence_entries += shard.absences.entries;
+                totals.absence_hits = totals.absence_hits.saturating_add(shard.absences.hits);
+            }
+        }
+        totals
     }
 }
 
@@ -163,9 +218,9 @@ mod tests {
             cache.insert(point.clone(), cell.clone());
         }
         let last = collisions.last().expect("overloaded shard entries");
-        assert!(cache.get(&collisions[0]).is_none());
-        assert!(cache.get(last).is_some());
-        assert!(cache.get(&sentinel).is_some());
+        assert!(cache.lookup(&collisions[0]).is_none());
+        assert!(cache.lookup(last).is_some());
+        assert!(cache.lookup(&sentinel).is_some());
         assert_eq!(
             cache.shards[overloaded_shard]
                 .lock()
@@ -179,11 +234,11 @@ mod tests {
         );
 
         cache.invalidate(std::iter::once(last));
-        assert!(cache.get(last).is_none());
-        assert!(cache.get(&sentinel).is_some());
+        assert!(cache.lookup(last).is_none());
+        assert!(cache.lookup(&sentinel).is_some());
         assert_eq!(cache.shards[overloaded_shard].lock().unwrap().bytes, 0);
         cache.clear();
-        assert!(cache.get(&sentinel).is_none());
+        assert!(cache.lookup(&sentinel).is_none());
         Ok(())
     }
 }

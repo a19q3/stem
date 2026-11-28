@@ -765,6 +765,10 @@ pub struct PinnedCellCacheStatus {
     pub shards: usize,
     #[serde(default)]
     pub capacity_flushes: u64,
+    #[serde(default)]
+    pub absence_entries: usize,
+    #[serde(default)]
+    pub absence_hits: u64,
 }
 
 type CellEdit = (OutPoint, Option<LiveCell>);
@@ -1847,7 +1851,7 @@ impl Store {
         {
             return Ok(Some(cell));
         }
-        Ok(self.cached_live_cell(point).map(Some))
+        Ok(self.live_cache.lookup(point))
     }
 
     fn read_stored_live_cell(&self, point: &OutPoint, key: &[u8]) -> Result<Option<LiveCell>> {
@@ -1860,8 +1864,12 @@ impl Store {
 
     fn remember_committed_live_cell(&self, point: &OutPoint, cell: Option<&LiveCell>) {
         // Candidate rows must never enter the shared committed cache.
-        if let Some(cell) = cell {
-            self.live_cache.insert(point.clone(), cell.clone());
+        match cell {
+            Some(cell) => self.live_cache.insert(point.clone(), cell.clone()),
+            None => {
+                #[cfg(feature = "native-pinned-cell-absence-cache")]
+                self.live_cache.remember_absence(point);
+            }
         }
     }
 
@@ -1874,10 +1882,6 @@ impl Store {
             #[cfg(not(feature = "native-compact-prepared-cell-delta"))]
             prepared.live.get(point)
         })
-    }
-
-    fn cached_live_cell(&self, point: &OutPoint) -> Option<LiveCell> {
-        self.live_cache.get(point)
     }
 
     fn live_cell_key(&self, point: &OutPoint) -> [u8; 34] {
@@ -2390,24 +2394,12 @@ impl Store {
     }
 
     fn prefetch_cell(&self, point: &OutPoint, max_record_bytes: usize) -> Option<Option<LiveCell>> {
-        if let Some(cell) = self.branch_cell(point) {
-            return cell
-                .as_ref()
-                .is_none_or(|cell| LiveCache::record_bytes(cell) <= max_record_bytes)
-                .then(|| cell.clone());
-        }
-        // A failed resident read must reach the canonical resolver. Do not
-        // turn a lower-tier result into a hint that could mask that error.
-        if let Some(index) = &self.live_index
-            && let Some(cell) = index.lookup(point).ok()?
-        {
+        // A failed resident read must reach the canonical resolver.
+        if let Some(cell) = self.live_cell_in_memory(point).ok()? {
             return cell
                 .as_ref()
                 .is_none_or(|cell| LiveCache::record_bytes(cell) <= max_record_bytes)
                 .then_some(cell);
-        }
-        if let Some(cell) = self.cached_live_cell(point) {
-            return (LiveCache::record_bytes(&cell) <= max_record_bytes).then_some(Some(cell));
         }
         // Keep tentative records local to the candidate and skip oversized
         // values before decoding. An I/O error is retried in canonical order.
@@ -4428,7 +4420,7 @@ mod pipeline_store_tests {
             assert!(old.live_cell(&points[0])?.is_some());
             store.pinned_view().with_snapshot(|peer| {
                 assert!(Arc::ptr_eq(&old.live_cache, &peer.live_cache));
-                assert!(peer.cached_live_cell(&points[0]).is_some());
+                assert!(peer.live_cache.lookup(&points[0]).flatten().is_some());
                 Ok(())
             })?.context("missing shared snapshot")?;
 
@@ -4447,9 +4439,9 @@ mod pipeline_store_tests {
         let second = delete(&store, &points[1], 1002)?;
         store.commit(second)?;
         store.pinned_view().with_snapshot(|fresh| {
-            assert!(fresh.cached_live_cell(&points[1]).is_none());
+            assert!(fresh.live_cache.lookup(&points[1]).flatten().is_none());
             assert!(fresh.live_cell(&points[1])?.is_none());
-            assert!(fresh.cached_live_cell(&points[2]).is_some());
+            assert!(fresh.live_cache.lookup(&points[2]).flatten().is_some());
             Ok(())
         })?.context("missing advanced snapshot")?;
         let status = store.pinned_cell_cache_status().expect("enabled cache");
@@ -4458,6 +4450,62 @@ mod pipeline_store_tests {
         assert_eq!(status.generations, 2);
         assert_eq!(status.carried_forward, 1);
         assert_eq!(status.entries, 1);
+        Ok(())
+    }
+
+    #[cfg(feature = "native-pinned-cell-absence-cache")]
+    #[test]
+    fn pinned_absences_yield_to_speculative_and_durable_creations() -> Result<()> {
+        let point = OutPoint::new([75; 32].pack(), 0);
+        let cell = Cell::new(20_000_000_000, Default::default(), vec![], Default::default())?;
+        for overlapping in [false, true] {
+            let home = tempfile::tempdir()?;
+            let mut store = Store::open(home.path(), &spec(), Retention::Archive)?;
+            assert!(store.live_cell(&point)?.is_none());
+            assert!(store.live_cache.lookup(&point).is_none());
+            let pin = store.pinned_view();
+            let context = HeaderContext::after(
+                store.network(),
+                store.tip(),
+                1001,
+                Tree::transactions(store.network().clone(), &[])?.root(),
+            )?;
+            let mut overlay = store.overlay(None);
+            overlay.live.insert(point.clone(), Some(LiveCell {
+                cell: cell.clone(),
+                origin: Origin::new(store.network(), &context),
+            }));
+            let prepared = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
+            let seed = |old: &Store| -> Result<()> {
+                assert!(old.live_cache.lookup(&point).is_none());
+                assert!(old.live_cell(&point)?.is_none());
+                assert!(old.live_cell(&point)?.is_none());
+                let totals = old.live_cache.totals();
+                assert_eq!((totals.absence_entries, totals.absence_hits), (1, 1));
+                old.on_branch(std::slice::from_ref(&prepared), |branch| {
+                    assert!(branch.live_cell(&point)?.is_some());
+                    Ok(())
+                })
+            };
+            if overlapping {
+                pin.with_snapshot(|old| {
+                    seed(old)?;
+                    store.commit_certified(&prepared, &[], &[])?;
+                    assert!(old.live_cell(&point)?.is_none());
+                    Ok(())
+                })?.context("missing overlapping snapshot")?;
+            } else {
+                pin.with_snapshot(seed)?.context("missing initial snapshot")?;
+                store.commit_certified(&prepared, &[], &[])?;
+                assert_eq!(store.pinned_cell_cache_status().unwrap().carried_forward, 1);
+            }
+            store.pinned_view().with_snapshot(|current| {
+                assert!(current.live_cache.lookup(&point).is_none());
+                let found = current.live_cell(&point)?.context("missing newly created Cell")?;
+                assert_eq!(found.cell.as_slice(), cell.as_slice());
+                Ok(())
+            })?.context("missing committed snapshot")?;
+        }
         Ok(())
     }
 
@@ -5473,7 +5521,7 @@ mod pipeline_store_tests {
         store.db.put(store.live_cell_key(absent), record::encode_cell(absent, &orphan))?;
         let error = store.prove_cells(&points).err().context("accepted an orphan record")?;
         assert!(error.to_string().contains("differs from its authenticated value"));
-        assert!(store.cached_live_cell(absent).is_none());
+        assert!(store.live_cache.lookup(absent).is_none());
         Ok(())
     }
 
