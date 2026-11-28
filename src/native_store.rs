@@ -3690,7 +3690,7 @@ mod pipeline_store_tests {
 
     #[cfg(feature = "jolteon-cross-block-pipeline")]
     #[test]
-    fn resident_index_uses_rocksdb_for_a_superseded_pinned_reader() -> Result<()> {
+    fn resident_index_falls_back_past_its_available_headers() -> Result<()> {
         let home = tempfile::tempdir()?;
         let mut spec = spec();
         let point = OutPoint::new([24; 32].pack(), 0);
@@ -3703,6 +3703,12 @@ mod pipeline_store_tests {
         pinned.with_snapshot(|view| {
             assert!(view.live_index.as_ref().unwrap().resident());
             store.commit(next)?;
+            assert_eq!(
+                view.live_index.as_ref().unwrap().resident(),
+                cfg!(feature = "native-live-cell-parent-index")
+            );
+            let next = store.prepare(&[], 1002, false)?;
+            store.commit(next)?;
             assert!(!view.live_index.as_ref().unwrap().resident());
             assert_eq!(view.live_cell(&point)?.context("old Cell missing")?.cell.as_slice(), cell.as_slice());
             Ok(())
@@ -3710,6 +3716,112 @@ mod pipeline_store_tests {
         let status = store.live_cell_index_status().unwrap();
         assert_eq!(status.fallbacks, 1);
         assert_eq!(status.entries, 1);
+        Ok(())
+    }
+
+    #[cfg(all(feature = "jolteon-cross-block-pipeline", feature = "native-live-cell-parent-index"))]
+    #[test]
+    fn resident_parent_reads_spends_creations_and_absences_at_the_pinned_header() -> Result<()> {
+        let mut spec = spec();
+        let txid = [41; 32].pack();
+        let spent = OutPoint::new(txid.clone(), 1);
+        let created = OutPoint::new(txid.clone(), 256);
+        let unchanged = OutPoint::new(txid.clone(), 3);
+        let absent = OutPoint::new(txid, 4);
+        let cell = Cell::new(
+            20_000_000_000,
+            ckb_types::packed::Script::default(),
+            vec![],
+            bytes::Bytes::new(),
+        )?;
+        spec.development_cells = vec![(spent.clone(), cell.clone()), (unchanged.clone(), cell.clone())];
+        let points = [spent.clone(), created.clone(), unchanged.clone(), absent];
+        let leaf_proofs = |view: &Store| -> Result<Vec<_>> {
+            view.prove_cells(&points)?.into_iter().zip(&points).map(|((row, proof), point)| {
+                let root = as_key(&view.tip.state.cell_root);
+                assert!(record::verify_cell(&view.cells, &root, point, row.as_ref(), &proof));
+                Ok((row.map(|row| record::encode_cell(point, &row)), proof))
+            }).collect()
+        };
+
+        for layout in [LiveCellIndexLayout::Inline, LiveCellIndexLayout::InternedScripts] {
+            let home = tempfile::tempdir()?;
+            let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+            store.enable_live_cell_index_with_layout(NonZeroUsize::new(2).unwrap(), layout)?;
+            let before = leaf_proofs(&store)?;
+            let pinned = store.pinned_view();
+            let context = HeaderContext::after(
+                &spec.network, store.tip(), 1001, Tree::transactions(spec.network.clone(), &[])?.root(),
+            )?;
+            let mut overlay = store.overlay(None);
+            overlay.live.insert(spent.clone(), None);
+            overlay.live.insert(created.clone(), Some(LiveCell {
+                cell: cell.clone(),
+                origin: Origin::new(&spec.network, &context),
+            }));
+            let next = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
+            let after = store.on_branch(std::slice::from_ref(&next), leaf_proofs)?;
+            assert_eq!(after.iter().map(|(row, _)| row.is_some()).collect::<Vec<_>>(), [false, true, true, false]);
+
+            pinned.with_snapshot(|view| {
+                store.commit_certified(&next, &[], &[])?;
+                assert_eq!(leaf_proofs(view)?, before);
+                assert_eq!(leaf_proofs(&store)?, after);
+                let status = store.live_cell_index_status().unwrap();
+                assert_eq!(status.previous_header_lookups, points.len() as u64);
+                assert!(status.previous_header_bytes > 0 && status.accounted_bytes <= status.limit_bytes);
+                assert_eq!(status.fallbacks, 0);
+                Ok(())
+            })?.context("missing previous snapshot")?;
+
+            // A reopened index comes entirely from the authenticated disk
+            // image, with no before-images from the old process.
+            drop(pinned);
+            drop(store);
+            let mut reopened = Store::open(home.path(), &spec, Retention::Archive)?;
+            reopened.enable_live_cell_index_with_layout(NonZeroUsize::new(2).unwrap(), layout)?;
+            assert_eq!(leaf_proofs(&reopened)?, after);
+            assert_eq!(reopened.live_cell_index_status().unwrap().previous_header_bytes, 0);
+        }
+        Ok(())
+    }
+
+    #[cfg(all(feature = "jolteon-cross-block-pipeline", feature = "native-live-cell-parent-index"))]
+    #[test]
+    fn resident_parent_drops_its_before_image_to_keep_current_rows() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let source = OutPoint::new([42; 32].pack(), 0);
+        let target = OutPoint::new([42; 32].pack(), 1);
+        let make_cell = |data_bytes| Cell::new(
+            20_000_000_000,
+            ckb_types::packed::Script::default(),
+            vec![],
+            bytes::Bytes::from(vec![1; data_bytes]),
+        );
+        spec.development_cells.push((source.clone(), make_cell(8)?));
+        let store = Store::open(home.path(), &spec, Retention::Archive)?;
+        let sized = IndexView::recover(&store, 2 << 20, LiveCellIndexLayout::Inline)?;
+        let room = 16 << 10;
+        let limit = sized.status().accounted_bytes + room;
+        let mut index = IndexView::recover(&store, limit, LiveCellIndexLayout::Inline)?;
+        let old = index.clone();
+        let new_cell = LiveCell {
+            // Fits without the before-image, but its small remaining headroom
+            // cannot retain two edit entries and the old Cell payload.
+            cell: make_cell(room - 32)?,
+            origin: Origin::new(&spec.network, &store.tip.context),
+        };
+        let mut changes = LiveChanges::new();
+        changes.insert(source.clone(), None);
+        changes.insert(target.clone(), Some(new_cell));
+        index.advance([7; 32], &changes);
+        assert!(index.resident());
+        assert!(matches!(index.lookup(&source)?, Some(None)));
+        assert!(matches!(index.lookup(&target)?, Some(Some(_))));
+        assert!(old.lookup(&source)?.is_none());
+        assert_eq!(index.status().previous_header_bytes, 0);
+        assert!(index.status().accounted_bytes <= limit);
         Ok(())
     }
 
