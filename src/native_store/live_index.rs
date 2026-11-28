@@ -27,6 +27,19 @@ use stem_ledger::{
 
 use super::{LiveChanges, STATE_RECORD, Store, TIP};
 
+mod interned;
+use interned::InternedRecords;
+
+const ROW_PAYLOAD_OVERHEAD: usize = OutPoint::TOTAL_SIZE + 32 + 256;
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveCellIndexLayout {
+    #[default]
+    Inline,
+    InternedScripts,
+}
+
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 pub struct LiveCellIndexStatus {
     pub active: bool,
@@ -37,19 +50,23 @@ pub struct LiveCellIndexStatus {
     pub hits: u64,
     pub absent: u64,
     pub fallbacks: u64,
+    #[serde(default)]
+    pub layout: LiveCellIndexLayout,
+    #[serde(default)]
+    pub descriptors: usize,
 }
 
 #[derive(Default)]
-struct Records {
+struct InlineRecords {
     rows: HashMap<OutPoint, LiveCell, RandomState>,
     payload_bytes: usize,
 }
 
-impl Records {
+impl InlineRecords {
     fn payload(cell: &LiveCell) -> usize {
         // Include owned key and record buffers, the lazy digest allocation
         // and allocator metadata. Bucket storage is accounted separately.
-        cell.cell.as_slice().len() + OutPoint::TOTAL_SIZE + 32 + 256
+        cell.cell.as_slice().len() + ROW_PAYLOAD_OVERHEAD
     }
 
     fn bytes(&self) -> usize {
@@ -89,6 +106,99 @@ impl Records {
     }
 }
 
+enum Records {
+    Inline(InlineRecords),
+    Interned(InternedRecords),
+}
+
+enum ResidentCell {
+    Inline(LiveCell),
+    Interned(interned::Row),
+}
+
+impl ResidentCell {
+    fn decode(self) -> Result<LiveCell> {
+        match self {
+            Self::Inline(cell) => Ok(cell),
+            Self::Interned(cell) => cell.into_cell(),
+        }
+    }
+}
+
+impl Records {
+    fn new(layout: LiveCellIndexLayout) -> Self {
+        match layout {
+            LiveCellIndexLayout::Inline => Self::Inline(InlineRecords::default()),
+            LiveCellIndexLayout::InternedScripts => Self::Interned(InternedRecords::default()),
+        }
+    }
+
+    fn get(&self, point: &OutPoint) -> Option<ResidentCell> {
+        match self {
+            Self::Inline(records) => records.rows.get(point).cloned().map(ResidentCell::Inline),
+            Self::Interned(records) => records.get(point).map(ResidentCell::Interned),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Inline(records) => records.rows.len(),
+            Self::Interned(records) => records.len(),
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Inline(records) => records.bytes(),
+            Self::Interned(records) => records.bytes(),
+        }
+    }
+
+    fn distinct_descriptors(&self) -> usize {
+        match self {
+            Self::Inline(_) => 0,
+            Self::Interned(records) => records.distinct_descriptors(),
+        }
+    }
+
+    fn remove(&mut self, point: &OutPoint) {
+        match self {
+            Self::Inline(records) => records.remove(point),
+            Self::Interned(records) => records.remove(point),
+        }
+    }
+
+    fn insert(&mut self, point: OutPoint, cell: LiveCell, limit: usize, detached: bool) -> bool {
+        let own_point = |point: OutPoint| {
+            if detached {
+                point
+            } else {
+                OutPoint::new_unchecked(Bytes::copy_from_slice(point.as_slice()))
+            }
+        };
+        match self {
+            Self::Inline(records) => records.insert(InlineRecords::payload(&cell), limit, || {
+                let point = own_point(point);
+                if detached {
+                    (point, cell)
+                } else {
+                    let record = LiveCell {
+                        cell: cell.cell.detached(),
+                        origin: stem_ledger::Origin {
+                            context_id: Byte32::new_unchecked(Bytes::copy_from_slice(
+                                cell.origin.context_id.as_slice(),
+                            )),
+                            ..cell.origin
+                        },
+                    };
+                    (point, record)
+                }
+            }),
+            Self::Interned(records) => records.insert(own_point(point), &cell, limit),
+        }
+    }
+}
+
 struct State {
     header: Key,
     records: Option<Records>,
@@ -97,6 +207,7 @@ struct State {
 struct Index {
     state: RwLock<State>,
     limit_bytes: usize,
+    layout: LiveCellIndexLayout,
     recovery_us: u64,
     hits: AtomicU64,
     absent: AtomicU64,
@@ -110,7 +221,7 @@ pub(super) struct IndexView {
 }
 
 impl IndexView {
-    pub(super) fn recover(store: &Store, limit_bytes: usize) -> Result<Self> {
+    pub(super) fn recover(store: &Store, limit_bytes: usize, layout: LiveCellIndexLayout) -> Result<Self> {
         let started = Instant::now();
         let snapshot = store.db.snapshot();
         let tip = snapshot.get(TIP)?.context("missing committed Stem tip")?;
@@ -121,7 +232,7 @@ impl IndexView {
         let mut cursor = snapshot.get_raw_iter(&options);
         cursor.seek(&prefix);
 
-        let mut records = Some(Records::default());
+        let mut records = Some(Records::new(layout));
         let committed = std::iter::from_fn(|| {
             let key = cursor.key()?;
             if !key.starts_with(&prefix) {
@@ -134,7 +245,7 @@ impl IndexView {
                 ensure!(record::cell_key(&store.cells, &point) == id, "miskeyed committed Cell record");
                 let digest = record::cell_value(&store.cells, &point, &cell);
                 if let Some(index) = &mut records
-                    && !index.insert(Records::payload(&cell), limit_bytes, || (point, cell))
+                    && !index.insert(point, cell, limit_bytes, true)
                 {
                     records = None;
                 }
@@ -153,6 +264,7 @@ impl IndexView {
             index: Arc::new(Index {
                 state: RwLock::new(State { header, records }),
                 limit_bytes,
+                layout,
                 recovery_us: started.elapsed().as_micros() as u64,
                 hits: AtomicU64::new(0),
                 absent: AtomicU64::new(0),
@@ -166,12 +278,12 @@ impl IndexView {
         self.header = header;
     }
 
-    pub(super) fn retire(self) -> usize {
+    pub(super) fn retire(self) -> (usize, LiveCellIndexLayout) {
         // Snapshot replacement may still have pinned readers holding this
         // generation. Release its index before recovering a replacement.
         let records = self.index.state.write().expect("Live Cell index").records.take();
         drop(records);
-        self.index.limit_bytes
+        (self.index.limit_bytes, self.index.layout)
     }
 
     pub(super) fn resident(&self) -> bool {
@@ -180,18 +292,22 @@ impl IndexView {
     }
 
     /// An inner None is authoritative absence at this exact committed Header.
-    pub(super) fn lookup(&self, point: &OutPoint) -> Option<Option<LiveCell>> {
+    pub(super) fn lookup(&self, point: &OutPoint) -> Result<Option<Option<LiveCell>>> {
         let state = self.index.state.read().expect("Live Cell index");
         if state.header == self.header
             && let Some(records) = &state.records
         {
-            let cell = records.rows.get(point).cloned();
+            let cell = records.get(point);
+            // Both kinds hold their own buffers. Reconstruct outside the lock
+            // so a large Cell cannot delay publication of the next generation.
+            drop(state);
+            let cell = cell.map(ResidentCell::decode).transpose()?;
             let counter = if cell.is_some() { &self.index.hits } else { &self.index.absent };
             counter.fetch_add(1, Ordering::Relaxed);
-            return Some(cell);
+            return Ok(Some(cell));
         }
         self.index.fallbacks.fetch_add(1, Ordering::Relaxed);
-        None
+        Ok(None)
     }
 
     pub(super) fn advance(&mut self, header: Key, changes: &LiveChanges) {
@@ -207,17 +323,7 @@ impl IndexView {
                 };
                 // A Cell in a prepared batch may share the entire signed
                 // transaction allocation. Keep only the exact record bytes.
-                if !records.insert(Records::payload(cell), self.index.limit_bytes, || {
-                    let point = OutPoint::new_unchecked(Bytes::copy_from_slice(point.as_slice()));
-                    let record = LiveCell {
-                        cell: cell.cell.detached(),
-                        origin: stem_ledger::Origin {
-                            context_id: Byte32::new_unchecked(Bytes::copy_from_slice(cell.origin.context_id.as_slice())),
-                            ..cell.origin.clone()
-                        },
-                    };
-                    (point, record)
-                }) {
+                if !records.insert(point.clone(), cell.clone(), self.index.limit_bytes, false) {
                     exhausted = true;
                     break;
                 }
@@ -234,13 +340,15 @@ impl IndexView {
         let state = self.index.state.read().expect("Live Cell index");
         LiveCellIndexStatus {
             active: state.records.is_some(),
-            entries: state.records.as_ref().map_or(0, |index| index.rows.len()),
+            entries: state.records.as_ref().map_or(0, Records::len),
             accounted_bytes: state.records.as_ref().map_or(0, Records::bytes),
             limit_bytes: self.index.limit_bytes,
             recovery_us: self.index.recovery_us,
             hits: self.index.hits.load(Ordering::Relaxed),
             absent: self.index.absent.load(Ordering::Relaxed),
             fallbacks: self.index.fallbacks.load(Ordering::Relaxed),
+            layout: self.index.layout,
+            descriptors: state.records.as_ref().map_or(0, Records::distinct_descriptors),
         }
     }
 }
