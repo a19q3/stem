@@ -403,3 +403,33 @@ descendant work, tail latency and finality. This path avoids waiting
 on publication, while disk fallbacks can cost more than a short
 wait or increase shared storage load. Runtime, replay and
 performance evidence are pending.
+
+### Preparing Inline Live Cell records for publication
+
+`native-prepared-live-cell-ownership` detaches new records at the end of
+Leader or Follower candidate preparation. It uses a nonblocking check for
+an Inline index covering the reader's base Header and drops the read
+guard before copying. It skips the copy if the index is busy, absent or
+interned, or the changed record payload alone exceeds the index budget.
+The existing publication logic still checks the full index budget and
+advances only after the atomic durable write.
+
+Only the candidate's existing Live Cell changes are updated. The detached
+Cell and context ID own their exact bytes. The synchronous installer or
+certified writer can share these buffers with the index, bypassing the
+record copy during publication. Speculative branch readers and persistence
+consume the same canonical bytes. RocksDB, authenticated roots, and
+reopening use the existing formats and recovery path.
+
+Compare `cell-publication` and `prepared-inline-cells` from the
+[integration build matrix](../native-v1-integration.md), with the Inline
+index budget, funded state, signed inputs and worker count held fixed.
+Capture candidate and commitment time, `commit_jobs.live_cell_publication`,
+peak RSS and snapshot contention fallbacks. Include a fork or timeout
+workload to count work spent on discarded candidates. Each live candidate
+can retain exact copies before finality while the original proposal bytes
+are still in use. Large or frequently discarded candidates may pay more
+in preparation time and memory than they save during publication. The
+writer fixture checks byte equality, Inline buffer sharing, old-snapshot
+isolation and reopen coverage. Runtime, independent replay and performance
+measurements are pending.

@@ -93,6 +93,12 @@ pub struct LiveCellIndexStatus {
     pub previous_header_bytes: usize,
 }
 
+fn detach_record(cell: &mut LiveCell) {
+    cell.cell = cell.cell.detached();
+    cell.origin.context_id =
+        Byte32::new_unchecked(Bytes::copy_from_slice(cell.origin.context_id.as_slice()));
+}
+
 #[derive(Default)]
 struct InlineRecords {
     rows: HashMap<ResidentKey, LiveCell, RandomState>,
@@ -226,7 +232,7 @@ impl Records {
     fn insert(
         &mut self,
         point: Cow<'_, OutPoint>,
-        cell: LiveCell,
+        mut cell: LiveCell,
         limit: usize,
         detached: bool,
     ) -> bool {
@@ -234,20 +240,10 @@ impl Records {
         match self {
             Self::Inline(records) => records.insert(InlineRecords::payload(&cell), limit, || {
                 let point = own_point();
-                if detached {
-                    (point, cell)
-                } else {
-                    let record = LiveCell {
-                        cell: cell.cell.detached(),
-                        origin: stem_ledger::Origin {
-                            context_id: Byte32::new_unchecked(Bytes::copy_from_slice(
-                                cell.origin.context_id.as_slice(),
-                            )),
-                            ..cell.origin
-                        },
-                    };
-                    (point, record)
+                if !detached {
+                    detach_record(&mut cell);
                 }
+                (point, cell)
             }),
             Self::Interned(records) => records.insert(own_point(), &cell, limit),
         }
@@ -572,7 +568,30 @@ impl IndexView {
         Ok(None)
     }
 
-    pub(super) fn advance(&mut self, header: Key, changes: &LiveChanges) {
+    #[cfg(feature = "native-prepared-live-cell-ownership")]
+    pub(super) fn detach_inline_records(&self, changes: &mut LiveChanges) -> bool {
+        if changes.is_empty()
+            || !self.index.state.try_read().is_ok_and(|state| {
+                state.covers(self.header) && matches!(&state.records, Some(Records::Inline(_)))
+            })
+        {
+            return false;
+        }
+        // Eligibility is only a hint. Drop the guard before touching record
+        // bytes and keep copies for one candidate below the index budget.
+        let payload = changes.values().flatten().fold(0usize, |size, cell| {
+            size.saturating_add(InlineRecords::payload(cell))
+        });
+        if payload == 0 || payload > self.index.limit_bytes {
+            return false;
+        }
+        for cell in changes.values_mut().flatten() {
+            detach_record(cell);
+        }
+        true
+    }
+
+    pub(super) fn advance(&mut self, header: Key, changes: &LiveChanges, detached: bool) {
         let mut state = self.index.state.write().expect("Live Cell index");
         #[cfg(feature = "jolteon-resident-cell-publication")]
         if state.header == header {
@@ -607,14 +626,14 @@ impl IndexView {
                 let limit = self.index.limit_bytes;
                 #[cfg(feature = "native-live-cell-parent-index")]
                 let limit = limit - previous.as_ref().map_or(0, |old| old.bytes);
-                if !records.insert(Cow::Borrowed(point), cell.clone(), limit, false) {
+                if !records.insert(Cow::Borrowed(point), cell.clone(), limit, detached) {
                     #[cfg(feature = "native-live-cell-parent-index")]
                     if previous.take().is_some()
                         && records.insert(
                             Cow::Borrowed(point),
                             cell.clone(),
                             self.index.limit_bytes,
-                            false,
+                            detached,
                         )
                     {
                         continue;
