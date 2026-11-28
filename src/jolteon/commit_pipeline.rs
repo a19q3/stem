@@ -176,6 +176,10 @@ impl Replica {
                     if let Some(elapsed) = timing.reused_state_build {
                         metrics.reused_state_build.observe(elapsed);
                     }
+                    #[cfg(feature = "jolteon-reuse-write-buffer")]
+                    if timing.reused_write_buffer {
+                        metrics.reused_write_buffers = metrics.reused_write_buffers.saturating_add(1);
+                    }
                     if let Some(elapsed) = timing.cell_node_publication {
                         metrics.cell_node_publication.observe(elapsed);
                     }

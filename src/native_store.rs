@@ -791,6 +791,8 @@ pub(crate) struct CertifiedWriteTiming {
     pub(crate) cell_node_publication: Option<Duration>,
     #[cfg(feature = "jolteon-prebuilt-state-write")]
     pub(crate) reused_state_build: Option<Duration>,
+    #[cfg(feature = "jolteon-reuse-write-buffer")]
+    pub(crate) reused_write_buffer: bool,
 }
 
 #[cfg(feature = "jolteon-commit-pipeline")]
@@ -798,6 +800,8 @@ pub(crate) struct CertifiedWriteTiming {
 pub(crate) struct CertifiedWriteCache {
     #[cfg(feature = "jolteon-prebuilt-state-write")]
     state: Option<CachedStateWrite>,
+    #[cfg(feature = "jolteon-reuse-write-buffer")]
+    spare: Option<WriteBatch>,
 }
 
 #[cfg(feature = "jolteon-prebuilt-state-write")]
@@ -807,10 +811,33 @@ struct CachedStateWrite {
     build: Duration,
 }
 
-#[cfg(feature = "jolteon-prebuilt-state-write")]
+#[cfg(feature = "jolteon-commit-pipeline")]
 impl CertifiedWriteCache {
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
     fn take(&mut self, prepared: &Arc<Prepared>) -> Option<CachedStateWrite> {
-        self.state.take().filter(|state| state.candidate.ptr_eq(&Arc::downgrade(prepared)))
+        let cached = self.state.take()?;
+        if cached.candidate.ptr_eq(&Arc::downgrade(prepared)) {
+            return Some(cached);
+        }
+        #[cfg(feature = "jolteon-reuse-write-buffer")]
+        self.recycle(cached.prefix.raw);
+        None
+    }
+
+    fn take_buffer(&mut self) -> Option<WriteBatch> {
+        #[cfg(feature = "jolteon-reuse-write-buffer")]
+        return self.spare.take();
+        #[cfg(not(feature = "jolteon-reuse-write-buffer"))]
+        None
+    }
+
+    #[cfg(feature = "jolteon-reuse-write-buffer")]
+    fn recycle(&mut self, mut raw: WriteBatch) {
+        const MAX_RECYCLED_BATCH_BYTES: usize = 8 * 1024 * 1024;
+        // Large batches may leave a larger backing allocation after clearing.
+        if raw.size_in_bytes() <= MAX_RECYCLED_BATCH_BYTES && raw.clear().is_ok() {
+            self.spare = Some(raw);
+        }
     }
 }
 
@@ -2436,6 +2463,10 @@ impl Store {
             let value = record
                 .as_ref()
                 .map(|record| record::cell_value(&self.cells, point, record));
+            #[cfg(feature = "native-prepared-cell-record-keys")]
+            if value.is_some() {
+                batch.created_cell_ids.push(id);
+            }
             cell_changes.push((id, value));
         }
         cell_changes.sort_unstable_by_key(|(id, _)| *id);
@@ -3538,10 +3569,16 @@ impl Store {
         let cells = self.cells.clone();
         let measured = self.metrics.is_some();
         Some(move |cache: &mut CertifiedWriteCache| {
-            cache.state = None;
+            if let Some(previous) = cache.state.take() {
+                #[cfg(feature = "jolteon-reuse-write-buffer")]
+                cache.recycle(previous.prefix.raw);
+                #[cfg(not(feature = "jolteon-reuse-write-buffer"))]
+                drop(previous);
+            }
             let started = Instant::now();
-            if let Ok((prefix, proposals)) =
-                assemble_write_prefix(&prepared.batch, Some((&cells, &prepared.live)), measured)
+            if let Ok((prefix, proposals)) = assemble_write_prefix(
+                &prepared.batch, Some((&cells, &prepared.live)), measured, cache.take_buffer(),
+            )
                 && proposals.is_empty()
             {
                 cache.state = Some(CachedStateWrite {
@@ -3584,9 +3621,16 @@ impl Store {
                 Some(parts) => parts,
                 None => assemble_write_prefix(
                     &prepared.batch, Some((&cells, &prepared.live)), measured.is_some(),
+                    _cache.take_buffer(),
                 )?,
             };
-            persist_write(&db, prefix, proposals, &records, &retired, measured)?;
+            #[cfg(feature = "jolteon-reuse-write-buffer")]
+            let reused_write_buffer = prefix.reused_buffer;
+            let raw = persist_write(&db, prefix, proposals, &records, &retired, measured)?;
+            #[cfg(feature = "jolteon-reuse-write-buffer")]
+            _cache.recycle(raw);
+            #[cfg(not(feature = "jolteon-reuse-write-buffer"))]
+            drop(raw);
             let persistence = started.elapsed();
             let cell_node_publication = cell_nodes.as_ref().map(|index| {
                 let started = Instant::now();
@@ -3599,6 +3643,8 @@ impl Store {
                 cell_node_publication,
                 #[cfg(feature = "jolteon-prebuilt-state-write")]
                 reused_state_build,
+                #[cfg(feature = "jolteon-reuse-write-buffer")]
+                reused_write_buffer,
             })
         })
     }
@@ -3814,6 +3860,9 @@ type Write = (JournalKey, Option<Vec<u8>>);
 struct Batch {
     writes: Vec<Write>,
     index: OnceLock<JournalIndex>,
+    /// IDs of present Cell rows in OutPoint order, before sorting the tree edits.
+    #[cfg(feature = "native-prepared-cell-record-keys")]
+    created_cell_ids: Vec<Key>,
     #[cfg(feature = "native-verified-cell-journal")]
     cell_nodes: Option<(usize, stem_ledger::patricia::VerifiedChanges)>,
 }
@@ -3856,6 +3905,8 @@ impl Batch {
 struct WritePrefix {
     raw: WriteBatch,
     bytes: Option<BatchBytes>,
+    #[cfg(feature = "jolteon-reuse-write-buffer")]
+    reused_buffer: bool,
 }
 
 fn sync_with_consensus(
@@ -3866,24 +3917,33 @@ fn sync_with_consensus(
     retired: &[Range<Vec<u8>>],
     measured: Option<(&StorageMetrics, Purpose)>,
 ) -> Result<()> {
-    let (prefix, proposals) = assemble_write_prefix(batch, live, measured.is_some())?;
-    persist_write(db, prefix, proposals, records, retired, measured)
+    let (prefix, proposals) = assemble_write_prefix(batch, live, measured.is_some(), None)?;
+    persist_write(db, prefix, proposals, records, retired, measured).map(drop)
 }
 
 fn assemble_write_prefix<'a>(
     batch: &'a Batch,
     live: Option<(&Patricia, &LiveChanges)>,
     measured: bool,
+    recycled: Option<WriteBatch>,
 ) -> Result<(WritePrefix, BTreeSet<&'a [u8]>)> {
-    let mut raw = WriteBatch::default();
+    #[cfg(feature = "jolteon-reuse-write-buffer")]
+    let reused_buffer = recycled.is_some();
+    let mut raw = recycled.unwrap_or_default();
+    debug_assert!(raw.is_empty());
     let mut bytes = measured.then(|| BatchBytes::new(raw.size_in_bytes()));
     // Finality keeps created records first, in the original batch order.
-    if let Some((tree, changes)) = live {
+    if let Some((_tree, changes)) = live {
+        #[cfg(feature = "native-prepared-cell-record-keys")]
+        let mut ids = batch.created_cell_ids.iter();
         let mut encoded = Vec::new();
         for (point, cell) in changes {
             // The Patricia edit already scheduled actual record deletions.
             if let Some(cell) = cell {
-                let id = record::cell_key(tree, point);
+                #[cfg(not(feature = "native-prepared-cell-record-keys"))]
+                let id = record::cell_key(_tree, point);
+                #[cfg(feature = "native-prepared-cell-record-keys")]
+                let id = *ids.next().context("missing prepared Cell record key")?;
                 let key = state_key(STATE_RECORD, Namespace::Cells, &id);
                 record::encode_cell_into(point, cell, &mut encoded);
                 raw.put(key, &encoded)?;
@@ -3892,6 +3952,8 @@ fn assemble_write_prefix<'a>(
                 }
             }
         }
+        #[cfg(feature = "native-prepared-cell-record-keys")]
+        ensure!(ids.next().is_none(), "unused prepared Cell record keys");
     }
     let mut proposals = BTreeSet::new();
     #[cfg(feature = "native-verified-cell-journal")]
@@ -3914,7 +3976,15 @@ fn assemble_write_prefix<'a>(
     #[cfg(not(feature = "native-verified-cell-journal"))]
     let remaining = batch.writes.as_slice();
     append_journal_rows(&mut raw, &mut bytes, remaining, &mut proposals)?;
-    Ok((WritePrefix { raw, bytes }, proposals))
+    Ok((
+        WritePrefix {
+            raw,
+            bytes,
+            #[cfg(feature = "jolteon-reuse-write-buffer")]
+            reused_buffer,
+        },
+        proposals,
+    ))
 }
 
 fn persist_write<'a>(
@@ -3924,8 +3994,8 @@ fn persist_write<'a>(
     records: &'a [(Vec<u8>, Vec<u8>)],
     retired: &[Range<Vec<u8>>],
     measured: Option<(&StorageMetrics, Purpose)>,
-) -> Result<()> {
-    let WritePrefix { mut raw, mut bytes } = prefix;
+) -> Result<WriteBatch> {
+    let WritePrefix { mut raw, mut bytes, .. } = prefix;
     for (key, value) in records {
         let storage_key = index_key(b'j', key);
         // A prior synchronous write already made this body durable. Preserve
@@ -3956,7 +4026,7 @@ fn persist_write<'a>(
     if let (Some((metrics, purpose)), Some(bytes), Some(started)) = (measured, bytes, started) {
         metrics.commit(purpose, bytes, started.elapsed());
     }
-    Ok(())
+    Ok(raw)
 }
 
 fn append_journal_rows<'a>(
@@ -4007,6 +4077,8 @@ mod pipeline_store_tests {
 
     fn assert_same_batch_writes(left: &Batch, right: &Batch) {
         assert_eq!(left.writes, right.writes);
+        #[cfg(feature = "native-prepared-cell-record-keys")]
+        assert_eq!(left.created_cell_ids, right.created_cell_ids);
         #[cfg(feature = "native-verified-cell-journal")]
         assert_eq!(left.cell_nodes, right.cell_nodes);
     }
@@ -5250,11 +5322,49 @@ mod pipeline_store_tests {
         assert!(store.header(1)?.is_none());
 
         let write = store.certified_write(Arc::clone(&certified), Vec::new(), Vec::new())?;
-        assert!(write(&mut cache)?.reused_state_build.is_none());
+        let timing = write(&mut cache)?;
+        assert!(timing.reused_state_build.is_none());
+        #[cfg(feature = "jolteon-reuse-write-buffer")]
+        assert!(timing.reused_write_buffer);
         assert!(cache.state.is_none());
+        assert!(
+            store.db.get(index_key(
+                HEADER_ID, speculative.header().id(store.network()).as_slice()
+            ))?.is_none()
+        );
         assert_eq!(store.header(1)?.as_ref(), Some(certified.header()));
         store.install_durable_tip(&certified, false);
         assert!(store.prebuild_certified_state(speculative).is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-reuse-write-buffer")]
+    #[test]
+    fn consecutive_certified_writes_reset_the_write_buffer() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut store = Store::open(home.path(), &spec(), Retention::Archive)?;
+        let mut cache = CertifiedWriteCache::default();
+        let write = |store: &mut Store, cache: &mut CertifiedWriteCache, time, records| {
+            let prepared = Arc::new(store.prepare(&[], time, false)?);
+            let persist = store.certified_write(Arc::clone(&prepared), records, Vec::new())?;
+            let timing = persist(cache)?;
+            store.install_durable_tip(&prepared, timing.cell_node_publication.is_some());
+            Ok::<_, anyhow::Error>(timing.reused_write_buffer)
+        };
+        let marker = b"writer-test".to_vec();
+        assert!(!write(
+            &mut store, &mut cache, 1001, vec![(marker.clone(), b"first".to_vec())],
+        )?);
+        assert!(cache.spare.as_ref().is_some_and(WriteBatch::is_empty));
+        store.persist_consensus(&[(marker.clone(), b"second".to_vec())])?;
+
+        assert!(write(&mut store, &mut cache, 1002, Vec::new())?);
+        assert!(cache.spare.as_ref().is_some_and(WriteBatch::is_empty));
+        assert_eq!(store.consensus_record(&marker)?.as_deref(), Some(b"second".as_slice()));
+        drop(store);
+        let recovered = Store::open(home.path(), &spec(), Retention::Archive)?;
+        assert_eq!(recovered.tip().context.height, 2);
+        assert_eq!(recovered.consensus_record(&marker)?.as_deref(), Some(b"second".as_slice()));
         Ok(())
     }
 
@@ -5403,6 +5513,12 @@ mod pipeline_store_tests {
             assert_same_batch_writes(&from_snapshot.batch, &serial.batch);
             assert_eq!(from_snapshot.header(), serial.header());
             assert!(pinned.with_snapshot(|_| Ok(()))?.is_none());
+            #[cfg(feature = "native-prepared-cell-record-keys")]
+            for (point, cell) in &serial.live {
+                let expected = cell.as_ref().map(|cell| record::encode_cell(point, cell));
+                let stored = store.db.get(store.live_cell_key(point))?;
+                assert_eq!(stored.as_deref(), expected.as_deref());
+            }
             #[cfg(feature = "native-stream-node-publication")]
             {
                 store.install_durable_tip(&parallel, cfg!(feature = "jolteon-resident-node-publication"));
