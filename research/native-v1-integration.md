@@ -14,6 +14,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Incremental Cell projection | `native-incremental-cell-projection` | Publish declaration prefixes as rolling tasks are submitted [Comparison notes](scheduling/README.md#incremental-projection-in-the-rolling-schedulers) |
 | Mask rejected Leader declarations | `native-mask-rejected-cell-projections` | Reveal the previous Cell version as soon as the ordered scan rejects a candidate [Comparison notes](scheduling/README.md#masking-rejected-leader-cell-declarations) |
 | Reclaim settled Cell declarations | `native-reclaim-cell-projection` | Keep speculative history near the active rolling window [Comparison notes](scheduling/README.md#retiring-settled-projection-edits) |
+| Resume the rolling Leader after a projection barrier | `native-resume-rolling-proposal` | Continue on the actual settled prefix after discarding stale jobs [Comparison notes](scheduling/README.md#resuming-leader-work-after-a-projection-barrier) |
 | Rolling Script Groups | `native-rolling-script-groups` | Refill group workers and charge their cycles in canonical order [Comparison notes](scheduling/README.md#rolling-script-group-verification) |
 | Standard trace cycle reuse | `native-trace-cycle-reuse` | Retain the built-in cycle total of byte-matched native VM traces [Comparison notes](critical-path/decoder-cache.md#reuse-the-built-in-cycle-total) |
 | Exact certified prefix | `jolteon-exact-prefix-pipeline` | Reuse pinned successor jobs across consecutive certified writes [Comparison notes](execution-pipeline/README.md#reusing-work-across-an-exact-certified-prefix) |
@@ -91,6 +92,7 @@ ordered_cells=native-reuse-ordered-cell-writes
 incremental_projection=native-incremental-cell-projection
 mask_rejected=native-mask-rejected-cell-projections
 reclaim_projection=native-reclaim-cell-projection
+resume_projection=native-resume-rolling-proposal
 rolling_groups=native-rolling-script-groups
 trace_cycles=native-trace-cycle-reuse
 exact_prefix=jolteon-exact-prefix-pipeline
@@ -160,6 +162,7 @@ build incremental-projection --features "$cells,$rolling_leader,$incremental_pro
 build mask-rejected --features "$cells,$rolling_leader,$incremental_projection,$mask_rejected"
 build projection-reclaim-control --features "$cells,$rolling_leader,$incremental_projection,$ordered_cells"
 build projection-reclaim --features "$cells,$rolling_leader,$reclaim_projection"
+build projection-resume --features "$cells,$rolling_leader,$reclaim_projection,$resume_projection"
 build rolling-script-groups --features "$cells,$rolling_leader,$rolling_groups"
 build trace-cycle-reuse --features "$trace_cycles"
 build exact-prefix --features "$exact_prefix"
@@ -206,7 +209,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$retry_parent_reads,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$compact_prepared_cells,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$pinned_inheritance,$pinned_absences,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$retry_parent_reads,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$resume_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$compact_prepared_cells,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$pinned_inheritance,$pinned_absences,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

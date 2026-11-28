@@ -240,6 +240,7 @@ pub struct CellStreamStats {
     pub masked_projection_positions: u64,
     pub projection_reclaim_us: u64,
     pub projection_barriers: u64,
+    pub projection_restarts: u64,
     pub first_submit_us: u64,
     pub refilled_jobs: u64,
     pub tail_cycle_share_jobs: u64,
@@ -307,6 +308,7 @@ impl CellStreamStats {
         self.projection_reclaim_us = self.projection_reclaim_us
             .saturating_add(other.projection_reclaim_us);
         self.projection_barriers = self.projection_barriers.saturating_add(other.projection_barriers);
+        self.projection_restarts = self.projection_restarts.saturating_add(other.projection_restarts);
         self.first_submit_us = self.first_submit_us.saturating_add(other.first_submit_us);
         self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
         self.tail_cycle_share_jobs = self
@@ -5572,6 +5574,62 @@ mod pipeline_store_tests {
                 stats.projected_transactions,
                 if cfg!(feature = "native-incremental-cell-projection") { 2 } else { 4 },
             );
+
+            #[cfg(feature = "native-resume-rolling-proposal")]
+            {
+                let child = signed(&OutPoint::new(first.id(&spec.network), 0))?;
+                let run = [first.clone(), child, second.clone(), third.clone()];
+                let serial = store.prepare(&run, 1001, false)?;
+                let block = BlockContext::after(
+                    &spec.network, store.tip(), 1001,
+                    Tree::transactions(spec.network.clone(), &run)?.root(), spec.capacity,
+                )?;
+                let origin = Origin::new(&spec.network, block.candidate());
+                for force_second in [false, true] {
+                    let mut stats = CellStreamStats::default();
+                    let mut receipts = Vec::new();
+                    let mut overlay = store.overlay(None);
+                    let result = workers.install(|| {
+                        store.drive_cell_run(
+                            &run, &block, &origin, 2, &mut Budget::new(spec.limits),
+                            &mut overlay, &mut stats, true,
+                            #[cfg(feature = "native-shared-cell-deps")]
+                            &mut None,
+                            |tx, trial, budget, overlay, _| {
+                                // Use exact ordered staging without marking the
+                                // declaration as certified for these positions.
+                                let forced = receipts.len() < 1 + usize::from(force_second);
+                                if !forced
+                                    && let ProposalTrial::Ready(work) = trial
+                                    && let Some(receipt) = work.adopt(budget, overlay)
+                                {
+                                    receipts.push(receipt);
+                                    return Ok(ProposalStep::Reused);
+                                }
+                                receipts.push(store.stage(
+                                    tx, &block, &origin, budget, overlay, None,
+                                    |resolved, limit| store.cache.verify(resolved, limit, false),
+                                )?);
+                                Ok(ProposalStep::Ordered)
+                            },
+                        )
+                    })?;
+                    assert_eq!(result, (run.len(), false));
+                    assert_eq!(stats.projection_restarts, 1);
+                    assert_eq!(stats.projection_barriers, 1 + u64::from(force_second));
+                    assert!(stats.discarded_jobs > 0);
+                    if !force_second {
+                        assert_eq!(stats.reused, (run.len() - 1) as u64);
+                    }
+                    let fees = receipts.iter().map(|receipt| receipt.fee).sum();
+                    let prepared = store.finish_block(
+                        block.candidate().clone(), overlay, &run, receipts, 0, fees, false,
+                    )?;
+                    assert_eq!(prepared.header(), serial.header());
+                    assert_eq!(prepared.receipts(), serial.receipts());
+                    assert_same_batch_writes(&prepared.batch, &serial.batch);
+                }
+            }
 
             #[cfg(feature = "native-reclaim-cell-projection")]
             {

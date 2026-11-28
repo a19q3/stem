@@ -470,3 +470,34 @@ The Follower fixture crosses the speculative byte limit and checks
 positive parent reuse during ordered retry. Both compare Header,
 receipts and durable batches with serial execution. Runtime tests,
 independent replay and performance results are pending.
+
+### Resuming Leader work after a projection barrier
+
+`native-resume-rolling-proposal` lets the rolling Leader restart its
+workers after a successful ordered transaction whose effects could not
+certify the original declaration. At the barrier, it cancels and discards
+unsettled jobs. The old Rayon scope joins and merges the actual accepted
+Cell changes into the candidate overlay. A fresh scope takes that overlay
+as its immutable prefix and projects the remaining transactions in their
+original order. Its completion ring and source positions belong to that
+scope. Resource budgets and the ordered selection state pass through the
+restart.
+
+A rolling run can restart once, with at least two remaining transactions
+and enough cycle budget for two rolling slots. A second barrier completes
+the suffix through ordered staging. The Follower uses the existing
+preparation flow. Published writes, final receipts, transaction ordering,
+and the deterministic resource charge remain governed by ordered
+settlement.
+
+Compare `projection-reclaim` and `projection-resume` with the same
+leader pipeline, worker affinity, budgets, mempool order and signed
+corpus. Include a mostly independent suffix after an uncertified
+ordered effect, a same-block child of that effect, repeated barriers,
+and a small or budget-limited suffix. Measure `projection_barriers`,
+`projection_restarts`, `discarded_jobs`, subsequent adoption, Leader
+preparation and finality. Joining stale jobs can delay a restart, and
+rebuilding a short or conflict-heavy suffix can cost more than ordered
+execution. The compile-checked fixture forces one and two barriers and
+compares the complete Header, receipts and durable writes to serial
+execution. Runtime, replay and performance results are pending.
