@@ -4213,6 +4213,35 @@ mod pipeline_store_tests {
                 stats.projected_transactions,
                 if cfg!(feature = "native-incremental-cell-projection") { 2 } else { 4 },
             );
+
+            #[cfg(feature = "native-reclaim-cell-projection")]
+            {
+                // Force the next submit to follow a fold at which the last
+                // settled job had no successor and no published declaration.
+                let mut budget = Budget::new(spec.limits);
+                budget.cycles = 2 * spec.limits.transaction_cycles;
+                let mut stats = CellStreamStats::default();
+                let mut steps = 0;
+                let outcome = workers.install(|| {
+                    store.drive_cell_run(
+                        &run, &block, &origin, 2, &mut budget,
+                        &mut store.overlay(None), &mut stats, true,
+                        #[cfg(feature = "native-shared-cell-deps")]
+                        &mut None,
+                        |_, _, budget, _, _| {
+                            if steps == 0 {
+                                budget.cycles -= 1;
+                            }
+                            steps += 1;
+                            Ok(ProposalStep::Skipped)
+                        },
+                    )
+                })?;
+                assert_eq!(outcome, (4, false));
+                assert_eq!(stats.jobs, 4);
+                assert_eq!(stats.projected_transactions, 2);
+                assert_eq!(stats.retired_projection_edits, 2);
+            }
         }
         #[cfg(all(
             feature = "native-reclaim-cell-projection",

@@ -297,6 +297,8 @@ impl Store {
         #[cfg(feature = "native-incremental-cell-projection")]
         let mut projected_prefix = 0;
         #[cfg(feature = "native-incremental-cell-projection")]
+        let mut projected_transactions = 0;
+        #[cfg(feature = "native-incremental-cell-projection")]
         let mut projection_elapsed = Duration::ZERO;
         #[cfg(feature = "native-incremental-cell-projection")]
         let mut declarations = Vec::new();
@@ -366,6 +368,7 @@ impl Store {
                                     stats.peak_projection_edits.max(rows.len() as u64);
                             }
                             projection_elapsed += projecting.elapsed();
+                            projected_transactions += position - projected_prefix;
                             projected_prefix = position;
                         }
                         let tx = &transactions[position];
@@ -490,6 +493,9 @@ impl Store {
                         let retired = writes.write().expect("Cell projection").advance(prefix, delta);
                         stats.retired_projection_edits += retired as u64;
                         retired_prefix = prefix;
+                        // The most recent settled job may not have needed
+                        // its declaration published before the fold.
+                        projected_prefix = projected_prefix.max(retired_prefix);
                         reclaim_elapsed += clearing.elapsed();
                     }
                 }
@@ -504,7 +510,7 @@ impl Store {
         #[cfg(feature = "native-shared-cell-deps")]
         drop(canonical);
         #[cfg(feature = "native-incremental-cell-projection")]
-        stats.record_projection(projected_prefix, projection_elapsed);
+        stats.record_projection(projected_transactions, projection_elapsed);
         #[cfg(feature = "native-reclaim-cell-projection")]
         {
             let state = writes.into_inner().expect("Cell projection");
