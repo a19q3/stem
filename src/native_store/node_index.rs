@@ -24,6 +24,11 @@ use super::{
     node_storage::{self, CanonicalNode, NodeRead},
 };
 
+#[cfg(feature = "native-hot-cell-node-cache")]
+mod hot;
+#[cfg(feature = "native-hot-cell-node-cache")]
+pub use hot::HotCellNodeStatus;
+
 const SHARDS: usize = 64;
 #[cfg(feature = "native-verified-cell-nodes")]
 type Rows = VerifiedNodes;
@@ -44,6 +49,9 @@ pub struct CellNodeIndexStatus {
     pub recovery_us: u64,
     pub hits: u64,
     pub misses: u64,
+    #[cfg(feature = "native-hot-cell-node-cache")]
+    #[serde(default)]
+    pub hot_cache: Option<HotCellNodeStatus>,
 }
 
 struct Shard {
@@ -100,6 +108,8 @@ pub(super) struct NodeIndex {
     nodes: AtomicUsize,
     limit_bytes: usize,
     recovery_us: u64,
+    #[cfg(feature = "native-hot-cell-node-cache")]
+    hot: std::sync::OnceLock<hot::HotNodes>,
 }
 
 fn slot(id: &Key) -> usize {
@@ -129,6 +139,8 @@ impl NodeIndex {
             nodes: AtomicUsize::new(0),
             limit_bytes,
             recovery_us: 0,
+            #[cfg(feature = "native-hot-cell-node-cache")]
+            hot: std::sync::OnceLock::new(),
         };
         let snapshot = store.db.snapshot();
         let tip = snapshot.get(TIP)?.context("missing committed Stem tip")?;
@@ -142,16 +154,26 @@ impl NodeIndex {
         let mut cursor = snapshot.get_raw_iter(&options);
         cursor.seek(prefix);
         let mut counts = [0usize; SHARDS];
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        let mut candidates = 0usize;
         while let Some(key) = cursor.key().filter(|key| key.starts_with(&prefix)) {
             counts[slot(&id_from_key(key)?)] += 1;
+            #[cfg(feature = "native-hot-cell-node-cache")]
+            {
+                candidates += 1;
+                if candidates > limit_bytes / ENTRY_BYTES {
+                    // A complete index cannot fit even without hash-table overhead.
+                    index.use_database_reads(store, started);
+                    return Ok(index);
+                }
+            }
             cursor.next();
         }
         for (shard, count) in index.shards.iter().zip(counts) {
             let mut rows = shard.rows.write().expect("Cell node shard");
             if !index.reserve(&mut rows, count) {
                 drop(rows);
-                index.retire();
-                index.recovery_us = started.elapsed().as_micros() as u64;
+                index.use_database_reads(store, started);
                 return Ok(index);
             }
         }
@@ -196,6 +218,13 @@ impl NodeIndex {
         index.nodes.store(loaded, Ordering::Relaxed);
         index.recovery_us = started.elapsed().as_micros() as u64;
         Ok(index)
+    }
+
+    fn use_database_reads(&mut self, _store: &Store, started: Instant) {
+        self.retire();
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        self.start_hot(&_store.cells, _store.cell_node_header);
+        self.recovery_us = started.elapsed().as_micros() as u64;
     }
 
     fn reserve(&self, rows: &mut Rows, count: usize) -> bool {
@@ -367,7 +396,36 @@ impl NodeIndex {
         true
     }
 
+    #[cfg(feature = "native-hot-cell-node-cache")]
+    fn start_hot(&self, tree: &Patricia, header: Key) -> &hot::HotNodes {
+        self.hot.get_or_init(|| hot::HotNodes::new(tree.clone(), self.limit_bytes, header))
+    }
+
+    #[cfg(feature = "native-hot-cell-node-cache")]
+    pub(super) fn advance_hot(&self, tree: &Patricia, batch: &Batch, parent: Key, next: Key) {
+        if !self.active.load(Ordering::Acquire) {
+            self.start_hot(tree, parent).advance(batch, parent, next);
+        }
+    }
+
+    #[cfg(feature = "native-hot-cell-node-cache")]
+    pub(super) fn lookup_hot(&self, header: &Key, id: &Key) -> Option<NodeRead> {
+        self.hot.get()?.lookup(header, id)
+    }
+
+    #[cfg(feature = "native-hot-cell-node-cache")]
+    pub(super) fn remember_stored(&self, header: &Key, id: &Key, stored: &[u8]) -> Result<NodeRead> {
+        match self.hot.get() {
+            Some(hot) => hot.remember(header, id, stored),
+            None => node_storage::read(stored),
+        }
+    }
+
     pub(super) fn retire(&self) -> usize {
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        if let Some(hot) = self.hot.get() {
+            hot.retire();
+        }
         self.active.store(false, Ordering::Release);
         for shard in &self.shards {
             let mut rows = shard.rows.write().expect("Cell node shard");
@@ -409,6 +467,8 @@ impl NodeIndex {
                 .iter()
                 .map(|shard| shard.misses.load(Ordering::Relaxed))
                 .sum(),
+            #[cfg(feature = "native-hot-cell-node-cache")]
+            hot_cache: self.hot.get().map(hot::HotNodes::status),
         }
     }
 }

@@ -56,17 +56,25 @@ mod verified {
     #[cfg(not(feature = "compact-verified-journal"))]
     type JournalRows = BTreeMap<Key, Option<Node>>;
 
+    #[derive(Clone)]
     enum Source<Raw> {
         Raw(Raw),
         Verified { domain: Key, id: Key, node: Node },
     }
 
     /// A node read that can fall back to canonical bytes from an unchecked source.
+    #[derive(Clone)]
     pub struct NodeRead<Raw>(Source<Raw>);
 
     impl<Raw> NodeRead<Raw> {
         pub fn raw(bytes: Raw) -> Self {
             Self(Source::Raw(bytes))
+        }
+
+        /// Authenticate canonical bytes before constructing a reusable decoded read.
+        pub fn authenticate(tree: &Patricia, id: Key, bytes: &[u8]) -> Result<Self> {
+            let (node, _) = checked_node(&bytes, tree, &id)?;
+            Ok(Self(Source::Verified { domain: tree.empty_root(), id, node }))
         }
     }
 

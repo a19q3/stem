@@ -207,6 +207,40 @@ exact proof bytes and fallback to an older pinned snapshot. This
 candidate has build evidence. Runtime correctness and the net change
 in traversal, publication and proof costs remain to be measured.
 
+## Demand-filled fallback after a residency limit
+
+With `native-hot-cell-node-cache`, a Store configured with
+`--cell-node-index-mib` starts a bounded read-through cache if the
+complete Cell node index cannot be retained. Recovery stops counting
+once the number of records alone exceeds the budget, before any full
+table is allocated. The fallback starts cold. Each RocksDB node
+admitted to the cache is verified against its content ID and tree
+domain, and reads still honor the candidate branch before consulting
+the cache. The System tree uses its existing reader.
+
+Each cache shard is allocated on demand and has a fixed number of
+slots, limited by its share of the configured budget and by 2,048
+slots. An allocation failure leaves that shard on disk reads. A
+collision replaces the old slot. There is no second resident index.
+After a durable commit, the cache removes node deletions and carries
+other rows into the new Header view. The Header match is checked
+under the shard lock on lookup and fill. A lagging worker uses its
+own RocksDB snapshot and cannot publish rows into the new view.
+Snapshot restoration retires the old cache.
+
+Compare builds with `native-verified-cell-nodes` in both arms and
+the fallback feature in one arm. Keep the RocksDB block cache and the
+Cell node budget fixed. Use a tree that exceeds the full index budget,
+repeated proofs or overlapping candidate blocks, and sustained churn
+that displaces entries. Record preparation and proof time, CPU,
+hot-cache hits and misses, node counts and accounted bytes, precise
+batch equality and reopened proofs. `cell_node_index.hot_cache`
+reports the fallback separately from full residency. A direct-mapped
+cache trades predictable memory for collisions, and invalidation adds
+work to durable-tip installation. An earlier recovery cutoff shows
+that full caching is infeasible. It provides no full-database recovery
+audit. Runtime, replay and performance evidence are pending.
+
 ## Generated Cell node journals
 
 The `native-verified-cell-journal` candidate carries immutable Cell nodes
