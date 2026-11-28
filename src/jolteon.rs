@@ -41,6 +41,7 @@ mod peer_discovery;
 mod proposal_pipeline;
 mod recovery;
 mod relay_attribution;
+mod relay_worker;
 pub mod snapshot;
 mod transport;
 mod wire;
@@ -55,6 +56,7 @@ pub use client::{
     ExecutionMetrics, FrameReuseMetrics, LatencyHistogram, QueryResult, Status, SubmissionProgress,
 };
 pub use relay_attribution::Metrics as RelayAttributionMetrics;
+pub use relay_worker::Metrics as RelayWorkerMetrics;
 
 const STATE: &[u8] = b"state";
 const BODY: &[u8] = b"body";
@@ -99,6 +101,9 @@ pub struct Config {
     /// Track first and repeated local relay admissions for a controlled workload.
     #[serde(default)]
     pub measure_relay_admission: bool,
+    /// Run local relay validation on a bounded background worker.
+    #[serde(default)]
+    pub relay_admission_worker: bool,
 }
 
 #[derive(Deserialize)]
@@ -243,6 +248,7 @@ struct Replica {
     mempool_max_bytes: usize,
     admission: AdmissionMetrics,
     relay_attribution: Option<relay_attribution::Attribution>,
+    relay_worker: Option<relay_worker::Worker>,
     #[cfg(feature = "jolteon-admission-pipeline")]
     pipeline: admission_pipeline::Pipeline,
     execution: ExecutionMetrics,
@@ -454,6 +460,12 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 Network::listen(directory.own, &addresses, committee.epoch(), auth).await?;
             #[cfg(feature = "jolteon-admission-pipeline")]
             let (pipeline, mut admission_done) = admission_pipeline::Pipeline::start()?;
+            let (relay_worker, mut relay_done) = if config.relay_admission_worker {
+                let (worker, results) = relay_worker::Worker::start()?;
+                (Some(worker), Some(results))
+            } else {
+                (None, None)
+            };
             let workers = Arc::new(rayon::ThreadPoolBuilder::new()
                 .num_threads(config.vm_workers)
                 .thread_name(|index| format!("stem-exec-{index}"))
@@ -515,6 +527,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 mempool_max_bytes,
                 admission: AdmissionMetrics::default(),
                 relay_attribution: config.measure_relay_admission.then(Default::default),
+                relay_worker,
                 #[cfg(feature = "jolteon-admission-pipeline")]
                 pipeline,
                 execution: ExecutionMetrics::default(),
@@ -531,6 +544,12 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
             let mut admission_done = std::future::pending::<Option<()>>();
             loop {
                 tokio::select! {
+                    result = async {
+                        match &mut relay_done {
+                            Some(done) => done.recv().await,
+                            None => std::future::pending().await,
+                        }
+                    } => replica.complete_relay(result.context("relay worker stopped")?)?,
                     result = async {
                         #[cfg(feature = "jolteon-admission-pipeline")]
                         { admission_done.recv().await }
@@ -1809,7 +1828,23 @@ impl Replica {
             self.observe_admission(id, client, Outcome::Capacity);
             return Err(error);
         }
-        let tx = self.check_admission(raw, id, client)?;
+        if !client && self.relay_worker.as_mut().is_some_and(|worker| worker.coalesce(&id)) {
+            self.observe_admission(id, false, Outcome::PendingDuplicate);
+            return Ok(id);
+        }
+        let tx = self.decode_admission(raw, id, client)?;
+        let tx = if !client && let Some(worker) = &mut self.relay_worker {
+            match worker.schedule(&self.store, self.committee.epoch(), id, tx)? {
+                relay_worker::Schedule::Inline(tx) => tx,
+                relay_worker::Schedule::Queued => {
+                    self.observe_admission(id, false, Outcome::Queued);
+                    return Ok(id);
+                }
+            }
+        } else {
+            tx
+        };
+        self.validate_admission(&tx, client, Some(id))?;
         self.mempool.insert(id, tx)?;
         Ok(id)
     }
@@ -1831,32 +1866,30 @@ impl Replica {
         Ok(())
     }
 
-    fn check_admission(&mut self, raw: &Bytes, id: Hash32, client: bool) -> Result<Transaction> {
-        use relay_attribution::Outcome;
+    fn decode_admission(&mut self, raw: &Bytes, id: Hash32, client: bool) -> Result<Transaction> {
+        Transaction::from_bytes(raw.clone()).inspect_err(|_| {
+            self.observe_admission(id, client, relay_attribution::Outcome::DecodeError);
+        })
+    }
 
-        let tx = match Transaction::from_bytes(raw.clone()) {
-            Ok(tx) => tx,
-            Err(error) => {
-                self.observe_admission(id, client, Outcome::DecodeError);
-                return Err(error);
-            }
-        };
+    fn validate_admission(&mut self, tx: &Transaction, client: bool, frame: Option<Hash32>) -> Result<()> {
         let height = self.store.tip().context.height;
         let started = Instant::now();
-        let checked = self.store.check(&tx);
+        let checked = self.store.check(tx);
         let elapsed_us = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
         self.record_admission_check(client, elapsed_us);
-        self.observe_admission(
-            id,
-            client,
-            Outcome::Checked {
-                height,
-                elapsed_us,
-                passed: checked.is_ok(),
-            },
-        );
-        checked?;
-        Ok(tx)
+        if let Some(id) = frame {
+            self.observe_admission(
+                id,
+                client,
+                relay_attribution::Outcome::Checked {
+                    height,
+                    elapsed_us,
+                    passed: checked.is_ok(),
+                },
+            );
+        }
+        checked.map(|_| ())
     }
 
     fn observe_admission(&mut self, id: Hash32, client: bool, outcome: relay_attribution::Outcome) {
@@ -1915,6 +1948,7 @@ impl Replica {
                     "mempool_max_bytes": self.mempool_max_bytes,
                     "admission": self.admission,
                     "relay_attribution": self.relay_attribution.as_ref().map(|m| m.metrics()),
+                    "relay_worker": self.relay_worker.as_ref().map(|worker| worker.status()),
                     "execution": self.execution,
                     "verification_cache": self.store.verification_cache_stats(),
                     "live_cell_index": self.store.live_cell_index_status(),

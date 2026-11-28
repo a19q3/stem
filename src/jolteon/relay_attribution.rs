@@ -20,6 +20,10 @@ pub struct RelayMetrics {
     pub pool_hits: u64,
     pub capacity_rejections: u64,
     pub decode_errors: u64,
+    #[serde(default)]
+    pub queued: u64,
+    #[serde(default)]
+    pub pending_duplicates: u64,
     pub after_finality: u64,
     pub after_finality_checks: u64,
     pub first_check: CheckMetrics,
@@ -46,6 +50,8 @@ pub(super) enum Outcome {
     PoolHit,
     Capacity,
     DecodeError,
+    Queued,
+    PendingDuplicate,
     Checked {
         height: u64,
         elapsed_us: u64,
@@ -97,6 +103,10 @@ impl Attribution {
                 metrics.capacity_rejections = metrics.capacity_rejections.saturating_add(1)
             }
             Outcome::DecodeError => metrics.decode_errors = metrics.decode_errors.saturating_add(1),
+            Outcome::Queued => metrics.queued = metrics.queued.saturating_add(1),
+            Outcome::PendingDuplicate => {
+                metrics.pending_duplicates = metrics.pending_duplicates.saturating_add(1)
+            }
             Outcome::Checked {
                 height,
                 elapsed_us,
