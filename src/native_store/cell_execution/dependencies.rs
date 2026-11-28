@@ -9,7 +9,6 @@ use std::{
 };
 
 use ckb_types::{core::DepType, packed::OutPoint};
-#[cfg(not(feature = "native-batched-cell-prefetch"))]
 use rayon::prelude::*;
 use stem_ledger::{LiveCell, Transaction};
 
@@ -176,26 +175,6 @@ impl DependencyReads {
         (hints, stats)
     }
 
-    #[cfg(feature = "native-batched-cell-prefetch")]
-    fn load(store: &Store, points: &[&OutPoint], previous: Option<&HintSet>) -> HintCells {
-        let Some(previous) = previous else {
-            return store.prefetch_cells_batched(points.iter().copied(), MAX_RECORD_BYTES);
-        };
-        let mut cached = HintCells::new();
-        let mut missing = Vec::new();
-        for &point in points {
-            match previous.cells.get(point) {
-                Some(row) => {
-                    cached.insert(point.clone(), row.clone());
-                }
-                None => missing.push(point),
-            }
-        }
-        cached.extend(store.prefetch_cells_batched(missing, MAX_RECORD_BYTES));
-        cached
-    }
-
-    #[cfg(not(feature = "native-batched-cell-prefetch"))]
     fn load(store: &Store, points: &[&OutPoint], previous: Option<&HintSet>) -> HintCells {
         let load = |&point: &&OutPoint| {
             previous

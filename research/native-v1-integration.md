@@ -2,6 +2,11 @@
 
 The retired experimental outputs remain in their original reports. This branch starts from the deployed-path source at `2b534a6` and puts the reversible changes on the same tree for one-factor comparisons. Its default configuration retains the existing execution and routing choices. The new runtime options and feature flags select individual candidates.
 
+The `native-v1-profile` feature selects the exact Native bundle used
+in the [frozen comparison](storage/frozen-native-jmt/README.md). Build it
+with `cargo build --locked --release --features native-v1-profile --bin stem`.
+The default feature list continues to select the baseline configuration.
+
 | Candidate | Source | Comparison |
 | --- | --- | --- |
 | Cell execution and material sharing | `1a50505` | Fixed-window or rolling Follower, parallel Leader, and immutable transaction material [Execution notes](scheduling/README.md) |
@@ -27,7 +32,6 @@ The retired experimental outputs remain in their original reports. This branch s
 | Lazy Cell digests | `native-lazy-cell-digests` | Compute only requested digests and share them across detached inline Cells [Resolver notes](follower-preparation/README.md#computing-cell-digests-independently) |
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
 | Rolling dependency hints | `native-rolling-dependency-hints` | Refresh parent lookup plans when the dependency mix changes [Resolver notes](follower-preparation/README.md#refreshing-dependency-hints-during-rolling-preparation) |
-| Batched Cell prefetch | `native-batched-cell-prefetch` | Use pinned MultiGet for bounded exact-view Cell prefetch [Resolver notes](follower-preparation/README.md#batched-rocksdb-reads-for-cell-prefetch) |
 | Sliced Dep Group members | `native-shared-dep-group-members` | Share verified member bytes through the consensus resolver and hint planner [Resolver notes](follower-preparation/README.md#slicing-verified-dep-group-members) |
 | Header dependency memo | `native-header-dep-memo` | Reuse decoded Headers within an exact Store view [Resolver notes](follower-preparation/README.md#reusing-decoded-header-dependencies-within-a-state-view) |
 | Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
@@ -82,7 +86,6 @@ export CXXFLAGS='-include cstdint'
 cells=native-rolling-cell-execution,native-leader-dependency-execution,native-execution-material-cache
 dependencies=native-shared-cell-deps
 rolling_dependency_hints=native-rolling-dependency-hints
-batched_prefetch=native-batched-cell-prefetch
 inline_live_cache_keys=native-inline-live-cache-keys
 dep_group_members=native-shared-dep-group-members
 header_dep_memo=native-header-dep-memo
@@ -155,8 +158,6 @@ build cell-execution --features "$cells"
 build shared-dependencies --features "$cells,$dependencies"
 build rolling-dependency-hints-control --features "$cells,$rolling_leader,$dependencies"
 build rolling-dependency-hints --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints"
-build batched-prefetch-control --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints"
-build batched-prefetch --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints,$batched_prefetch"
 build dep-members-control --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints,$inline_live_cache_keys"
 build dep-members-sliced --features "$cells,$rolling_leader,$dependencies,$rolling_dependency_hints,$inline_live_cache_keys,$dep_group_members"
 build header-dep-control --features "$cells,$rolling_leader,$pinned_rolling"

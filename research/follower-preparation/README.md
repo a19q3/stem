@@ -289,39 +289,24 @@ sets. The static allocation difference in the ordinary case does not
 measure block or network performance. Regression targets were compiled.
 Runtime checks, replay and performance measurements remain pending.
 
-## Batched RocksDB reads for Cell prefetch
+## Retired pinned MultiGet Cell prefetch
 
-`native-batched-cell-prefetch` uses pinned RocksDB MultiGet for cold
-lookups in ordinary Follower prefetch and the shared Cell Dep hints used
-by Leader and Follower. The store opens its existing default column
-family with the same RocksDB options and exposes its handle to MultiGet.
-The prefetcher checks the speculative branch, resident index and local
-cache before sending remaining keys to RocksDB. It groups four to
-sixteen misses in one call and uses pinned point reads for smaller
-groups. A successful absence is retained for that exact view. Large
-rows and read or decode errors fall back to the original resolver.
-The input and dependency read limits are still charged by canonical
-execution. Earlier accepted and projected writes retain precedence.
+The pinned MultiGet trial used four to sixteen RocksDB misses per call
+and the same existing branch and resident cache precedence. The older
+one-call `multi_get_opt` trial had already regressed cold and partially
+cached preparation. The pinned variant was tested separately on a
+warmed, disk-backed 65,536-Cell image with two workers and a 256 MiB
+RocksDB cache. Each timed round ran 2,048 windows with deterministic
+present and absent keys. The two readers returned the same sampled
+canonical records. In two A/B/B/A pairs, median batched wall time
+increased by 6.2%, 30.5% and 65.7% at widths 4, 16 and 64 respectively.
 
-The earlier fixed-block comparison above found that one coordinator
-`multi_get_opt` over the same window regressed both cold and partially
-cached wall time. Keep parallel point reads as the baseline. This arm
-uses bounded pinned batches and also targets shared Dep Group hints.
-That difference needs its own matched measurement before adoption.
-
-Compare the `batched-prefetch-control` and `batched-prefetch` builds on
-the same payment and mixed-contract corpora, exact parent snapshots,
-RocksDB cache, resident index settings and worker budget. Separately
-inspect the base Follower window and rolling runs with changing shared
-dependencies. Measure RocksDB read calls and bytes, prefetch wall and
-CPU time, cache hit rate, peak RSS, full preparation and finality. The
-candidate reduces calls across the storage interface but can lose
-parallel point-read overlap. It provides little opportunity when the
-resident index answers nearly every lookup. The regression fixture
-covers cold point reads, absence, an oversized record, speculative
-creation and spending, and an old snapshot after a durable commit.
-Compilation passed. Runtime regressions, replay and performance
-measurements remain pending.
+The production path continues to use parallel pinned point reads.
+With a resident index, the normal Follower input prefetch is bypassed
+and the batch path has little opportunity to reduce database reads.
+The candidate and its separate column-family opening path were removed.
+The full timings are preserved in the
+[frozen comparison](../storage/frozen-native-jmt/README.md#retired-prefetch-candidate).
 
 ## Slicing verified Dep Group members
 

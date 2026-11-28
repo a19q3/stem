@@ -1196,13 +1196,6 @@ impl Store {
         if measured {
             options.enable_statistics();
         }
-        #[cfg(feature = "native-batched-cell-prefetch")]
-        let db = DB::open_cf_descriptors(
-            &options,
-            path,
-            [ckb_db::internal::ColumnFamilyDescriptor::new("default", options.clone())],
-        )?;
-        #[cfg(not(feature = "native-batched-cell-prefetch"))]
         let db = DB::open(&options, path)?;
         let marker = db.get(MARKER)?;
         if let Some(marker) = &marker {
@@ -2487,92 +2480,31 @@ impl Store {
         points.sort_unstable();
         points.dedup();
         points.retain(|point| !overlay.live.contains_key(point));
-        #[cfg(feature = "native-batched-cell-prefetch")]
-        {
-            overlay.prefetched_cells = self.prefetch_cells_batched(&points, 16 * 1024);
-        }
-        #[cfg(not(feature = "native-batched-cell-prefetch"))]
-        {
-            let reads: Vec<_> = points
-                .into_par_iter()
-                .filter_map(|point| self.prefetch_cell(&point, 16 * 1024).map(|cell| (point, cell)))
-                .collect();
-            overlay.prefetched_cells.extend(reads);
-        }
+        let reads: Vec<_> = points
+            .into_par_iter()
+            .filter_map(|point| self.prefetch_cell(&point, 16 * 1024).map(|cell| (point, cell)))
+            .collect();
+        overlay.prefetched_cells.extend(reads);
     }
 
-    #[cfg(feature = "native-batched-cell-prefetch")]
-    fn prefetch_cells_batched<'a>(
-        &self,
-        points: impl IntoIterator<Item = &'a OutPoint>,
-        max_record_bytes: usize,
-    ) -> HashMap<OutPoint, Option<LiveCell>> {
-        // Check exact-view tombstones and cached rows before creating database keys.
-        let points = points.into_iter();
-        let mut cells = HashMap::with_capacity(points.size_hint().0);
-        let mut missing = Vec::new();
-        for point in points {
-            match self.live_cell_in_memory(point) {
-                Ok(None) => missing.push(point),
-                Ok(Some(row)) if Self::fits_prefetch(&row, max_record_bytes) => {
-                    cells.insert(point.clone(), row);
-                }
-                _ => {}
-            }
-        }
-        let cf = self.db.cf_handle("default").expect("native state column family");
-        // Limit the number of large database values pinned at once.
-        for batch in missing.chunks(16) {
-            if batch.len() < 4 {
-                cells.extend(batch.iter().filter_map(|&point| {
-                    self.prefetch_stored_cell(point, max_record_bytes)
-                        .map(|row| (point.clone(), row))
-                }));
-                continue;
-            }
-            let keys: Vec<_> = batch.iter().map(|point| self.live_cell_key(point)).collect();
-            let values = self.db.batched_multi_get_cf_opt(cf, &keys, false, &self.read_options);
-            cells.extend(batch.iter().zip(values).filter_map(|(&point, value)| {
-                Self::decode_prefetched_cell(point, value.ok()?.as_deref(), max_record_bytes)
-                    .map(|row| (point.clone(), row))
-            }));
-        }
-        cells
-    }
-
-    fn fits_prefetch(cell: &Option<LiveCell>, max_record_bytes: usize) -> bool {
-        cell.as_ref()
-            .is_none_or(|cell| LiveCache::record_bytes(cell) <= max_record_bytes)
-    }
-
-    #[cfg(not(feature = "native-batched-cell-prefetch"))]
     fn prefetch_cell(&self, point: &OutPoint, max_record_bytes: usize) -> Option<Option<LiveCell>> {
         // A failed resident read must reach the canonical resolver.
         if let Some(cell) = self.live_cell_in_memory(point).ok()? {
-            return Self::fits_prefetch(&cell, max_record_bytes).then_some(cell);
+            return cell
+                .as_ref()
+                .is_none_or(|cell| LiveCache::record_bytes(cell) <= max_record_bytes)
+                .then_some(cell);
         }
-        self.prefetch_stored_cell(point, max_record_bytes)
-    }
-
-    fn prefetch_stored_cell(&self, point: &OutPoint, max_record_bytes: usize) -> Option<Option<LiveCell>> {
         // Keep tentative records local to the candidate and skip oversized
         // values before decoding. An I/O error is retried in canonical order.
         let bytes = self
             .db
             .get_pinned_opt(self.live_cell_key(point), &self.read_options)
             .ok()?;
-        Self::decode_prefetched_cell(point, bytes.as_deref(), max_record_bytes)
-    }
-
-    fn decode_prefetched_cell(
-        point: &OutPoint,
-        bytes: Option<&[u8]>,
-        max_record_bytes: usize,
-    ) -> Option<Option<LiveCell>> {
         match bytes {
             None => Some(None),
             Some(bytes) if bytes.len() <= max_record_bytes => {
-                Self::decode_live_cell(point, bytes).ok().map(Some)
+                Self::decode_live_cell(point, &bytes).ok().map(Some)
             }
             Some(_) => None,
         }
@@ -4465,7 +4397,6 @@ fn append_journal_row(
         feature = "jolteon-proposal-pipeline",
         feature = "native-commitment-pipeline",
         feature = "native-cell-subtree-parallel",
-        feature = "native-batched-cell-prefetch",
         feature = "native-header-dep-memo",
         feature = "native-parallel-cell-record-hashes",
         feature = "native-compact-prepared-cell-delta"
@@ -4569,70 +4500,6 @@ mod pipeline_store_tests {
         assert!(restored.header_dep_memo.get().is_none());
         assert!(restored.resolve_header(&genesis_id, 2).is_err());
         assert_eq!(restored.resolve_header(&first_id, 3)?, *first.header());
-        Ok(())
-    }
-
-    #[cfg(feature = "native-batched-cell-prefetch")]
-    #[test]
-    fn batched_prefetch_preserves_pinned_rows_and_branch_tombstones() -> Result<()> {
-        let home = tempfile::tempdir()?;
-        let mut spec = spec();
-        let points = (0..20)
-            .map(|index| OutPoint::new([76; 32].pack(), index))
-            .collect::<Vec<_>>();
-        let cell = Cell::new(20_000_000_000, Default::default(), vec![], Default::default())?;
-        let large = Cell::new(
-            1_000_000_000_000,
-            Default::default(),
-            vec![],
-            bytes::Bytes::from(vec![0; 32 * 1024]),
-        )?;
-        spec.development_cells.extend([
-            (points[0].clone(), cell.clone()),
-            (points[1].clone(), large),
-            (points[2].clone(), cell.clone()),
-        ]);
-        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
-        let fetch = |view: &Store| view.prefetch_cells_batched(&points, 16 * 1024);
-        let before = fetch(&store);
-        assert!(matches!(before.get(&points[0]), Some(Some(_))));
-        assert!(matches!(before.get(&points[2]), Some(Some(_))));
-        assert!(!before.contains_key(&points[1]));
-        assert!(points[3..].iter().all(|point| matches!(before.get(point), Some(None))));
-
-        let context = HeaderContext::after(
-            &spec.network,
-            store.tip(),
-            1001,
-            Tree::transactions(spec.network.clone(), &[])?.root(),
-        )?;
-        let mut overlay = store.overlay(None);
-        overlay.live.insert(points[0].clone(), None);
-        overlay.live.insert(points[3].clone(), Some(LiveCell {
-            cell,
-            origin: Origin::new(&spec.network, &context),
-        }));
-        let next = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
-        let branch = store.on_branch(std::slice::from_ref(&next), |view| Ok(fetch(view)))?;
-        assert!(matches!(branch.get(&points[0]), Some(None)));
-        assert!(matches!(branch.get(&points[3]), Some(Some(_))));
-        assert!(!branch.contains_key(&points[1]));
-
-        let db = Arc::clone(&store.db);
-        let snapshot = db.snapshot();
-        let mut options = ReadOptions::default();
-        options.set_snapshot(&snapshot);
-        let mut pinned = store.read_view(&[]);
-        pinned.read_options = Arc::new(options);
-        store.commit_certified(&next, &[], &[])?;
-        let encode = |rows: HashMap<OutPoint, Option<LiveCell>>| {
-            rows.into_iter().map(|(point, row)| {
-                let bytes = row.as_ref().map(|row| record::encode_cell(&point, row));
-                (point, bytes)
-            }).collect::<HashMap<_, _>>()
-        };
-        assert_eq!(encode(fetch(&pinned)), encode(before));
-        assert_eq!(encode(fetch(&store)), encode(branch));
         Ok(())
     }
 
