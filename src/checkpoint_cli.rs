@@ -17,6 +17,7 @@ use stem_stake::{
 };
 
 mod fund;
+mod history;
 mod publisher;
 
 use crate::{
@@ -41,6 +42,8 @@ pub enum CheckpointCommand {
         #[command(subcommand)]
         command: fund::Command,
     },
+    /// Verify an archive history proof against independently trusted Jolteon finality.
+    VerifyHistory(history::VerifyHistory),
     /// Rebuild the archive index as needed and produce a historical Header proof.
     History {
         #[command(flatten)]
@@ -270,6 +273,7 @@ impl CheckpointCommand {
             Self::JolteonBundle(args) => args.run(),
             Self::Publish(args) => args.run(),
             Self::Fund { command } => command.run(),
+            Self::VerifyHistory(args) => args.run(),
             Self::History {
                 archive, header, strand_output,
             } => {

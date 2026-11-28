@@ -626,7 +626,35 @@ The certificate probe reports one weighted signer payload at 4, 16, 32, 64, 100 
 
 ### Portable Strand proofs and snapshots
 
-`stem checkpoint history` can write the same historical Header, MMR frontier and sibling hashes as a binary Strand file with `--strand-output history.strand`. The ordinary JSON response is also printed. Pass a file with the `.strand` suffix to the Intercell delivery command's `--history` option. Both inputs produce the deployed CKB witness format. A verifier must authenticate the expected history root separately.
+`stem checkpoint history` can write the same historical Header, MMR frontier and sibling hashes as a binary Strand file with `--strand-output history.strand`. The ordinary JSON response is also printed. Pass a file with the `.strand` suffix to the Intercell delivery command's `--history` option. Both inputs produce the deployed CKB witness format. The consumer must authenticate the expected history root.
+
+Use `stem checkpoint verify-history` to check a portable proof against the
+history root of an independently verified Jolteon checkpoint. Export the
+trust file from reviewed genesis through a trusted channel. An archive or
+indexer can provide the certificate and inclusion proof.
+
+```sh
+stem jolteon-trust --genesis trusted-genesis.json > trusted-network.json
+stem checkpoint verify-history --trust trusted-network.json \
+  --finality two-chain.json --history history.strand --height 1
+```
+
+The finality certificate file contains a JSON hex string. When the certificate
+belongs to a later committee, supply earlier handoff proofs in chronological
+order with repeated `--handoff`. Use `--terminal` if the certificate itself
+closes the epoch. The result returns the requested Header and the certified
+checkpoint's height and ID. Build the proof using the height in the
+authenticated certificate, which can be later than the height used for the
+original certificate request. These checks work without a node, archive
+database or proof index. Trust files obtained from the archive itself need
+independent validation.
+
+The localnet flag `--check-authenticated-history` reopens and advances the
+archive index, then independently rebuilds it. The four-validator restart
+fixture produced identical proofs after both operations and independently
+authenticated height 1 against the certificate at height 13. It rejected a
+wrong requested height, an altered inclusion node and a different trusted
+network. Transaction and receipt indexing require separate proof checks.
 
 `stem stake delegation-proof` accepts `--strand-output position.strand` for a single delegation principal or an absent position. Check it against the root from the authenticated Registry entry using `stem stake verify-delegation-proof --network NETWORK --root ROOT --proof position.strand`. The returned identity includes the registry, validator, owner and nonce. An authenticated zero principal proves absence at that root.
 

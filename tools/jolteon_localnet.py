@@ -414,6 +414,68 @@ def scenario(args):
                 child.wait()
 
 
+def check_authenticated_history(args, report):
+    output = args.output
+    trust = output / "history-trust.json"
+    write_json(trust, json.loads(run(args.binary, "jolteon-trust", "--genesis", output / "genesis.json")))
+    checkpoint = report["proof_verification"]
+    checkpoint_height = checkpoint["height"]
+    archive = output / f"node{report['archival_replica']}" / "db"
+    index = output / "history-index"
+    network = json.loads(trust.read_text())["network_id"]
+    proof = output / "history.strand"
+
+    def produce(path, height, destination):
+        return json.loads(run(
+            args.binary, "checkpoint", "history", "--archive-db", archive,
+            "--index", path, "--network", network, "--height", str(height),
+            "--header", "1", "--strand-output", destination,
+        ))
+
+    # Synchronize in a separate process, reopen and advance, then rebuild from scratch.
+    produce(index, checkpoint_height - 1, output / "history-early.strand")
+    indexed = produce(index, checkpoint_height, proof)
+    restart = produce(index, checkpoint_height, output / "history-reopen.strand")
+    rebuilt = produce(output / "history-rebuilt-index", checkpoint_height, output / "history-rebuilt.strand")
+    assert indexed == restart == rebuilt
+    assert proof.read_bytes() == (output / "history-reopen.strand").read_bytes()
+    assert proof.read_bytes() == (output / "history-rebuilt.strand").read_bytes()
+
+    def verify(height=1, path=proof, trust_path=trust, error=None):
+        command = [args.binary, "checkpoint", "verify-history", "--trust", trust_path,
+                   "--finality", output / "two-chain.json", "--history", path, "--height", str(height)]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        if error is not None:
+            assert result.returncode != 0 and error in result.stderr and not result.stdout, result
+            return result.stderr.strip()
+        result.check_returncode()
+        return json.loads(result.stdout)
+
+    verified = verify()
+    assert verified["height"] == 1 and verified["checkpoint_height"] == checkpoint_height, verified
+    assert verified["header"] == indexed["header"] and verified["id"] == indexed["id"], verified
+    assert verified["checkpoint_id"] == hex_bytes(ckb_hash(
+        b"Stem Header\0" + bytes.fromhex(network.removeprefix("0x")) + bytes.fromhex(checkpoint["header"])
+    )), verified
+
+    altered = output / "history-altered.strand"
+    raw = bytearray(proof.read_bytes())
+    raw[-1] ^= 1
+    altered.write_bytes(raw)
+    other = output / "history-wrong-trust.json"
+    wrong_trust = json.loads(trust.read_text())
+    wrong_trust["network_id"] = "0x" + "ab" * 32
+    write_json(other, wrong_trust)
+    write_json(output / "authenticated-history.json", {
+        "checkpoint_height": checkpoint_height,
+        "verified": verified,
+        "identical_after_reopen_and_rebuild": True,
+        "wrong_height": verify(2, error="height differs from the request"),
+        "altered_proof": verify(path=altered, error="differs from authenticated history"),
+        "wrong_trust": verify(trust_path=other, error="against trusted genesis"),
+    })
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ("binary", "lock", "output"):
@@ -428,6 +490,8 @@ def main():
     parser.add_argument("--history-window", type=int)
     parser.add_argument("--check-pruning", action="store_true")
     parser.add_argument("--check-readiness", action="store_true")
+    parser.add_argument("--check-authenticated-history", action="store_true",
+                        help="verify archive index resume, rebuild and portable proofs after replicas stop")
     parser.add_argument("--port", type=int, default=22000)
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)
@@ -450,6 +514,8 @@ def main():
         parser.error("relay retry requires at least two offline leaders")
     args.output.mkdir(mode=0o700, parents=True)
     result = scenario(args)
+    if args.check_authenticated_history:
+        check_authenticated_history(args, result)
     print(f"{result['validators']} validators finalized {result['payments']} payments "
           f"with {len(result['offline'])} offline, all agreed at height {result['agreement']['height']}")
 

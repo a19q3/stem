@@ -11,6 +11,7 @@ use stem_stake::{
 use crate::{
     block::Header,
     hash,
+    history::HistoricalHeaderProof,
     patricia::{Namespace, Patricia, Proof},
 };
 
@@ -107,6 +108,15 @@ impl VerifiedHeader {
 
     pub fn network(&self) -> &Byte32 {
         &self.network
+    }
+
+    /// Check inclusion of a specific older Header under this finalized Header.
+    pub fn verify_history(&self, height: u64, proof: &HistoricalHeaderProof) -> Result<()> {
+        ensure!(
+            proof.header.context.height == height && height < self.header.context.height,
+            "historical Header height differs from the request or is outside the checkpoint"
+        );
+        proof.verify(&self.network, &self.header.state.history_root.unpack())
     }
 
     pub fn same_trust_anchor(&self, other: &Self) -> bool {
