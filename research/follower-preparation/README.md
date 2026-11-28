@@ -170,6 +170,40 @@ consumed earlier in the same block or on the speculative parent,
 including Leader selection under a dependency conflict. Runtime
 regressions and performance measurements remain pending.
 
+### Refreshing dependency hints during rolling preparation
+
+The optional `native-rolling-dependency-hints` feature refreshes the
+candidate lookup plan as rolling workers reach a new band of up to 64
+ordinary transactions. It also resamples the start of a later rolling
+run. Matching plans keep the same immutable table. A changed plan
+carries over matching cached parent results and reads the additional
+points from the same pinned view. Workers already queued keep their
+original table, so a refresh needs no completion barrier. Both
+versions use the same ordered writes and speculative tombstones
+ahead of any parent hint. Ordered fallbacks retain the run's starting
+table and use the normal resolver for other lookups.
+
+The transaction band is wider than the maximum reorder window of 32.
+At most two rolling band tables can be referenced by the current
+workers. The ordered fallback may also hold the run's initial table.
+Each table retains up to 32 result records with the original per-record
+size bound. A resident read error now leaves no hint, allowing the
+canonical lookup to report it.
+
+Toggle this feature over the existing shared-dependency configuration
+with the same rolling Leader and Follower. `rolling_samples` counts
+plans checked after initialization, `rolling_rebuilds` counts changed
+tables, and `rolling_carried` counts reused results. In this arm the
+original planned, cached and byte counters sum across successfully
+built tables. They measure lookup preparation, while `hits` counts
+served lookups. Compare workloads with the same dependency set across
+the block and workloads that switch groups after the first band.
+Sampling on the coordinator and retaining two tables during a boundary
+can offset the benefits. The compile-checked fixture switches from
+direct Code deps to a repeated Dep Group and compares both rolling
+paths against serial execution. Runtime, replay and performance
+evidence are pending.
+
 ## Inline Cell resolution bookkeeping
 
 The ordinary resolver inserts consumed inputs and resolved Code OutPoints

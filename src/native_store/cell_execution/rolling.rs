@@ -19,6 +19,8 @@ use std::{
 use super::Context;
 #[cfg(feature = "native-rolling-leader-execution")]
 use super::ProposalWindow;
+#[cfg(feature = "native-rolling-dependency-hints")]
+use super::dependencies::{DependencyReads, SAMPLE_TRANSACTIONS};
 #[cfg(not(feature = "native-incremental-cell-projection"))]
 use super::project;
 use super::{
@@ -270,9 +272,15 @@ impl Store {
         let mut projection_elapsed = Duration::ZERO;
         #[cfg(feature = "native-incremental-cell-projection")]
         let mut declarations = Vec::new();
+        #[cfg(feature = "native-rolling-dependency-hints")]
+        let mut sampled_through = if dependency_reads.is_some() { 0 } else { SAMPLE_TRANSACTIONS };
         #[cfg(feature = "native-shared-cell-deps")]
         let shared = &*dependency_reads
             .get_or_insert_with(|| super::DependencyReads::collect(self, transactions));
+        #[cfg(feature = "native-rolling-dependency-hints")]
+        let mut hints = shared.snapshot();
+        #[cfg(feature = "native-rolling-dependency-hints")]
+        let mut hint_stats = super::DependencyReadStats::default();
         // Workers see an immutable prefix and declared edits in this run.
         // The coordinator applies accepted effects in a separate delta.
         let mut base = std::mem::take(&mut overlay.live);
@@ -337,6 +345,16 @@ impl Store {
                             slot
                         };
                         let position = submitted;
+                        #[cfg(feature = "native-rolling-dependency-hints")]
+                        if position >= sampled_through && count - position >= 2 {
+                            sampled_through = count.min(position + SAMPLE_TRANSACTIONS);
+                            DependencyReads::refresh(
+                                self,
+                                &transactions[position..sampled_through],
+                                &mut hints,
+                                &mut hint_stats,
+                            );
+                        }
                         #[cfg(feature = "native-incremental-cell-projection")]
                         if projected_prefix < position {
                             let projecting = Instant::now();
@@ -368,6 +386,8 @@ impl Store {
                         }
                         let send = sender.clone();
                         let parallel_groups = count - prefix < width;
+                        #[cfg(feature = "native-rolling-dependency-hints")]
+                        let hints = std::sync::Arc::clone(&hints);
                         scope.spawn_fifo(move |_| {
                             if cancelled.load(Ordering::Relaxed) {
                                 return;
@@ -387,8 +407,13 @@ impl Store {
                                     settled: None,
                                     #[cfg(feature = "native-reuse-ordered-cell-writes")]
                                     ordered_writes: None,
-                                    #[cfg(feature = "native-shared-cell-deps")]
+                                    #[cfg(all(
+                                        feature = "native-shared-cell-deps",
+                                        not(feature = "native-rolling-dependency-hints"),
+                                    ))]
                                     dependencies: shared.reader(),
+                                    #[cfg(feature = "native-rolling-dependency-hints")]
+                                    dependencies: shared.reader_from(&hints),
                                 };
                                 let effects = self.execute_cell_trial(
                                     tx,
@@ -523,6 +548,11 @@ impl Store {
         });
         #[cfg(feature = "native-shared-cell-deps")]
         drop(canonical);
+        #[cfg(feature = "native-rolling-dependency-hints")]
+        dependency_reads
+            .as_mut()
+            .expect("candidate dependency reads")
+            .set_snapshot(hints, hint_stats);
         #[cfg(feature = "native-incremental-cell-projection")]
         stats.record_projection(projected_transactions, projection_elapsed);
         #[cfg(feature = "native-reclaim-cell-projection")]
