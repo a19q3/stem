@@ -128,6 +128,7 @@ pub struct ProposalScan {
     pub priority_spent_in_parent: u64,
     pub priority_spent_in_proposal: u64,
     pub priority_cycle_rejections: u64,
+    pub keeper_wakes: KeeperWakeMetrics,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -141,6 +142,27 @@ pub struct LineageSchedule {
     pub lookahead_commands: u64,
     pub lookahead_reused: u64,
     pub lookahead_fallbacks: u64,
+    pub keeper_wakes: KeeperWakeMetrics,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct KeeperWakeMetrics {
+    pub access_us: u64,
+    pub materialize_us: u64,
+    pub jobs: u64,
+    pub reused: u64,
+    pub fallbacks: u64,
+}
+
+impl KeeperWakeMetrics {
+    fn record(&mut self, other: Self) {
+        self.access_us = self.access_us.saturating_add(other.access_us);
+        self.materialize_us = self.materialize_us.saturating_add(other.materialize_us);
+        self.jobs = self.jobs.saturating_add(other.jobs);
+        self.reused = self.reused.saturating_add(other.reused);
+        self.fallbacks = self.fallbacks.saturating_add(other.fallbacks);
+    }
 }
 
 impl LineageSchedule {
@@ -155,6 +177,7 @@ impl LineageSchedule {
         self.lookahead_commands = self.lookahead_commands.saturating_add(other.lookahead_commands);
         self.lookahead_reused = self.lookahead_reused.saturating_add(other.lookahead_reused);
         self.lookahead_fallbacks = self.lookahead_fallbacks.saturating_add(other.lookahead_fallbacks);
+        self.keeper_wakes.record(other.keeper_wakes);
     }
 }
 
@@ -180,6 +203,7 @@ impl ProposalScan {
         self.priority_spent_in_parent = self.priority_spent_in_parent.saturating_add(scan.priority_spent_in_parent);
         self.priority_spent_in_proposal = self.priority_spent_in_proposal.saturating_add(scan.priority_spent_in_proposal);
         self.priority_cycle_rejections = self.priority_cycle_rejections.saturating_add(scan.priority_cycle_rejections);
+        self.keeper_wakes.record(scan.keeper_wakes);
     }
 }
 
@@ -1592,7 +1616,8 @@ impl Store {
             self.capacity,
         )?;
         let origin = Origin::new(&self.network, block.candidate());
-        let mut receipts = self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay)?;
+        let (mut receipts, keeper_wakes) =
+            self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay, parallel)?;
         let mut fees = receipts
             .iter()
             .try_fold(0u64, |sum, receipt| sum.checked_add(receipt.fee))
@@ -1608,7 +1633,7 @@ impl Store {
         let prefetch_cells = cfg!(feature = "native-candidate-cell-prefetch")
             && width > 1
             && !self.live_index.as_ref().is_some_and(IndexView::resident);
-        let mut lineage_schedule = LineageSchedule::default();
+        let mut lineage_schedule = LineageSchedule { keeper_wakes, ..LineageSchedule::default() };
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
         for mut segment in transactions
@@ -2128,7 +2153,9 @@ impl Store {
         )?;
         let origin = Origin::new(&self.network, block.candidate());
         let due = self.due(block.candidate().height, &mut budget)?;
-        let mut receipts = self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay)?;
+        let (mut receipts, keeper_wakes) =
+            self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay, true)?;
+        scan.keeper_wakes = keeper_wakes;
         let mut reusable = due.commands.is_empty();
         let mut selected = Vec::new();
         let mut cycle_rejections = 0;
