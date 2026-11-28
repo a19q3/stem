@@ -11,7 +11,7 @@ use crate::{
 };
 
 use stem_stake::patricia::{
-    Commitment, MAX_NODES, MAX_PATH_BYTES, Node, canonical_prefix, decode_path, side,
+    Commitment, MAX_NODE_BYTES, MAX_NODES, MAX_PATH_BYTES, Node, canonical_prefix, decode_path, side,
 };
 pub use stem_stake::patricia::{Key, Namespace};
 
@@ -19,7 +19,7 @@ mod node_value;
 use node_value::checked_node;
 pub use node_value::NodeValue;
 #[cfg(feature = "verified-patricia-cache")]
-pub use node_value::{NodeRead, VerifiedNodes};
+pub use node_value::{GeneratedNode, NodeRead, VerifiedChanges, VerifiedNodes};
 
 #[derive(Clone, Debug)]
 pub struct Patricia {
@@ -123,6 +123,20 @@ impl Patricia {
         Read: FnMut(&Key) -> Result<Option<Value>>,
         Value: NodeValue,
     {
+        self.update_batch(root, read, changes, previous)
+    }
+
+    fn update_batch<Read, Value, Row: JournalRow>(
+        &self,
+        root: Key,
+        read: Read,
+        changes: &[(Key, Option<Key>)],
+        previous: impl FnMut(Key, Key, Option<Key>),
+    ) -> Result<(Key, BTreeMap<Key, Option<Row>>)>
+    where
+        Read: FnMut(&Key) -> Result<Option<Value>>,
+        Value: NodeValue,
+    {
         let mut nodes = Nodes {
             tree: self,
             read,
@@ -140,15 +154,30 @@ impl Patricia {
         root: Key,
         read: Read,
         changes: &[(Key, Option<Key>)],
-        mut previous: impl FnMut(Key, Key, Option<Key>),
+        previous: impl FnMut(Key, Key, Option<Key>),
     ) -> Result<(Key, BTreeMap<Key, Option<Vec<u8>>>)>
+    where
+        Read: Fn(&Key) -> Result<Option<Value>> + Sync,
+        Value: NodeValue,
+    {
+        self.update_batch_parallel(root, read, changes, previous)
+    }
+
+    #[cfg(feature = "parallel-patricia")]
+    fn update_batch_parallel<Read, Value, Row: JournalRow + Send>(
+        &self,
+        root: Key,
+        read: Read,
+        changes: &[(Key, Option<Key>)],
+        mut previous: impl FnMut(Key, Key, Option<Key>),
+    ) -> Result<(Key, BTreeMap<Key, Option<Row>>)>
     where
         Read: Fn(&Key) -> Result<Option<Value>> + Sync,
         Value: NodeValue,
     {
         let workers = rayon::current_num_threads();
         if workers < 2 || changes.len() < 2 * MIN_PARALLEL_CHANGES {
-            return self.batch_update(root, read, changes, previous);
+            return self.update_batch(root, read, changes, previous);
         }
         check_change_order(changes)?;
         let mut nodes = Nodes { tree: self, read: &read, writes: Vec::new() };
@@ -158,6 +187,35 @@ impl Patricia {
             previous(key, value, replacement);
         }
         Ok((next, nodes.writes.into_iter().collect()))
+    }
+
+    /// Retain the immutable nodes that were hashed in this edit for later reads and publication.
+    #[cfg(feature = "verified-patricia-cache")]
+    pub fn batch_update_verified<Read, Value>(
+        &self,
+        root: Key,
+        read: Read,
+        changes: &[(Key, Option<Key>)],
+        previous: impl FnMut(Key, Key, Option<Key>),
+        parallel: bool,
+    ) -> Result<(Key, VerifiedChanges)>
+    where
+        Read: Fn(&Key) -> Result<Option<Value>> + Sync,
+        Value: NodeValue,
+    {
+        #[cfg(feature = "parallel-patricia")]
+        let updated = if parallel {
+            self.update_batch_parallel(root, read, changes, previous)
+        } else {
+            self.update_batch(root, read, changes, previous)
+        };
+        #[cfg(not(feature = "parallel-patricia"))]
+        let updated = {
+            let _ = parallel;
+            self.update_batch(root, read, changes, previous)
+        };
+        let (next, rows) = updated?;
+        Ok((next, VerifiedChanges::from_update(self, rows)))
     }
 
     pub fn verify(&self, root: &Key, query: &Key, expected: Option<&Key>, proof: &Proof) -> bool {
@@ -215,7 +273,25 @@ trait NodeWrites {
     fn pending(&self, _: &Key) -> Option<&Option<Vec<u8>>> {
         None
     }
-    fn record(&mut self, id: Key, value: Option<Vec<u8>>);
+    fn record_insert(&mut self, id: Key, node: Node, bytes: &[u8]);
+    fn record_delete(&mut self, id: Key);
+}
+
+trait JournalRow {
+    fn new(node: Node, bytes: &[u8]) -> Self;
+}
+
+impl JournalRow for Vec<u8> {
+    fn new(_: Node, bytes: &[u8]) -> Self {
+        bytes.to_vec()
+    }
+}
+
+#[cfg(feature = "verified-patricia-cache")]
+impl JournalRow for Node {
+    fn new(node: Node, _: &[u8]) -> Self {
+        node
+    }
 }
 
 #[cfg(feature = "parallel-patricia")]
@@ -225,7 +301,7 @@ const MIN_PARALLEL_CHANGES: usize = 128;
 type PreviousValue = (Key, Key, Option<Key>);
 
 #[cfg(feature = "parallel-patricia")]
-impl<Read, Value> Nodes<'_, &Read, Vec<(Key, Option<Vec<u8>>)>>
+impl<Read, Value, Row: JournalRow + Send> Nodes<'_, &Read, Vec<(Key, Option<Row>)>>
 where
     Read: Fn(&Key) -> Result<Option<Value>> + Sync,
     Value: NodeValue,
@@ -281,14 +357,20 @@ impl NodeWrites for BTreeMap<Key, Option<Vec<u8>>> {
     fn pending(&self, id: &Key) -> Option<&Option<Vec<u8>>> {
         self.get(id)
     }
-    fn record(&mut self, id: Key, value: Option<Vec<u8>>) {
-        self.insert(id, value);
+    fn record_insert(&mut self, id: Key, _: Node, bytes: &[u8]) {
+        self.insert(id, Some(bytes.to_vec()));
+    }
+    fn record_delete(&mut self, id: Key) {
+        self.insert(id, None);
     }
 }
 
-impl NodeWrites for Vec<(Key, Option<Vec<u8>>)> {
-    fn record(&mut self, id: Key, value: Option<Vec<u8>>) {
-        self.push((id, value));
+impl<Row: JournalRow> NodeWrites for Vec<(Key, Option<Row>)> {
+    fn record_insert(&mut self, id: Key, node: Node, bytes: &[u8]) {
+        self.push((id, Some(Row::new(node, bytes))));
+    }
+    fn record_delete(&mut self, id: Key) {
+        self.push((id, None));
     }
 }
 
@@ -465,9 +547,10 @@ where
     }
 
     fn insert(&mut self, node: Node) -> Key {
-        let bytes = node.encode();
-        let id = self.tree.node_hash(&bytes);
-        self.writes.record(id, Some(bytes));
+        let mut buffer = [0; MAX_NODE_BYTES];
+        let bytes = node.encode_into(&mut buffer);
+        let id = self.tree.node_hash(bytes);
+        self.writes.record_insert(id, node, bytes);
         id
     }
 
@@ -498,7 +581,7 @@ where
         if updated == children {
             return id;
         }
-        self.writes.record(id, None);
+        self.writes.record_delete(id);
         self.branch(prefix, bits, updated)
     }
 
@@ -555,7 +638,7 @@ where
                 if Some(value) == changes[0].1 {
                     return Ok(id);
                 }
-                self.writes.record(id, None);
+                self.writes.record_delete(id);
                 changes[0]
                     .1
                     .map_or(empty, |value| self.insert(Node::Leaf { key, value }))
@@ -842,17 +925,21 @@ mod tests {
                     .or_else(|| storage.get(id).map(|bytes| NodeRead::raw(bytes.as_slice())));
                 let mut verified_prior = Vec::new();
                 let (verified, journal) = pool.install(|| {
-                    tree.batch_update_parallel(root, |id| Ok(mixed(id)), &changes, |key, before, after| {
-                        verified_prior.push((key, before, after));
-                    })
+                    tree.batch_update_verified(
+                        root, |id| Ok(mixed(id)), &changes, |key, before, after| {
+                            verified_prior.push((key, before, after));
+                        }, true,
+                    )
                 })?;
                 assert_eq!(verified, serial);
-                assert_eq!(journal, writes);
+                let mut bytes = [0; MAX_NODE_BYTES];
+                let encoded: Vec<_> = journal.iter().map(|(id, node)| {
+                    (*id, node.map(|node| node.encode_into(&mut bytes).to_vec()))
+                }).collect();
+                assert_eq!(encoded, writes.iter().map(|(id, value)| (*id, value.clone())).collect::<Vec<_>>());
                 assert_eq!(verified_prior, serial_prior);
                 let mut mixed_view = tree.edit(verified, |id| {
-                    Ok(journal.get(id).map_or_else(|| mixed(id), |write| {
-                        write.as_deref().map(NodeRead::raw)
-                    }))
+                    Ok(journal.get(id).unwrap_or_else(|| mixed(id)))
                 });
                 let mut raw_view = tree.edit(serial, |id| {
                     Ok(writes.get(id).map_or_else(|| storage.get(id).map(Vec::as_slice), |write| write.as_deref()))

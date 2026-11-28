@@ -173,11 +173,11 @@ Live Cell index budget in both arms. Hold the RocksDB cache, VM workers,
 resource limits, cadence, network topology, seeds and signed workload
 constant. For this paired comparison omit the Patricia-specific resident
 node cache from both arms. Use the resident Patricia configuration as a
-separate optimized control and record its memory budget. Build that arm
-both with and without `native-verified-cell-nodes` while holding its cache
-sizes and the remaining features fixed. The
-[verified node comparison](resident-patricia.md#verified-decoded-resident-nodes)
-specifies separate traversal, publication and proof measurements. The
+separate optimized control and record its memory budget. Hold the cache
+sizes and other features fixed across the original resident layout,
+`native-verified-cell-nodes`, and `native-verified-cell-journal`. The
+[generated journal comparison](resident-patricia.md#generated-cell-node-journals)
+separates traversal, serialized WAL preparation and publication. The
 read-only audit reads durable nodes in every arm. Run the paired
 comparison in both orders and compare actual offer, common confirmation,
 finality latency, backlog, RSS and the RocksDB metrics. Record genesis IDs

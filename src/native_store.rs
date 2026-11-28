@@ -1715,8 +1715,19 @@ impl Store {
 
     fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<node_storage::NodeRead>> {
         let key = state_key(STATE_NODE, namespace, id);
-        if let Some(value) = self.candidate_value(&key) {
-            return value.map(node_storage::read).transpose();
+        for prepared in self.branch.iter().rev() {
+            #[cfg(feature = "native-verified-cell-journal")]
+            if namespace == Namespace::Cells
+                && let Some((_, changes)) = &prepared.batch.cell_nodes
+            {
+                if let Some(value) = changes.get(id) {
+                    return Ok(value);
+                }
+                continue;
+            }
+            if let Some(value) = prepared.batch.lookup(&key) {
+                return value.as_deref().map(node_storage::read).transpose();
+            }
         }
         if namespace == Namespace::Cells
             && let Some(node) = self.cell_nodes.as_ref().and_then(|index| index.lookup(id))
@@ -2172,20 +2183,33 @@ impl Store {
                 batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
             }
         };
-        #[cfg(feature = "native-cell-subtree-parallel")]
-        let updated = if parallel {
-            self.cells.batch_update_parallel(root, reader, &cell_changes, previous)
-        } else {
-            self.cells.batch_update(root, reader, &cell_changes, previous)
+        #[cfg(feature = "native-verified-cell-journal")]
+        let (cell_root, tree_done) = {
+            let (root, journal) = self.cells.batch_update_verified(
+                root, reader, &cell_changes, previous, parallel,
+            )?;
+            let tree_done = Instant::now();
+            batch.cell_nodes = Some((batch.writes.len(), journal));
+            (root, tree_done)
         };
-        #[cfg(not(feature = "native-cell-subtree-parallel"))]
-        let updated = {
-            let _ = parallel;
-            self.cells.batch_update(root, reader, &cell_changes, previous)
+        #[cfg(not(feature = "native-verified-cell-journal"))]
+        let (cell_root, tree_done) = {
+            #[cfg(feature = "native-cell-subtree-parallel")]
+            let updated = if parallel {
+                self.cells.batch_update_parallel(root, reader, &cell_changes, previous)
+            } else {
+                self.cells.batch_update(root, reader, &cell_changes, previous)
+            };
+            #[cfg(not(feature = "native-cell-subtree-parallel"))]
+            let updated = {
+                let _ = parallel;
+                self.cells.batch_update(root, reader, &cell_changes, previous)
+            };
+            let (root, nodes) = updated?;
+            let tree_done = Instant::now();
+            put_nodes(batch, Namespace::Cells, nodes);
+            (root, tree_done)
         };
-        let (cell_root, nodes) = updated?;
-        let tree_done = Instant::now();
-        put_nodes(batch, Namespace::Cells, nodes);
         Ok((
             cell_root.pack(),
             CellCommitmentTiming {
@@ -3373,6 +3397,8 @@ type Write = (Vec<u8>, Option<Vec<u8>>);
 struct Batch {
     writes: Vec<Write>,
     index: OnceLock<HashMap<Vec<u8>, usize>>,
+    #[cfg(feature = "native-verified-cell-journal")]
+    cell_nodes: Option<(usize, stem_ledger::patricia::VerifiedChanges)>,
 }
 
 impl Batch {
@@ -3427,18 +3453,26 @@ fn sync_with_consensus(
         }
     }
     let mut proposals = BTreeSet::new();
-    for (key, entry) in &batch.writes {
-        if key.starts_with(b"jbody") {
-            proposals.insert(key[1..].as_ref());
+    #[cfg(feature = "native-verified-cell-journal")]
+    let remaining = if let Some((position, journal)) = &batch.cell_nodes {
+        let (prefix, tail) = batch.writes.split_at(*position);
+        append_journal_rows(&mut raw, &mut bytes, prefix, &mut proposals)?;
+        let mut buffer = [0; stem_stake::patricia::MAX_NODE_BYTES];
+        for (id, node) in journal.iter() {
+            let key = state_key(STATE_NODE, Namespace::Cells, id);
+            let value = match node {
+                Some(node) => Some(node_storage::compact_bytes(node.encode_into(&mut buffer))),
+                None => None,
+            };
+            append_journal_row(&mut raw, &mut bytes, &key, value)?;
         }
-        match entry {
-            Some(value) => raw.put(key, value)?,
-            None => raw.delete(key)?,
-        }
-        if let Some(bytes) = &mut bytes {
-            bytes.add(key, raw.size_in_bytes());
-        }
-    }
+        tail
+    } else {
+        batch.writes.as_slice()
+    };
+    #[cfg(not(feature = "native-verified-cell-journal"))]
+    let remaining = batch.writes.as_slice();
+    append_journal_rows(&mut raw, &mut bytes, remaining, &mut proposals)?;
     for (key, value) in records {
         let storage_key = index_key(b'j', key);
         // A prior synchronous write already made this body durable. Preserve
@@ -3472,6 +3506,37 @@ fn sync_with_consensus(
     Ok(())
 }
 
+fn append_journal_rows<'a>(
+    batch: &mut WriteBatch,
+    measured: &mut Option<BatchBytes>,
+    rows: &'a [Write],
+    proposals: &mut BTreeSet<&'a [u8]>,
+) -> Result<()> {
+    for (key, value) in rows {
+        if key.starts_with(b"jbody") {
+            proposals.insert(&key[1..]);
+        }
+        append_journal_row(batch, measured, key, value.as_deref())?;
+    }
+    Ok(())
+}
+
+fn append_journal_row(
+    batch: &mut WriteBatch,
+    measured: &mut Option<BatchBytes>,
+    key: &[u8],
+    value: Option<&[u8]>,
+) -> Result<()> {
+    match value {
+        Some(value) => batch.put(key, value)?,
+        None => batch.delete(key)?,
+    }
+    if let Some(bytes) = measured {
+        bytes.add(key, batch.size_in_bytes());
+    }
+    Ok(())
+}
+
 #[cfg(all(
     test,
     any(
@@ -3485,6 +3550,12 @@ fn sync_with_consensus(
 ))]
 mod pipeline_store_tests {
     use super::*;
+
+    fn assert_same_batch_writes(left: &Batch, right: &Batch) {
+        assert_eq!(left.writes, right.writes);
+        #[cfg(feature = "native-verified-cell-journal")]
+        assert_eq!(left.cell_nodes, right.cell_nodes);
+    }
 
     fn spec() -> Spec {
         Spec {
@@ -3753,12 +3824,12 @@ mod pipeline_store_tests {
         let (_, late) = build(&branch, true)?.context("exact prefix should rebase")?;
         assert_eq!(before.header(), late.header());
         assert_eq!(before.receipts(), late.receipts());
-        assert_eq!(before.batch.writes, late.batch.writes);
+        assert_same_batch_writes(&before.batch, &late.batch);
         let follower = pinned
             .prepare_candidate(&branch, &[], 1004, true)?
             .context("Follower should open the same exact prefix")?;
         assert_eq!(before.header(), follower.header());
-        assert_eq!(before.batch.writes, follower.batch.writes);
+        assert_same_batch_writes(&before.batch, &follower.batch);
         store.commit_certified(&second, &[], &[])?;
         assert!(build(&branch, true)?.is_none());
         Ok(())
@@ -3833,7 +3904,7 @@ mod pipeline_store_tests {
             let pipelined = workers.install(|| store.prepare(&run, 1001, true))?;
             assert_eq!(pipelined.header(), serial.header());
             assert_eq!(pipelined.receipts(), serial.receipts());
-            assert_eq!(pipelined.batch.writes, serial.batch.writes);
+            assert_same_batch_writes(&pipelined.batch, &serial.batch);
             let stats = pipelined.cell_stream();
             assert_eq!((stats.runs, stats.jobs, stats.reused, stats.fallbacks), (1, 4, 4, 0));
             assert_eq!(stats.peak_outstanding, 3);
@@ -4078,10 +4149,28 @@ mod pipeline_store_tests {
         let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build()?;
         let parallel = pool.install(|| build(&store, true))?;
         assert!(!serial.batch.writes.is_empty());
-        assert_eq!(serial.batch.writes, parallel.batch.writes);
+        assert_same_batch_writes(&serial.batch, &parallel.batch);
         assert_eq!(serial.header().encode(), parallel.header().encode());
         #[cfg(all(feature = "native-cell-subtree-parallel", feature = "jolteon-commit-pipeline"))]
         {
+            #[cfg(feature = "native-verified-cell-journal")]
+            let witness = {
+                let mut changes = serial.live.iter().map(|(point, cell)| {
+                    (
+                        record::cell_key(&store.cells, point),
+                        cell.as_ref().map(|cell| record::cell_value(&store.cells, point, cell)),
+                    )
+                }).collect::<Vec<_>>();
+                changes.sort_unstable_by_key(|(id, _)| *id);
+                let (root, edits) = store.cells.batch_update(
+                    as_key(&store.tip.state.cell_root),
+                    |id| store.node(Namespace::Cells, id),
+                    &changes,
+                    |_, _, _| {},
+                )?;
+                assert_eq!(root.as_slice(), serial.header().state.cell_root.as_slice());
+                edits
+            };
             let mut store = store;
             store.enable_cell_node_index(NonZeroUsize::new(8).unwrap())?;
             let pinned = store.pinned_view();
@@ -4103,9 +4192,14 @@ mod pipeline_store_tests {
                     pool.install(|| build(old, true))
                 })?
                 .context("missing snapshot for the old parent")?;
-            assert_eq!(from_snapshot.batch.writes, serial.batch.writes);
+            assert_same_batch_writes(&from_snapshot.batch, &serial.batch);
             assert_eq!(from_snapshot.header(), serial.header());
             assert!(pinned.with_snapshot(|_| Ok(()))?.is_none());
+            #[cfg(feature = "native-verified-cell-journal")]
+            for (id, expected) in witness {
+                let stored = store.db.get(state_key(STATE_NODE, Namespace::Cells, &id))?;
+                assert_eq!(stored.as_deref(), expected.map(node_storage::compact).as_deref());
+            }
         }
         Ok(())
     }

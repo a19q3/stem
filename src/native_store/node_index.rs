@@ -11,6 +11,8 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{ReadOptions, prelude::*};
 use ckb_types::prelude::*;
+#[cfg(feature = "native-verified-cell-journal")]
+use stem_ledger::patricia::GeneratedNode;
 #[cfg(feature = "native-verified-cell-nodes")]
 use stem_ledger::patricia::VerifiedNodes;
 use stem_ledger::patricia::{Key, Namespace, Patricia};
@@ -70,6 +72,22 @@ fn insert(rows: &mut Rows, id: Key, node: CanonicalNode) -> Result<()> {
     #[cfg(not(feature = "native-verified-cell-nodes"))]
     rows.insert(id, node);
     Ok(())
+}
+
+enum NodeUpdate<'a> {
+    Stored(&'a [u8]),
+    #[cfg(feature = "native-verified-cell-journal")]
+    Generated(GeneratedNode<'a>),
+}
+
+impl NodeUpdate<'_> {
+    fn apply(self, rows: &mut Rows, id: &Key) -> Result<()> {
+        match self {
+            Self::Stored(encoded) => insert(rows, *id, node_storage::canonical(encoded)?),
+            #[cfg(feature = "native-verified-cell-journal")]
+            Self::Generated(node) => rows.insert_generated(id, node),
+        }
+    }
 }
 
 /// Node IDs authenticate their canonical bytes. A retained node can be used by
@@ -228,13 +246,28 @@ impl NodeIndex {
         if !self.active.load(Ordering::Acquire) {
             return;
         }
+        #[cfg(feature = "native-verified-cell-journal")]
+        if let Some((_, journal)) = &batch.cell_nodes {
+            self.advance_edits(|| {
+                journal
+                    .iter()
+                    .map(|(id, node)| (id, node.map(NodeUpdate::Generated)))
+            });
+            return;
+        }
         let prefix = [STATE_NODE, Namespace::Cells.tag()];
-        let node_edits = || {
+        self.advance_edits(|| {
             batch.writes.iter().filter_map(|(key, value)| {
                 let id = <&Key>::try_from(key.strip_prefix(&prefix)?).ok()?;
-                Some((id, value.as_deref()))
+                Some((id, value.as_deref().map(NodeUpdate::Stored)))
             })
-        };
+        });
+    }
+
+    fn advance_edits<'a, Edits>(&self, node_edits: impl Fn() -> Edits)
+    where
+        Edits: Iterator<Item = (&'a Key, Option<NodeUpdate<'a>>)>,
+    {
         #[cfg(feature = "jolteon-resident-node-publication")]
         let mut by_shard = {
             let mut counts = [0; SHARDS];
@@ -257,15 +290,14 @@ impl NodeIndex {
             let mut rows = shard.rows.write().expect("Cell node shard");
             #[cfg(feature = "jolteon-resident-node-publication")]
             let old_len = rows.len();
-            for (id, encoded) in changes {
-                if let Some(encoded) = encoded {
+            for (id, update) in changes {
+                if let Some(update) = update {
                     let count = rows.len() + 1;
-                    if let Ok(node) = node_storage::canonical(encoded)
-                        && ((cfg!(feature = "jolteon-resident-node-publication")
-                            && count <= rows.capacity())
-                            || rows.contains_key(id)
-                            || self.reserve(&mut rows, count))
-                        && insert(&mut rows, *id, node).is_ok()
+                    if ((cfg!(feature = "jolteon-resident-node-publication")
+                        && count <= rows.capacity())
+                        || rows.contains_key(id)
+                        || self.reserve(&mut rows, count))
+                        && update.apply(&mut rows, id).is_ok()
                     {
                         continue;
                     }
