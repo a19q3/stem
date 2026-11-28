@@ -6,7 +6,8 @@ use crate::{Error, Hash32, Result, digest, digest_parts};
 
 pub type Key = Hash32;
 pub const MAX_NODES: usize = 257;
-pub const MAX_PATH_BYTES: usize = 4 + MAX_NODES * (4 + 98);
+pub const MAX_NODE_BYTES: usize = 98;
+pub const MAX_PATH_BYTES: usize = 4 + MAX_NODES * (4 + MAX_NODE_BYTES);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Namespace {
@@ -38,24 +39,27 @@ pub enum Node {
 
 impl Node {
     pub fn encode(&self) -> Vec<u8> {
+        self.encode_into(&mut [0; MAX_NODE_BYTES]).to_vec()
+    }
+
+    /// Write canonical node bytes into caller-owned storage.
+    pub fn encode_into<'a>(&self, bytes: &'a mut [u8; MAX_NODE_BYTES]) -> &'a mut [u8] {
         match self {
             Self::Leaf { key, value } => {
-                let mut bytes = Vec::with_capacity(65);
-                bytes.push(0);
-                bytes.extend_from_slice(key);
-                bytes.extend_from_slice(value);
-                bytes
+                bytes[0] = 0;
+                bytes[1..33].copy_from_slice(key);
+                bytes[33..65].copy_from_slice(value);
+                &mut bytes[..65]
             }
             Self::Branch {
                 prefix,
                 bits,
                 children,
             } => {
-                let mut bytes = Vec::with_capacity(98);
-                bytes.extend_from_slice(&[1, *bits]);
-                bytes.extend_from_slice(prefix);
-                bytes.extend_from_slice(&children[0]);
-                bytes.extend_from_slice(&children[1]);
+                bytes[..2].copy_from_slice(&[1, *bits]);
+                bytes[2..34].copy_from_slice(prefix);
+                bytes[34..66].copy_from_slice(&children[0]);
+                bytes[66..].copy_from_slice(&children[1]);
                 bytes
             }
         }

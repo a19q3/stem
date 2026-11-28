@@ -206,3 +206,45 @@ malformed nodes, mixed resident and raw reads, ordered reclamation,
 exact proof bytes and fallback to an older pinned snapshot. This
 candidate has build evidence. Runtime correctness and the net change
 in traversal, publication and proof costs remain to be measured.
+
+## Generated Cell node journals
+
+The `native-verified-cell-journal` candidate carries immutable Cell nodes
+from the Patricia updater into speculative descendants and the certified
+writer. The updater hashes each new node in canonical form and retains
+the decoded value and its content ID. Only the updater can create a
+generated journal. Each journal is scoped to the exact network and
+namespace. Its original content IDs and tombstones remain sorted in the
+same order as the byte journal.
+
+A descendant checks its ancestors newest first, including deletion
+entries. Generated nodes carry their ID and domain into the tree reader.
+The committed resident index publishes the same decoded nodes after
+WAL acknowledgement. Publication compares the ID and domain for each
+entry and skips byte decoding and cryptographic rehashing of generated
+nodes. Disk and recovery reads still authenticate canonical bytes.
+Old branches keep their pinned snapshots and state-proof output remains
+canonical.
+
+At the original position in the atomic WriteBatch, the writer encodes
+Cell nodes into one reusable stack buffer and writes the same compact
+RocksDB keys and values. The original write order and synchronous WAL
+call apply to both layouts. The prepared block retains a single typed
+Cell node journal in this mode. The normal byte journal remains the
+control, with the earlier verified resident lookup enabled in both builds.
+
+Use identical resource envelopes, worker counts, index budgets and
+signed corpora to compare `native-verified-cell-nodes` and
+`native-verified-cell-journal`. Collect the block's traversal and batch
+timings alongside certified write time, publication time, serialized
+WAL bytes and RSS at multiple in-flight depths. Account for encoding
+moving into durable write preparation. Measure memory under churn since
+the decoded journal stores fixed-width node values alongside tombstones.
+Compare a disk-only arm and both choices for certified writer
+publication separately.
+
+The compile-checked regressions compare the generated journal against
+the byte journal for mixed updates, exact Cell roots and proof paths.
+They also compare the durable compact bytes and reclaimed keys, and
+read the prior state from its pinned snapshot during certified write.
+Performance, memory impact and runtime parity remain to be measured.
