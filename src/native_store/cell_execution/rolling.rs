@@ -76,6 +76,9 @@ impl Store {
         receipts: &mut Vec<Receipt>,
         fees: &mut u64,
         stats: &mut CellStreamStats,
+        #[cfg(feature = "native-shared-cell-deps")] dependency_reads: &mut Option<
+            super::DependencyReads,
+        >,
     ) -> Result<usize> {
         let depth = self.cell_window_limit(width, *budget);
         if depth < 2 {
@@ -93,6 +96,9 @@ impl Store {
         let started = Instant::now();
         stats.runs += 1;
         let writes = project(&self.network, transactions, origin)?;
+        #[cfg(feature = "native-shared-cell-deps")]
+        let shared = &*dependency_reads
+            .get_or_insert_with(|| super::DependencyReads::collect(self, transactions));
         // Workers see an immutable prefix and the declared edits in this run.
         // Ordered staging writes into a separate delta until the scope joins.
         let mut base = std::mem::take(&mut overlay.live);
@@ -100,6 +106,8 @@ impl Store {
         let canonical = PrecedingCells {
             base: prior,
             projection: None,
+            #[cfg(feature = "native-shared-cell-deps")]
+            dependencies: shared.reader(),
         };
         let projected = &writes;
         let (sender, receiver) = mpsc::channel();
@@ -135,6 +143,8 @@ impl Store {
                                     position,
                                     sources: Sources::Run(&sources),
                                 }),
+                                #[cfg(feature = "native-shared-cell-deps")]
+                                dependencies: shared.reader(),
                             };
                             let effects = self.execute_cell_trial(
                                 tx,
@@ -144,6 +154,8 @@ impl Store {
                                 &view,
                                 parallel_groups,
                             )?;
+                            #[cfg(feature = "native-shared-cell-deps")]
+                            drop(view);
                             Ok(Trial {
                                 effects,
                                 sources: sources.into_inner(),
@@ -207,6 +219,8 @@ impl Store {
             }
             Ok(prefix)
         });
+        #[cfg(feature = "native-shared-cell-deps")]
+        drop(canonical);
         base.extend(std::mem::take(&mut overlay.live));
         overlay.live = base;
         stats.elapsed_us = stats
