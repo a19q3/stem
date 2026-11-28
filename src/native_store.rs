@@ -2886,6 +2886,19 @@ impl Store {
         overlay: &Overlay,
         budget: Budget,
     ) -> Result<Option<lineage::Materialized>> {
+        self.materialize_lineage_with_reader(tx, block, overlay, budget, |point| {
+            self.resolve_live(&overlay.live, point)
+        })
+    }
+
+    fn materialize_lineage_with_reader(
+        &self,
+        tx: &Transaction,
+        block: &BlockContext<'_>,
+        overlay: &Overlay,
+        budget: Budget,
+        read: impl FnMut(&OutPoint) -> Result<LiveCell>,
+    ) -> Result<Option<lineage::Materialized>> {
         let height = block.candidate().height;
         ensure!(
             tx.keeper_schedule().is_none_or(|schedule| {
@@ -2894,7 +2907,7 @@ impl Store {
             }),
             "trigger-bound Lineage command requires its committed Keeper reservation"
         );
-        self.materialize_lineage_from_view(tx, block, &overlay.lineages, &overlay.live, budget)
+        self.materialize_lineage_from_view(tx, block, &overlay.lineages, budget, read)
     }
 
     fn materialize_lineage_from_view(
@@ -2902,8 +2915,8 @@ impl Store {
         tx: &Transaction,
         block: &BlockContext<'_>,
         heads: &lineage::Heads,
-        live: &LiveChanges,
         budget: Budget,
+        read: impl FnMut(&OutPoint) -> Result<LiveCell>,
     ) -> Result<Option<lineage::Materialized>> {
         tx.lineage_command()
             .map(|command| {
@@ -2918,7 +2931,7 @@ impl Store {
                     block,
                     heads,
                     budget,
-                    |point| self.resolve_live(live, point),
+                    read,
                 )
             })
             .transpose()
@@ -3053,10 +3066,27 @@ impl Store {
             tx.as_slice().len() as u64 + batch.as_ref().map_or(0, |item| item.extra_bytes);
         let mut next = *budget;
         charge(&mut next.bytes, tx_bytes, "block transaction bytes")?;
+        #[cfg(feature = "native-reuse-lineage-cell-reads")]
+        let mut materialized_reads = (staged_command.is_none()
+            && preceding.is_none()
+            && tx.has_lineage_command())
+            .then(lineage::ReadCache::default);
         let materialized = if staged_command.is_some() {
             staged_command
         } else {
-            self.materialize_lineage(tx, block, overlay, next)?
+            #[cfg(feature = "native-reuse-lineage-cell-reads")]
+            let materialized = if let Some(reads) = &mut materialized_reads {
+                // This cache lives inside one ordered staging call. Reads from
+                // a background materialization are never substituted here.
+                self.materialize_lineage_with_reader(tx, block, overlay, next, |point| {
+                    reads.load(point, |point| self.resolve_live(&overlay.live, point))
+                })?
+            } else {
+                self.materialize_lineage(tx, block, overlay, next)?
+            };
+            #[cfg(not(feature = "native-reuse-lineage-cell-reads"))]
+            let materialized = self.materialize_lineage(tx, block, overlay, next)?;
+            materialized
         };
         ensure!(
             batch.is_none()
@@ -3149,7 +3179,13 @@ impl Store {
         };
         let speculative_bytes = std::cell::Cell::new(0usize);
         let fresh = |point: &OutPoint| {
-            let record = match staged(point) {
+            let record = staged(point);
+            #[cfg(feature = "native-reuse-lineage-cell-reads")]
+            let record = record.or_else(|| {
+                let reads = materialized_reads.as_ref()?;
+                reads.get(point).cloned().map(Some)
+            });
+            let record = match record {
                 Some(record) => record,
                 None => lookup(point)?,
             }

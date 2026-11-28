@@ -3,6 +3,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "native-reuse-lineage-cell-reads")]
+use std::collections::HashMap;
+
 use anyhow::{Context, Result, ensure};
 use ckb_types::{
     core::ScriptHashType,
@@ -28,6 +31,41 @@ mod lookahead;
 pub(super) mod access_plan;
 
 pub(super) type Heads = BTreeMap<Byte32, Option<Head>>;
+
+/// Physical reads made by a single materialization against one ordered view.
+/// Consensus resolution still charges every logical read.
+#[cfg(feature = "native-reuse-lineage-cell-reads")]
+#[derive(Default)]
+pub(super) struct ReadCache {
+    cells: HashMap<OutPoint, LiveCell>,
+    retained_bytes: usize,
+}
+
+#[cfg(feature = "native-reuse-lineage-cell-reads")]
+impl ReadCache {
+    pub(super) fn get(&self, point: &OutPoint) -> Option<&LiveCell> {
+        self.cells.get(point)
+    }
+
+    pub(super) fn load(
+        &mut self,
+        point: &OutPoint,
+        read: impl FnOnce(&OutPoint) -> Result<LiveCell>,
+    ) -> Result<LiveCell> {
+        const MAX_RECORDS: usize = 32;
+        const MAX_BYTES: usize = 4 * 1024 * 1024;
+        if let Some(cell) = self.get(point) {
+            return Ok(cell.clone());
+        }
+        let cell = read(point)?;
+        let bytes = super::LiveCache::record_bytes(&cell);
+        if self.cells.len() < MAX_RECORDS && bytes <= MAX_BYTES - self.retained_bytes {
+            self.cells.insert(point.clone(), cell.clone());
+            self.retained_bytes += bytes;
+        }
+        Ok(cell)
+    }
+}
 
 pub(super) fn changes(
     store: &Store,
@@ -268,9 +306,11 @@ pub(super) fn resolve_fee(
 ) -> Result<FeeAuthorization> {
     let mut fresh = fresh;
     let fee_input = original.input(0).context("missing Lineage fee input")?;
-    let fee_cell = fresh(&fee_input.previous_output)
-        .context(MissingFeeCell)?
-        .cell;
+    let fee_record = fresh(&fee_input.previous_output).context(MissingFeeCell)?;
+    #[cfg(feature = "native-reuse-lineage-cell-reads")]
+    let fee_cell = fee_record.cell.clone();
+    #[cfg(not(feature = "native-reuse-lineage-cell-reads"))]
+    let fee_cell = fee_record.cell;
     ensure!(
         fee_cell.data().is_empty() && fee_cell.type_scripts().len() == 0,
         "Lineage fee input must hold only CKB Capacity"
@@ -293,7 +333,14 @@ pub(super) fn resolve_fee(
         vec![refund.clone()],
         vec![witness.clone()],
     )?;
-    let preflight = ResolvedTransaction::resolve(initial_fee.clone(), block, fresh, |_| {
+    let read = |point: &OutPoint| {
+        #[cfg(feature = "native-reuse-lineage-cell-reads")]
+        if point == &fee_input.previous_output {
+            return Ok(fee_record.clone());
+        }
+        fresh(point)
+    };
+    let preflight = ResolvedTransaction::resolve(initial_fee.clone(), block, read, |_| {
         unreachable!("Lineage fee preflight has no Header Deps")
     })?
     .authorize_materialized_lineage(original, &fee_cell)?;
@@ -352,13 +399,28 @@ pub(super) fn materialize(
         .lineage
         .as_ref()
         .context("Lineages are not configured")?;
+    #[cfg(feature = "native-reuse-lineage-cell-reads")]
+    let mut seen_executor = None;
     let FeeAuthorization {
         input: fee_input,
         cell: fee_cell,
         refund,
         transaction: initial_fee,
         resolved: preflight,
-    } = resolve_fee(original, command, block, &mut fresh)?;
+    } = resolve_fee(original, command, block, |point| {
+        let record = fresh(point)?;
+        #[cfg(feature = "native-reuse-lineage-cell-reads")]
+        if point == &command.executor_dep {
+            seen_executor = Some(record.cell.clone());
+        }
+        Ok(record)
+    })?;
+    #[cfg(feature = "native-reuse-lineage-cell-reads")]
+    let executor_code = match seen_executor {
+        Some(executor) => executor,
+        None => fresh(&command.executor_dep)?.cell,
+    };
+    #[cfg(not(feature = "native-reuse-lineage-cell-reads"))]
     let executor_code = fresh(&command.executor_dep)?.cell;
     ensure!(
         executor_code.data_hash() == &command.executor,
@@ -565,5 +627,44 @@ impl Store {
     ) -> bool {
         let record = head.map(Head::encode);
         Self::verify_system_record(network, header, &head_key(id), record.as_deref(), proof)
+    }
+}
+
+#[cfg(all(test, feature = "native-reuse-lineage-cell-reads"))]
+mod read_cache_tests {
+    use super::*;
+    use stem_ledger::Origin;
+
+    #[test]
+    fn lineage_read_cache_retains_only_successful_exact_reads() -> Result<()> {
+        let live = LiveCell {
+            cell: Cell::new(20_000_000_000, Script::default(), vec![], Default::default())?,
+            origin: Origin {
+                height: 3,
+                timestamp_ms: 5,
+                context_id: [7; 32].pack(),
+            },
+        };
+        let point = |index| OutPoint::new([8; 32].pack(), index);
+        let mut reads = ReadCache::default();
+        let first = point(0);
+        reads.load(&first, |_| Ok(live.clone()))?;
+        let repeated = reads.load(&first, |_| anyhow::bail!("unnecessary physical read"))?;
+        assert_eq!(repeated.origin, live.origin);
+        assert_eq!(repeated.cell.as_slice(), live.cell.as_slice());
+
+        let missing = point(1);
+        assert!(
+            reads.load(&missing, |_| anyhow::bail!("read path failed")).is_err()
+        );
+        assert!(reads.get(&missing).is_none());
+        for index in 2..=32 {
+            reads.load(&point(index), |_| Ok(live.clone()))?;
+        }
+        let overflow = point(33);
+        assert_eq!(reads.load(&overflow, |_| Ok(live.clone()))?.origin, live.origin);
+        assert!(reads.get(&overflow).is_none());
+        assert!(reads.get(&first).is_some());
+        Ok(())
     }
 }
