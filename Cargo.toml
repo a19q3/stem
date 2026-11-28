@@ -35,6 +35,7 @@ jolteon-pre-quorum-proposal = ["jolteon-exact-prefix-pipeline", "jolteon-cancel-
 jolteon-bounded-cycle-scan = []
 jolteon-aged-proposal-selection = []
 native-commitment-pipeline = []
+native-parallel-cell-record-hashes = []
 native-cell-subtree-parallel = ["stem-ledger/parallel-patricia"]
 native-batched-patricia-proofs = ["stem-ledger/batched-patricia-proofs"]
 native-batched-cell-proof-records = []
