@@ -39,6 +39,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Certificates and votes | `34e4743` | Shared direct frames and exact current-certificate reuse [Communication notes](certificates/README.md#sharing-certificates-and-direct-vote-frames) |
 | Decoded QC retention | `jolteon-retain-verified-quorums` | Share bounded exact recent certificates in the direct path [Comparison notes](certificates/README.md#retaining-decoded-quorum-certificates) |
 | Resident Patricia publication | `0eba67f` | Publish on the certified writer after WAL sync or on the Replica when it installs the durable tip [Resident Patricia notes](storage/resident-patricia.md) |
+| Resident Live Cell publication | `jolteon-resident-cell-publication` | Publish the Live Cell generation after WAL sync on the certified writer [Comparison notes](storage/live-cell-index.md#publishing-live-cells-on-the-certified-writer) |
 | Prebuilt finality state writes | `jolteon-prebuilt-state-write` | Assemble one certified state prefix before the atomic finality write [Comparison notes](execution-pipeline/cross-block.md#prebuilding-the-certified-state-writebatch) |
 | Verified resident nodes | `native-verified-cell-nodes` | Authenticate decoded nodes at cache insertion and reuse them by content ID [Comparison notes](storage/resident-patricia.md#verified-decoded-resident-nodes) |
 | Hot Cell node fallback | `native-hot-cell-node-cache` | Cache authenticated reads when the complete Patricia index exceeds its budget [Comparison notes](storage/resident-patricia.md#demand-filled-fallback-after-a-residency-limit) |
@@ -54,7 +55,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Segmented generated node journals | `native-segmented-patricia-journal` | Transfer generated node buffers at parallel subtree joins [Comparison notes](storage/resident-patricia.md#segmented-generated-node-journals) |
 | Stream generated node publication | `native-stream-node-publication` | Apply the verified journal directly to contiguous resident shards [Comparison notes](storage/resident-patricia.md#streaming-verified-edits-into-the-resident-shards) |
 
-This integration adds `jolteon-resident-node-publication` as an independent control. Only the selected writer path updates the node index before its acknowledgement. The normal installer updates the Live Cell index and publishes nodes when the writer did not. The node-count and shard preallocation changes follow the same build option.
+This integration adds `jolteon-resident-node-publication` as an independent control. Only the selected writer path updates the node index before its acknowledgement. The installer publishes either index when that index was left to the Replica. The Live Cell writer has its own switch. The node-count and shard preallocation changes follow the same build option.
 
 The integrated regression prepares one block containing dependent height wakes, an independent timed wake and a ten-payment spend chain. It compares selected bytes, complete Headers, receipts, versions, Cell proofs and reservation paths against a separate serial Store. The candidate uses both resident indexes, with the interned Live Cell layout. The all-feature regression targets, default Release build and combined Release build are compile-checked. Runtime correctness and performance remain to be qualified.
 
@@ -93,6 +94,7 @@ lineage_reads=native-reuse-lineage-cell-reads
 leader_lineage=native-leader-lineage-execution
 keeper_prefix=native-reuse-keeper-proposal-prefix
 publication=jolteon-resident-node-publication
+cell_publication=jolteon-resident-cell-publication
 prebuilt_state_write=jolteon-prebuilt-state-write
 prepared_cell_keys=native-prepared-cell-record-keys
 vectored_cell_writes=native-vectored-cell-writes
@@ -153,6 +155,7 @@ build rolling-lineage --features "$contracts,$rolling_lineage"
 build leader-lineage --features "$contracts,$rolling_lineage,$leader_lineage"
 build keeper-prefix --features "$contracts,$keeper_prefix"
 build publication --features "$publication"
+build cell-publication --features "$cell_publication"
 build prebuilt-state-write --features "$prebuilt_state_write"
 build prepared-cell-keys --features "$prepared_cell_keys"
 build vectored-cell-writes --features "$vectored_cell_writes"
@@ -174,7 +177,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

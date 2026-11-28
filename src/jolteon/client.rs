@@ -147,6 +147,8 @@ pub struct CommitMetrics {
     pub reused_write_buffers: u64,
     #[serde(default)]
     pub cell_node_publication: LatencyHistogram,
+    #[serde(default)]
+    pub live_cell_publication: LatencyHistogram,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]

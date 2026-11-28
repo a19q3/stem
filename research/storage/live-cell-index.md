@@ -347,3 +347,33 @@ shards. The compile-checked regressions cover a capacity flush isolated
 from another shard, exact invalidation and the pinned generation's
 old/new Header behavior. Runtime qualification and performance results
 are pending.
+
+## Publishing Live Cells on the certified writer
+
+With `jolteon-resident-cell-publication`, the certified writer advances
+the optional Live Cell index after the atomic WAL sync and before
+sending its acknowledgement. It applies the same durable Cell delta
+and enforces the same memory budget for both layouts. The Replica
+installs the acknowledged Header using that exact index generation,
+so it applies the delta only once. The synchronous commit path still
+uses the installer.
+
+Pinned readers look up their own Header. When a worker's pinned
+generation has been superseded, it takes the normal RocksDB path or
+the previous-generation index if enabled and still retained.
+During publication the status response can use the summary captured
+for the installed Header before the write was handed to the worker.
+This avoids waiting on the Live Cell index write lock or reporting a
+new index under the old Replica tip. The compiled fixture covers
+spending and creating Cells through the writer, an old pinned view,
+Replica installation and reopening for both resident layouts.
+
+Compare at the same live index layout, budget and worker count.
+Hold `jolteon-resident-node-publication` fixed or vary it independently.
+Read `commit_jobs.persistence`, `commit_jobs.live_cell_publication`,
+commit acknowledgement and control queue time, plus old-view fallback
+and index residency counters. Advancing the index extends the writer
+window, and descendant readers can still contend on the index lock
+or fall back to disk. Compare effective descendant reuse and finality
+before enabling the feature more broadly. Runtime, independent
+replay and recovery evidence are pending.

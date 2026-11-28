@@ -809,6 +809,8 @@ pub(crate) struct CellCommitmentTiming {
 pub(crate) struct CertifiedWriteTiming {
     pub(crate) persistence: Duration,
     pub(crate) cell_node_publication: Option<Duration>,
+    #[cfg(feature = "jolteon-resident-cell-publication")]
+    pub(crate) live_cell_publication: Option<Duration>,
     #[cfg(feature = "jolteon-prebuilt-state-write")]
     pub(crate) reused_state_build: Option<Duration>,
     #[cfg(feature = "jolteon-reuse-write-buffer")]
@@ -1509,6 +1511,11 @@ impl Store {
 
     pub fn live_cell_index_status(&self) -> Option<LiveCellIndexStatus> {
         self.live_index.as_ref().map(IndexView::status)
+    }
+
+    #[cfg(feature = "jolteon-resident-cell-publication")]
+    pub(crate) fn try_live_cell_index_status(&self) -> Option<LiveCellIndexStatus> {
+        self.live_index.as_ref().and_then(IndexView::try_current_status)
     }
 
     /// Enable the optional bounded Cell Patricia node index.
@@ -3870,6 +3877,11 @@ impl Store {
         } else {
             None
         };
+        #[cfg(feature = "jolteon-resident-cell-publication")]
+        let live_index = self.live_index.clone().map(|index| {
+            index.retain_writer_status();
+            (index, prepared.next.id(&self.network).unpack())
+        });
         Ok(move |_cache: &mut CertifiedWriteCache| {
             let started = Instant::now();
             let measured = metrics.as_deref().map(|m| (m, Purpose::Finality));
@@ -3902,9 +3914,17 @@ impl Store {
                 index.advance(&prepared.batch);
                 started.elapsed()
             });
+            #[cfg(feature = "jolteon-resident-cell-publication")]
+            let live_cell_publication = live_index.map(|(mut index, next)| {
+                let started = Instant::now();
+                index.advance(next, &prepared.live);
+                started.elapsed()
+            });
             Ok(CertifiedWriteTiming {
                 persistence,
                 cell_node_publication,
+                #[cfg(feature = "jolteon-resident-cell-publication")]
+                live_cell_publication,
                 #[cfg(feature = "jolteon-prebuilt-state-write")]
                 reused_state_build,
                 #[cfg(feature = "jolteon-reuse-write-buffer")]
@@ -5788,6 +5808,64 @@ mod pipeline_store_tests {
         let reopened = Store::open(home.path(), &spec, Retention::Archive)?;
         assert_eq!(reopened.tip().context.height, 1);
         assert_eq!(reopened.consensus_record(b"state")?.unwrap(), records[0].1);
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-resident-cell-publication")]
+    #[test]
+    fn certified_writer_publishes_live_cells_before_installing_their_header() -> Result<()> {
+        let mut spec = spec();
+        let point = |index| OutPoint::new([52; 32].pack(), index);
+        let spent = point(0);
+        let created = [point(2), point(3)];
+        let cell = Cell::new(
+            20_000_000_000, ckb_types::packed::Script::default(), vec![], bytes::Bytes::new(),
+        )?;
+        spec.development_cells = vec![(spent.clone(), cell.clone()), (point(1), cell.clone())];
+
+        for layout in [LiveCellIndexLayout::Inline, LiveCellIndexLayout::InternedScripts] {
+            let home = tempfile::tempdir()?;
+            let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+            store.enable_live_cell_index_with_layout(NonZeroUsize::new(2).unwrap(), layout)?;
+            let pinned = store.pinned_view();
+            let context = HeaderContext::after(
+                &spec.network, store.tip(), 1001, Tree::transactions(spec.network.clone(), &[])?.root(),
+            )?;
+            let mut overlay = store.overlay(None);
+            overlay.live.insert(spent.clone(), None);
+            for point in &created {
+                overlay.live.insert(point.clone(), Some(LiveCell {
+                    cell: cell.clone(),
+                    origin: Origin::new(&spec.network, &context),
+                }));
+            }
+            let prepared = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
+            let write = store.certified_write(Arc::clone(&prepared), Vec::new(), Vec::new())?;
+            pinned.with_snapshot(|old| {
+                let timing = std::thread::spawn(move || write(&mut CertifiedWriteCache::default()))
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("certified writer panicked"))??;
+                assert!(timing.live_cell_publication.is_some());
+                assert_eq!(store.tip(), old.tip());
+                assert_eq!(store.try_live_cell_index_status().unwrap().entries, 2);
+                assert!(old.live_cell(&spent)?.is_some());
+                assert!(old.live_cell(&created[0])?.is_none());
+                store.install_durable_tip(&prepared, timing.cell_node_publication.is_some());
+                assert_eq!(store.try_live_cell_index_status().unwrap().entries, 3);
+                assert!(store.live_cell_index_status().unwrap().active);
+                assert!(old.live_cell(&spent)?.is_some());
+                assert!(store.live_cell(&spent)?.is_none());
+                assert!(store.live_cell(&created[0])?.is_some());
+                Ok(())
+            })?.context("old snapshot unavailable")?;
+
+            drop(pinned);
+            drop(store);
+            let mut reopened = Store::open(home.path(), &spec, Retention::Archive)?;
+            reopened.enable_live_cell_index_with_layout(NonZeroUsize::new(2).unwrap(), layout)?;
+            assert_eq!(reopened.tip(), prepared.header());
+            assert_eq!(reopened.live_cell_index_status().unwrap().entries, 3);
+        }
         Ok(())
     }
 

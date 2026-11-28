@@ -328,6 +328,8 @@ impl State {
 
 struct Index {
     state: RwLock<State>,
+    #[cfg(feature = "jolteon-resident-cell-publication")]
+    writer_status: std::sync::Mutex<Option<(Key, LiveCellIndexStatus)>>,
     limit_bytes: usize,
     layout: LiveCellIndexLayout,
     recovery_us: u64,
@@ -467,6 +469,8 @@ impl IndexView {
                     #[cfg(feature = "native-live-cell-parent-index")]
                     previous: None,
                 }),
+                #[cfg(feature = "jolteon-resident-cell-publication")]
+                writer_status: Default::default(),
                 limit_bytes,
                 layout,
                 recovery_us: started.elapsed().as_micros() as u64,
@@ -539,6 +543,12 @@ impl IndexView {
 
     pub(super) fn advance(&mut self, header: Key, changes: &LiveChanges) {
         let mut state = self.index.state.write().expect("Live Cell index");
+        #[cfg(feature = "jolteon-resident-cell-publication")]
+        if state.header == header {
+            // The certified writer may already have published this exact view.
+            self.header = header;
+            return;
+        }
         let mut exhausted = state.header != self.header;
         #[cfg(feature = "native-live-cell-parent-index")]
         let mut previous = {
@@ -596,6 +606,28 @@ impl IndexView {
 
     pub(super) fn status(&self) -> LiveCellIndexStatus {
         let state = self.index.state.read().expect("Live Cell index");
+        self.status_from(&state)
+    }
+
+    #[cfg(feature = "jolteon-resident-cell-publication")]
+    pub(super) fn retain_writer_status(&self) {
+        let state = self.index.state.read().expect("Live Cell index");
+        let status = (state.header == self.header).then(|| (self.header, self.status_from(&state)));
+        *self.index.writer_status.lock().expect("Live Cell index status") = status;
+    }
+
+    #[cfg(feature = "jolteon-resident-cell-publication")]
+    pub(super) fn try_current_status(&self) -> Option<LiveCellIndexStatus> {
+        match self.index.state.try_read() {
+            Ok(state) if state.header == self.header => return Some(self.status_from(&state)),
+            Ok(_) | Err(std::sync::TryLockError::WouldBlock) => {}
+            Err(std::sync::TryLockError::Poisoned(_)) => panic!("Live Cell index"),
+        }
+        let status = *self.index.writer_status.lock().expect("Live Cell index status");
+        status.filter(|(header, _)| *header == self.header).map(|(_, value)| value)
+    }
+
+    fn status_from(&self, state: &State) -> LiveCellIndexStatus {
         #[cfg(feature = "native-live-cell-parent-index")]
         let (previous_header_bytes, previous_header_lookups) = (
             state.previous.as_ref().map_or(0, |old| old.bytes),
