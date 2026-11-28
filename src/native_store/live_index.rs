@@ -27,7 +27,9 @@ use stem_ledger::{
     record,
 };
 
-use super::{LiveChanges, STATE_RECORD, Store, TIP};
+#[cfg(feature = "native-prepared-live-cell-ownership")]
+use super::LiveChanges;
+use super::{PreparedCells, STATE_RECORD, Store, TIP};
 
 mod interned;
 use interned::InternedRecords;
@@ -263,7 +265,7 @@ impl Previous {
     fn capture(
         header: Key,
         records: &mut Records,
-        changes: &LiveChanges,
+        changes: &PreparedCells,
         limit: usize,
     ) -> Option<Self> {
         // Anchor the journal budget to the table before removing any rows.
@@ -618,7 +620,7 @@ impl IndexView {
         true
     }
 
-    pub(super) fn advance(&mut self, header: Key, changes: &LiveChanges, detached: bool) {
+    pub(super) fn advance(&mut self, header: Key, changes: &PreparedCells, detached: bool) {
         let mut state = self.index.state.write().expect("Live Cell index");
         #[cfg(feature = "jolteon-resident-cell-publication")]
         if state.header == header {
@@ -645,7 +647,7 @@ impl IndexView {
             for point in changes.keys() {
                 drop(records.remove(point));
             }
-            for (point, change) in changes {
+            for (point, change) in changes.iter() {
                 let Some(cell) = change else {
                     continue;
                 };
@@ -754,7 +756,12 @@ mod tests {
             cell: Cell::new(20_000_000_000, Script::default(), vec![], Bytes::new())?,
             origin: Origin { height: 0, timestamp_ms: 0, context_id: Byte32::default() },
         };
-        let changes = points.iter().cloned().map(|point| (point, None)).collect();
+        let changes = points
+            .iter()
+            .cloned()
+            .map(|point| (point, None))
+            .collect::<super::super::LiveChanges>();
+        let changes = PreparedCells::from(changes);
         for layout in [LiveCellIndexLayout::Inline, LiveCellIndexLayout::InternedScripts] {
             let mut records = Records::new(layout);
             for point in &points {

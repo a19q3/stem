@@ -460,3 +460,42 @@ in preparation time and memory than they save during publication. The
 writer fixture checks byte equality, Inline buffer sharing, old-snapshot
 isolation and reopen coverage. Runtime, independent replay and performance
 measurements are pending.
+
+## Compact prepared Cell changes
+
+`native-compact-prepared-cell-delta` freezes each completed candidate's
+mutable Live Cell map into a contiguous array in OutPoint order. Every
+reader of that candidate shares the array through the existing prepared
+block reference. Candidates with 128–16,384 changes also get a bounded
+hash table of 32-bit array positions. Lookup verifies the full OutPoint,
+and reuses one point hash across indexed ancestors. Smaller or larger
+candidates and candidates that cannot reserve the index use binary
+search over the same array. Freezing moves existing record buffers.
+
+The resolver visits ancestors from newest to oldest, so a newer
+spend still masks any older creation. A miss continues to the next
+ancestor or the committed snapshot. The array contains explicit
+removals and preserves the exact iteration order used by both certified
+writers and committed index publication. Branch validation and snapshot
+rebasing use the existing contiguous Header checks. Patricia and JMT
+consume the same ordered Cell changes and write the existing record
+format.
+
+The earlier disjoint-parent Follower sample reported 6,144 branch probes
+and 3.99 ms of summed probe time, with zero hits. Compare
+`prepared-cell-keys` and `compact-prepared-cells` with identical blocks,
+VM workers, Live Cell index budget and state engine. Exercise positive
+parent dependencies, speculative spends, unrelated inputs, sibling
+branches, and snapshots that rebase across a committed prefix. Record
+branch probe CPU, preparation and publication time, allocations, RSS,
+and finality. Freezing and constructing the table take additional time
+before voting, including for candidates that are never read as parents.
+The table can add memory when many candidates remain in flight. Measure
+shallow and deep branches as well as the committed-only control.
+
+The compile-checked lookup fixture checks iteration order, positive
+records, deletions, misses, and the binary-search path on both sides of
+the index size range. A two-branch fixture checks that a newer spend
+masks an indexed parent creation on only its own branch. Existing
+pipeline fixtures exercise ordered persistence and snapshot rebasing. Runtime, replay and performance results are
+pending.

@@ -49,6 +49,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Batched Patricia proof reads | `native-batched-patricia-proofs` | Group proof-frontier RocksDB misses while preserving canonical proof bytes [Comparison notes](patricia/README.md#batched-reads-for-shared-prefix-proofs) |
 | Batched Live Cell proof records | `native-batched-cell-proof-records` | Fetch unique records in bounded groups and verify them against their paths [Comparison notes](patricia/README.md#grouping-the-live-cell-records-behind-proofs) |
 | Prepared Cell record keys | `native-prepared-cell-record-keys` | Reuse created Cell keys from the commitment on finality [Comparison notes](storage/patricia-finishing/README.md#reducing-certified-batch-construction-work) |
+| Compact prepared Cell changes | `native-compact-prepared-cell-delta` | Share an exact position index and ordered Cell changes across speculative readers [Comparison notes](storage/live-cell-index.md#compact-prepared-cell-changes) |
 | Parallel Cell record hashing | `native-parallel-cell-record-hashes` | Hash the ordered Live Cell changes on existing execution workers [Comparison notes](storage/patricia-finishing/README.md#parallel-cell-record-hashing) |
 | Vectored Cell writes | `native-vectored-cell-writes` | Append large canonical records without a contiguous scratch copy [Comparison notes](storage/patricia-finishing/README.md#vectored-writes-for-large-cell-records) |
 | Reuse certified writer buffer | `jolteon-reuse-write-buffer` | Clear and recycle a bounded write buffer on the existing writer [Comparison notes](storage/patricia-finishing/README.md#reducing-certified-batch-construction-work) |
@@ -101,6 +102,7 @@ publication=jolteon-resident-node-publication
 cell_publication=jolteon-resident-cell-publication
 prebuilt_state_write=jolteon-prebuilt-state-write
 prepared_cell_keys=native-prepared-cell-record-keys
+compact_prepared_cells=native-compact-prepared-cell-delta
 parallel_cell_hashes=native-parallel-cell-record-hashes
 vectored_cell_writes=native-vectored-cell-writes
 reuse_write_buffer=jolteon-reuse-write-buffer
@@ -168,6 +170,7 @@ build pinned-index-contention --features "$cell_publication,$pinned_index_try_re
 build prepared-inline-cells --features "$cell_publication,$inline_cell_ownership"
 build prebuilt-state-write --features "$prebuilt_state_write"
 build prepared-cell-keys --features "$prepared_cell_keys"
+build compact-prepared-cells --features "$prepared_cell_keys,$compact_prepared_cells"
 build parallel-cell-hashes --features "$prepared_cell_keys,$parallel_cell_hashes"
 build vectored-cell-writes --features "$vectored_cell_writes"
 build reuse-write-buffer --features "$reuse_write_buffer"
@@ -189,7 +192,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$compact_prepared_cells,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
