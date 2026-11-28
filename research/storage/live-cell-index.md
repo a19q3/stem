@@ -463,11 +463,11 @@ measurements are pending.
 
 ## Compact prepared Cell changes
 
-`native-compact-prepared-cell-delta` freezes each completed candidate's
-mutable Live Cell map into a contiguous array in OutPoint order. Every
-reader of that candidate shares the array through the existing prepared
-block reference. Candidates with 128–16,384 changes also get a bounded
-hash table of 32-bit array positions. Lookup verifies the full OutPoint,
+`native-compact-prepared-cell-delta` freezes the candidate's settled
+Live Cell changes in OutPoint order as the Cell commitment begins. The
+hash stage, branch readers, Live Cell publication, and the durable writer
+share that array. After successful commitment, candidates with 128–16,384
+changes get a bounded hash table of 32-bit array positions. Lookup verifies the full OutPoint,
 and reuses one point hash across indexed ancestors. Smaller or larger
 candidates and candidates that cannot reserve the index use binary
 search over the same array. Freezing moves existing record buffers.
@@ -488,8 +488,9 @@ VM workers, Live Cell index budget and state engine. Exercise positive
 parent dependencies, speculative spends, unrelated inputs, sibling
 branches, and snapshots that rebase across a committed prefix. Record
 branch probe CPU, preparation and publication time, allocations, RSS,
-and finality. Freezing and constructing the table take additional time
-before voting, including for candidates that are never read as parents.
+and finality. Array construction is included in `cell_keys`, and building
+the position table is included in total commitment time. Both operations
+occur before voting, including for candidates never read as parents.
 The table can add memory when many candidates remain in flight. Measure
 shallow and deep branches as well as the committed-only control.
 

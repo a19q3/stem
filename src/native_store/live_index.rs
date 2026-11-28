@@ -27,8 +27,6 @@ use stem_ledger::{
     record,
 };
 
-#[cfg(feature = "native-prepared-live-cell-ownership")]
-use super::LiveChanges;
 use super::{PreparedCells, STATE_RECORD, Store, TIP};
 
 mod interned;
@@ -598,7 +596,7 @@ impl IndexView {
     }
 
     #[cfg(feature = "native-prepared-live-cell-ownership")]
-    pub(super) fn detach_inline_records(&self, changes: &mut LiveChanges) -> bool {
+    pub(super) fn detach_inline_records(&self, changes: &mut PreparedCells) -> bool {
         if changes.is_empty()
             || !self.index.state.try_read().is_ok_and(|state| {
                 state.covers(self.header) && matches!(&state.records, Some(Records::Inline(_)))
@@ -608,9 +606,10 @@ impl IndexView {
         }
         // Eligibility is only a hint. Drop the guard before touching record
         // bytes and keep copies for one candidate below the index budget.
-        let payload = changes.values().flatten().fold(0usize, |size, cell| {
-            size.saturating_add(InlineRecords::payload(cell))
-        });
+        let payload = changes
+            .iter()
+            .filter_map(|(_, cell)| cell.as_ref())
+            .fold(0usize, |size, cell| size.saturating_add(InlineRecords::payload(cell)));
         if payload == 0 || payload > self.index.limit_bytes {
             return false;
         }
