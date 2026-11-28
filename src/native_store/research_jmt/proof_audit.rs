@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
-use ckb_db::internal::{DBPinnableSlice, ReadOnlyDB, ReadOptions, prelude::*};
+use ckb_db::internal::{DBPinnableSlice, DBVector, ReadOnlyDB, ReadOptions, prelude::*};
 use jmt::{
     KeyHash, RootHash, Sha256Jmt, Version,
     proof::SparseMerkleProof,
@@ -22,6 +22,8 @@ type Query = (Key, Option<Key>);
 #[derive(Clone, Copy, Default, serde::Serialize)]
 struct Reads {
     calls: u64,
+    keys: u64,
+    multi_get_calls: u64,
     returned_bytes: u64,
 }
 
@@ -58,15 +60,71 @@ impl<'a> ProofStorage<'a> {
 
     fn read(&self, key: impl AsRef<[u8]>, kind: ReadKind) -> Result<Option<DBPinnableSlice<'a>>> {
         let value = self.database.get_pinned_opt(key, self.options)?;
+        self.record(kind, 1, 1, 0, value.as_deref().map_or(0, <[u8]>::len));
+        Ok(value)
+    }
+
+    fn read_many(&self, keys: &[[u8; 34]], kind: ReadKind) -> Result<Vec<Option<DBVector>>> {
+        const MIN_MULTI_GET: usize = 4;
+        let grouped = keys.len() >= MIN_MULTI_GET;
+        let values = if grouped {
+            self.database.multi_get_opt(keys, self.options)
+        } else {
+            keys.iter()
+                .map(|key| self.database.get_opt(key, self.options))
+                .collect()
+        }
+        .into_iter()
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+        ensure!(values.len() == keys.len(), "wrong audit batch read length");
+        let returned_bytes = values.iter().flatten().map(|value| value.len()).sum();
+        let calls = if grouped { 1 } else { keys.len() };
+        self.record(
+            kind,
+            calls,
+            keys.len(),
+            usize::from(grouped),
+            returned_bytes,
+        );
+        Ok(values)
+    }
+
+    fn record(&self, kind: ReadKind, calls: usize, keys: usize, batches: usize, bytes: usize) {
         let mut reads = self.reads.get();
         let tally = match kind {
             ReadKind::Node => &mut reads.nodes,
             ReadKind::Cell => &mut reads.cells,
         };
-        tally.calls += 1;
-        tally.returned_bytes += value.as_deref().map_or(0, <[u8]>::len) as u64;
+        tally.calls += calls as u64;
+        tally.keys += keys as u64;
+        tally.multi_get_calls += batches as u64;
+        tally.returned_bytes += bytes as u64;
         self.reads.set(reads);
-        Ok(value)
+    }
+
+    fn check_record_batch(
+        &self,
+        cells: &Patricia,
+        group: &[Query],
+    ) -> Result<HashMap<Key, Option<Key>>> {
+        const RECORD_READ_WIDTH: usize = 8;
+        let mut digests = HashMap::with_capacity(group.len());
+        for queries in group.chunks(RECORD_READ_WIDTH) {
+            let keys: Vec<_> = queries
+                .iter()
+                .map(|(id, _)| state_key(STATE_RECORD, Namespace::Cells, id))
+                .collect();
+            for (&(id, expected), raw) in queries.iter().zip(self.read_many(&keys, ReadKind::Cell)?)
+            {
+                let digest = raw.as_deref().map(|bytes| cells.value_hash(bytes));
+                ensure!(
+                    digest == expected,
+                    "audit Live Cell changed after root reconstruction"
+                );
+                digests.insert(id, digest);
+            }
+        }
+        Ok(digests)
     }
 }
 
@@ -76,6 +134,7 @@ struct JmtReader<'a> {
     version: Version,
     limit: usize,
     nodes: RefCell<HashMap<NodeKey, Node>>,
+    values: RefCell<Option<HashMap<Key, Option<Key>>>>,
     hits: Cell<usize>,
 }
 
@@ -109,6 +168,12 @@ impl TreeReader for JmtReader<'_> {
             version == self.version,
             "JMT proof value version differs from the view"
         );
+        if let Some(values) = self.values.borrow().as_ref() {
+            return Ok(values
+                .get(&id.0)
+                .context("JMT proof value outside audit batch")?
+                .map(|digest| digest.to_vec()));
+        }
         Ok(self
             .storage
             .read(
@@ -128,6 +193,7 @@ impl TreeReader for JmtReader<'_> {
 pub(super) struct ProofStats {
     pub(super) bytes: usize,
     pub(super) generate: Duration,
+    pub(super) record_fetch: Duration,
     pub(super) verify: Duration,
     pub(super) digest: Sha256,
     pub(super) peak_cached_nodes: usize,
@@ -159,6 +225,7 @@ pub(super) fn jmt(
         version,
         limit: 0,
         nodes: RefCell::default(),
+        values: RefCell::default(),
         hits: Cell::default(),
     };
     ensure!(
@@ -172,6 +239,11 @@ pub(super) fn jmt(
     let mut stats = ProofStats::default();
     for group in queries.chunks(options.batch_width) {
         let started = Instant::now();
+        if options.shared_record_batches {
+            let records = storage.check_record_batch(cells, group)?;
+            stats.record_fetch += started.elapsed();
+            *reader.values.borrow_mut() = Some(records);
+        }
         let encoded = group
             .iter()
             .map(|&(id, _)| {
@@ -183,6 +255,7 @@ pub(super) fn jmt(
         stats.peak_cached_nodes = stats.peak_cached_nodes.max(nodes.len());
         nodes.clear();
         drop(nodes);
+        reader.values.borrow_mut().take();
         stats.generate += started.elapsed();
 
         let started = Instant::now();
@@ -210,11 +283,18 @@ pub(super) fn patricia(
     cells: &Patricia,
     root: Key,
     queries: &[Query],
-    batch_width: usize,
+    options: CellAuditProofOptions,
 ) -> Result<ProofStats> {
     let mut stats = ProofStats::default();
-    for group in queries.chunks(batch_width) {
+    for group in queries.chunks(options.batch_width) {
         let started = Instant::now();
+        let records = options
+            .shared_record_batches
+            .then(|| storage.check_record_batch(cells, group))
+            .transpose()?;
+        if records.is_some() {
+            stats.record_fetch += started.elapsed();
+        }
         let mut tree = cells.edit(root, |id| {
             storage
                 .read(state_key(STATE_NODE, Namespace::Cells, id), ReadKind::Node)?
@@ -223,12 +303,39 @@ pub(super) fn patricia(
                 .transpose()
         });
         let keys: Vec<_> = group.iter().map(|&(id, _)| id).collect();
-        let paths = tree.prove_many(&keys)?;
+        #[cfg(feature = "native-batched-patricia-proofs")]
+        let batched = options
+            .patricia_frontier
+            .then(|| {
+                cells.prove_many_batched(root, &keys, |ids| {
+                    let keys: Vec<_> = ids
+                        .iter()
+                        .map(|id| state_key(STATE_NODE, Namespace::Cells, id))
+                        .collect();
+                    storage
+                        .read_many(&keys, ReadKind::Node)?
+                        .into_iter()
+                        .map(|value| value.as_deref().map(node_storage::canonical).transpose())
+                        .collect()
+                })
+            })
+            .transpose()?;
+        #[cfg(not(feature = "native-batched-patricia-proofs"))]
+        let batched = None;
+        let paths = match batched {
+            Some(paths) => paths,
+            None => tree.prove_many(&keys)?,
+        };
         let encoded = keys
             .into_iter()
             .zip(paths)
             .map(|(id, (value, proof))| {
-                if let Some(digest) = value {
+                if let Some(records) = &records {
+                    ensure!(
+                        records.get(&id) == Some(&value),
+                        "proven Patricia record changed"
+                    );
+                } else if let Some(digest) = value {
                     let raw = storage
                         .read(
                             state_key(STATE_RECORD, Namespace::Cells, &id),
@@ -243,6 +350,7 @@ pub(super) fn patricia(
                 Ok((value, proof.encode()?))
             })
             .collect::<Result<Vec<_>>>()?;
+        drop(records);
         stats.generate += started.elapsed();
 
         let started = Instant::now();

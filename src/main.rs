@@ -144,6 +144,12 @@ enum Command {
         /// Maximum decoded JMT nodes retained per batch. Zero disables reuse.
         #[arg(long, default_value_t = 0)]
         jmt_proof_cache_nodes: usize,
+        /// Use the same batched Cell record reader for either state engine.
+        #[arg(long)]
+        shared_proof_record_batches: bool,
+        /// Batch Patricia node reads across the upper proof frontier.
+        #[arg(long)]
+        patricia_proof_frontier: bool,
     },
     /// Export the trusted genesis and initial Jolteon committee for light clients.
     JolteonTrust {
@@ -401,6 +407,8 @@ fn main() -> Result<()> {
             expected_genesis,
             proof_batch_width,
             jmt_proof_cache_nodes,
+            shared_proof_record_batches,
+            patricia_proof_frontier,
         } => {
             use ckb_types::{packed::Byte32, prelude::Entity};
             use stem::native_store::CellAuditProofOptions;
@@ -410,6 +418,8 @@ fn main() -> Result<()> {
                 proof_options.batch_width = width;
             }
             proof_options.jmt_cache_nodes = jmt_proof_cache_nodes;
+            proof_options.shared_record_batches = shared_proof_record_batches;
+            proof_options.patricia_frontier = patricia_proof_frontier;
 
             let spec = native_spec::load(&genesis)?;
             let id = |raw: &str| -> Result<Byte32> {

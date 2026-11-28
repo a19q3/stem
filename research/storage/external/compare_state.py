@@ -110,9 +110,22 @@ def audit(args, engine, home, verified):
     ]
     if engine == "jmt":
         command += ["--jmt-proof-cache-nodes", str(args.jmt_proof_cache_nodes)]
+    elif args.patricia_proof_frontier:
+        command.append("--patricia-proof-frontier")
+    if args.shared_proof_record_batches:
+        command.append("--shared-proof-record-batches")
     result = json.loads(subprocess.check_output(command))
     if result["engine"] != ENGINES[engine]:
         raise ValueError(f"{home}: recovered database uses {result['engine']}, expected {ENGINES[engine]}")
+    expected_frontier = args.patricia_proof_frontier and engine == "patricia"
+    if (result["proof_batch_width"] != args.proof_batch_width
+            or result.get("shared_proof_record_batches", False) != args.shared_proof_record_batches
+            or result.get("patricia_proof_frontier", False) != expected_frontier):
+        raise ValueError(f"{home}: proof audit did not use the requested read paths")
+    if args.shared_proof_record_batches:
+        expected_keys = result["membership_queries"] + result["absence_queries"]
+        if result["proof_reads"]["cells"]["keys"] != expected_keys:
+            raise ValueError(f"{home}: proof audit did not read every sampled record")
     return result
 
 
@@ -126,6 +139,8 @@ def main():
     parser.add_argument("--jmt-runtime", type=Path)
     parser.add_argument("--proof-batch-width", type=int, default=32)
     parser.add_argument("--jmt-proof-cache-nodes", type=int, default=0)
+    parser.add_argument("--shared-proof-record-batches", action="store_true")
+    parser.add_argument("--patricia-proof-frontier", action="store_true")
     args = parser.parse_args()
     homes = (args.patricia_home, args.jmt_home)
     if any(homes) and (not all(homes) or args.binary is None):
@@ -215,6 +230,14 @@ def main():
         result["audit_binary_sha256"] = digest(args.binary)
         for engine, home, replayed in zip(ENGINES, homes, verified, strict=True):
             result["engines"][engine]["recovery_audit"] = audit(args, engine, home, replayed)
+        left, right = [entry["recovery_audit"] for entry in result["engines"].values()]
+        digests = (left.get("proof_query_digest"), right.get("proof_query_digest"))
+        same_queries = digests[0] == digests[1] if all(digests) else None
+        result["same_recovered_proof_queries"] = same_queries
+        if same_queries and args.shared_proof_record_batches:
+            for field in ("calls", "keys", "multi_get_calls"):
+                if left["proof_reads"]["cells"][field] != right["proof_reads"]["cells"][field]:
+                    parser.error(f"matched proof queries disagree on record read {field}")
     with args.output.open("x") as output:
         json.dump(result, output, indent=2)
         output.write("\n")

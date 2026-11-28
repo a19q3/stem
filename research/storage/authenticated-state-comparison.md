@@ -351,6 +351,40 @@ batch widths, bounded caches including a one-node limit, exact proof
 digests and accounting of avoided database calls. No runtime
 performance or recovery results have been collected for this change.
 
+### Shared record reads in the stopped-store proof audit
+
+Build the research binary with `native-research-jmt,native-batched-patricia-proofs`.
+Run paired stopped-store audits with `--shared-proof-record-batches`
+and the same `--proof-batch-width`. Both engines then fetch and check
+each sampled Cell record in groups of up to eight before constructing
+the paths. In this mode absence samples also check record absence
+inside the measured span. JMT serves its value callback from the
+checked group, and Patricia checks its authenticated leaf against
+the same group. Omitting the flag retains the historical per-engine
+record path and its timing boundary.
+
+Use `--patricia-proof-frontier` on the Patricia image to exercise the
+native bounded node traversal against the read-only database, then
+repeat on the same image with the flag omitted. The paired
+`compare_state.py` accepts both options and forwards the frontier
+flag only to Patricia. The optional JMT decoded node cache remains an
+independent setting.
+
+The audit reports logical database calls, requested keys, MultiGet
+calls, and returned bytes for both node and Cell reads. The proof
+generation and encoding time includes record checks. The separately
+reported `shared_record_fetch_us` is a component of that time.
+`proof_query_digest` covers the ordered keys and membership flags,
+and the paired report records whether the two recovered images
+produced the same sample. For matching samples, the shared-mode
+paired audit also checks that the logical record batches agree.
+A pair can finalize different live sets, so
+a workload match alone does not establish matching proof queries.
+Compare proof digests within each engine, and verify each against its
+own authenticated Header. Batch size can change allocation and cache
+behavior even with equal logical keys. The reopened-store fixtures
+are compile-checked. Runtime, replay and comparisons are pending.
+
 ### Reclaiming Live Cell rows from observed JMT leaves
 
 The replicated JMT control probes the exact parent record for every

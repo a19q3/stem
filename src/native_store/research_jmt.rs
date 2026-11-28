@@ -289,6 +289,10 @@ pub struct CellAuditProofOptions {
     pub batch_width: usize,
     /// Maximum decoded JMT nodes retained within one batch.
     pub jmt_cache_nodes: usize,
+    /// Use the same bounded record reader on both engines.
+    pub shared_record_batches: bool,
+    /// Use the native upper-frontier reader for Patricia proofs.
+    pub patricia_frontier: bool,
 }
 
 impl Default for CellAuditProofOptions {
@@ -296,6 +300,8 @@ impl Default for CellAuditProofOptions {
         Self {
             batch_width: MAX_CELL_PROOF_BATCH,
             jmt_cache_nodes: 0,
+            shared_record_batches: false,
+            patricia_frontier: false,
         }
     }
 }
@@ -382,6 +388,11 @@ fn audit_cell_state_at(
         .get(MARKER)?
         .context("missing Stem database layout")?;
     let is_jmt = marker.starts_with(LAYOUT);
+    ensure!(
+        !proof_options.patricia_frontier
+            || (!is_jmt && cfg!(feature = "native-batched-patricia-proofs")),
+        "frontier audit requires a Patricia store and native-batched-patricia-proofs"
+    );
     let layout = if is_jmt { LAYOUT } else { STORAGE_LAYOUT };
     let genesis = marker
         .strip_prefix(layout)
@@ -501,12 +512,17 @@ fn audit_cell_state_at(
         queries.push((id, None));
     }
 
+    let mut query_digest = Sha256::new_with_prefix(b"Stem research proof query order v1");
+    for (id, digest) in &queries {
+        query_digest.update(id);
+        query_digest.update([u8::from(digest.is_some())]);
+    }
     let version = tip.context.height;
     let stored = proof_audit::ProofStorage::new(&database, &options);
     let stats = if is_jmt {
         proof_audit::jmt(&stored, &cells, version, root, &queries, proof_options)?
     } else {
-        proof_audit::patricia(&stored, &cells, root, &queries, proof_options.batch_width)?
+        proof_audit::patricia(&stored, &cells, root, &queries, proof_options)?
     };
     Ok(serde_json::json!({
         "engine": if is_jmt { "sha256-jmt-0.12" } else { "compact-patricia" },
@@ -524,10 +540,14 @@ fn audit_cell_state_at(
         "membership_queries": members,
         "absence_queries": MEMBER_SAMPLES,
         "proof_batch_width": proof_options.batch_width,
+        "shared_proof_record_batches": proof_options.shared_record_batches,
+        "patricia_proof_frontier": proof_options.patricia_frontier,
         "jmt_proof_cache_limit_nodes": if is_jmt { proof_options.jmt_cache_nodes } else { 0 },
         "jmt_proof_cache_peak_nodes": stats.peak_cached_nodes,
         "jmt_proof_cache_hits": stats.cache_hits,
         "proof_reads": stored.metrics(),
+        "proof_query_digest": hex::encode(query_digest.finalize()),
+        "shared_record_fetch_us": proof_options.shared_record_batches.then(|| stats.record_fetch.as_micros()),
         "proof_bytes": stats.bytes,
         "proof_digest": hex::encode(stats.digest.finalize()),
         "open_us": open_us,

@@ -4429,6 +4429,7 @@ mod pipeline_store_tests {
                     CellAuditProofOptions {
                         batch_width: 12,
                         jmt_cache_nodes: cache,
+                        ..CellAuditProofOptions::default()
                     },
                 )
             };
@@ -4436,6 +4437,23 @@ mod pipeline_store_tests {
             assert_eq!(reference["proof_digest"], batched["proof_digest"]);
             assert_eq!(reference["proof_bytes"], batched["proof_bytes"]);
             assert_eq!(batched["proof_reads"]["cells"]["calls"], 32);
+            let shared = audit_cell_state_with_proofs(
+                home.path(),
+                spec.network.clone(),
+                &tip,
+                CellAuditProofOptions {
+                    batch_width: 12,
+                    shared_record_batches: true,
+                    patricia_frontier: !jmt && cfg!(feature = "native-batched-patricia-proofs"),
+                    ..CellAuditProofOptions::default()
+                },
+            )?;
+            assert_eq!(batched["proof_digest"], shared["proof_digest"]);
+            assert_eq!(batched["proof_query_digest"], shared["proof_query_digest"]);
+            assert_eq!(shared["proof_reads"]["cells"]["keys"], 32 + 512);
+            assert!(shared["proof_reads"]["cells"]["multi_get_calls"].as_u64().unwrap() > 0);
+            assert!(shared["proof_reads"]["cells"]["calls"].as_u64().unwrap() < 32 + 512);
+            assert_eq!(shared["proof_reads"]["nodes"]["keys"], batched["proof_reads"]["nodes"]["keys"]);
             if jmt {
                 for limit in [1, 128] {
                     let cached = audit(limit)?;
