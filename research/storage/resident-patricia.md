@@ -111,6 +111,27 @@ The inline WAL work alone averaged 29.7 and 44.2 ms in the combined
 runs. The measurements are from shared hardware and short windows.
 The sustained operating envelope remains a separate qualification.
 
+## Mixed Type Group control
+
+The established generator cycles through zero to 12 Type Groups with
+a total of 55,000 offered payments. The driver offers 2,200/s for 25
+seconds, excludes five seconds of warmup and gives 20 seconds to drain.
+Both builds use the same topology, worker allocation, block budgets
+and optional index settings as in the payment comparison.
+
+| Configuration | Common TPS | Conditional p99 | Follower preparation | Validator CPU |
+| --- | ---: | ---: | ---: | ---: |
+| RocksDB, first | 2,194 | 0.99 s | 92.9 ms | 80.8 s |
+| Both indexes, first | 2,193 | 0.95 s | 72.9 ms | 73.4 s |
+| Both indexes, reverse | 2,232 | 4.38 s | 143.2 ms | 81.1 s |
+| RocksDB, reverse | 2,184 | 1.47 s | 101.4 ms | 83.5 s |
+
+All four arms acknowledged and finalized 55,000 payments. Each archive
+passed independent replay. Throughput tracked the offered load. Tail
+latency changed direction by run order, and the second combined run
+had longer Follower preparation and higher p99 than its control.
+Keep this workload separate from the overloaded payment result.
+
 ## Native recovery and regressions
 
 Run the [certified write fault fixture](../execution-pipeline/README.md#integrated-commit-faults-with-live-payments)
