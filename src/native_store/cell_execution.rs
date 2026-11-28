@@ -280,6 +280,11 @@ impl<T: Borrow<Transaction>> ProposalWindow<T> {
         }
     }
 
+    #[cfg(feature = "native-leader-lineage-execution")]
+    pub(super) fn is_empty(&self) -> bool {
+        self.ready.len() == 0
+    }
+
     #[cfg(feature = "native-shared-cell-deps")]
     pub(super) fn dependency_stats(&self) -> DependencyReadStats {
         self.dependency_reads

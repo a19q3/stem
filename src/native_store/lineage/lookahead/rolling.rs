@@ -11,9 +11,9 @@ use std::{
 
 use anyhow::Result;
 use ckb_types::packed::OutPoint;
-use stem_ledger::{BlockContext, Origin, Transaction, block::Receipt};
+use stem_ledger::{BlockContext, Transaction};
 
-use super::Materialized;
+use super::{Materialized, Window};
 use crate::native_store::{
     Budget, LineageSchedule, LiveChanges, Overlay, Store, lineage::Heads, worker_completion,
 };
@@ -69,20 +69,25 @@ struct Completion {
 }
 
 impl Store {
-    pub(super) fn prepare_rolling_lineage_window(
+    pub(super) fn drive_lineage_window(
         &self,
         transactions: &[Transaction],
-        prefix: &[usize],
-        initial_heads: &Heads,
+        window: &Window,
         block: &BlockContext<'_>,
-        origin: &Origin,
+        width: usize,
         budget: &mut Budget,
         overlay: &mut Overlay,
-        receipts: &mut Vec<Receipt>,
-        fees: &mut u64,
         stats: &mut LineageSchedule,
-        max_jobs: impl Fn(Budget) -> usize,
-    ) -> Result<usize> {
+        mut settle: impl FnMut(
+            &Transaction,
+            &mut Budget,
+            &mut Overlay,
+            &mut LineageSchedule,
+            Option<Materialized>,
+            bool,
+        ) -> Result<bool>,
+    ) -> Result<bool> {
+        let prefix = &window.prefix;
         let (sender, receiver) = mpsc::channel::<Completion>();
         let cancelled = &AtomicBool::new(false);
         let mut tasks: Vec<_> = (0..prefix.len()).map(|_| Task::Pending).collect();
@@ -94,7 +99,7 @@ impl Store {
                 for position in 0..prefix.len() {
                     self.check_preparation_cancelled()?;
                     let slot = *budget;
-                    let funded = max_jobs(slot);
+                    let funded = self.funded_lineage_jobs(width, slot);
                     candidates.clear();
                     if funded > 1 {
                         let available = funded.saturating_sub(outstanding);
@@ -114,7 +119,7 @@ impl Store {
                             let tx = &transactions[index];
                             let inputs = Inputs::capture(
                                 tx,
-                                initial_heads,
+                                &window.initial_heads,
                                 &overlay.lineages,
                                 &overlay.live,
                             );
@@ -178,20 +183,18 @@ impl Store {
                             }
                             Task::Running => unreachable!("current Lineage task completed"),
                         };
-                    self.settle_lineage_lookahead(
+                    if settle(
                         &transactions[position],
-                        block,
-                        origin,
                         budget,
                         overlay,
-                        receipts,
-                        fees,
                         stats,
                         material,
                         attempted,
-                    )?;
+                    )? {
+                        return Ok(true);
+                    }
                 }
-                Ok(prefix.len())
+                Ok(false)
             })();
             // A failed ordered stage can leave later jobs queued.
             cancelled.store(true, Ordering::Relaxed);
@@ -207,7 +210,7 @@ mod tests {
         prelude::*,
     };
     use stem_ledger::{
-        Cell, LiveCell,
+        Cell, LiveCell, Origin,
         lineage::{Command, Head, LineageRef, Target},
     };
 

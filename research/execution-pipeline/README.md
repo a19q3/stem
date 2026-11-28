@@ -246,6 +246,40 @@ A shared Head or a saturated resource budget constrains overlap.
 The snapshot and existing ordered-oracle regressions have compile
 coverage. Runtime regressions, replay and load qualification are pending.
 
+#### Leader Lineage materialization
+
+`native-leader-lineage-execution` uses the same bounded scheduler
+inside Leader proposal selection. It visits the supplied candidates in
+their original order. A planned dependency waits for all possible
+earlier mutations to have been visited. A candidate rejected by the
+greedy scan publishes no Cell or Head edits. Later jobs capture the
+actual accepted prefix, including a retained Head after rejection or
+fee-only rollback. The planner already includes every possible Head
+successor and direct Cell access. If it cannot inspect a dependency,
+the buffered suffix is handled by ordinary ordered selection.
+Keeper schedules and atomic wrappers still use their existing paths.
+
+Materializations are adopted through the original proposal scan after
+its byte and logical read limits permit the candidate. Accepted count,
+wire limits, age-priority order, error handling and final receipts
+continue through that scan. A planning window starts after any buffered
+ordinary Cell candidate results are consumed. An early proposal stop
+cancels remaining queued work. A valid worker result can save
+materialization while the full authorization and application still
+run at the ordered position.
+
+Compare `rolling-lineage` and `leader-lineage` with the same funded
+mempool snapshot, workers and block limits. Include a rejected earlier
+command on the same Head, a reader of a refund from an accepted
+transaction, unrelated Heads and the single-Head AMM control. Check
+selected bytes, exact Headers, receipts, final Head proofs and
+independent replay. Measure `proposal_scan.lineage` for useful worker
+results, ordered fallbacks and current-position wait alongside Leader
+selection CPU and wall time. Spending work on candidates that the
+Leader later rejects can erase savings. The rejected-predecessor
+regression and existing Follower comparison have compile coverage.
+Runtime validation, replay and performance remain pending.
+
 ## Certified Commit Pipeline
 
 `jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.
