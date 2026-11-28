@@ -91,3 +91,45 @@ cargo build --release --locked --no-default-features \
 For a scheduling-only control, substitute `jolteon-commit-pipeline,jolteon-proposal-pipeline` for the cross-block feature. Omit the pipeline flags for the synchronous Cell-prefetch reference. For the integrated control, add `jolteon-admission-pipeline,native-commitment-pipeline,native-work-stealing,jolteon-certificate-experiment` to the paced configuration. Use the current checkout's release `native_store` test executable for the [driver and independent verifier](../storage/external/README.md#measure-and-replay), including the current Status fields. For the mature snapshot, use the [fixed funding fixture](../saturation/README.md#实验条件与复现) and stop all four validators after funding and before dispatch. Reopen independent copies for each arm and verify the funded Header and paid count before starting the timed offer.
 
 Final release binary SHA-256 values were `33d490d9ac76a671fa040e125b3db7f00743cd7ccdf9ac843a3b8317aa800368` for the synchronous reference, `f7cd758ed57f944fc70043775dd9fb0285de0e6ffaa7d4e1bbf263e5b6e57efc` for the paced three-stage control and `c39a0af5749881d21caac429300c6a3da92bbb594690d5034c35ef8ffac47c95` for the focused candidate. Reported native performance remains bounded by execution before voting, plus the consensus cadence and persistence budget.
+## Preparing the next proposal while its parent is being certified
+
+The `jolteon-pre-quorum-proposal` option gives the scheduled next-view
+Leader an earlier starting point. After that replica has independently
+executed an ordinary proposal and durably recorded and dispatched its own
+vote, it can use the prepared branch as input to its existing single Leader
+worker. It takes a bounded local mempool snapshot in the existing order.
+The replica can process parent votes while the worker builds a candidate.
+Recovery, seals, and a next block at a committee activation boundary skip
+this path.
+
+The speculative result is eligible only for the same epoch and next view
+with the exact voted parent certified. The Replica uses the existing exact
+prefix rebase if the database has advanced, checks the remaining branch,
+and attempts publication through the normal tick after finalization work.
+Pacing, timestamp validity and local vote journaling still apply. An
+intervening view, sibling QC or incompatible committed base cancels active
+work at existing safe boundaries or discards its result locally.
+
+The status counters `pre_quorum_started` and `pre_quorum_published` count
+jobs enqueued and actually published. For published jobs,
+`pre_quorum_overlap_us` counts the part of the worker's execution interval
+before the replica entered the certified target view. That boundary
+includes local QC journaling. Worker queue time and commit-window overlap
+are separate; the existing commit counters count jobs launched in that
+window and should not be used to infer overlap for these earlier jobs.
+
+Use a matched control built with
+`--features jolteon-exact-prefix-pipeline,jolteon-cancel-stale-execution`
+and change only the addition of `jolteon-pre-quorum-proposal`. Use the same
+funded state, signed workload, worker and core allocation, pipeline
+settings and block envelope in both arms. Compare pre-quorum reuse and
+compute overlap with discarded work, Leader queue and preparation times,
+CPU, common finality and backlog in the mature payment and mixed Type
+Group fixtures. Exercise a competing QC, timeout, writer pause and recovery
+with the independent replay and checkpoint validation controls.
+Lookahead can be short when the next Leader is the last validator to
+complete its vote or already holds a quorum. Copying the mempool
+snapshot and sharing the worker pool can add control delay, especially
+for late or replaced candidates. The compile-checked binding regression
+covers the waiting state, exact QC, timeout, sibling QC and one durable
+prefix advance. No new runtime or performance evidence has been collected.

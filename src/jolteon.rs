@@ -1277,15 +1277,22 @@ impl Replica {
         if !seal && !self.observe_time(point.view, time) {
             return Ok(());
         }
-        if self.execute(&branch)?.is_none() {
+        let Some(execution) = self.execute(&branch)? else {
             return Ok(());
-        }
+        };
+        #[cfg(not(feature = "jolteon-pre-quorum-proposal"))]
+        drop(execution);
         if !seal && !self.observe_time(point.view, time) {
             return Ok(());
         }
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &self.candidates[&point].proposal.wire)))?;
-        self.dispatch_vote(point)
+        self.dispatch_vote(point)?;
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        if !seal {
+            self.prepare_next_view(point, branch, execution)?;
+        }
+        Ok(())
     }
 
     fn observe_time(&mut self, view: u64, time: u64) -> bool {

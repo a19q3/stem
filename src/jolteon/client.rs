@@ -161,6 +161,12 @@ pub struct ProposalMetrics {
     #[serde(default)]
     pub commit_overlap_us: u64,
     #[serde(default)]
+    pub pre_quorum_started: u64,
+    #[serde(default)]
+    pub pre_quorum_published: u64,
+    #[serde(default)]
+    pub pre_quorum_overlap_us: u64,
+    #[serde(default)]
     pub rebased: u64,
     #[serde(default)]
     pub rebased_blocks: u64,
