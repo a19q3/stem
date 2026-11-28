@@ -112,6 +112,9 @@ pub struct StorageSample {
 
 #[derive(Serialize)]
 struct RocksDb {
+    keys_read: u64,
+    bytes_read: u64,
+    multiget_bytes_read: u64,
     wal_bytes: u64,
     wal_syncs: u64,
     flush_bytes: u64,
@@ -160,6 +163,9 @@ impl StorageMetrics {
             Ok(count.trim().parse()?)
         };
         let rocksdb = RocksDb {
+            keys_read: ticker("rocksdb.number.keys.read")?,
+            bytes_read: ticker("rocksdb.bytes.read")?,
+            multiget_bytes_read: ticker("rocksdb.number.multiget.bytes.read")?,
             wal_bytes: ticker("rocksdb.wal.bytes")?,
             wal_syncs: ticker("rocksdb.wal.synced")?,
             flush_bytes: ticker("rocksdb.flush.write.bytes")?,

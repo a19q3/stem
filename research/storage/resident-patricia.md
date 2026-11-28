@@ -11,10 +11,10 @@ The index checks durable node hashes before activation. It applies the
 existing ordered node edits only after acknowledgement of the atomic
 certified WAL write. It uses a separate memory limit and shard-local
 read locks so readers on different shards can proceed during publication.
-Allocation checks include a shard's possible replacement table.
-Exhaustion retires the index and keeps the ordinary authenticated reader
-available. The node encoding, commitments, proof bytes, WAL transaction and
-CKB settlement stay canonical.
+Allocation checks include a shard's possible replacement table. The
+original implementation retired the index when a shard could not grow.
+The follow-up covers bounded rebuilds and per-node RocksDB fallback.
+[Longer residency comparison](index-residency/README.md)
 
 ## Churn and storage
 

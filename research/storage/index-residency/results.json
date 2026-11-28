@@ -1,0 +1,1104 @@
+{
+  "base": "69c8e46112416a19d4e57ef211a05ccfc7d93655",
+  "binary_sha256": {
+    "index-candidate": "de51687b0510fbda10dd6ce4e45e45c16f65dcccc16dcff0b02eea09cde8d27e",
+    "index-control": "a55818b8a077e2ae3bda77d3e8307e87ff16c99262655fa5c5206cb03dbc9c67",
+    "index-harness": "ea8baeb9cf24ba45f99aa337c5f0671eb6960f90074c33794852fd148614a71f"
+  },
+  "drain_cutoff_seconds": 155,
+  "order": [
+    "control",
+    "candidate",
+    "candidate",
+    "control"
+  ],
+  "plan": {
+    "genesis_sha256": "b22086da6308a3bbcd6439dbf3bdc8c109fed65fc61ab41c066f371921c96ee3",
+    "harness_sha256": "ea8baeb9cf24ba45f99aa337c5f0671eb6960f90074c33794852fd148614a71f",
+    "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+    "storage_settings": {
+      "BLOCK_CYCLES": 4000000000,
+      "BLOCK_TRANSACTIONS": 2048,
+      "CADENCE": 100,
+      "COMPLETE_VOLUME": 1,
+      "DRAIN": 35,
+      "FUNDED_CELLS": 1440000,
+      "PAUSE_ON_FULL": 0,
+      "PAYMENT_DATA_BYTES": 0,
+      "PREFUND_PAYMENTS": 1,
+      "RATE": 8500,
+      "READY_SENDERS": 1,
+      "REPLICAS": 4,
+      "REUSE_SUBMISSIONS": 1,
+      "SECONDS": 120,
+      "SENDERS": 256,
+      "SHARD_SENDERS": 0,
+      "VM_WORKERS": 2
+    },
+    "topology_sha256": "3a236c3568eab1ad45906c7a6652eb6bbd4c7aa364f446a25008a833223cc944"
+  },
+  "runs": [
+    {
+      "actual_admitted_count": 665372,
+      "actual_offer_count": 1020000,
+      "archive_sha256": "5f60cd4b8f88231f447ecc26eddebd5af3a2a72a731eb877a6cc35fe67fc6b41",
+      "backlog": {
+        "120": 111539,
+        "155": 13235,
+        "20": 58011,
+        "60": 103587,
+        "80": 108015
+      },
+      "end": {
+        "common": 652137,
+        "pending": 13235
+      },
+      "funding_header": "ca010000000000007483fd22a2010000c513cff77b03576f8ed1b2dc9547bf508904686e4fda56e2ee566f965d436c40594aa8152d4e7ef2ad922b0584795b2d6369fa30cfc764b3a2acb3cbbd3fe01e128b8dd0fb08f46f5c54da10526ab96bb146ca0fb5429282f5f28dcec6c8c26f600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6c50629bf6d72d72dcd78ceabfaabc87972595f9104029c043c9498b4fae140b1b623e91cc5b652453b2791a92afc854d3c4d2e5a3d1f0fd922b8a7f54e3a6125",
+      "funding_height": 458,
+      "independent_replay": "Verified 1020000 writes, 665372 acknowledgements, 652137 finalized payments, 553833 in the offer window (4615.27 TPS), at certified height 1005",
+      "nodes": [
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5171534,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2588463,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 65312862,
+            "height": 860
+          },
+          "peak_rss_kib": 2106304,
+          "peak_sampled_accounted_bytes": 769721344
+        },
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5111971,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2611568,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 64231769,
+            "height": 858
+          },
+          "peak_rss_kib": 1983908,
+          "peak_sampled_accounted_bytes": 731710464
+        },
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5111674,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2687372,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 64231769,
+            "height": 858
+          },
+          "peak_rss_kib": 1995456,
+          "peak_sampled_accounted_bytes": 769721344
+        },
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5171718,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2504720,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 65312862,
+            "height": 860
+          },
+          "peak_rss_kib": 1943476,
+          "peak_sampled_accounted_bytes": 788726784
+        }
+      ],
+      "observer_errors": 0,
+      "run": "1-control",
+      "storage_sampling_errors": [],
+      "windows": {
+        "early": {
+          "client_errors": {
+            "mempool capacity exceeded": 77860
+          },
+          "conditional_latency_us": {
+            "50": 1396865,
+            "95": 107129586,
+            "99": 123687216
+          },
+          "confirmation_window_us": [
+            20000000,
+            60000000
+          ],
+          "counts": {
+            "acks": 262664,
+            "common": 217088,
+            "offers": 340268
+          },
+          "latency_samples": 257056,
+          "node_index_hits": 12503602,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            19878624,
+            59994554
+          ],
+          "process_cpu_seconds": 277.94,
+          "process_io_bytes": {
+            "read_bytes": 737280,
+            "write_bytes": 11304288256
+          },
+          "rocksdb": {
+            "bytes_read": 439682122,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 63289,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 2818708384,
+            "wal_syncs": 1208
+          },
+          "rocksdb_window_us": [
+            18834020,
+            58935054
+          ],
+          "status_window_us": [
+            19854147,
+            59991920
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 36.73616719242902,
+              "n": 317,
+              "us": 11645365
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 222.63994952681387,
+              "n": 317,
+              "us": 70576864
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 42.79549528301887,
+              "n": 424,
+              "us": 18145290
+            },
+            "execution.control_queue": {
+              "mean_ms": 5.142259247242051,
+              "n": 3082,
+              "us": 15848443
+            },
+            "execution.proposal": {
+              "mean_ms": 114.23967924528301,
+              "n": 106,
+              "us": 12109406
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 37.90601886792452,
+              "n": 106,
+              "us": 4018038
+            }
+          },
+          "view_timeouts": 0
+        },
+        "late": {
+          "client_errors": {
+            "mempool capacity exceeded": 191069
+          },
+          "conditional_latency_us": {
+            "50": 1941471,
+            "95": 44951112,
+            "99": 62077710
+          },
+          "confirmation_window_us": [
+            80000000,
+            120000000
+          ],
+          "counts": {
+            "acks": 148932,
+            "common": 145408,
+            "offers": 340000
+          },
+          "latency_samples": 145946,
+          "node_index_hits": 0,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            80078007,
+            120480299
+          ],
+          "process_cpu_seconds": 220.26,
+          "process_io_bytes": {
+            "read_bytes": 32768,
+            "write_bytes": 6894325760
+          },
+          "rocksdb": {
+            "bytes_read": 861157242,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 8374496,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 1860670505,
+            "wal_syncs": 785
+          },
+          "rocksdb_window_us": [
+            80080017,
+            119478638
+          ],
+          "status_window_us": [
+            79966408,
+            119969123
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 125.5079483568075,
+              "n": 213,
+              "us": 26733193
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 320.0878122065728,
+              "n": 213,
+              "us": 68178704
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 43.28232042253521,
+              "n": 284,
+              "us": 12292179
+            },
+            "execution.control_queue": {
+              "mean_ms": 2.9050322079937914,
+              "n": 2577,
+              "us": 7486268
+            },
+            "execution.proposal": {
+              "mean_ms": 203.19911267605633,
+              "n": 71,
+              "us": 14427137
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 111.22340845070423,
+              "n": 71,
+              "us": 7896862
+            }
+          },
+          "view_timeouts": 0
+        }
+      },
+      "workload_id": "1f14b179d8279d80ad0c5f3a1811502dcb1cbc6c452717be7c49bf53fae622c3"
+    },
+    {
+      "actual_admitted_count": 734893,
+      "actual_offer_count": 1020000,
+      "archive_sha256": "f2432025d41f39026b91f4736e15735d1997f76a3d06279d69609de090d29326",
+      "backlog": {
+        "120": 108554,
+        "155": 0,
+        "20": 55644,
+        "60": 102788,
+        "80": 105900
+      },
+      "end": {
+        "common": 734893,
+        "pending": 0
+      },
+      "funding_header": "ca010000000000007483fd22a2010000c513cff77b03576f8ed1b2dc9547bf508904686e4fda56e2ee566f965d436c40594aa8152d4e7ef2ad922b0584795b2d6369fa30cfc764b3a2acb3cbbd3fe01e128b8dd0fb08f46f5c54da10526ab96bb146ca0fb5429282f5f28dcec6c8c26f600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6c50629bf6d72d72dcd78ceabfaabc87972595f9104029c043c9498b4fae140b1b623e91cc5b652453b2791a92afc854d3c4d2e5a3d1f0fd922b8a7f54e3a6125",
+      "funding_height": 458,
+      "independent_replay": "Verified 1020000 writes, 734893 acknowledgements, 734893 finalized payments, 625748 in the offer window (5214.57 TPS), at certified height 1083",
+      "nodes": [
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 10627358,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2492578,
+            "shard_rebuilds": 110,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1850064,
+          "peak_sampled_accounted_bytes": 608175104
+        },
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 10626864,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2439477,
+            "shard_rebuilds": 111,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1873084,
+          "peak_sampled_accounted_bytes": 608175104
+        },
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 10627499,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2519319,
+            "shard_rebuilds": 107,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1841072,
+          "peak_sampled_accounted_bytes": 608175104
+        },
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 10625147,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2393953,
+            "shard_rebuilds": 109,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1916596,
+          "peak_sampled_accounted_bytes": 608175104
+        }
+      ],
+      "observer_errors": 0,
+      "run": "2-candidate",
+      "storage_sampling_errors": [],
+      "windows": {
+        "early": {
+          "client_errors": {
+            "mempool capacity exceeded": 76364
+          },
+          "conditional_latency_us": {
+            "50": 1419710,
+            "95": 104847890,
+            "99": 119984512
+          },
+          "confirmation_window_us": [
+            20000000,
+            60000000
+          ],
+          "counts": {
+            "acks": 264232,
+            "common": 217088,
+            "offers": 340352
+          },
+          "latency_samples": 263988,
+          "node_index_hits": 12599307,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            19959378,
+            59662369
+          ],
+          "process_cpu_seconds": 275.27,
+          "process_io_bytes": {
+            "read_bytes": 49152,
+            "write_bytes": 10891362304
+          },
+          "rocksdb": {
+            "bytes_read": 438402824,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 67675,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 2791984470,
+            "wal_syncs": 1201
+          },
+          "rocksdb_window_us": [
+            18915619,
+            58652613
+          ],
+          "status_window_us": [
+            19848723,
+            59969284
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 36.62836163522013,
+              "n": 318,
+              "us": 11647819
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 221.16947798742137,
+              "n": 318,
+              "us": 70331894
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 44.25649528301887,
+              "n": 424,
+              "us": 18764754
+            },
+            "execution.control_queue": {
+              "mean_ms": 6.574380525304292,
+              "n": 3122,
+              "us": 20525216
+            },
+            "execution.proposal": {
+              "mean_ms": 114.8801320754717,
+              "n": 106,
+              "us": 12177294
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 38.535716981132076,
+              "n": 106,
+              "us": 4084786
+            }
+          },
+          "view_timeouts": 0
+        },
+        "late": {
+          "client_errors": {
+            "mempool capacity exceeded": 140150
+          },
+          "conditional_latency_us": {
+            "50": 1345113,
+            "95": 42003897,
+            "99": 59017099
+          },
+          "confirmation_window_us": [
+            80000000,
+            120000000
+          ],
+          "counts": {
+            "acks": 199262,
+            "common": 196608,
+            "offers": 339656
+          },
+          "latency_samples": 199506,
+          "node_index_hits": 11467697,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            79916336,
+            119548584
+          ],
+          "process_cpu_seconds": 237.69,
+          "process_io_bytes": {
+            "read_bytes": 0,
+            "write_bytes": 9378299904
+          },
+          "rocksdb": {
+            "bytes_read": 399051430,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 69114,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 2551850727,
+            "wal_syncs": 1105
+          },
+          "rocksdb_window_us": [
+            79935920,
+            119574122
+          ],
+          "status_window_us": [
+            79948677,
+            119890005
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 38.17749134948097,
+              "n": 289,
+              "us": 11033295
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 232.7665017301038,
+              "n": 289,
+              "us": 67269519
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 50.569421875,
+              "n": 384,
+              "us": 19418658
+            },
+            "execution.control_queue": {
+              "mean_ms": 8.961315715292459,
+              "n": 2838,
+              "us": 25432214
+            },
+            "execution.proposal": {
+              "mean_ms": 129.10955670103093,
+              "n": 97,
+              "us": 12523627
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 37.727505154639175,
+              "n": 97,
+              "us": 3659568
+            }
+          },
+          "view_timeouts": 0
+        }
+      },
+      "workload_id": "1f14b179d8279d80ad0c5f3a1811502dcb1cbc6c452717be7c49bf53fae622c3"
+    },
+    {
+      "actual_admitted_count": 623662,
+      "actual_offer_count": 1020000,
+      "archive_sha256": "ab75befeb7a6072ca4b9e3a1fd987907d6237d22dba4eab1b2d3f78f70428c61",
+      "backlog": {
+        "120": 122798,
+        "155": 22554,
+        "20": 78688,
+        "60": 114996,
+        "80": 118761
+      },
+      "end": {
+        "common": 601108,
+        "pending": 22554
+      },
+      "funding_header": "ca010000000000007483fd22a2010000c513cff77b03576f8ed1b2dc9547bf508904686e4fda56e2ee566f965d436c40594aa8152d4e7ef2ad922b0584795b2d6369fa30cfc764b3a2acb3cbbd3fe01e128b8dd0fb08f46f5c54da10526ab96bb146ca0fb5429282f5f28dcec6c8c26f600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6c50629bf6d72d72dcd78ceabfaabc87972595f9104029c043c9498b4fae140b1b623e91cc5b652453b2791a92afc854d3c4d2e5a3d1f0fd922b8a7f54e3a6125",
+      "funding_height": 458,
+      "independent_replay": "Verified 1020000 writes, 623662 acknowledgements, 601108 finalized payments, 500756 in the offer window (4172.97 TPS), at certified height 983",
+      "nodes": [
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 8750697,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2670764,
+            "shard_rebuilds": 64,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1843292,
+          "peak_sampled_accounted_bytes": 608175104
+        },
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 8754467,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2653128,
+            "shard_rebuilds": 64,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1842120,
+          "peak_sampled_accounted_bytes": 608175104
+        },
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 8751730,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2767926,
+            "shard_rebuilds": 64,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1827940,
+          "peak_sampled_accounted_bytes": 608175104
+        },
+        {
+          "final": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 8751426,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2583572,
+            "shard_rebuilds": 64,
+            "uncached_inserts": 0
+          },
+          "first_inactive": null,
+          "peak_rss_kib": 1908948,
+          "peak_sampled_accounted_bytes": 608175104
+        }
+      ],
+      "observer_errors": 0,
+      "run": "3-candidate",
+      "storage_sampling_errors": [],
+      "windows": {
+        "early": {
+          "client_errors": {
+            "mempool capacity exceeded": 131814
+          },
+          "conditional_latency_us": {
+            "50": 1937062,
+            "95": 108481811,
+            "99": 124418580
+          },
+          "confirmation_window_us": [
+            20000000,
+            60000000
+          ],
+          "counts": {
+            "acks": 208340,
+            "common": 172032,
+            "offers": 340000
+          },
+          "latency_samples": 200711,
+          "node_index_hits": 9932930,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            19551876,
+            60202514
+          ],
+          "process_cpu_seconds": 231.91,
+          "process_io_bytes": {
+            "read_bytes": 2873892864,
+            "write_bytes": 9736536064
+          },
+          "rocksdb": {
+            "bytes_read": 360510924,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 63809,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 2205889638,
+            "wal_syncs": 959
+          },
+          "rocksdb_window_us": [
+            19588106,
+            59201038
+          ],
+          "status_window_us": [
+            19979085,
+            59986669
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 37.229170634920635,
+              "n": 252,
+              "us": 9381751
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 231.4128611111111,
+              "n": 252,
+              "us": 58316041
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 47.611110119047616,
+              "n": 336,
+              "us": 15997333
+            },
+            "execution.control_queue": {
+              "mean_ms": 8.27893357400722,
+              "n": 2770,
+              "us": 22932646
+            },
+            "execution.proposal": {
+              "mean_ms": 199.78507142857143,
+              "n": 84,
+              "us": 16781946
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 38.233809523809526,
+              "n": 84,
+              "us": 3211640
+            }
+          },
+          "view_timeouts": 0
+        },
+        "late": {
+          "client_errors": {
+            "mempool capacity exceeded": 176111
+          },
+          "conditional_latency_us": {
+            "50": 1770448,
+            "95": 45976274,
+            "99": 61986979
+          },
+          "confirmation_window_us": [
+            80000000,
+            120000000
+          ],
+          "counts": {
+            "acks": 163781,
+            "common": 159744,
+            "offers": 340000
+          },
+          "latency_samples": 157847,
+          "node_index_hits": 9289668,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            80288089,
+            119578721
+          ],
+          "process_cpu_seconds": 202.0,
+          "process_io_bytes": {
+            "read_bytes": 4321644544,
+            "write_bytes": 8892456960
+          },
+          "rocksdb": {
+            "bytes_read": 331042446,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 65812,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 2046946093,
+            "wal_syncs": 886
+          },
+          "rocksdb_window_us": [
+            80306089,
+            119647996
+          ],
+          "status_window_us": [
+            79994702,
+            119954194
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 39.19232478632479,
+              "n": 234,
+              "us": 9171004
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 235.85831196581196,
+              "n": 234,
+              "us": 55190845
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 44.4529391025641,
+              "n": 312,
+              "us": 13869317
+            },
+            "execution.control_queue": {
+              "mean_ms": 9.15036246689368,
+              "n": 2643,
+              "us": 24184408
+            },
+            "execution.proposal": {
+              "mean_ms": 212.80497435897433,
+              "n": 78,
+              "us": 16598788
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 37.40958974358974,
+              "n": 78,
+              "us": 2917948
+            }
+          },
+          "view_timeouts": 0
+        }
+      },
+      "workload_id": "1f14b179d8279d80ad0c5f3a1811502dcb1cbc6c452717be7c49bf53fae622c3"
+    },
+    {
+      "actual_admitted_count": 624922,
+      "actual_offer_count": 1020000,
+      "archive_sha256": "9b5b5a10cd9436cf812264e6fb24872aceba204d6d55c46faa7420d0ec3ebb1f",
+      "backlog": {
+        "120": 114083,
+        "155": 34212,
+        "20": 60443,
+        "60": 105129,
+        "80": 108790
+      },
+      "end": {
+        "common": 590710,
+        "pending": 34212
+      },
+      "funding_header": "ca010000000000007483fd22a2010000c513cff77b03576f8ed1b2dc9547bf508904686e4fda56e2ee566f965d436c40594aa8152d4e7ef2ad922b0584795b2d6369fa30cfc764b3a2acb3cbbd3fe01e128b8dd0fb08f46f5c54da10526ab96bb146ca0fb5429282f5f28dcec6c8c26f600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6c50629bf6d72d72dcd78ceabfaabc87972595f9104029c043c9498b4fae140b1b623e91cc5b652453b2791a92afc854d3c4d2e5a3d1f0fd922b8a7f54e3a6125",
+      "funding_height": 458,
+      "independent_replay": "Verified 1020000 writes, 624922 acknowledgements, 590710 finalized payments, 510838 in the offer window (4256.98 TPS), at certified height 972",
+      "nodes": [
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5141107,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2523799,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 65491608,
+            "height": 856
+          },
+          "peak_rss_kib": 2007940,
+          "peak_sampled_accounted_bytes": 769721344
+        },
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5144459,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2494209,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 65491608,
+            "height": 856
+          },
+          "peak_rss_kib": 2094860,
+          "peak_sampled_accounted_bytes": 769721344
+        },
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5144141,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2560156,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 65491608,
+            "height": 856
+          },
+          "peak_rss_kib": 2036664,
+          "peak_sampled_accounted_bytes": 750715904
+        },
+        {
+          "final": {
+            "accounted_bytes": 0,
+            "active": false,
+            "hits": 5231073,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 0,
+            "peak_accounted_bytes": 0,
+            "recovery_us": 2448440,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "first_inactive": {
+            "at_us": 70128295,
+            "height": 858
+          },
+          "peak_rss_kib": 1959800,
+          "peak_sampled_accounted_bytes": 788726784
+        }
+      ],
+      "observer_errors": 0,
+      "run": "4-control",
+      "storage_sampling_errors": [],
+      "windows": {
+        "early": {
+          "client_errors": {
+            "mempool capacity exceeded": 78353
+          },
+          "conditional_latency_us": {
+            "50": 1379812,
+            "95": 105070076,
+            "99": 122679657
+          },
+          "confirmation_window_us": [
+            20000000,
+            60000000
+          ],
+          "counts": {
+            "acks": 261774,
+            "common": 217088,
+            "offers": 340000
+          },
+          "latency_samples": 247229,
+          "node_index_hits": 12544091,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            19842106,
+            59616053
+          ],
+          "process_cpu_seconds": 273.41,
+          "process_io_bytes": {
+            "read_bytes": 45465600,
+            "write_bytes": 11010891776
+          },
+          "rocksdb": {
+            "bytes_read": 440069478,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 58465,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 2765436835,
+            "wal_syncs": 1193
+          },
+          "rocksdb_window_us": [
+            18796356,
+            58614581
+          ],
+          "status_window_us": [
+            19890078,
+            59997907
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 35.51427044025157,
+              "n": 318,
+              "us": 11293538
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 220.2795786163522,
+              "n": 318,
+              "us": 70048906
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 46.99481603773585,
+              "n": 424,
+              "us": 19925802
+            },
+            "execution.control_queue": {
+              "mean_ms": 6.519206165703276,
+              "n": 3114,
+              "us": 20300808
+            },
+            "execution.proposal": {
+              "mean_ms": 114.18852830188679,
+              "n": 106,
+              "us": 12103984
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 38.934396226415096,
+              "n": 106,
+              "us": 4127046
+            }
+          },
+          "view_timeouts": 0
+        },
+        "late": {
+          "client_errors": {
+            "mempool capacity exceeded": 203635
+          },
+          "conditional_latency_us": {
+            "50": 2174128,
+            "95": 43970291,
+            "99": 61181056
+          },
+          "confirmation_window_us": [
+            80000000,
+            120000000
+          ],
+          "counts": {
+            "acks": 136365,
+            "common": 131072,
+            "offers": 340000
+          },
+          "latency_samples": 128742,
+          "node_index_hits": 0,
+          "node_index_misses": 0,
+          "proc_window_us": [
+            79684310,
+            119899601
+          ],
+          "process_cpu_seconds": 209.29,
+          "process_io_bytes": {
+            "read_bytes": 466673664,
+            "write_bytes": 6179782656
+          },
+          "rocksdb": {
+            "bytes_read": 777540649,
+            "compaction_bytes": 0,
+            "flush_bytes": 0,
+            "keys_read": 7480722,
+            "multiget_bytes_read": 0,
+            "wal_bytes": 1675210965,
+            "wal_syncs": 710
+          },
+          "rocksdb_window_us": [
+            79694385,
+            118888791
+          ],
+          "status_window_us": [
+            79995267,
+            119972973
+          ],
+          "timing": {
+            "execution.candidate_commitments.cell_tree": {
+              "mean_ms": 133.380046875,
+              "n": 192,
+              "us": 25608969
+            },
+            "execution.candidate_verify": {
+              "mean_ms": 337.9165208333333,
+              "n": 192,
+              "us": 64879972
+            },
+            "execution.commit_jobs.persistence": {
+              "mean_ms": 49.042765625,
+              "n": 256,
+              "us": 12554948
+            },
+            "execution.control_queue": {
+              "mean_ms": 2.6944664523905186,
+              "n": 2489,
+              "us": 6706527
+            },
+            "execution.proposal": {
+              "mean_ms": 249.08884375,
+              "n": 64,
+              "us": 15941686
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "mean_ms": 120.11415625,
+              "n": 64,
+              "us": 7687306
+            }
+          },
+          "view_timeouts": 0
+        }
+      },
+      "workload_id": "1f14b179d8279d80ad0c5f3a1811502dcb1cbc6c452717be7c49bf53fae622c3"
+    }
+  ],
+  "scoring_windows_seconds": {
+    "early": [
+      20,
+      60
+    ],
+    "late": [
+      80,
+      120
+    ]
+  }
+}

@@ -72,11 +72,14 @@ reader's RocksDB snapshot. The index applies edits after the normal durable
 write while proofs and consensus use the same canonical encoding.
 
 Status reports `cell_node_index.active`, the indexed node count, table
-bytes, budget, startup verification time, hits and misses. The index is
-independent of the Live Cell index and the RocksDB block cache. A budget
-failure retires the index. The replica continues reading authenticated
-nodes from RocksDB. Include the configured indexes and RocksDB cache when
-sizing a replica's memory.
+bytes, peak table bytes including replacement allocations, budget, startup
+verification time, hits, misses, shard rebuilds and uncached inserts. The
+index is independent of the Live Cell index and the RocksDB block cache.
+If the initial index exceeds its budget, the replica uses RocksDB. During
+commits, the index retains existing nodes when a new allocation cannot
+fit. Lookups of uncached content addresses use the reader's RocksDB
+snapshot. Include the configured indexes and RocksDB cache when sizing
+a replica's memory.
 
 ```sh
 stem run --initialize --home /srv/stem/app --genesis /srv/stem/stem.json \

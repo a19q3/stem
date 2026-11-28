@@ -34,6 +34,12 @@ pub struct CellNodeIndexStatus {
     pub recovery_us: u64,
     pub hits: u64,
     pub misses: u64,
+    #[serde(default)]
+    pub peak_accounted_bytes: usize,
+    #[serde(default)]
+    pub shard_rebuilds: u64,
+    #[serde(default)]
+    pub uncached_inserts: u64,
 }
 
 #[derive(Default)]
@@ -49,8 +55,11 @@ pub(super) struct NodeIndex {
     shards: [Shard; SHARDS],
     active: AtomicBool,
     bytes: AtomicUsize,
+    peak_bytes: AtomicUsize,
     limit_bytes: usize,
     recovery_us: u64,
+    rebuilds: AtomicU64,
+    uncached_inserts: AtomicU64,
 }
 
 fn slot(id: &Key) -> usize {
@@ -65,15 +74,22 @@ fn id_from_key(key: &[u8]) -> Result<Key> {
 }
 
 impl NodeIndex {
-    pub(super) fn recover(store: &Store, limit_bytes: usize) -> Result<Self> {
-        let started = Instant::now();
-        let mut index = Self {
+    fn new(limit_bytes: usize) -> Self {
+        Self {
             shards: std::array::from_fn(|_| Shard::default()),
             active: AtomicBool::new(true),
             bytes: AtomicUsize::new(0),
+            peak_bytes: AtomicUsize::new(0),
             limit_bytes,
             recovery_us: 0,
-        };
+            rebuilds: AtomicU64::new(0),
+            uncached_inserts: AtomicU64::new(0),
+        }
+    }
+
+    pub(super) fn recover(store: &Store, limit_bytes: usize) -> Result<Self> {
+        let started = Instant::now();
+        let mut index = Self::new(limit_bytes);
         let snapshot = store.db.snapshot();
         let tip = snapshot.get(TIP)?.context("missing committed Stem tip")?;
         ensure!(
@@ -148,17 +164,28 @@ impl NodeIndex {
             .saturating_add(64);
         let bytes = self.bytes.load(Ordering::Relaxed);
         let old = rows.allocation_size();
-        // Tombstones can force the table to double even when the requested
-        // count would normally fit. Count both allocations at that peak.
-        if bytes.saturating_add(estimate.max(old.saturating_mul(2))) > self.limit_bytes {
+        // An in-place reserve may double the table to clear tombstones. A
+        // fresh table can use the capacity required by the live entries.
+        // Budget the old and replacement allocations together.
+        if bytes.saturating_add(estimate) > self.limit_bytes {
             return false;
         }
-        if rows.try_reserve(count - rows.len()).is_err() {
+        let mut replacement = Rows::with_hasher(rows.hasher().clone());
+        if replacement.try_reserve(count).is_err() {
             return false;
         }
-        let used = bytes - old + rows.allocation_size();
-        self.bytes.store(used, Ordering::Relaxed);
-        used <= self.limit_bytes
+        let peak = bytes.saturating_add(replacement.allocation_size());
+        if peak > self.limit_bytes {
+            return false;
+        }
+        self.peak_bytes.fetch_max(peak, Ordering::Relaxed);
+        replacement.extend(rows.drain());
+        *rows = replacement;
+        self.bytes.store(peak - old, Ordering::Relaxed);
+        if old != 0 {
+            self.rebuilds.fetch_add(1, Ordering::Relaxed);
+        }
+        true
     }
 
     pub(super) fn lookup(&self, id: &Key) -> Option<CanonicalNode> {
@@ -197,19 +224,23 @@ impl NodeIndex {
             }
             let mut rows = shard.rows.write().expect("Cell node shard");
             for (id, encoded) in changes {
-                if let Some(encoded) = encoded {
-                    let count = rows.len() + 1;
-                    if let Ok(node) = node_storage::canonical(encoded)
-                        && (rows.contains_key(id) || self.reserve(&mut rows, count))
-                    {
-                        rows.insert(*id, node);
-                        continue;
-                    }
+                let Some(encoded) = encoded else {
+                    rows.remove(id);
+                    continue;
+                };
+                let Ok(node) = node_storage::canonical(encoded) else {
                     drop(rows);
                     self.retire();
                     return;
+                };
+                let count = rows.len() + 1;
+                if rows.contains_key(id) || self.reserve(&mut rows, count) {
+                    rows.insert(*id, node);
+                } else {
+                    // The node is already durable. Reads use the caller's
+                    // RocksDB snapshot when its content address is absent.
+                    self.uncached_inserts.fetch_add(1, Ordering::Relaxed);
                 }
-                rows.remove(id);
             }
         }
     }
@@ -245,6 +276,71 @@ impl NodeIndex {
                 .iter()
                 .map(|shard| shard.misses.load(Ordering::Relaxed))
                 .sum(),
+            peak_accounted_bytes: self.peak_bytes.load(Ordering::Relaxed),
+            shard_rebuilds: self.rebuilds.load(Ordering::Relaxed),
+            uncached_inserts: self.uncached_inserts.load(Ordering::Relaxed),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_store::state_key;
+
+    fn key(index: u32) -> Key {
+        let mut key = [0; 32];
+        key[1..5].copy_from_slice(&index.to_le_bytes());
+        key
+    }
+
+    fn fill(index: &NodeIndex, count: u32) {
+        let mut batch = Batch::default();
+        for i in 0..count {
+            batch.put(state_key(STATE_NODE, Namespace::Cells, &key(i)), [0; 65]);
+        }
+        index.advance(&batch);
+    }
+
+    #[test]
+    fn churn_rebuilds_a_shard_at_fixed_cardinality_and_budget() {
+        const NODES: u32 = 100;
+        let mut index = NodeIndex::new(1 << 20);
+        fill(&index, NODES);
+        let allocation = index.status().accounted_bytes;
+        index.limit_bytes = 2 * allocation + 64;
+        for offset in 0..4096 {
+            let mut batch = Batch::default();
+            batch.delete(state_key(STATE_NODE, Namespace::Cells, &key(offset)));
+            batch.put(
+                state_key(STATE_NODE, Namespace::Cells, &key(NODES + offset)),
+                [0; 65],
+            );
+            index.advance(&batch);
+        }
+        let status = index.status();
+        assert!(status.active && status.shard_rebuilds > 0);
+        assert_eq!(status.nodes, NODES as usize);
+        assert_eq!(status.uncached_inserts, 0);
+        assert_eq!(status.accounted_bytes, allocation);
+        assert!(status.peak_accounted_bytes <= status.limit_bytes);
+    }
+
+    #[test]
+    fn budget_exhaustion_preserves_unrelated_entries() {
+        let mut index = NodeIndex::new(1 << 20);
+        fill(&index, 100);
+        index.limit_bytes = index.status().accounted_bytes;
+        let mut batch = Batch::default();
+        let mut miss = key(101);
+        miss[0] = 1;
+        batch.put(state_key(STATE_NODE, Namespace::Cells, &miss), [0; 65]);
+        index.advance(&batch);
+        let status = index.status();
+        assert!(status.active);
+        assert_eq!(status.nodes, 100);
+        assert_eq!(status.uncached_inserts, 1);
+        assert!(index.lookup(&key(99)).is_some());
+        assert!(index.lookup(&miss).is_none());
     }
 }
