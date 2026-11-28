@@ -38,6 +38,7 @@ native-dependency-execution = []
 native-shared-cell-deps = []
 native-leader-dependency-execution = []
 native-rolling-cell-execution = ["native-dependency-execution"]
+native-rolling-leader-execution = ["native-leader-dependency-execution"]
 native-execution-material-cache = ["stem-ledger/execution-material-cache"]
 native-research-jmt = ["dep:borsh", "dep:jmt"]
 

@@ -99,3 +99,51 @@ CXXFLAGS='-include cstdint' cargo test --locked --release -p stem-vm --test nati
 # Use the executable path printed by Cargo. The native fixture needs clang with RV64 support.
 taskset -c 0-31 /usr/bin/time -v /path/to/native-test-binary measure_resolved_job_schedules --ignored --nocapture
 ```
+
+## Rolling Leader preparation
+
+The `native-rolling-leader-execution` feature extends the bounded
+Follower queue to greedy Leader construction. The reference build uses
+`native-leader-dependency-execution` and prepares a whole fixed window
+before it starts settling that window. In rolling mode the Leader
+refills available worker slots as ordered settlement advances.
+
+The Leader inspects ordinary candidates in input order and gathers
+at most 128 consecutive entries ahead of settlement. This lookahead
+stays within the remaining item, transaction byte and proposal wire
+budgets. Workers resolve against the exact parent, an immutable
+accepted prefix and declared earlier Cell edits in the lookahead.
+At most 32 jobs are outstanding, at most four per worker, with a
+full transaction cycle limit reserved for each speculative position.
+The running queue is limited to two jobs per worker. Protocol
+operations and single entries use the existing ordered path.
+
+The Leader and its fixed-window control share the same selection and
+accounting logic. A job is reusable only after every projected producer
+it read has actually been adopted and its actual resource charges fit.
+A failed speculative job is rechecked against the canonical prefix.
+When the remaining budget prevents another speculative job, the Leader
+can finish the gathered suffix in order. Early stop cancels queued
+work where possible and joins the bounded in-flight jobs. Discarded
+results never enter the proposal. Follower and Leader use the same
+rolling coordinator with their respective ordered settlement rules.
+
+Compare `native-leader-dependency-execution` with
+`native-rolling-leader-execution` at the same worker count and cache
+settings. Keep the Follower, commitment, WAL and VM cache settings
+fixed. Use independent payments, same-block spend chains and ordered
+rejected entries that depend on discarded producers. Include mixed
+Type Groups and resource-limited candidate sequences. Compare exact
+selection, Headers, receipts and archived state, then compare proposal
+selection and finality. The `rolling_cells` counters describe
+submitted work, reused results, refills, discarded work, peak
+outstanding work and whole-run elapsed time. That elapsed time
+includes canonical fallback and should be compared with whole
+selection timing rather than the fixed-window worker-only span.
+
+The compiled fixtures compare serial and rolling proposals and check
+bounded refill, early stop, conflicting dependencies and original
+cycle scan behavior. The deeper lookahead can perform more speculative
+work, and channel handoffs can cost more than the fixed barrier on warm
+payments. Runtime correctness, worker utilization and throughput
+remain to be measured.

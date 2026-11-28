@@ -22,7 +22,7 @@ mod dependencies;
 use super::DependencyReadStats;
 #[cfg(feature = "native-shared-cell-deps")]
 pub(super) use dependencies::DependencyReads;
-#[cfg(feature = "native-rolling-cell-execution")]
+#[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
 mod rolling;
 
 const MAX_WINDOW: usize = u32::BITS as usize;
@@ -106,7 +106,7 @@ struct ProjectedPrefix<'a> {
 
 enum Sources<'a> {
     Window(&'a Cell<u32>),
-    #[cfg(feature = "native-rolling-cell-execution")]
+    #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
     Run(&'a std::cell::RefCell<rolling::SourcePositions>),
 }
 
@@ -133,7 +133,7 @@ impl PrecedingCells<'_> {
                 .map_or(&history.first, |i| &history.later[i]);
             match prefix.sources {
                 Sources::Window(mask) => mask.set(mask.get() | (1 << edit.position)),
-                #[cfg(feature = "native-rolling-cell-execution")]
+                #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
                 Sources::Run(sources) => sources.borrow_mut().record(edit.position),
             }
             return Some(edit.cell.as_ref());
@@ -207,6 +207,11 @@ impl<T: Borrow<Transaction>> ProposalWindow<T> {
         self.dependency_reads
             .as_ref()
             .map_or_else(DependencyReadStats::default, DependencyReads::stats)
+    }
+
+    #[cfg(all(feature = "native-shared-cell-deps", feature = "native-rolling-leader-execution"))]
+    pub(super) fn shared_reads(&mut self) -> &mut Option<DependencyReads> {
+        &mut self.dependency_reads
     }
 
     pub(super) fn next(
@@ -318,6 +323,29 @@ impl Store {
         } else {
             false
         }
+    }
+
+    #[cfg(feature = "native-rolling-leader-execution")]
+    pub(super) fn collect_proposal_run<T: Borrow<Transaction>>(
+        &self,
+        input: &mut Peekable<impl Iterator<Item = T>>,
+        budget: Budget,
+        wire_bytes: u64,
+        available: usize,
+        width: usize,
+    ) -> Vec<Transaction> {
+        let mut run = Vec::new();
+        if self.cell_window_limit(width, budget).min(available) < 2 {
+            return run;
+        }
+        let limit = available.min(4 * MAX_WINDOW);
+        let mut remaining = (budget.bytes, wire_bytes);
+        while run.len() < limit
+            && input.peek().is_some_and(|item| self.reserve_proposal_cell(item.borrow(), &mut remaining))
+        {
+            run.push(input.next().expect("peeked transaction").borrow().clone());
+        }
+        run
     }
 
     pub(super) fn prepare_cell_window(
