@@ -43,6 +43,32 @@ found a regression even with fewer storage calls. Fully resident or
 narrow proof batches may also see little benefit from the additional
 buffering. Runtime and replay evidence are pending.
 
+### Grouping the Live Cell records behind proofs
+
+`native-batched-cell-proof-records` groups the actual Live Cell lookup
+after proof traversal. The requested OutPoints keep their original
+positions. Each unique OutPoint uses the same branch, resident and
+decoded-cache precedence as a single lookup. Remaining committed
+records use point reads or MultiGet in groups of up to eight. The
+Store reuses the key from proof traversal and checks the record hash
+once per OutPoint. Duplicate queries still return separate proof
+paths, and a missing leaf still requires checking record absence.
+
+Committed records from disk enter the decoded cache after proof
+binding succeeds. The feature supports both the ordinary and owned
+RocksDB record decoders. The compile-checked fixtures cover duplicate
+positions, a disk row present behind an absence proof, and batch
+proofs from a pinned view after the next block commits.
+
+Compare with and without the option at the same committed root,
+using uniform and repeated or clustered OutPoints. Hold node
+batching and the owned record decoder constant for the comparison.
+Record live-record point and batch calls, duplicate share, lookup
+CPU, RSS and total response time and verify exact output bytes.
+Small requests or resident state may gain little. MultiGet holds
+multiple raw values until each group is decoded, while a group never
+exceeds eight unique records. Runtime and replay evidence are pending.
+
 ## Parallel Cell subtree mutation
 
 The optional `native-cell-subtree-parallel` feature gives Cell commitment work to the existing Rayon pool used by the Leader and Follower. A partition can run concurrently when every change fits the existing compressed prefix and each child has at least 128 changes. The two children receive disjoint key ranges and bounded shares of the available workers. Each child reads the same immutable parent view and buffers node edits and previous values. The parent joins left before right, then applies the existing compression rule. Small or one-sided batches and changes extending an existing prefix use the serial editor. The System tree, node encoding, durable batch ordering and state proof format use the existing paths.
