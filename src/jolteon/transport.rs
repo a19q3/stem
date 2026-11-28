@@ -269,6 +269,25 @@ impl Network {
         }
     }
 
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    pub(super) fn send_shared_vote(&self, routes: [Option<u16>; 2], body: Vec<u8>) -> usize {
+        let mut peers = routes
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.peers.get(usize::from(id)).and_then(Option::as_ref));
+        let Some(first) = peers.next() else {
+            return 0;
+        };
+        let frame = self.frame(self.epoch, wire::VOTE, body);
+        self.enqueue(first, wire::VOTE, frame.clone());
+        if let Some(second) = peers.next() {
+            self.enqueue(second, wire::VOTE, frame);
+            2
+        } else {
+            1
+        }
+    }
+
     pub(super) fn relay(&self, routes: &[Option<u16>], body: bytes::Bytes) {
         let mut frame = None;
         for (index, route) in routes.iter().enumerate() {
@@ -486,6 +505,44 @@ async fn write(stream: &mut TcpStream, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "jolteon-shared-certificate-path")]
+    #[tokio::test]
+    async fn collector_and_next_leader_share_the_exact_signed_vote() -> Result<()> {
+        let make_peer = || {
+            let (control, reader) = mpsc::channel(1);
+            let (relay, _) = mpsc::channel(1);
+            let tasks = std::array::from_fn(|_| tokio::spawn(std::future::pending::<()>()));
+            (PeerQueues { control, relay, tasks }, reader)
+        };
+        let (first, mut first_reader) = make_peer();
+        let (second, mut second_reader) = make_peer();
+        let net = Network {
+            own: 0,
+            epoch: 7,
+            traffic: Arc::default(),
+            peers: vec![None, Some(first), Some(second)],
+            authentication: Some(Arc::new(Authentication {
+                network: [1; 32],
+                genesis: [2; 32],
+                key: ed25519_dalek::SigningKey::from_bytes(&[3; 32]),
+            })),
+        };
+        let body = vec![4; 112];
+        let reference = net.frame(7, wire::VOTE, body.clone());
+        assert_eq!(net.send_shared_vote([Some(1), Some(2)], body.clone()), 2);
+        let first = first_reader.try_recv()?;
+        let second = second_reader.try_recv()?;
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.as_slice(), reference.as_slice());
+        let frame: Frame = wire::canonical(&first)?;
+        let (_, opened) = net.authentication.as_deref().unwrap().verify(&frame)?;
+        assert_eq!(opened.as_ref(), body);
+        assert_eq!(net.send_shared_vote([None, Some(33)], body.clone()), 0);
+        assert_eq!(net.send_shared_vote([Some(0), Some(2)], body), 1);
+        assert_eq!(second_reader.try_recv()?.as_slice(), reference.as_slice());
+        Ok(())
+    }
 
     #[tokio::test]
     async fn a_learned_endpoint_must_prove_the_announcing_key() -> Result<()> {

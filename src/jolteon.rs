@@ -30,7 +30,10 @@ use crate::native_store::{Prepared, Store};
 mod admission_pipeline;
 #[cfg(feature = "jolteon-candidate-pipeline")]
 mod candidate_pipeline;
-#[cfg(feature = "jolteon-certificate-experiment")]
+#[cfg(any(
+    feature = "jolteon-certificate-experiment",
+    feature = "jolteon-shared-certificate-path"
+))]
 mod certificate_experiment;
 mod client;
 #[cfg(feature = "jolteon-commit-pipeline")]
@@ -228,7 +231,10 @@ struct Replica {
     observed_votes: HashMap<(u64, u16), (Point, Share)>,
     timeouts: BTreeMap<u64, BTreeMap<u16, (Quorum, Share)>>,
     certificates: HashSet<Hash32>,
-    #[cfg(feature = "jolteon-certificate-experiment")]
+    #[cfg(any(
+        feature = "jolteon-certificate-experiment",
+        feature = "jolteon-shared-certificate-path"
+    ))]
     certificate_experiment: certificate_experiment::Cache,
     requests: HashMap<Point, Instant>,
     mempool: Mempool,
@@ -493,7 +499,10 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 observed_votes: HashMap::new(),
                 timeouts: BTreeMap::new(),
                 certificates: HashSet::new(),
-                #[cfg(feature = "jolteon-certificate-experiment")]
+                #[cfg(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                ))]
                 certificate_experiment: Default::default(),
                 requests: HashMap::new(),
                 mempool: Mempool::default(),
@@ -589,6 +598,14 @@ impl Replica {
     }
 
     fn qc(&mut self, raw: &[u8]) -> Result<Quorum> {
+        // Startup, learning and handoff install the authenticated high QC
+        // alongside its canonical journal bytes.
+        #[cfg(feature = "jolteon-shared-certificate-path")]
+        if let Some(high) =
+            self.certificate_experiment.reuse_quorum(&self.high, &self.journal.high, raw)
+        {
+            return Ok(high);
+        }
         let quorum = Quorum::decode(raw, self.committee.size())?;
         let id = ckb_hash::blake2b_256(raw);
         if !self.certificates.contains(&id) {
@@ -602,13 +619,18 @@ impl Replica {
     }
 
     fn learn_quorum(&mut self, quorum: Quorum) -> Result<()> {
+        self.learn_quorum_body(quorum, None)
+    }
+
+    fn learn_quorum_body(&mut self, quorum: Quorum, encoded: Option<Vec<u8>>) -> Result<()> {
+        debug_assert!(encoded.as_ref().is_none_or(|body| *body == quorum.encode()));
         if quorum.point.view == self.high.point.view {
             ensure!(
                 quorum.point == self.high.point,
                 "conflicting certificates for one view"
             );
         } else if quorum.point.view > self.high.point.view {
-            self.journal.high = quorum.encode();
+            self.journal.high = encoded.unwrap_or_else(|| quorum.encode());
             self.high = quorum;
             self.save(None)?;
             self.enter();
@@ -617,6 +639,11 @@ impl Replica {
     }
 
     fn learn_tc(&mut self, tc: TimeoutCertificate) -> Result<()> {
+        self.learn_tc_body(tc, None)
+    }
+
+    fn learn_tc_body(&mut self, tc: TimeoutCertificate, encoded: Option<Vec<u8>>) -> Result<()> {
+        debug_assert!(encoded.as_ref().is_none_or(|body| *body == tc.encode()));
         if self
             .certificate
             .as_ref()
@@ -625,7 +652,7 @@ impl Replica {
             return Ok(());
         }
         self.learn_quorum(tc.high.clone())?;
-        self.journal.certificate = tc.encode();
+        self.journal.certificate = encoded.unwrap_or_else(|| tc.encode());
         if self.timeout_views.len() == 256 {
             self.timeout_views.pop_front();
         }
@@ -1100,7 +1127,10 @@ impl Replica {
             self.high = committee.genesis_quorum();
             self.finalized = self.high.point;
             self.committee = committee;
-            #[cfg(feature = "jolteon-certificate-experiment")]
+            #[cfg(any(
+                feature = "jolteon-certificate-experiment",
+                feature = "jolteon-shared-certificate-path"
+            ))]
             self.certificate_experiment.reset();
             self.pending = None;
             self.handoff_tip = None;
@@ -1231,13 +1261,24 @@ impl Replica {
         let body = [point.encode().as_slice(), &share.encode()].concat();
         let collector = self.committee.leader(point.view)?;
         let next = self.committee.leader(point.view.saturating_add(1))?;
-        if let Some(peer) = self.routes[usize::from(collector)] {
-            self.net.send(peer, wire::VOTE, body.clone());
-        }
-        if next != collector
-            && let Some(peer) = self.routes[usize::from(next)]
+        #[cfg(feature = "jolteon-shared-certificate-path")]
         {
-            self.net.send(peer, wire::VOTE, body);
+            let collector_route = self.routes[usize::from(collector)];
+            let next_route = if next == collector { None } else { self.routes[usize::from(next)] };
+            let routes = [collector_route, next_route];
+            let sent = self.net.send_shared_vote(routes, body);
+            self.certificate_experiment.vote_frame_encodes_saved += sent.saturating_sub(1) as u64;
+        }
+        #[cfg(not(feature = "jolteon-shared-certificate-path"))]
+        {
+            if let Some(peer) = self.routes[usize::from(collector)] {
+                self.net.send(peer, wire::VOTE, body.clone());
+            }
+            if next != collector
+                && let Some(peer) = self.routes[usize::from(next)]
+            {
+                self.net.send(peer, wire::VOTE, body);
+            }
         }
         if member == collector || member == next {
             self.accept_vote(point, share)?;
@@ -1290,8 +1331,17 @@ impl Replica {
         let votes = self.votes.entry(point).or_default();
         votes.insert(share.member, share.signature);
         if let Ok(qc) = self.committee.assemble_quorum(point, votes) {
-            self.net.broadcast(wire::QUORUM, qc.encode());
-            self.learn_quorum(qc)?;
+            #[cfg(feature = "jolteon-shared-certificate-path")]
+            {
+                let body = qc.encode();
+                self.certificate_experiment.quorum_frame.send(&self.net, wire::QUORUM, &body);
+                self.learn_quorum_body(qc, Some(body))?;
+            }
+            #[cfg(not(feature = "jolteon-shared-certificate-path"))]
+            {
+                self.net.broadcast(wire::QUORUM, qc.encode());
+                self.learn_quorum(qc)?;
+            }
         }
         Ok(())
     }
@@ -1335,8 +1385,17 @@ impl Replica {
                     .collect(),
             };
             self.committee.verify_timeout_certificate(&tc)?;
-            self.net.broadcast(wire::TIMEOUT_CERTIFICATE, tc.encode());
-            self.learn_tc(tc)?;
+            #[cfg(feature = "jolteon-shared-certificate-path")]
+            {
+                let body = tc.encode();
+                self.certificate_experiment.timeout_frame.send(&self.net, wire::TIMEOUT_CERTIFICATE, &body);
+                self.learn_tc_body(tc, Some(body))?;
+            }
+            #[cfg(not(feature = "jolteon-shared-certificate-path"))]
+            {
+                self.net.broadcast(wire::TIMEOUT_CERTIFICATE, tc.encode());
+                self.learn_tc(tc)?;
+            }
         }
         Ok(())
     }
@@ -1543,26 +1602,38 @@ impl Replica {
         }
         if self.announced.elapsed() >= Duration::from_millis(350) {
             self.announced = Instant::now();
-            #[cfg(feature = "jolteon-certificate-experiment")]
+            #[cfg(any(
+                feature = "jolteon-certificate-experiment",
+                feature = "jolteon-shared-certificate-path"
+            ))]
             self.certificate_experiment.quorum_frame.send(
                 &self.net,
                 wire::QUORUM,
                 &self.journal.high,
             );
-            #[cfg(not(feature = "jolteon-certificate-experiment"))]
+            #[cfg(not(any(
+                feature = "jolteon-certificate-experiment",
+                feature = "jolteon-shared-certificate-path"
+            )))]
             self.net.broadcast(wire::QUORUM, self.high.encode());
             if let Some(_tc) = self
                 .certificate
                 .as_ref()
                 .filter(|tc| tc.view >= self.high.point.view)
             {
-                #[cfg(feature = "jolteon-certificate-experiment")]
+                #[cfg(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                ))]
                 self.certificate_experiment.timeout_frame.send(
                     &self.net,
                     wire::TIMEOUT_CERTIFICATE,
                     &self.journal.certificate,
                 );
-                #[cfg(not(feature = "jolteon-certificate-experiment"))]
+                #[cfg(not(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                )))]
                 self.net.broadcast(wire::TIMEOUT_CERTIFICATE, _tc.encode());
             }
             if !self.journal.timeout.is_empty() {
@@ -1752,6 +1823,12 @@ impl Replica {
             }
             wire::TIMEOUT => self.accept_timeout(&frame.body)?,
             wire::TIMEOUT_CERTIFICATE => {
+                #[cfg(feature = "jolteon-shared-certificate-path")]
+                if self.certificate.is_some()
+                    && self.certificate_experiment.known_timeout(&self.journal.certificate, &frame.body)
+                {
+                    return Ok(());
+                }
                 let tc = TimeoutCertificate::decode(&frame.body, self.committee.size())?;
                 if self
                     .certificate
@@ -1852,7 +1929,10 @@ impl Replica {
                     "live_cell_index": self.store.live_cell_index_status(),
                     "cell_node_index": self.store.cell_node_index_status(),
                 });
-                #[cfg(feature = "jolteon-certificate-experiment")]
+                #[cfg(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                ))]
                 let status = {
                     let mut value = status;
                     value["certificate_experiment"] = json!(&self.certificate_experiment);
