@@ -211,6 +211,41 @@ Compiled regressions cover a reader waiting for a possible successor's consumpti
 
 Compare the existing fixed and prefix schedulers with the lookahead feature in separate builds and the same branch, corpus and worker counts. Use interleaved active Heads to exercise work beyond a gap, a single-market AMM to measure the shared-Head control, and multiple markets to measure independent contract execution. Record access-analysis and materialization time, reused attempts, discarded work, CPU and common finality. The planner holds possible successors and completed materializations within a bounded window. Conservative conflicts and planning overhead may offset savings under highly serial, small or offer-limited workloads. The earlier measurements still support the existing default.
 
+#### Rolling Lineage materialization
+
+`native-rolling-lineage-execution` uses the same ordered-prefix access
+plan with a refillable queue. The Follower waits for the current
+position when it needs that result. Later workers can continue while
+the coordinator validates and applies an earlier materialization. As
+the accepted prefix advances, ready positions can enter without an
+all-worker barrier. Ineligible commands, Keeper schedules and atomic
+Lineage batches still use the existing paths.
+
+A job captures the specific Head records, fee-input and direct-Cell-Dep
+overrides, and selected Head Cell overrides from its eligible prefix.
+Head records loaded for the access plan supply unchanged targets.
+The captured edits include tombstones. Other cells come from the
+same candidate-parent view. In-flight and completed-but-unsettled jobs
+both count toward the worker-width bound. Each submission also checks
+the remaining cycle budget. The signed order controls settlement,
+final Script validation, logical reads, fees and rollback. A worker
+failure or a tighter ordered budget takes the ordinary materializer.
+
+Compare `contract-execution` with `rolling-lineage` from the
+[matched builds](../native-v1-integration.md#matched-builds). Use
+interleaved conflicting Heads and independent markets, the shared-Head
+AMM control and a multi-market CLOB load. Hold the parent, signed
+commands, workers, cache budgets and block limits fixed. Compare
+ordered receipts, exact Headers, post-commit Head proofs and independent
+replay. In `candidate_lineage`, measure `rolling_wait_us` (coordinator
+wall time waiting for the current result), `rolling_worker_us` (sum
+of task elapsed times), `rolling_peak_outstanding` and
+`lookahead_reused`. The worker and wait timings can overlap.
+Capturing overrides, moving jobs and buffering results add work.
+A shared Head or a saturated resource budget constrains overlap.
+The snapshot and existing ordered-oracle regressions have compile
+coverage. Runtime regressions, replay and load qualification are pending.
+
 ## Certified Commit Pipeline
 
 `jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.

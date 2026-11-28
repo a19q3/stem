@@ -3,11 +3,15 @@
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+#[cfg(not(feature = "native-rolling-lineage-execution"))]
 use rayon::prelude::*;
 use stem_ledger::{BlockContext, Origin, Transaction, block::Receipt};
 
 use super::{Materialized, access_plan::plan, current_head};
 use crate::native_store::{Budget, LineageSchedule, Overlay, Store};
+
+#[cfg(feature = "native-rolling-lineage-execution")]
+mod rolling;
 
 const MAX_LOOKAHEAD: usize = 32;
 
@@ -56,11 +60,18 @@ impl Store {
             return Ok(0);
         }
         let started = Instant::now();
+        #[cfg(feature = "native-rolling-lineage-execution")]
+        let mut initial_heads = super::Heads::new();
         let prefix = plan(
             transactions,
             &self.network,
             |tx| tx.keeper_schedule().is_none(),
-            |id| current_head(self, &overlay.lineages, id),
+            |id| {
+                let head = current_head(self, &overlay.lineages, id)?;
+                #[cfg(feature = "native-rolling-lineage-execution")]
+                initial_heads.insert(id.clone(), head.clone());
+                Ok(head)
+            },
         );
         stats.access_analysis_us += started.elapsed().as_micros() as u64;
         if !prefix
@@ -71,6 +82,49 @@ impl Store {
             return Ok(0);
         }
 
+        #[cfg(feature = "native-rolling-lineage-execution")]
+        return self.prepare_rolling_lineage_window(
+            transactions,
+            &prefix,
+            &initial_heads,
+            block,
+            origin,
+            budget,
+            overlay,
+            receipts,
+            fees,
+            stats,
+            max_jobs,
+        );
+        #[cfg(not(feature = "native-rolling-lineage-execution"))]
+        self.prepare_lineage_waves(
+            transactions,
+            &prefix,
+            block,
+            origin,
+            budget,
+            overlay,
+            receipts,
+            fees,
+            stats,
+            max_jobs,
+        )
+    }
+
+    #[cfg(not(feature = "native-rolling-lineage-execution"))]
+    fn prepare_lineage_waves(
+        &self,
+        transactions: &[Transaction],
+        prefix: &[usize],
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        receipts: &mut Vec<Receipt>,
+        fees: &mut u64,
+        stats: &mut LineageSchedule,
+        max_jobs: impl Fn(Budget) -> usize,
+    ) -> Result<usize> {
         let mut prepared: Vec<Option<Materialized>> = (0..prefix.len()).map(|_| None).collect();
         let mut attempted = vec![false; prefix.len()];
         for position in 0..prefix.len() {
@@ -105,36 +159,64 @@ impl Store {
                 }
             }
 
-            // Worker errors and tighter resources use the existing ordered
-            // path. Successful materialization alone publishes no effects.
-            let material = prepared[position].take().filter(|work| {
-                budget.cycles >= limit
-                    && work.reads <= budget.reads
-                    && work.read_bytes <= budget.read_bytes
-            });
-            if material.is_some() {
-                stats.lookahead_reused += 1;
-            } else {
-                stats.serial_commands += 1;
-                if attempted[position] {
-                    stats.lookahead_fallbacks += 1;
-                }
-            }
-            let receipt = self.stage(
+            self.settle_lineage_lookahead(
                 &transactions[position],
                 block,
                 origin,
                 budget,
                 overlay,
-                material,
-                |resolved, limit| self.cache.verify(resolved, limit, false),
+                receipts,
+                fees,
+                stats,
+                prepared[position].take(),
+                attempted[position],
             )?;
-            *fees = fees
-                .checked_add(receipt.fee)
-                .context("block fee overflow")?;
-            receipts.push(receipt);
         }
         Ok(prefix.len())
+    }
+
+    fn settle_lineage_lookahead(
+        &self,
+        tx: &Transaction,
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        receipts: &mut Vec<Receipt>,
+        fees: &mut u64,
+        stats: &mut LineageSchedule,
+        material: Option<Materialized>,
+        attempted: bool,
+    ) -> Result<()> {
+        // Worker errors and tighter resources use the existing ordered path.
+        // Successful materialization alone publishes no effects.
+        let material = material.filter(|work| {
+            budget.cycles >= self.limits.transaction_cycles
+                && work.reads <= budget.reads
+                && work.read_bytes <= budget.read_bytes
+        });
+        if material.is_some() {
+            stats.lookahead_reused += 1;
+        } else {
+            stats.serial_commands += 1;
+            if attempted {
+                stats.lookahead_fallbacks += 1;
+            }
+        }
+        let receipt = self.stage(
+            tx,
+            block,
+            origin,
+            budget,
+            overlay,
+            material,
+            |resolved, limit| self.cache.verify(resolved, limit, false),
+        )?;
+        *fees = fees
+            .checked_add(receipt.fee)
+            .context("block fee overflow")?;
+        receipts.push(receipt);
+        Ok(())
     }
 }
 
