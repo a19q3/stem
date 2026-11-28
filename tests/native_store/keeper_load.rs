@@ -466,13 +466,14 @@ fn replica_storage_args() -> Result<Vec<String>> {
     for (variable, flag) in [
         ("STEM_TEST_ROCKSDB_BLOCK_CACHE_MIB", "--rocksdb-block-cache-mib"),
         ("STEM_TEST_LIVE_CELL_INDEX_MIB", "--live-cell-index-mib"),
+        ("STEM_TEST_LIVE_CELL_RECOVERY_WORKERS", "--live-cell-recovery-workers"),
         ("STEM_TEST_CELL_NODE_INDEX_MIB", "--cell-node-index-mib"),
     ] {
         match std::env::var(variable) {
             Ok(value) => {
-                let limit: std::num::NonZeroUsize = value.parse()
-                    .with_context(|| format!("invalid budget in {variable}"))?;
-                args.extend([flag.to_owned(), limit.to_string()]);
+                let number: std::num::NonZeroUsize = value.parse()
+                    .with_context(|| format!("invalid value in {variable}"))?;
+                args.extend([flag.to_owned(), number.to_string()]);
             }
             Err(std::env::VarError::NotPresent) => {}
             Err(error) => return Err(error.into()),

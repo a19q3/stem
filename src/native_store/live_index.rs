@@ -14,15 +14,16 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use bytes::Bytes;
-use ckb_db::internal::{ReadOptions, prelude::*};
+use ckb_db::internal::{DBRawIterator, ReadOptions, prelude::*};
 use ckb_types::{
     packed::{Byte32, OutPoint},
     prelude::*,
 };
 use hashbrown::HashMap;
+use rayon::prelude::*;
 use stem_ledger::{
-    LiveCell,
-    patricia::{Key, Namespace},
+    Cell, LiveCell, MAX_CELL_BYTES, Origin,
+    patricia::{Key, Namespace, Patricia},
     record,
 };
 
@@ -75,6 +76,8 @@ pub struct LiveCellIndexStatus {
     pub accounted_bytes: usize,
     pub limit_bytes: usize,
     pub recovery_us: u64,
+    #[serde(default)]
+    pub recovery_workers: usize,
     pub hits: u64,
     pub absent: u64,
     pub fallbacks: u64,
@@ -328,6 +331,7 @@ struct Index {
     limit_bytes: usize,
     layout: LiveCellIndexLayout,
     recovery_us: u64,
+    recovery_workers: usize,
     hits: AtomicU64,
     absent: AtomicU64,
     fallbacks: AtomicU64,
@@ -341,9 +345,73 @@ pub(super) struct IndexView {
     header: Key,
 }
 
+struct RecoveryRow {
+    id: Key,
+    value: Key,
+    point: OutPoint,
+    cell: LiveCell,
+}
+
+impl RecoveryRow {
+    fn verify(tree: &Patricia, id: Key, point: OutPoint, cell: LiveCell) -> Result<Self> {
+        ensure!(record::cell_key(tree, &point) == id, "miskeyed committed Cell record");
+        let value = record::cell_value(tree, &point, &cell);
+        Ok(Self { id, value, point, cell })
+    }
+}
+
+fn read_recovery_batch(
+    cursor: &mut DBRawIterator<'_>,
+    prefix: &[u8],
+    tree: &Patricia,
+    pool: &rayon::ThreadPool,
+) -> Result<Vec<Result<RecoveryRow>>> {
+    const MAX_BATCH_ROWS: usize = 512;
+    const MAX_BATCH_BYTES: usize = 2 * (MAX_CELL_BYTES + OutPoint::TOTAL_SIZE + Origin::LEN);
+    let mut batch = Vec::new();
+    let mut bytes = 0;
+    while batch.len() < MAX_BATCH_ROWS {
+        let Some(key) = cursor.key().filter(|key| key.starts_with(prefix)) else {
+            break;
+        };
+        let raw = cursor.value().context("missing committed Cell record")?;
+        if !batch.is_empty() && raw.len() > MAX_BATCH_BYTES - bytes {
+            break;
+        }
+        let id: Key = key[prefix.len()..].try_into()?;
+        let (point, origin, body) = record::decode_cell_prefix(raw)?;
+        ensure!(body.len() <= MAX_CELL_BYTES, "Cell exceeds byte limit");
+        bytes += raw.len();
+        batch.push((id, point, origin, Bytes::copy_from_slice(body)));
+        cursor.next();
+    }
+    Ok(pool.install(|| {
+        batch
+            .into_par_iter()
+            .map(|(id, point, origin, body)| {
+                let cell = LiveCell { cell: Cell::from_bytes(body)?, origin };
+                RecoveryRow::verify(tree, id, point, cell)
+            })
+            .collect()
+    }))
+}
+
 impl IndexView {
-    pub(super) fn recover(store: &Store, limit_bytes: usize, layout: LiveCellIndexLayout) -> Result<Self> {
+    pub(super) fn recover(
+        store: &Store,
+        limit_bytes: usize,
+        layout: LiveCellIndexLayout,
+        recovery_workers: usize,
+    ) -> Result<Self> {
+        ensure!(
+            (1..=64).contains(&recovery_workers),
+            "Live Cell recovery workers must be between 1 and 64"
+        );
         let started = Instant::now();
+        let pool = (recovery_workers > 1)
+            .then(|| rayon::ThreadPoolBuilder::new().num_threads(recovery_workers).build())
+            .transpose()?;
+
         let snapshot = store.db.snapshot();
         let tip = snapshot.get(TIP)?.context("missing committed Stem tip")?;
         ensure!(tip.as_ref() == store.tip.encode(), "Live Cell index tip changed during recovery");
@@ -353,27 +421,37 @@ impl IndexView {
         let mut cursor = snapshot.get_raw_iter(&options);
         cursor.seek(&prefix);
 
-        let mut records = Some(Records::new(layout));
-        let committed = std::iter::from_fn(|| {
-            let key = cursor.key()?;
-            if !key.starts_with(&prefix) {
-                return None;
-            }
-            let result = (|| {
-                let id: Key = key[2..].try_into()?;
-                let value = cursor.value().context("missing committed Cell record")?;
-                let (point, cell) = record::decode_cell(value)?;
-                ensure!(record::cell_key(&store.cells, &point) == id, "miskeyed committed Cell record");
-                let digest = record::cell_value(&store.cells, &point, &cell);
-                if let Some(index) = &mut records
-                    && !index.insert(Cow::Owned(point), cell, limit_bytes, true)
-                {
-                    records = None;
+        let mut batch = Vec::new().into_iter();
+        let decoded = std::iter::from_fn(|| {
+            if let Some(pool) = &pool {
+                if let Some(row) = batch.next() {
+                    return Some(row);
                 }
-                Ok((id, digest))
+                batch = match read_recovery_batch(&mut cursor, &prefix, &store.cells, pool) {
+                    Ok(rows) => rows.into_iter(),
+                    Err(error) => return Some(Err(error)),
+                };
+                return batch.next();
+            }
+            let key = cursor.key().filter(|key| key.starts_with(&prefix))?;
+            let row = (|| {
+                let id: Key = key[2..].try_into()?;
+                let raw = cursor.value().context("missing committed Cell record")?;
+                let (point, cell) = record::decode_cell(raw)?;
+                RecoveryRow::verify(&store.cells, id, point, cell)
             })();
             cursor.next();
-            Some(result)
+            Some(row)
+        });
+        let mut records = Some(Records::new(layout));
+        let committed = decoded.map(|row| {
+            let RecoveryRow { id, value, point, cell } = row?;
+            if let Some(index) = &mut records
+                && !index.insert(Cow::Owned(point), cell, limit_bytes, true)
+            {
+                records = None;
+            }
+            Ok((id, value))
         });
         let root = store.rebuild_cell_root(committed)?;
         ensure!(
@@ -392,6 +470,7 @@ impl IndexView {
                 limit_bytes,
                 layout,
                 recovery_us: started.elapsed().as_micros() as u64,
+                recovery_workers,
                 hits: AtomicU64::new(0),
                 absent: AtomicU64::new(0),
                 fallbacks: AtomicU64::new(0),
@@ -406,7 +485,7 @@ impl IndexView {
         self.header = header;
     }
 
-    pub(super) fn retire(self) -> (usize, LiveCellIndexLayout) {
+    pub(super) fn retire(self) -> (usize, LiveCellIndexLayout, usize) {
         // Snapshot replacement may still have pinned readers holding this
         // generation. Release its index before recovering a replacement.
         let mut state = self.index.state.write().expect("Live Cell index");
@@ -417,7 +496,7 @@ impl IndexView {
         drop(records);
         #[cfg(feature = "native-live-cell-parent-index")]
         drop(previous);
-        (self.index.limit_bytes, self.index.layout)
+        (self.index.limit_bytes, self.index.layout, self.index.recovery_workers)
     }
 
     pub(super) fn resident(&self) -> bool {
@@ -530,6 +609,7 @@ impl IndexView {
             accounted_bytes: state.records.as_ref().map_or(0, Records::bytes) + previous_header_bytes,
             limit_bytes: self.index.limit_bytes,
             recovery_us: self.index.recovery_us,
+            recovery_workers: self.index.recovery_workers,
             hits: self.index.hits.load(Ordering::Relaxed),
             absent: self.index.absent.load(Ordering::Relaxed),
             fallbacks: self.index.fallbacks.load(Ordering::Relaxed),

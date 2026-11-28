@@ -232,8 +232,8 @@ impl Store {
         self.live_cache.lock().expect("Live Cell cache").clear();
         self.history = frontier;
         if let Some(index) = self.live_index.take() {
-            let (limit, layout) = index.retire();
-            self.live_index = Some(super::IndexView::recover(self, limit, layout)?);
+            let (limit, layout, workers) = index.retire();
+            self.live_index = Some(super::IndexView::recover(self, limit, layout, workers)?);
         }
         if let Some(index) = self.cell_nodes.take() {
             let limit = index.retire();

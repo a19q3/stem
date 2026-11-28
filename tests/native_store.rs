@@ -658,9 +658,10 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     let hash = archive.tip().app_hash(archive.network());
     let restore_path = tempfile::tempdir()?;
     let mut restore = Store::open(restore_path.path(), &fixture.spec, Retention::Recent(2))?;
-    restore.enable_live_cell_index_with_layout(
+    restore.configure_live_cell_index(
         std::num::NonZeroUsize::new(4).unwrap(),
         LiveCellIndexLayout::InternedScripts,
+        2,
     )?;
     assert!(restore.live_cell(&fixture.spend)?.is_some());
     let mut wrong_frontier = snapshot.clone();
@@ -674,6 +675,7 @@ fn sync_commit_reopen_and_prove_the_native_execution() -> Result<()> {
     restore.install_state(snapshot, &hash)?;
     let layout = restore.live_cell_index_status().unwrap();
     assert!(layout.active && layout.descriptors > 0);
+    assert_eq!(layout.recovery_workers, 2);
     assert!(matches!(layout.layout, LiveCellIndexLayout::InternedScripts));
     assert!(restore.live_cell(&fixture.spend)?.is_none());
     assert!(restore.prove_cell(&fixture.spend)?.0.is_none());
@@ -1119,7 +1121,7 @@ fn resident_live_cell_index_matches_layout(layout: LiveCellIndexLayout) -> Resul
     drop(indexed);
 
     let mut reopened = Store::open(indexed_path.path(), &fixture.spec, Retention::Archive)?;
-    reopened.enable_live_cell_index_with_layout(budget, layout)?;
+    reopened.configure_live_cell_index(budget, layout, 2)?;
     reopened.enable_cell_node_index(budget)?;
     assert_eq!(reopened.tip(), oracle.header());
     assert!(reopened.live_cell(&output)?.is_none());
@@ -1136,10 +1138,17 @@ fn resident_index_budget_falls_back_to_verified_durable_cells() -> Result<()> {
     let cell = Cell::new(
         20_000_000_000_000, fixture.lock.clone(), vec![], Bytes::from(vec![9; (1 << 20) + 1]),
     )?;
-    fixture.spec.development_cells.push((point.clone(), cell.clone()));
+    for index in 0..5 {
+        let out_point = OutPoint::new([89; 32].pack(), index);
+        fixture.spec.development_cells.push((out_point, cell.clone()));
+    }
     let dir = tempfile::tempdir()?;
     let mut store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
-    store.enable_live_cell_index(std::num::NonZeroUsize::new(1).unwrap())?;
+    store.configure_live_cell_index(
+        std::num::NonZeroUsize::new(1).unwrap(),
+        LiveCellIndexLayout::Inline,
+        2,
+    )?;
     let status = store.live_cell_index_status().unwrap();
     assert!(!status.active && status.entries == 0 && status.accounted_bytes == 0);
     assert_eq!(store.prove_cell(&point)?.0.context("durable large Cell missing")?.cell.as_slice(), cell.as_slice());

@@ -24,6 +24,47 @@ that process. The limit applies to index-owned allocations. The general page
 cache, RocksDB block cache, execution arena and a pinned reader's own handles
 have separate lifetimes and memory costs.
 
+## Bounded parallel index recovery
+
+`stem run --live-cell-index-mib MIB --live-cell-recovery-workers N`
+uses a local worker pool for record recovery when `N` is greater than one.
+The scanner reads one pinned RocksDB snapshot in disk-key order. Each
+parallel batch carries at most 512 rows and about four MiB of canonical
+record bytes. Workers validate the Cell encoding, bind the stored OutPoint
+to its key and hash the complete record. The coordinator consumes the
+results in the original order and passes them to the existing root
+reconstructor. The reconstructed root must match the exact snapshot Header
+before the table is visible. If the resident budget is exhausted, all
+remaining batches still contribute to the root check.
+
+The same scanner feeds Patricia and the JMT comparison build. The
+authenticated tree folds, database and proof formats, and commit durability
+are shared with each respective serial control. The worker setting applies
+on startup and after installing a verified snapshot. A single worker uses
+the direct serial recovery path and is the default. The recovery batch and
+worker stacks are transient memory in addition to the existing resident
+index budget. Rows processed in parallel allocate only their own Cell bytes,
+so the index does not pin recovery batch buffers.
+
+Compare 1, 2, 4 and 8 recovery workers from copies of the same committed
+database and identical CPU placement, and report `recovery_us`,
+`recovery_workers`, wall time to the first verified response, CPU and peak
+RSS. Use the same resident layout and budget and record the RocksDB and
+operating-system cache conditions. Repeat for both layouts, a tight budget
+that falls back to durable reads, and an interrupted load followed by
+restart and proof audit. The test launcher accepts
+`STEM_TEST_LIVE_CELL_RECOVERY_WORKERS` together with
+`STEM_TEST_LIVE_CELL_INDEX_MIB`. Compare serial and parallel recovery
+separately on each engine before interpreting the paired JMT and Patricia
+results.
+
+The compile-checked regressions cover both layouts at reopen, persistent
+worker settings after snapshot installation, rejection of records outside
+the authenticated root and multi-batch verification after budget exhaustion.
+The RocksDB scan, table insertion and final root fold remain ordered.
+Scheduling overhead can dominate small states and the serial stages may
+limit speedup on large states. Runtime and performance results are pending.
+
 ## Resident Lock and TypeSet sharing
 
 Add `--live-cell-index-intern-scripts` alongside `--live-cell-index-mib` to test the compact resident representation. It retains one owned byte buffer per distinct Lock or nonempty TypeSet and releases that buffer after the final resident reference is removed. The remaining canonical bytes and origin belong to the Cell. Lookups copy the owned handles under the Header guard, then reconstruct and validate the canonical Cell outside the index lock. Recovery authenticates the complete original RocksDB record set against the Cell root, including when the compact index exceeds its budget. Snapshot installation retains the selected layout.

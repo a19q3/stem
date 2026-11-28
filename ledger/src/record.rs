@@ -34,19 +34,26 @@ pub fn encode_cell_into(point: &OutPoint, record: &LiveCell, bytes: &mut Vec<u8>
 }
 
 pub fn decode_cell(bytes: &[u8]) -> Result<(OutPoint, LiveCell)> {
+    let (point, origin, cell) = decode_cell_prefix(bytes)?;
+    Ok((
+        point,
+        LiveCell {
+            cell: Cell::from_slice(cell)?,
+            origin,
+        },
+    ))
+}
+
+/// Decode the fixed record fields and borrow the Cell body for validation by
+/// the caller. This keeps the Cell payload independent of the key and origin.
+pub fn decode_cell_prefix(bytes: &[u8]) -> Result<(OutPoint, Origin, &[u8])> {
     let (point, rest) = bytes
         .split_at_checked(OutPoint::TOTAL_SIZE)
         .context("truncated Cell OutPoint")?;
     let (origin, cell) = rest
         .split_at_checked(Origin::LEN)
         .context("truncated Cell origin")?;
-    Ok((
-        OutPoint::from_slice(point)?,
-        LiveCell {
-            cell: Cell::from_slice(cell)?,
-            origin: Origin::decode(origin)?,
-        },
-    ))
+    Ok((OutPoint::from_slice(point)?, Origin::decode(origin)?, cell))
 }
 
 pub fn cell_key(tree: &Patricia, point: &OutPoint) -> Key {
