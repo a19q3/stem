@@ -520,9 +520,10 @@ impl NodeIndex {
 mod tests {
     use super::*;
     use crate::native_store::state_key;
-    use stem_stake::patricia::Node;
+    use stem_stake::patricia::{Commitment, Node};
 
-    fn valid_rows(tree: &Patricia, shard: usize) -> impl Iterator<Item = (Key, Vec<u8>)> + '_ {
+    fn valid_rows(shard: usize) -> impl Iterator<Item = (Key, Vec<u8>)> {
+        let commitment = Commitment::new([0; 32], Namespace::Cells);
         (0u64..).filter_map(move |i| {
             let mut key = [0; 32];
             key[..8].copy_from_slice(&i.to_le_bytes());
@@ -531,7 +532,7 @@ mod tests {
                 value: [5; 32],
             }
             .encode();
-            let id = tree.node_hash(&encoded);
+            let id = commitment.node_hash(&encoded);
             (slot(&id) == shard).then_some((id, encoded))
         })
     }
@@ -548,7 +549,7 @@ mod tests {
     fn churn_rebuilds_a_shard_at_fixed_cardinality_and_budget() {
         const NODES: usize = 100;
         let tree = Patricia::new(ckb_types::packed::Byte32::default(), Namespace::Cells);
-        let rows: Vec<_> = valid_rows(&tree, 0).take(NODES + 1024).collect();
+        let rows: Vec<_> = valid_rows(0).take(NODES + 1024).collect();
         let mut index = NodeIndex::new(&tree, 1 << 20);
         fill(&index, &rows[..NODES]);
         let allocation = index.status().accounted_bytes;
@@ -572,11 +573,11 @@ mod tests {
     #[test]
     fn budget_exhaustion_preserves_unrelated_entries() {
         let tree = Patricia::new(ckb_types::packed::Byte32::default(), Namespace::Cells);
-        let rows: Vec<_> = valid_rows(&tree, 0).take(100).collect();
+        let rows: Vec<_> = valid_rows(0).take(100).collect();
         let mut index = NodeIndex::new(&tree, 1 << 20);
         fill(&index, &rows);
         index.limit_bytes = index.status().accounted_bytes;
-        let miss = valid_rows(&tree, 1).next().unwrap();
+        let miss = valid_rows(1).next().unwrap();
         fill(&index, std::slice::from_ref(&miss));
         let status = index.status();
         assert!(status.active);

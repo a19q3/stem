@@ -1,0 +1,1444 @@
+{
+  "binary_sha256": {
+    "control": "9ba32fb00db2ad46ad3e1eda58fb59aaa7867ec919a7a0930515956b9f11c9a5",
+    "harness": "e98779ec0b9db70a86392e6e68a348b0450f9040d6a9cf59cbf7d74e94c498a6",
+    "native": "5e6f108362328de17fa3e52a4927c18fd6fcba6441f383aca58a0ae529febc0e"
+  },
+  "funding_proof_sha256": "47d215a5a1700a96a7b28d5b0f5ca09d61ec7027b569139d1345265440677d93",
+  "order": [
+    "control",
+    "native",
+    "native",
+    "control"
+  ],
+  "plan": {
+    "genesis_sha256": "b22086da6308a3bbcd6439dbf3bdc8c109fed65fc61ab41c066f371921c96ee3",
+    "harness_sha256": "e98779ec0b9db70a86392e6e68a348b0450f9040d6a9cf59cbf7d74e94c498a6",
+    "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+    "storage_settings": {
+      "BLOCK_CYCLES": 4000000000,
+      "BLOCK_TRANSACTIONS": 2048,
+      "CADENCE": 100,
+      "COMPLETE_VOLUME": 1,
+      "DRAIN": 35,
+      "FUNDED_CELLS": 1440000,
+      "PAUSE_ON_FULL": 0,
+      "PAYMENT_DATA_BYTES": 0,
+      "PREFUND_PAYMENTS": 1,
+      "RATE": 5500,
+      "READY_SENDERS": 1,
+      "REPLICAS": 4,
+      "REUSE_SUBMISSIONS": 1,
+      "SECONDS": 60,
+      "SENDERS": 256,
+      "SHARD_SENDERS": 0,
+      "VM_WORKERS": 2
+    },
+    "topology_sha256": "3a236c3568eab1ad45906c7a6652eb6bbd4c7aa364f446a25008a833223cc944"
+  },
+  "regime": {
+    "drain_cutoff_us": 95000000,
+    "scored_us": {
+      "scored": [
+        20000000,
+        60000000
+      ]
+    }
+  },
+  "runs": [
+    {
+      "archive_sha256": "0e09798fdbfd5c37a5acd966234639acde02dbc3b8ff9260d1efab484c2700b1",
+      "backlog": {
+        "20": 5854,
+        "35": 6144,
+        "50": 5843,
+        "60": 6096,
+        "95": 0
+      },
+      "common_at_95s": 330000,
+      "funding_header": "2d0200000000000064db3823a20100007c9b242fcd6c44d2e22d114fd7afbb2b2a2db69243213b95b6ec75d6698e3eca4bc7a692ac7945117e17fdc275348589e618ba75ee6e57fa67ce1073206ddaf1cfe1ede2098a7c0c7ab967f37e8f14e84a116a1187bdfa29c913a9c360b4568d600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c69e2cb85040c8792719fa35ecc4e9372606fbc2f5122a33ebdf730cbc0de92409693633421656a4cf3cb280c1db55a70477262cb1b7e3add116223d363c2f22d8",
+      "funding_height": 557,
+      "independent_replay": "Verified 330000 writes, 330000 acknowledgements, 330000 finalized payments, 323894 in the offer window (5398.23 TPS), at certified height 1084",
+      "index": [
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4877695,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 608175104,
+            "recovery_us": 2653395,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 541000,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 7121,
+            "hits": 1081822,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2748674,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1581916,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4878755,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2598938,
+            "shard_rebuilds": 2,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 540533,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 4806,
+            "hits": 1080985,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2742949,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1551940,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4878516,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2605778,
+            "shard_rebuilds": 3,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 543567,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 1735,
+            "hits": 1087036,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2725935,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1557468,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4877618,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 617677840,
+            "recovery_us": 2650285,
+            "shard_rebuilds": 1,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 543073,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 5093,
+            "hits": 1086061,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2723546,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1615004,
+          "node_index_all_active": true
+        }
+      ],
+      "observed_offer_count": 330000,
+      "observer_errors": 0,
+      "run": "1-control",
+      "terminal_height": 1084,
+      "windows": {
+        "scored": {
+          "client_errors": {},
+          "commit_overlap": {
+            "acknowledged": 464,
+            "descendants": 0,
+            "overlap_eligible_writes": 464,
+            "state_prebuilds": 0
+          },
+          "conditioned_p99_us": 2179418,
+          "counts": {
+            "acks": 220154,
+            "common": 219912,
+            "writes": 220000
+          },
+          "cpu_seconds": 261.29,
+          "latency_samples": 220000,
+          "leader_scan": {
+            "block_cycle_rejection_us": 0,
+            "block_cycle_rejections": 0,
+            "cycle_scan_stops": 0,
+            "dependency_reads": {
+              "build_us": 0,
+              "bytes": 0,
+              "cached": 0,
+              "hits": 0,
+              "planned": 0,
+              "rolling_carried": 0,
+              "rolling_rebuilds": 0,
+              "rolling_samples": 0
+            },
+            "inspected": 358062,
+            "keeper_prefix_reused": 0,
+            "keeper_wakes": {
+              "access_us": 0,
+              "fallbacks": 0,
+              "jobs": 0,
+              "materialize_us": 0,
+              "reused": 0
+            },
+            "lineage": {
+              "access_analysis_us": 0,
+              "lookahead_commands": 0,
+              "lookahead_fallbacks": 0,
+              "lookahead_reused": 0,
+              "parallel_commands": 0,
+              "parallel_materialize_us": 0,
+              "parallel_waves": 0,
+              "rolling_peak_outstanding": 0,
+              "rolling_wait_us": 0,
+              "rolling_windows": 0,
+              "rolling_worker_us": 0,
+              "serial_commands": 0
+            },
+            "parallel_cell_fallback": 0,
+            "parallel_cell_jobs": 0,
+            "parallel_cell_reused": 0,
+            "parallel_cell_us": 0,
+            "parallel_parent_rejections_reused": 0,
+            "priority_at_limit": 0,
+            "priority_candidates": 0,
+            "priority_cycle_rejections": 0,
+            "priority_inspected": 0,
+            "priority_selected": 0,
+            "priority_spent_in_parent": 0,
+            "priority_spent_in_proposal": 0,
+            "rolling_cells": {
+              "discarded_jobs": 0,
+              "elapsed_us": 0,
+              "fallbacks": 0,
+              "first_submit_us": 0,
+              "jobs": 0,
+              "masked_projection_positions": 0,
+              "ordered_declarations": 0,
+              "peak_outstanding": 0,
+              "peak_projection_edits": 0,
+              "projected_transactions": 0,
+              "projection_barriers": 0,
+              "projection_reclaim_us": 0,
+              "projection_restarts": 0,
+              "projection_us": 0,
+              "refilled_jobs": 0,
+              "retired_projection_edits": 0,
+              "retry_parent_hits": 0,
+              "retry_parent_records": 0,
+              "reused": 0,
+              "runs": 0,
+              "tail_cycle_share_jobs": 0,
+              "tail_cycle_share_reused": 0
+            },
+            "selected": 220117,
+            "selection_us": 4125047,
+            "spent_in_parent": 137945,
+            "spent_in_parent_us": 585905,
+            "spent_in_proposal": 0
+          },
+          "leader_selection_mean_ms": 35.56075,
+          "nonempty_blocks": {
+            "count": 116,
+            "full": 34,
+            "median_size": 1948
+          },
+          "other_busy_seconds": 37.35999999999996,
+          "proc_window_us": [
+            20258957,
+            60284134
+          ],
+          "proposal_jobs": {
+            "cancel_requested": 0,
+            "cancelled": 0,
+            "cancelled_us": 0,
+            "commit_overlap_published": 116,
+            "commit_overlap_started": 116,
+            "commit_overlap_us": 4811630,
+            "pre_quorum_overlap_us": 0,
+            "pre_quorum_published": 0,
+            "pre_quorum_started": 0,
+            "published": 116,
+            "rebased": 116,
+            "rebased_blocks": 116,
+            "snapshot_entries": 369601,
+            "stale": 0,
+            "stale_us": 0,
+            "started": 116
+          },
+          "stages": {
+            "admission.client_queue": {
+              "count": 220428,
+              "elapsed_us": 3966867529,
+              "mean_ms": 17.996205241620846
+            },
+            "execution.candidate_commitments.cell_tree": {
+              "count": 348,
+              "elapsed_us": 12084788,
+              "mean_ms": 34.72640229885057
+            },
+            "execution.candidate_verify": {
+              "count": 348,
+              "elapsed_us": 59986922,
+              "mean_ms": 172.37621264367814
+            },
+            "execution.commit_jobs.cell_node_publication": {
+              "count": 0,
+              "elapsed_us": 0,
+              "mean_ms": null
+            },
+            "execution.commit_jobs.live_cell_publication": {
+              "count": 0,
+              "elapsed_us": 0,
+              "mean_ms": null
+            },
+            "execution.commit_jobs.persistence": {
+              "count": 464,
+              "elapsed_us": 19772029,
+              "mean_ms": 42.61213146551724
+            },
+            "execution.control_queue": {
+              "count": 3486,
+              "elapsed_us": 24921439,
+              "mean_ms": 7.149007171543316
+            },
+            "execution.proposal": {
+              "count": 116,
+              "elapsed_us": 10346801,
+              "mean_ms": 89.19656034482757
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "count": 116,
+              "elapsed_us": 5135447,
+              "mean_ms": 44.27109482758621
+            },
+            "execution.proposal_jobs.snapshot_capture": {
+              "count": 116,
+              "elapsed_us": 46331,
+              "mean_ms": 0.3994051724137931
+            },
+            "execution.proposal_jobs.worker_service": {
+              "count": 116,
+              "elapsed_us": 10343955,
+              "mean_ms": 89.17202586206898
+            }
+          },
+          "status_window_us": [
+            19901392,
+            59963094
+          ],
+          "transport_drops": 77,
+          "validator_cpu_mask_busy_seconds": 298.65,
+          "view_timeouts": 0
+        }
+      },
+      "workload_id": "258a867ddbaab1a7e2df46aa396e4ca8c4ed8e86a108ff512b08979622b6535a"
+    },
+    {
+      "archive_sha256": "a6dfeff6270d66eecd2b48f18c39f6e9db5ae58466281fed60128b70a91c0d8a",
+      "backlog": {
+        "20": 5273,
+        "35": 3361,
+        "50": 3155,
+        "60": 3445,
+        "95": 0
+      },
+      "common_at_95s": 330000,
+      "funding_header": "2d0200000000000064db3823a20100007c9b242fcd6c44d2e22d114fd7afbb2b2a2db69243213b95b6ec75d6698e3eca4bc7a692ac7945117e17fdc275348589e618ba75ee6e57fa67ce1073206ddaf1cfe1ede2098a7c0c7ab967f37e8f14e84a116a1187bdfa29c913a9c360b4568d600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c69e2cb85040c8792719fa35ecc4e9372606fbc2f5122a33ebdf730cbc0de92409693633421656a4cf3cb280c1db55a70477262cb1b7e3add116223d363c2f22d8",
+      "funding_height": 557,
+      "independent_replay": "Verified 330000 writes, 330000 acknowledgements, 330000 finalized payments, 326425 in the offer window (5440.42 TPS), at certified height 1169",
+      "index": [
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5244172,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3183447,
+            "shard_rebuilds": 10,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 541979,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 0,
+            "hits": 754164,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2568252,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1547332,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5242945,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3096971,
+            "shard_rebuilds": 9,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 544109,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 0,
+            "hits": 758426,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2489473,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1525288,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5245144,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3190234,
+            "shard_rebuilds": 6,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 543118,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 165,
+            "hits": 756529,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 301,
+            "recovery_us": 2509894,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 165
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1511604,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5246880,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3162022,
+            "shard_rebuilds": 6,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 542851,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 1,
+            "hits": 755473,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2498456,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 1
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1530296,
+          "node_index_all_active": true
+        }
+      ],
+      "observed_offer_count": 330000,
+      "observer_errors": 0,
+      "run": "2-native",
+      "terminal_height": 1169,
+      "windows": {
+        "scored": {
+          "client_errors": {},
+          "commit_overlap": {
+            "acknowledged": 697,
+            "descendants": 0,
+            "overlap_eligible_writes": 697,
+            "state_prebuilds": 697
+          },
+          "conditioned_p99_us": 1798236,
+          "counts": {
+            "acks": 219927,
+            "common": 221755,
+            "writes": 220000
+          },
+          "cpu_seconds": 240.96,
+          "latency_samples": 220000,
+          "leader_scan": {
+            "block_cycle_rejection_us": 0,
+            "block_cycle_rejections": 0,
+            "cycle_scan_stops": 0,
+            "dependency_reads": {
+              "build_us": 57375,
+              "bytes": 4649628,
+              "cached": 174,
+              "hits": 219888,
+              "planned": 174,
+              "rolling_carried": 0,
+              "rolling_rebuilds": 0,
+              "rolling_samples": 5516
+            },
+            "inspected": 357769,
+            "keeper_prefix_reused": 0,
+            "keeper_wakes": {
+              "access_us": 0,
+              "fallbacks": 0,
+              "jobs": 0,
+              "materialize_us": 0,
+              "reused": 0
+            },
+            "lineage": {
+              "access_analysis_us": 0,
+              "lookahead_commands": 0,
+              "lookahead_fallbacks": 0,
+              "lookahead_reused": 0,
+              "parallel_commands": 0,
+              "parallel_materialize_us": 0,
+              "parallel_waves": 0,
+              "rolling_peak_outstanding": 0,
+              "rolling_wait_us": 0,
+              "rolling_windows": 0,
+              "rolling_worker_us": 0,
+              "serial_commands": 0
+            },
+            "parallel_cell_fallback": 0,
+            "parallel_cell_jobs": 357760,
+            "parallel_cell_reused": 219888,
+            "parallel_cell_us": 0,
+            "parallel_parent_rejections_reused": 137872,
+            "priority_at_limit": 0,
+            "priority_candidates": 0,
+            "priority_cycle_rejections": 0,
+            "priority_inspected": 0,
+            "priority_selected": 0,
+            "priority_spent_in_parent": 0,
+            "priority_spent_in_proposal": 0,
+            "rolling_cells": {
+              "discarded_jobs": 0,
+              "elapsed_us": 2756053,
+              "fallbacks": 0,
+              "first_submit_us": 31794,
+              "jobs": 357760,
+              "masked_projection_positions": 136749,
+              "ordered_declarations": 0,
+              "peak_outstanding": 0,
+              "peak_projection_edits": 0,
+              "projected_transactions": 354861,
+              "projection_barriers": 0,
+              "projection_reclaim_us": 250221,
+              "projection_restarts": 0,
+              "projection_us": 611954,
+              "refilled_jobs": 334674,
+              "retired_projection_edits": 670558,
+              "retry_parent_hits": 0,
+              "retry_parent_records": 577648,
+              "reused": 219888,
+              "runs": 2899,
+              "tail_cycle_share_jobs": 0,
+              "tail_cycle_share_reused": 0
+            },
+            "selected": 219893,
+            "selection_us": 3083050,
+            "spent_in_parent": 137876,
+            "spent_in_parent_us": 150640,
+            "spent_in_proposal": 0
+          },
+          "leader_selection_mean_ms": 17.718678160919538,
+          "nonempty_blocks": {
+            "count": 175,
+            "full": 8,
+            "median_size": 1205
+          },
+          "other_busy_seconds": 21.02000000000001,
+          "proc_window_us": [
+            20293922,
+            60318019
+          ],
+          "proposal_jobs": {
+            "cancel_requested": 0,
+            "cancelled": 0,
+            "cancelled_us": 0,
+            "commit_overlap_published": 170,
+            "commit_overlap_started": 169,
+            "commit_overlap_us": 6226244,
+            "pre_quorum_overlap_us": 118046,
+            "pre_quorum_published": 5,
+            "pre_quorum_started": 5,
+            "published": 175,
+            "rebased": 175,
+            "rebased_blocks": 175,
+            "snapshot_entries": 365625,
+            "stale": 0,
+            "stale_us": 0,
+            "started": 174
+          },
+          "stages": {
+            "admission.client_queue": {
+              "count": 220221,
+              "elapsed_us": 3321655336,
+              "mean_ms": 15.083281503580494
+            },
+            "execution.candidate_commitments.cell_tree": {
+              "count": 523,
+              "elapsed_us": 8724388,
+              "mean_ms": 16.681430210325047
+            },
+            "execution.candidate_verify": {
+              "count": 523,
+              "elapsed_us": 41202352,
+              "mean_ms": 78.78078776290631
+            },
+            "execution.commit_jobs.cell_node_publication": {
+              "count": 697,
+              "elapsed_us": 7067988,
+              "mean_ms": 10.140585365853658
+            },
+            "execution.commit_jobs.live_cell_publication": {
+              "count": 697,
+              "elapsed_us": 1643164,
+              "mean_ms": 2.357480631276901
+            },
+            "execution.commit_jobs.persistence": {
+              "count": 697,
+              "elapsed_us": 19698924,
+              "mean_ms": 28.262444763271162
+            },
+            "execution.control_queue": {
+              "count": 4056,
+              "elapsed_us": 27474358,
+              "mean_ms": 6.773756903353057
+            },
+            "execution.proposal": {
+              "count": 174,
+              "elapsed_us": 7595820,
+              "mean_ms": 43.654137931034484
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "count": 174,
+              "elapsed_us": 4082853,
+              "mean_ms": 23.464672413793107
+            },
+            "execution.proposal_jobs.snapshot_capture": {
+              "count": 174,
+              "elapsed_us": 0,
+              "mean_ms": 0.0
+            },
+            "execution.proposal_jobs.worker_service": {
+              "count": 174,
+              "elapsed_us": 7564306,
+              "mean_ms": 43.47302298850575
+            }
+          },
+          "status_window_us": [
+            19922309,
+            59915290
+          ],
+          "transport_drops": 34,
+          "validator_cpu_mask_busy_seconds": 261.98,
+          "view_timeouts": 0
+        }
+      },
+      "workload_id": "258a867ddbaab1a7e2df46aa396e4ca8c4ed8e86a108ff512b08979622b6535a"
+    },
+    {
+      "archive_sha256": "dd8b7ce77ed17fef962d4aa796ed30de4d3b179602fd25b1c527b248026e0f51",
+      "backlog": {
+        "20": 4172,
+        "35": 4797,
+        "50": 2903,
+        "60": 3075,
+        "95": 0
+      },
+      "common_at_95s": 330000,
+      "funding_header": "2d0200000000000064db3823a20100007c9b242fcd6c44d2e22d114fd7afbb2b2a2db69243213b95b6ec75d6698e3eca4bc7a692ac7945117e17fdc275348589e618ba75ee6e57fa67ce1073206ddaf1cfe1ede2098a7c0c7ab967f37e8f14e84a116a1187bdfa29c913a9c360b4568d600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c69e2cb85040c8792719fa35ecc4e9372606fbc2f5122a33ebdf730cbc0de92409693633421656a4cf3cb280c1db55a70477262cb1b7e3add116223d363c2f22d8",
+      "funding_height": 557,
+      "independent_replay": "Verified 330000 writes, 330000 acknowledgements, 330000 finalized payments, 326868 in the offer window (5447.80 TPS), at certified height 1169",
+      "index": [
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5184694,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3580435,
+            "shard_rebuilds": 2,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 542434,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 102,
+            "hits": 754950,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 171,
+            "recovery_us": 2749105,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 102
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1487812,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5184504,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3515518,
+            "shard_rebuilds": 7,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 544960,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 0,
+            "hits": 760092,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2707858,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1517332,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5184094,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3576614,
+            "shard_rebuilds": 4,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 544087,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 2,
+            "hits": 758405,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 11,
+            "recovery_us": 2707586,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 2
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1497160,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 549454848,
+            "active": true,
+            "hits": 5185983,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 558040080,
+            "recovery_us": 3539531,
+            "shard_rebuilds": 7,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 541381,
+            "accounted_bytes": 786079908,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 53,
+            "hits": 753032,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 870,
+            "recovery_us": 2749455,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 53
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1528368,
+          "node_index_all_active": true
+        }
+      ],
+      "observed_offer_count": 330000,
+      "observer_errors": 0,
+      "run": "3-native",
+      "terminal_height": 1169,
+      "windows": {
+        "scored": {
+          "client_errors": {},
+          "commit_overlap": {
+            "acknowledged": 696,
+            "descendants": 0,
+            "overlap_eligible_writes": 696,
+            "state_prebuilds": 696
+          },
+          "conditioned_p99_us": 1600935,
+          "counts": {
+            "acks": 220011,
+            "common": 221108,
+            "writes": 220001
+          },
+          "cpu_seconds": 248.49,
+          "latency_samples": 220001,
+          "leader_scan": {
+            "block_cycle_rejection_us": 0,
+            "block_cycle_rejections": 0,
+            "cycle_scan_stops": 0,
+            "dependency_reads": {
+              "build_us": 56961,
+              "bytes": 4649628,
+              "cached": 174,
+              "hits": 220727,
+              "planned": 174,
+              "rolling_carried": 0,
+              "rolling_rebuilds": 0,
+              "rolling_samples": 5589
+            },
+            "inspected": 363014,
+            "keeper_prefix_reused": 0,
+            "keeper_wakes": {
+              "access_us": 0,
+              "fallbacks": 0,
+              "jobs": 0,
+              "materialize_us": 0,
+              "reused": 0
+            },
+            "lineage": {
+              "access_analysis_us": 0,
+              "lookahead_commands": 0,
+              "lookahead_fallbacks": 0,
+              "lookahead_reused": 0,
+              "parallel_commands": 0,
+              "parallel_materialize_us": 0,
+              "parallel_waves": 0,
+              "rolling_peak_outstanding": 0,
+              "rolling_wait_us": 0,
+              "rolling_windows": 0,
+              "rolling_worker_us": 0,
+              "serial_commands": 0
+            },
+            "parallel_cell_fallback": 0,
+            "parallel_cell_jobs": 363009,
+            "parallel_cell_reused": 220727,
+            "parallel_cell_us": 0,
+            "parallel_parent_rejections_reused": 142282,
+            "priority_at_limit": 0,
+            "priority_candidates": 0,
+            "priority_cycle_rejections": 0,
+            "priority_inspected": 0,
+            "priority_selected": 0,
+            "priority_spent_in_parent": 0,
+            "priority_spent_in_proposal": 0,
+            "rolling_cells": {
+              "discarded_jobs": 0,
+              "elapsed_us": 2877865,
+              "fallbacks": 0,
+              "first_submit_us": 32700,
+              "jobs": 363009,
+              "masked_projection_positions": 141127,
+              "ordered_declarations": 0,
+              "peak_outstanding": 0,
+              "peak_projection_edits": 0,
+              "projected_transactions": 360083,
+              "projection_barriers": 0,
+              "projection_reclaim_us": 258823,
+              "projection_restarts": 0,
+              "projection_us": 648775,
+              "refilled_jobs": 339664,
+              "retired_projection_edits": 680380,
+              "retry_parent_hits": 0,
+              "retry_parent_records": 583736,
+              "reused": 220727,
+              "runs": 2926,
+              "tail_cycle_share_jobs": 0,
+              "tail_cycle_share_reused": 0
+            },
+            "selected": 220731,
+            "selection_us": 3210994,
+            "spent_in_parent": 142283,
+            "spent_in_parent_us": 163593,
+            "spent_in_proposal": 0
+          },
+          "leader_selection_mean_ms": 18.453988505747127,
+          "nonempty_blocks": {
+            "count": 174,
+            "full": 5,
+            "median_size": 1202
+          },
+          "other_busy_seconds": 64.20999999999998,
+          "proc_window_us": [
+            19514033,
+            59539527
+          ],
+          "proposal_jobs": {
+            "cancel_requested": 0,
+            "cancelled": 0,
+            "cancelled_us": 0,
+            "commit_overlap_published": 168,
+            "commit_overlap_started": 169,
+            "commit_overlap_us": 6164153,
+            "pre_quorum_overlap_us": 72497,
+            "pre_quorum_published": 5,
+            "pre_quorum_started": 5,
+            "published": 173,
+            "rebased": 173,
+            "rebased_blocks": 173,
+            "snapshot_entries": 365321,
+            "stale": 0,
+            "stale_us": 0,
+            "started": 174
+          },
+          "stages": {
+            "admission.client_queue": {
+              "count": 219860,
+              "elapsed_us": 3864214132,
+              "mean_ms": 17.57579428727372
+            },
+            "execution.candidate_commitments.cell_tree": {
+              "count": 522,
+              "elapsed_us": 8752550,
+              "mean_ms": 16.76733716475096
+            },
+            "execution.candidate_verify": {
+              "count": 522,
+              "elapsed_us": 42516921,
+              "mean_ms": 81.45004022988505
+            },
+            "execution.commit_jobs.cell_node_publication": {
+              "count": 696,
+              "elapsed_us": 7294424,
+              "mean_ms": 10.480494252873562
+            },
+            "execution.commit_jobs.live_cell_publication": {
+              "count": 696,
+              "elapsed_us": 1662424,
+              "mean_ms": 2.3885402298850575
+            },
+            "execution.commit_jobs.persistence": {
+              "count": 696,
+              "elapsed_us": 23372111,
+              "mean_ms": 33.58061925287356
+            },
+            "execution.control_queue": {
+              "count": 4024,
+              "elapsed_us": 23028481,
+              "mean_ms": 5.722783548707754
+            },
+            "execution.proposal": {
+              "count": 174,
+              "elapsed_us": 7729920,
+              "mean_ms": 44.424827586206895
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "count": 174,
+              "elapsed_us": 4077231,
+              "mean_ms": 23.432362068965517
+            },
+            "execution.proposal_jobs.snapshot_capture": {
+              "count": 174,
+              "elapsed_us": 0,
+              "mean_ms": 0.0
+            },
+            "execution.proposal_jobs.worker_service": {
+              "count": 174,
+              "elapsed_us": 7697813,
+              "mean_ms": 44.24030459770115
+            }
+          },
+          "status_window_us": [
+            19989802,
+            59967838
+          ],
+          "transport_drops": 13,
+          "validator_cpu_mask_busy_seconds": 312.7,
+          "view_timeouts": 0
+        }
+      },
+      "workload_id": "258a867ddbaab1a7e2df46aa396e4ca8c4ed8e86a108ff512b08979622b6535a"
+    },
+    {
+      "archive_sha256": "7671af242a8fe35548f9115743f1cf60468121c56dfadf640c6999c20d63fd47",
+      "backlog": {
+        "20": 14477,
+        "35": 27733,
+        "50": 67589,
+        "60": 94274,
+        "95": 36501
+      },
+      "common_at_95s": 291643,
+      "funding_header": "2d0200000000000064db3823a20100007c9b242fcd6c44d2e22d114fd7afbb2b2a2db69243213b95b6ec75d6698e3eca4bc7a692ac7945117e17fdc275348589e618ba75ee6e57fa67ce1073206ddaf1cfe1ede2098a7c0c7ab967f37e8f14e84a116a1187bdfa29c913a9c360b4568d600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c69e2cb85040c8792719fa35ecc4e9372606fbc2f5122a33ebdf730cbc0de92409693633421656a4cf3cb280c1db55a70477262cb1b7e3add116223d363c2f22d8",
+      "funding_height": 557,
+      "independent_replay": "Verified 330000 writes, 328139 acknowledgements, 291643 finalized payments, 215867 in the offer window (3597.78 TPS), at certified height 793",
+      "index": [
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4269399,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 608175104,
+            "recovery_us": 2862376,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 519297,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 1224,
+            "hits": 1034956,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2768642,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1593416,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4297116,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 608175104,
+            "recovery_us": 2825786,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 527005,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 4917,
+            "hits": 1026254,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2799743,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1646524,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4269041,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 608175104,
+            "recovery_us": 2840052,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 519559,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 3150,
+            "hits": 1023973,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2793951,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1611092,
+          "node_index_all_active": true
+        },
+        {
+          "cell_node_index": {
+            "accounted_bytes": 608175104,
+            "active": true,
+            "hits": 4299832,
+            "hot_cache": null,
+            "limit_bytes": 805306368,
+            "misses": 0,
+            "nodes": 2880003,
+            "peak_accounted_bytes": 608175104,
+            "recovery_us": 2849730,
+            "shard_rebuilds": 0,
+            "uncached_inserts": 0
+          },
+          "live_cell_index": {
+            "absent": 509066,
+            "accounted_bytes": 821142764,
+            "active": true,
+            "descriptors": 0,
+            "entries": 1440002,
+            "fallbacks": 5157,
+            "hits": 1008872,
+            "layout": "inline",
+            "limit_bytes": 1610612736,
+            "previous_header_bytes": 0,
+            "previous_header_lookups": 0,
+            "recovery_us": 2781117,
+            "recovery_workers": 1,
+            "snapshot_contention_fallbacks": 0
+          },
+          "live_index_all_active": true,
+          "max_rss_kib": 1658468,
+          "node_index_all_active": true
+        }
+      ],
+      "observed_offer_count": 330000,
+      "observer_errors": 1,
+      "run": "4-control",
+      "terminal_height": 793,
+      "windows": {
+        "scored": {
+          "client_errors": {
+            "Resource temporarily unavailable (os error 11)": 6
+          },
+          "commit_overlap": {
+            "acknowledged": 235,
+            "descendants": 0,
+            "overlap_eligible_writes": 235,
+            "state_prebuilds": 0
+          },
+          "conditioned_p99_us": 62220283,
+          "counts": {
+            "acks": 200627,
+            "common": 120832,
+            "writes": 200633
+          },
+          "cpu_seconds": 184.4,
+          "latency_samples": 171458,
+          "leader_scan": {
+            "block_cycle_rejection_us": 0,
+            "block_cycle_rejections": 0,
+            "cycle_scan_stops": 0,
+            "dependency_reads": {
+              "build_us": 0,
+              "bytes": 0,
+              "cached": 0,
+              "hits": 0,
+              "planned": 0,
+              "rolling_carried": 0,
+              "rolling_rebuilds": 0,
+              "rolling_samples": 0
+            },
+            "inspected": 203997,
+            "keeper_prefix_reused": 0,
+            "keeper_wakes": {
+              "access_us": 0,
+              "fallbacks": 0,
+              "jobs": 0,
+              "materialize_us": 0,
+              "reused": 0
+            },
+            "lineage": {
+              "access_analysis_us": 0,
+              "lookahead_commands": 0,
+              "lookahead_fallbacks": 0,
+              "lookahead_reused": 0,
+              "parallel_commands": 0,
+              "parallel_materialize_us": 0,
+              "parallel_waves": 0,
+              "rolling_peak_outstanding": 0,
+              "rolling_wait_us": 0,
+              "rolling_windows": 0,
+              "rolling_worker_us": 0,
+              "serial_commands": 0
+            },
+            "parallel_cell_fallback": 0,
+            "parallel_cell_jobs": 0,
+            "parallel_cell_reused": 0,
+            "parallel_cell_us": 0,
+            "parallel_parent_rejections_reused": 0,
+            "priority_at_limit": 0,
+            "priority_candidates": 0,
+            "priority_cycle_rejections": 0,
+            "priority_inspected": 0,
+            "priority_selected": 0,
+            "priority_spent_in_parent": 0,
+            "priority_spent_in_proposal": 0,
+            "rolling_cells": {
+              "discarded_jobs": 0,
+              "elapsed_us": 0,
+              "fallbacks": 0,
+              "first_submit_us": 0,
+              "jobs": 0,
+              "masked_projection_positions": 0,
+              "ordered_declarations": 0,
+              "peak_outstanding": 0,
+              "peak_projection_edits": 0,
+              "projected_transactions": 0,
+              "projection_barriers": 0,
+              "projection_reclaim_us": 0,
+              "projection_restarts": 0,
+              "projection_us": 0,
+              "refilled_jobs": 0,
+              "retired_projection_edits": 0,
+              "retry_parent_hits": 0,
+              "retry_parent_records": 0,
+              "reused": 0,
+              "runs": 0,
+              "tail_cycle_share_jobs": 0,
+              "tail_cycle_share_reused": 0
+            },
+            "selected": 118784,
+            "selection_us": 2830439,
+            "spent_in_parent": 85213,
+            "spent_in_parent_us": 354004,
+            "spent_in_proposal": 0
+          },
+          "leader_selection_mean_ms": 48.8006724137931,
+          "nonempty_blocks": {
+            "count": 59,
+            "full": 59,
+            "median_size": 2048
+          },
+          "other_busy_seconds": 87.84,
+          "proc_window_us": [
+            19986930,
+            60010846
+          ],
+          "proposal_jobs": {
+            "cancel_requested": 0,
+            "cancelled": 0,
+            "cancelled_us": 0,
+            "commit_overlap_published": 58,
+            "commit_overlap_started": 58,
+            "commit_overlap_us": 4048415,
+            "pre_quorum_overlap_us": 0,
+            "pre_quorum_published": 0,
+            "pre_quorum_started": 0,
+            "published": 58,
+            "rebased": 58,
+            "rebased_blocks": 58,
+            "snapshot_entries": 1425086,
+            "stale": 0,
+            "stale_us": 0,
+            "started": 58
+          },
+          "stages": {
+            "admission.client_queue": {
+              "count": 198648,
+              "elapsed_us": 8234563001,
+              "mean_ms": 41.45303753876203
+            },
+            "execution.candidate_commitments.cell_tree": {
+              "count": 175,
+              "elapsed_us": 6746467,
+              "mean_ms": 38.55124
+            },
+            "execution.candidate_verify": {
+              "count": 175,
+              "elapsed_us": 40615897,
+              "mean_ms": 232.09084
+            },
+            "execution.commit_jobs.cell_node_publication": {
+              "count": 0,
+              "elapsed_us": 0,
+              "mean_ms": null
+            },
+            "execution.commit_jobs.live_cell_publication": {
+              "count": 0,
+              "elapsed_us": 0,
+              "mean_ms": null
+            },
+            "execution.commit_jobs.persistence": {
+              "count": 235,
+              "elapsed_us": 43714308,
+              "mean_ms": 186.01833191489362
+            },
+            "execution.control_queue": {
+              "count": 2049,
+              "elapsed_us": 233960620,
+              "mean_ms": 114.18283064909711
+            },
+            "execution.proposal": {
+              "count": 58,
+              "elapsed_us": 5818489,
+              "mean_ms": 100.31877586206897
+            },
+            "execution.proposal_commitments.cell_tree": {
+              "count": 58,
+              "elapsed_us": 2384027,
+              "mean_ms": 41.10391379310345
+            },
+            "execution.proposal_jobs.snapshot_capture": {
+              "count": 58,
+              "elapsed_us": 205151,
+              "mean_ms": 3.537086206896552
+            },
+            "execution.proposal_jobs.worker_service": {
+              "count": 58,
+              "elapsed_us": 5816705,
+              "mean_ms": 100.28801724137931
+            }
+          },
+          "status_window_us": [
+            19998289,
+            59565233
+          ],
+          "transport_drops": 873,
+          "validator_cpu_mask_busy_seconds": 272.24,
+          "view_timeouts": 4
+        }
+      },
+      "workload_id": "258a867ddbaab1a7e2df46aa396e4ca8c4ed8e86a108ff512b08979622b6535a"
+    }
+  ]
+}
