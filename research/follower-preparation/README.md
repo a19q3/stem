@@ -100,3 +100,25 @@ The two arms also ran the established mixed fixture with zero to twelve Type Gro
 | Certified blocks independently replayed | 275 | 278 |
 
 The smaller Follower change is consistent with the short, type-heavy blocks and less time available to hide behind Cell reads. A single arm per build leaves the throughput and p99 changes subject to normal live-run variance. Keep the feature opt-in. The full-block controls establish a preparation benefit for cold and partially cached state. A wider launch default needs repeat live results under varied contract workloads and shared-resource pressure. [Mixed fixture command](../critical-path/README.md#reproduction)
+
+## Other full-block candidates
+
+A second offline comparison used the bounded parallel point reader as its control. Each column comes from the same 16 candidates per setting, on physical CPUs `2,3` with two workers. A matched control ran before and after the three candidates. Medians are elapsed milliseconds.
+
+| Variant | Cold | Partial | Hot | Speculative parent |
+| --- | ---: | ---: | ---: | ---: |
+| Parallel points, before | 323.81 | 175.87 | 110.08 | 174.44 |
+| RocksDB MultiGet for Cell records | 395.26 | 198.44 | 113.71 | 190.57 |
+| Pinned reads for committed Cell Patricia nodes | 317.53 | 173.66 | 106.18 | 168.09 |
+| Existing Work Stealing plus parallel Cell reads | 311.68 | 180.13 | 107.30 | 165.45 |
+| Parallel points, after | 344.02 | 171.61 | 107.05 | 165.49 |
+
+The MultiGet version keeps the same point window and consults the speculative overlay and committed cache first. It substitutes one coordinator-side `multi_get_opt` for the parallel point calls for the remaining RocksDB keys. Its cold and partial wall times exceed both bracketing controls. Retain parallel point reads for this candidate.
+
+The Patricia experiment changes only the committed Cell namespace node fetch from `get_opt` to `get_pinned_opt`. It retains speculative lookups, canonical node decoding and the normal hash validation. In the hot case, its full block took 106.18 ms and the tree phase took 70.18 ms, against 107.05–110.08 ms and 70.81–73.36 ms in the controls. Keep the existing node reader. These results leave Patricia traversal and authenticated state construction as the dominant measured cost in the hot fixture and indicate limited leverage from changing this read API alone.
+
+Work Stealing reduced cold process CPU from 451.83–452.10 ms to 433.67 ms. Cold wall time also fell, while the partially cached case was slower than both controls. Keep the existing Work Stealing feature optional. The fixture uses uniform payment scripts and cannot establish a scheduling decision for heterogeneous VM work. Wire decoding remains below about 2 ms per full block in these runs.
+
+All 320 preparations in this comparison matched the independent serial oracle on the Header, receipts and cycles. The alternate reader patches were experimental and the report records their results.
+
+The final release workspace run with all Cargo features passed 543 tests across 26 suites. Thirty explicitly ignored fixtures were outside that run. The network and offline experiments above were run separately.
