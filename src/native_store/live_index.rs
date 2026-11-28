@@ -2,6 +2,7 @@
 //! their RocksDB snapshot when this local index advances past their Header.
 
 use std::{
+    borrow::Cow,
     hash::RandomState,
     mem::size_of,
     sync::{
@@ -30,7 +31,34 @@ use super::{LiveChanges, STATE_RECORD, Store, TIP};
 mod interned;
 use interned::InternedRecords;
 
-const ROW_PAYLOAD_OVERHEAD: usize = OutPoint::TOTAL_SIZE + 32 + 256;
+#[cfg(feature = "native-inline-outpoint-index")]
+type ResidentKey = [u8; OutPoint::TOTAL_SIZE];
+#[cfg(not(feature = "native-inline-outpoint-index"))]
+type ResidentKey = OutPoint;
+
+const KEY_PAYLOAD_BYTES: usize = if cfg!(feature = "native-inline-outpoint-index") {
+    0
+} else {
+    OutPoint::TOTAL_SIZE
+};
+const ROW_PAYLOAD_OVERHEAD: usize = KEY_PAYLOAD_BYTES + 32 + 256;
+
+fn resident_key_ref(point: &OutPoint) -> Option<&ResidentKey> {
+    #[cfg(feature = "native-inline-outpoint-index")]
+    return point.as_slice().try_into().ok();
+    #[cfg(not(feature = "native-inline-outpoint-index"))]
+    Some(point)
+}
+
+fn own_resident_key(point: Cow<'_, OutPoint>) -> ResidentKey {
+    #[cfg(feature = "native-inline-outpoint-index")]
+    return *resident_key_ref(&point).expect("packed OutPoint width");
+    #[cfg(not(feature = "native-inline-outpoint-index"))]
+    match point {
+        Cow::Owned(point) => point,
+        Cow::Borrowed(point) => OutPoint::new_unchecked(Bytes::copy_from_slice(point.as_slice())),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,14 +90,14 @@ pub struct LiveCellIndexStatus {
 
 #[derive(Default)]
 struct InlineRecords {
-    rows: HashMap<OutPoint, LiveCell, RandomState>,
+    rows: HashMap<ResidentKey, LiveCell, RandomState>,
     payload_bytes: usize,
 }
 
 impl InlineRecords {
     fn payload(cell: &LiveCell) -> usize {
-        // Include owned key and record buffers, the lazy digest allocation
-        // and allocator metadata. Bucket storage is accounted separately.
+        // Include owned record buffers, the lazy digest, allocator metadata
+        // and any separate key bytes. Bucket storage is accounted separately.
         cell.cell.as_slice().len() + ROW_PAYLOAD_OVERHEAD
     }
 
@@ -77,13 +105,18 @@ impl InlineRecords {
         self.payload_bytes + self.rows.allocation_size()
     }
 
-    fn remove(&mut self, point: &OutPoint) {
+    fn remove(&mut self, point: &ResidentKey) {
         if let Some(cell) = self.rows.remove(point) {
             self.payload_bytes -= Self::payload(&cell);
         }
     }
 
-    fn insert(&mut self, inserted_bytes: usize, limit: usize, own: impl FnOnce() -> (OutPoint, LiveCell)) -> bool {
+    fn insert(
+        &mut self,
+        inserted_bytes: usize,
+        limit: usize,
+        own: impl FnOnce() -> (ResidentKey, LiveCell),
+    ) -> bool {
         let payload = self.payload_bytes.saturating_add(inserted_bytes);
         if payload.saturating_add(self.rows.allocation_size()) > limit {
             return false;
@@ -92,7 +125,7 @@ impl InlineRecords {
             // Reserving a single slot can double the table while the old
             // allocation is still live. Also cover the first allocation.
             let table = self.rows.allocation_size();
-            let first = 8 * (size_of::<(OutPoint, LiveCell)>() + 1) + 64;
+            let first = 8 * (size_of::<(ResidentKey, LiveCell)>() + 1) + 64;
             let peak = table.saturating_mul(3).max(first);
             if payload.saturating_add(peak) > limit || self.rows.try_reserve(1).is_err() {
                 return false;
@@ -147,6 +180,7 @@ impl Records {
     }
 
     fn get(&self, point: &OutPoint) -> Option<ResidentCell> {
+        let point = resident_key_ref(point)?;
         match self {
             Self::Inline(records) => records.rows.get(point).cloned().map(ResidentCell::Inline),
             Self::Interned(records) => records.get(point).map(ResidentCell::Interned),
@@ -175,23 +209,26 @@ impl Records {
     }
 
     fn remove(&mut self, point: &OutPoint) {
+        let Some(point) = resident_key_ref(point) else {
+            return;
+        };
         match self {
             Self::Inline(records) => records.remove(point),
             Self::Interned(records) => records.remove(point),
         }
     }
 
-    fn insert(&mut self, point: OutPoint, cell: LiveCell, limit: usize, detached: bool) -> bool {
-        let own_point = |point: OutPoint| {
-            if detached {
-                point
-            } else {
-                OutPoint::new_unchecked(Bytes::copy_from_slice(point.as_slice()))
-            }
-        };
+    fn insert(
+        &mut self,
+        point: Cow<'_, OutPoint>,
+        cell: LiveCell,
+        limit: usize,
+        detached: bool,
+    ) -> bool {
+        let own_point = || own_resident_key(point);
         match self {
             Self::Inline(records) => records.insert(InlineRecords::payload(&cell), limit, || {
-                let point = own_point(point);
+                let point = own_point();
                 if detached {
                     (point, cell)
                 } else {
@@ -207,7 +244,7 @@ impl Records {
                     (point, record)
                 }
             }),
-            Self::Interned(records) => records.insert(own_point(point), &cell, limit),
+            Self::Interned(records) => records.insert(own_point(), &cell, limit),
         }
     }
 }
@@ -329,7 +366,7 @@ impl IndexView {
                 ensure!(record::cell_key(&store.cells, &point) == id, "miskeyed committed Cell record");
                 let digest = record::cell_value(&store.cells, &point, &cell);
                 if let Some(index) = &mut records
-                    && !index.insert(point, cell, limit_bytes, true)
+                    && !index.insert(Cow::Owned(point), cell, limit_bytes, true)
                 {
                     records = None;
                 }
@@ -450,10 +487,15 @@ impl IndexView {
                 let limit = self.index.limit_bytes;
                 #[cfg(feature = "native-live-cell-parent-index")]
                 let limit = limit - previous.as_ref().map_or(0, |old| old.bytes);
-                if !records.insert(point.clone(), cell.clone(), limit, false) {
+                if !records.insert(Cow::Borrowed(point), cell.clone(), limit, false) {
                     #[cfg(feature = "native-live-cell-parent-index")]
                     if previous.take().is_some()
-                        && records.insert(point.clone(), cell.clone(), self.index.limit_bytes, false)
+                        && records.insert(
+                            Cow::Borrowed(point),
+                            cell.clone(),
+                            self.index.limit_bytes,
+                            false,
+                        )
                     {
                         continue;
                     }

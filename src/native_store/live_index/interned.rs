@@ -8,9 +8,10 @@ use std::{
 
 use anyhow::Result;
 use bytes::Bytes;
-use ckb_types::packed::OutPoint;
 use hashbrown::{HashMap, hash_map::EntryRef};
 use stem_ledger::{Cell, LiveCell, Origin};
+
+use super::ResidentKey;
 
 type Table<K, V> = HashMap<K, V, RandomState>;
 
@@ -89,7 +90,7 @@ impl Descriptors {
 
 #[derive(Default)]
 pub(super) struct InternedRecords {
-    rows: Table<OutPoint, Row>,
+    rows: Table<ResidentKey, Row>,
     descriptors: Descriptors,
     payload: usize,
 }
@@ -110,11 +111,11 @@ impl InternedRecords {
             .saturating_add(self.descriptors.values.allocation_size())
     }
 
-    pub(super) fn get(&self, point: &OutPoint) -> Option<Row> {
+    pub(super) fn get(&self, point: &ResidentKey) -> Option<Row> {
         self.rows.get(point).cloned()
     }
 
-    pub(super) fn remove(&mut self, point: &OutPoint) {
+    pub(super) fn remove(&mut self, point: &ResidentKey) {
         if let Some(row) = self.rows.remove(point) {
             self.payload -= Row::cost(row.body.len());
             self.descriptors.release(&row.lock);
@@ -124,7 +125,7 @@ impl InternedRecords {
         }
     }
 
-    pub(super) fn insert(&mut self, point: OutPoint, cell: &LiveCell, limit: usize) -> bool {
+    pub(super) fn insert(&mut self, point: ResidentKey, cell: &LiveCell, limit: usize) -> bool {
         let [prefix, lock, types, data] = cell.cell.canonical_parts();
         let row_cost = Row::cost(prefix.len() + data.len());
         let mut descriptors = 0;
@@ -190,12 +191,14 @@ fn peak<K: Eq + Hash, V>(table: &Table<K, V>, additional: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use ckb_types::{
-        packed::{Byte32, Script},
+        packed::{Byte32, OutPoint, Script},
         prelude::*,
     };
 
-    use super::*;
+    use super::{super::own_resident_key, *};
 
     #[test]
     fn releases_unowned_descriptors_and_preserves_cloned_views() -> Result<()> {
@@ -215,26 +218,26 @@ mod tests {
                 origin: origin.clone(),
             })
         };
-        let first = OutPoint::new([4; 32].pack(), 0);
-        let second = OutPoint::new([4; 32].pack(), 1);
+        let first = || own_resident_key(Cow::Owned(OutPoint::new([4; 32].pack(), 0)));
+        let second = || own_resident_key(Cow::Owned(OutPoint::new([4; 32].pack(), 256)));
         let first_cell = make(Bytes::new())?;
         let second_cell = make(Bytes::from_static(b"separate data"))?;
         let mut records = InternedRecords::default();
-        assert!(records.insert(first.clone(), &first_cell, 1 << 20));
-        assert!(records.insert(second.clone(), &second_cell, 1 << 20));
+        assert!(records.insert(first(), &first_cell, 1 << 20));
+        assert!(records.insert(second(), &second_cell, 1 << 20));
         assert_eq!(records.distinct_descriptors(), 2);
-        let retained = records.get(&second).expect("resident row");
-        records.remove(&first);
+        let retained = records.get(&second()).expect("resident row");
+        records.remove(&first());
         assert_eq!(records.distinct_descriptors(), 2);
-        records.remove(&second);
+        records.remove(&second());
         assert_eq!(records.distinct_descriptors(), 0);
         assert_eq!(records.descriptors.payload, 0);
-        assert!(records.get(&second).is_none());
+        assert!(records.get(&second()).is_none());
 
         let decoded = retained.into_cell()?;
         assert_eq!(decoded.cell.as_slice(), second_cell.cell.as_slice());
         assert_eq!(decoded.origin, origin);
-        assert!(!records.insert(first, &first_cell, records.bytes()));
+        assert!(!records.insert(first(), &first_cell, records.bytes()));
         assert_eq!(records.len(), 0);
         assert_eq!(records.distinct_descriptors(), 0);
         Ok(())
