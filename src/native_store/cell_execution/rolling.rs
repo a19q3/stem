@@ -7,7 +7,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, RecvTimeoutError, TryRecvError},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -27,7 +27,7 @@ use super::{
 use super::{IncrementalProjection, declared_writes};
 #[cfg(feature = "native-incremental-cell-projection")]
 use std::sync::RwLock;
-use crate::native_store::{CellStreamStats, ProposalStep, ProposalTrial};
+use crate::native_store::{CellStreamStats, ProposalStep, ProposalTrial, worker_completion};
 #[cfg(feature = "native-rolling-leader-execution")]
 use crate::native_store::{ProposalProgress, ProposalScan};
 #[cfg(feature = "native-rolling-leader-execution")]
@@ -73,28 +73,6 @@ impl ReadyCell {
         overlay: &mut Overlay,
     ) -> Option<Receipt> {
         self.effects.adopt(self.slot, budget, overlay)
-    }
-}
-
-fn next_completion(receiver: &Receiver<Completion>) -> Completion {
-    loop {
-        match receiver.try_recv() {
-            Ok(completion) => return completion,
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => unreachable!("Cell workers lost their scope"),
-        }
-        // The coordinator can be on the same pool as the workers. Run pending
-        // tasks before parking, and periodically retry if several blocks share
-        // the pool and work becomes available after the probe.
-        if rayon::yield_now() != Some(rayon::Yield::Executed) {
-            match receiver.recv_timeout(Duration::from_micros(100)) {
-                Ok(completion) => return completion,
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => {
-                    unreachable!("Cell workers lost their scope")
-                }
-            }
-        }
     }
 }
 
@@ -422,7 +400,7 @@ impl Store {
                         ProposalTrial::Ordered
                     } else {
                         let Some((_, slot, outcome)) = ready[prefix % depth].take() else {
-                            let completion = next_completion(&receiver);
+                            let completion = worker_completion::next(&receiver);
                             let index = completion.0 % depth;
                             debug_assert!(ready[index].is_none());
                             ready[index] = Some(completion);

@@ -64,6 +64,12 @@ pub(crate) use preparation::{PreparationCancellation, PreparationCancelled};
 mod staking;
 mod state_snapshot;
 mod storage_metrics;
+#[cfg(any(
+    feature = "native-rolling-cell-execution",
+    feature = "native-rolling-leader-execution",
+    feature = "native-rolling-lineage-execution"
+))]
+mod worker_completion;
 pub use storage_metrics::StorageSample;
 use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
 #[cfg(feature = "native-compact-write-journal")]
@@ -172,6 +178,10 @@ pub struct LineageSchedule {
     pub lookahead_commands: u64,
     pub lookahead_reused: u64,
     pub lookahead_fallbacks: u64,
+    pub rolling_windows: u64,
+    pub rolling_wait_us: u64,
+    pub rolling_worker_us: u64,
+    pub rolling_peak_outstanding: u64,
     pub keeper_wakes: KeeperWakeMetrics,
 }
 
@@ -288,6 +298,10 @@ impl LineageSchedule {
         self.lookahead_commands = self.lookahead_commands.saturating_add(other.lookahead_commands);
         self.lookahead_reused = self.lookahead_reused.saturating_add(other.lookahead_reused);
         self.lookahead_fallbacks = self.lookahead_fallbacks.saturating_add(other.lookahead_fallbacks);
+        self.rolling_windows = self.rolling_windows.saturating_add(other.rolling_windows);
+        self.rolling_wait_us = self.rolling_wait_us.saturating_add(other.rolling_wait_us);
+        self.rolling_worker_us = self.rolling_worker_us.saturating_add(other.rolling_worker_us);
+        self.rolling_peak_outstanding = self.rolling_peak_outstanding.max(other.rolling_peak_outstanding);
         self.keeper_wakes.record(other.keeper_wakes);
     }
 }
@@ -2992,10 +3006,21 @@ impl Store {
             }),
             "trigger-bound Lineage command requires its committed Keeper reservation"
         );
+        self.materialize_lineage_from_view(tx, block, &overlay.lineages, &overlay.live, budget)
+    }
+
+    fn materialize_lineage_from_view(
+        &self,
+        tx: &Transaction,
+        block: &BlockContext<'_>,
+        heads: &lineage::Heads,
+        live: &LiveChanges,
+        budget: Budget,
+    ) -> Result<Option<lineage::Materialized>> {
         tx.lineage_command()
             .map(|command| {
                 ensure!(
-                    height < tx.valid_before_height().expect("validated command expiry"),
+                    block.candidate().height < tx.valid_before_height().expect("validated command expiry"),
                     "Lineage command has expired"
                 );
                 lineage::materialize(
@@ -3003,9 +3028,9 @@ impl Store {
                     tx,
                     command,
                     block,
-                    &overlay.lineages,
+                    heads,
                     budget,
-                    |point| self.resolve_live(&overlay.live, point),
+                    |point| self.resolve_live(live, point),
                 )
             })
             .transpose()
