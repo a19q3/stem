@@ -14,6 +14,8 @@ use tokio::sync::mpsc;
 use super::{CommitWindow, MAX_PROPOSAL_BYTES, Replica, can_vote_at, commit_overlap};
 #[cfg(feature = "jolteon-pre-quorum-proposal")]
 use super::BranchExecution;
+#[cfg(feature = "jolteon-shared-proposal-snapshot")]
+use super::mempool::ProposalSnapshot;
 use crate::native_store::{PinnedView, Prepared, ProposalScan, StateReadFault};
 #[cfg(feature = "jolteon-cancel-stale-execution")]
 use crate::native_store::{PreparationCancellation, PreparationCancelled};
@@ -74,7 +76,11 @@ struct Job {
     time: u64,
     state: PinnedView,
     ancestors: Vec<Arc<Prepared>>,
+    #[cfg(feature = "jolteon-shared-proposal-snapshot")]
+    transactions: ProposalSnapshot,
+    #[cfg(not(feature = "jolteon-shared-proposal-snapshot"))]
     transactions: Vec<Transaction>,
+    #[cfg(not(feature = "jolteon-shared-proposal-snapshot"))]
     scan: ProposalScan,
     commit: Option<CommitWindow>,
 }
@@ -118,19 +124,24 @@ impl Pipeline {
             .spawn(move || {
                 while let Some(job) = jobs.blocking_recv() {
                     let started = Instant::now();
-                    let mut scan = job.scan;
-                    let (execution, work) = workers.install(|| {
+                    let (execution, work, scan) = workers.install(|| {
                         let executing = Instant::now();
+                        #[cfg(feature = "jolteon-shared-proposal-snapshot")]
+                        let (transactions, mut scan) = job.transactions.candidates();
+                        #[cfg(not(feature = "jolteon-shared-proposal-snapshot"))]
+                        let (transactions, mut scan) = (job.transactions, job.scan);
                         let result = job.state.build_proposal(
                             &job.ancestors,
-                            job.transactions,
+                            transactions,
                             job.time,
                             MAX_PROPOSAL_BYTES,
                             &mut scan,
                             job.commit.is_some(),
                         );
-                        (result, (executing, executing.elapsed()))
+                        (result, (executing, executing.elapsed()), scan)
                     });
+                    #[cfg(feature = "jolteon-shared-proposal-snapshot")]
+                    drop(job.transactions);
                     let result = Completion {
                         stamp: job.stamp,
                         branch: job.branch,
@@ -204,7 +215,16 @@ impl Replica {
             "proposal construction already running"
         );
         let state = self.store.pinned_view();
-        let (transactions, scan) = self.mempool.proposal_candidates();
+        let capture = Instant::now();
+        let snapshot_entries = self.mempool.len() as u64;
+        #[cfg(feature = "jolteon-shared-proposal-snapshot")]
+        let transactions = self.mempool.proposal_snapshot();
+        #[cfg(not(feature = "jolteon-shared-proposal-snapshot"))]
+        let (transactions, scan) = {
+            let (transactions, scan) = self.mempool.proposal_candidates();
+            (transactions.cloned().collect(), scan)
+        };
+        let capture = capture.elapsed();
         let committing = commit.is_some();
         #[cfg(feature = "jolteon-cancel-stale-execution")]
         let active = Active {
@@ -222,7 +242,8 @@ impl Replica {
             time,
             state,
             ancestors,
-            transactions: transactions.cloned().collect(),
+            transactions,
+            #[cfg(not(feature = "jolteon-shared-proposal-snapshot"))]
             scan,
             commit,
         };
@@ -237,6 +258,8 @@ impl Replica {
         }
         let jobs = &mut self.execution.proposal_jobs;
         jobs.started = jobs.started.saturating_add(1);
+        jobs.snapshot_capture.observe(capture);
+        jobs.snapshot_entries = jobs.snapshot_entries.saturating_add(snapshot_entries);
         if committing {
             jobs.commit_overlap_started = jobs.commit_overlap_started.saturating_add(1);
         }

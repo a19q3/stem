@@ -14,6 +14,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Exact certified prefix | `jolteon-exact-prefix-pipeline` | Reuse pinned successor jobs across consecutive certified writes [Comparison notes](execution-pipeline/README.md#reusing-work-across-an-exact-certified-prefix) |
 | Cancel obsolete preparation | `jolteon-cancel-stale-execution` | Stop work on expired Leader proposals or irrecoverable Follower branches [Comparison notes](execution-pipeline/README.md#cancelling-obsolete-preparation) |
 | Pre-quorum Leader construction | `jolteon-pre-quorum-proposal` | Prepare after the local parent vote while the next view waits for its exact QC [Comparison notes](execution-pipeline/cross-block.md#preparing-the-next-proposal-while-its-parent-is-being-certified) |
+| Shared proposal snapshot | `jolteon-shared-proposal-snapshot` | Move ordered mempool traversal from the Replica to the Leader worker [Comparison notes](execution-pipeline/cross-block.md#sharing-the-ordered-mempool-snapshot-with-the-leader-worker) |
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
 | Prior durable Live Cell view | `native-live-cell-parent-index` | Keep overlapping workers on resident reads through one tip advance [Index comparison notes](storage/live-cell-index.md#keeping-the-prior-durable-header-resident) |
 | Fixed-width resident OutPoints | `native-inline-outpoint-index` | Keep full packed keys in table buckets [Index comparison notes](storage/live-cell-index.md#fixed-width-resident-outpoint-keys) |
@@ -48,6 +49,7 @@ trace_cycles=native-trace-cycle-reuse
 exact_prefix=jolteon-exact-prefix-pipeline
 cancellation=jolteon-cancel-stale-execution
 pre_quorum=jolteon-pre-quorum-proposal
+shared_proposal_snapshot=jolteon-shared-proposal-snapshot
 contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
 publication=jolteon-resident-node-publication
 parent_cells=native-live-cell-parent-index
@@ -79,6 +81,7 @@ build exact-prefix --features "$exact_prefix"
 build cancellation --features "$cancellation"
 build pre-quorum-control --features "$exact_prefix,$cancellation"
 build pre-quorum --features "$exact_prefix,$cancellation,$pre_quorum"
+build shared-proposal-snapshot --features "$pre_quorum,$shared_proposal_snapshot"
 build contract-execution --features "$contracts"
 build publication --features "$publication"
 build prior-durable-cells --features "$parent_cells"
@@ -87,7 +90,7 @@ build verified-nodes --features "$verified_nodes"
 build verified-journal --features "$verified_journal"
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$rolling_leader,$ordered_cells,$incremental_projection,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$contracts,$publication,$parent_cells,$inline_outpoints,$verified_journal,$compact_journal,$certificates"
+build combined --features "$cells,$dependencies,$rolling_leader,$ordered_cells,$incremental_projection,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$publication,$parent_cells,$inline_outpoints,$verified_journal,$compact_journal,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

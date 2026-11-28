@@ -1,8 +1,12 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, btree_map::Entry as MapEntry},
+    collections::BTreeSet,
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "jolteon-shared-proposal-snapshot")]
+use imbl::{OrdMap, ordmap::Entry as MapEntry};
+#[cfg(not(feature = "jolteon-shared-proposal-snapshot"))]
+use std::collections::{BTreeMap, btree_map::Entry as MapEntry};
 use stem_ledger::{
     Transaction,
     keeper::{Action, Trigger, decode_command},
@@ -17,6 +21,7 @@ const PROPOSAL_PRIORITY_AGE: Duration = Duration::from_secs(5);
 #[cfg(feature = "jolteon-aged-proposal-selection")]
 const MAX_AGED_PROPOSAL_VISITS: usize = 256;
 
+#[cfg_attr(feature = "jolteon-shared-proposal-snapshot", derive(Clone))]
 #[derive(Default)]
 struct Deadline {
     height: Option<u64>,
@@ -44,17 +49,27 @@ impl Deadline {
     }
 }
 
+#[cfg(feature = "jolteon-shared-proposal-snapshot")]
+type Entries = OrdMap<Hash32, Entry>;
+#[cfg(not(feature = "jolteon-shared-proposal-snapshot"))]
+type Entries = BTreeMap<Hash32, Entry>;
+#[cfg(all(feature = "jolteon-aged-proposal-selection", feature = "jolteon-shared-proposal-snapshot"))]
+type Arrivals = imbl::OrdSet<(Instant, Hash32)>;
+#[cfg(all(feature = "jolteon-aged-proposal-selection", not(feature = "jolteon-shared-proposal-snapshot")))]
+type Arrivals = BTreeSet<(Instant, Hash32)>;
+
 #[derive(Default)]
 pub(super) struct Mempool {
-    entries: BTreeMap<Hash32, Entry>,
+    entries: Entries,
     heights: BTreeSet<(u64, Hash32)>,
     parent_times: BTreeSet<(u64, Hash32)>,
     relays: BTreeSet<(Instant, Hash32)>,
     #[cfg(feature = "jolteon-aged-proposal-selection")]
-    arrivals: BTreeSet<(Instant, Hash32)>,
+    arrivals: Arrivals,
     bytes: usize,
 }
 
+#[cfg_attr(feature = "jolteon-shared-proposal-snapshot", derive(Clone))]
 struct Entry {
     tx: Transaction,
     deadline: Deadline,
@@ -63,10 +78,60 @@ struct Entry {
     accepted: Instant,
 }
 
+#[cfg_attr(feature = "jolteon-shared-proposal-snapshot", derive(Clone))]
 struct PendingRelay {
     at: Instant,
     epoch: u64,
     cursor: usize,
+}
+
+/// One worker holds a previous copy-on-write root. The Replica remains the
+/// sole writer of both indexes and never waits for the worker to traverse them.
+#[cfg(feature = "jolteon-shared-proposal-snapshot")]
+pub(super) struct ProposalSnapshot {
+    entries: Entries,
+    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    arrivals: Arrivals,
+    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    at: Instant,
+}
+
+#[cfg(feature = "jolteon-shared-proposal-snapshot")]
+impl ProposalSnapshot {
+    pub(super) fn candidates(&self) -> (impl Iterator<Item = &Transaction>, ProposalScan) {
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        return transactions_at(&self.entries, &self.arrivals, self.at);
+        #[cfg(not(feature = "jolteon-aged-proposal-selection"))]
+        (self.entries.values().map(|entry| &entry.tx), ProposalScan::default())
+    }
+}
+
+#[cfg(feature = "jolteon-aged-proposal-selection")]
+fn transactions_at<'a>(
+    entries: &'a Entries,
+    arrivals: &'a Arrivals,
+    now: Instant,
+) -> (impl Iterator<Item = &'a Transaction>, ProposalScan) {
+    let aged = arrivals
+        .iter()
+        .take(MAX_AGED_PROPOSAL_VISITS)
+        .take_while(move |(at, _)| now.saturating_duration_since(*at) >= PROPOSAL_PRIORITY_AGE);
+    // The promoted entries form a prefix of the arrival index. Skip exactly
+    // that prefix when walking the regular hash order.
+    let mut count = 0;
+    let boundary = aged.clone().inspect(|_| count += 1).last().copied();
+    let transactions = aged.map(|(_, id)| &entries[id].tx).chain(
+        entries
+            .iter()
+            .filter(move |(id, entry)| boundary.is_none_or(|last| (entry.accepted, **id) > last))
+            .map(|(_, entry)| &entry.tx),
+    );
+    let scan = ProposalScan {
+        priority_candidates: count as u64,
+        priority_at_limit: u64::from(count == MAX_AGED_PROPOSAL_VISITS),
+        ..ProposalScan::default()
+    };
+    (transactions, scan)
 }
 
 impl Mempool {
@@ -82,39 +147,25 @@ impl Mempool {
         self.bytes
     }
 
-    #[cfg(not(feature = "jolteon-aged-proposal-selection"))]
+    #[cfg(not(any(feature = "jolteon-aged-proposal-selection", feature = "jolteon-shared-proposal-snapshot")))]
     pub(super) fn proposal_candidates(&self) -> (impl Iterator<Item = &Transaction>, ProposalScan) {
         (self.entries.values().map(|entry| &entry.tx), ProposalScan::default())
     }
 
-    #[cfg(feature = "jolteon-aged-proposal-selection")]
+    #[cfg(all(feature = "jolteon-aged-proposal-selection", not(feature = "jolteon-shared-proposal-snapshot")))]
     pub(super) fn proposal_candidates(&self) -> (impl Iterator<Item = &Transaction>, ProposalScan) {
-        self.transactions_at(Instant::now())
+        transactions_at(&self.entries, &self.arrivals, Instant::now())
     }
 
-    #[cfg(feature = "jolteon-aged-proposal-selection")]
-    fn transactions_at(&self, now: Instant) -> (impl Iterator<Item = &Transaction>, ProposalScan) {
-        let aged = self
-            .arrivals
-            .iter()
-            .take(MAX_AGED_PROPOSAL_VISITS)
-            .take_while(move |(at, _)| now.saturating_duration_since(*at) >= PROPOSAL_PRIORITY_AGE);
-        // The promoted entries form a prefix of the arrival index. Skip exactly
-        // that prefix when walking the regular hash order.
-        let mut count = 0;
-        let boundary = aged.clone().inspect(|_| count += 1).last().copied();
-        let transactions = aged.map(|(_, id)| &self.entries[id].tx).chain(
-            self.entries
-                .iter()
-                .filter(move |(id, entry)| boundary.is_none_or(|last| (entry.accepted, **id) > last))
-                .map(|(_, entry)| &entry.tx),
-        );
-        let scan = ProposalScan {
-            priority_candidates: count as u64,
-            priority_at_limit: u64::from(count == MAX_AGED_PROPOSAL_VISITS),
-            ..ProposalScan::default()
-        };
-        (transactions, scan)
+    #[cfg(feature = "jolteon-shared-proposal-snapshot")]
+    pub(super) fn proposal_snapshot(&self) -> ProposalSnapshot {
+        ProposalSnapshot {
+            entries: self.entries.clone(),
+            #[cfg(feature = "jolteon-aged-proposal-selection")]
+            arrivals: self.arrivals.clone(),
+            #[cfg(feature = "jolteon-aged-proposal-selection")]
+            at: Instant::now(),
+        }
     }
 
     pub(super) fn insert(&mut self, id: Hash32, tx: Transaction) -> anyhow::Result<()> {
@@ -256,12 +307,13 @@ mod tests {
             pool.insert(id, transaction.with_valid_before_height(height)?)?;
         }
         let heights = |pool: &Mempool, at| {
-            pool.transactions_at(at).0.map(|tx| tx.valid_before_height().unwrap()).collect::<Vec<_>>()
+            transactions_at(&pool.entries, &pool.arrivals, at)
+                .0.map(|tx| tx.valid_before_height().unwrap()).collect::<Vec<_>>()
         };
         assert_eq!(heights(&pool, before), (1..=260).collect::<Vec<_>>());
-        assert_eq!(pool.transactions_at(before).1.priority_candidates, 0);
-        let cutoff = pool.arrivals.last().unwrap().0 + PROPOSAL_PRIORITY_AGE;
-        let scan = pool.transactions_at(cutoff).1;
+        assert_eq!(transactions_at(&pool.entries, &pool.arrivals, before).1.priority_candidates, 0);
+        let cutoff = pool.arrivals.iter().next_back().unwrap().0 + PROPOSAL_PRIORITY_AGE;
+        let scan = transactions_at(&pool.entries, &pool.arrivals, cutoff).1;
         assert_eq!(scan.priority_candidates, MAX_AGED_PROPOSAL_VISITS as u64);
         assert_eq!(scan.priority_at_limit, 1);
         let ordered = heights(&pool, cutoff);
@@ -275,7 +327,7 @@ mod tests {
         assert!(ordered[MAX_AGED_PROPOSAL_VISITS..].is_sorted());
         assert_eq!(ordered.iter().copied().collect::<BTreeSet<_>>().len(), 260);
 
-        let (_, oldest) = *pool.arrivals.first().unwrap();
+        let (_, oldest) = *pool.arrivals.iter().next().unwrap();
         let bytes = pool.bytes();
         pool.insert(oldest, transaction.with_valid_before_height(300)?)?;
         assert_eq!(pool.bytes(), bytes);
@@ -285,6 +337,50 @@ mod tests {
         assert_eq!(pool.arrivals.len(), pool.len());
         assert!(!pool.arrivals.iter().any(|(_, id)| *id == oldest));
         assert!(heights(&pool, cutoff).iter().all(|height| *height > 5));
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-shared-proposal-snapshot")]
+    #[test]
+    fn scheduled_candidates_keep_the_snapshot_order_and_membership() -> anyhow::Result<()> {
+        let before = Instant::now();
+        let mut pool = Mempool::default();
+        let input = CellInput::new(OutPoint::default(), None);
+        let tx = Transaction::new(vec![], vec![], vec![input], vec![], vec![])?;
+        // Enough entries to exercise updates to different branches of the map.
+        for height in (1..=128_u8).rev() {
+            pool.insert([height; 32], tx.with_valid_before_height(u64::from(height))?)?;
+        }
+        #[cfg(not(feature = "jolteon-aged-proposal-selection"))]
+        let snapshot = pool.proposal_snapshot();
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        let snapshot = {
+            let mut snapshot = pool.proposal_snapshot();
+            // Set the capture time explicitly so the test has no timing race.
+            snapshot.at = pool.arrivals.iter().next_back().unwrap().0 + PROPOSAL_PRIORITY_AGE;
+            snapshot
+        };
+
+        let heights = |snapshot: &ProposalSnapshot| {
+            snapshot.candidates().0.map(|tx| tx.valid_before_height().unwrap()).collect::<Vec<_>>()
+        };
+        let scheduled = heights(&snapshot);
+        #[cfg(not(feature = "jolteon-aged-proposal-selection"))]
+        assert_eq!(scheduled, (1..=128).collect::<Vec<_>>());
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        assert_eq!(scheduled, pool.arrivals.iter().map(|(_, id)| u64::from(id[0])).collect::<Vec<_>>());
+        pool.expire(63, 0);
+        pool.remove(&[128; 32]);
+        pool.insert([63; 32], tx.with_valid_before_height(200)?)?;
+        assert!(pool.track_local([65; 32], before, 0));
+
+        assert_eq!(heights(&snapshot), scheduled);
+        let fresh = pool.proposal_snapshot();
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        let fresh = ProposalSnapshot { at: before, ..fresh };
+        assert_eq!(heights(&fresh), [vec![200], (65..=127).collect()].concat());
+        #[cfg(feature = "jolteon-aged-proposal-selection")]
+        assert_eq!(snapshot.candidates().1.priority_candidates, 128);
         Ok(())
     }
 

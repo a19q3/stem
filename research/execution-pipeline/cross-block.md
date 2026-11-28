@@ -133,3 +133,41 @@ snapshot and sharing the worker pool can add control delay, especially
 for late or replaced candidates. The compile-checked binding regression
 covers the waiting state, exact QC, timeout, sibling QC and one durable
 prefix advance. No new runtime or performance evidence has been collected.
+
+## Sharing the ordered mempool snapshot with the Leader worker
+
+The original asynchronous scheduler walks the entire mempool on the Replica
+thread and clones every transaction handle into a vector. That work happens
+before the worker starts, even if selection fills the block after visiting
+only part of the snapshot. Under `jolteon-shared-proposal-snapshot`, the
+Replica clones the root of a copy-on-write ordered map instead. The worker
+traverses the captured root lazily. The optional age-priority policy also
+captures the arrival-index root and the scheduling time, and uses the same
+256-entry promotion policy, order and counters as the vector path.
+
+Insertions, expirations, committed removals and relay metadata updates can
+continue against the current map. A scheduled job sees the membership and
+order it captured. It still evaluates every transaction it visits against
+the pinned execution branch, including current-block writes, budget limits
+and validity checks. One in-flight job can keep one older generation. Its
+snapshot is dropped on the worker before the completion is sent. Live
+admission retains its existing byte limit. Shared paths can add node
+allocations to updates, and a snapshot can retain removed transactions
+until the job finishes. These allocations and the worker's tree traversal
+need to be measured alongside the Replica time saved.
+
+For a matched pair, build the same revision with
+`--features jolteon-pre-quorum-proposal` and with
+`--features jolteon-pre-quorum-proposal,jolteon-shared-proposal-snapshot`.
+Hold age-priority, admission, execution, resident indexes and all limits
+constant. Compare both configurations again with age priority enabled.
+Use identical candidate inputs and timestamps for Header, receipt and
+charged-resource equivalence. In the sustained payment and mixed-contract
+runs, compare the new `proposal_jobs.snapshot_capture` histogram at similar
+mempool sizes (`proposal_jobs.snapshot_entries` sums the captured entry
+counts), as well as admission latency, control queue, selection time, CPU,
+RSS, backlog and independently verified finality. A worker that scans most
+entries may gain less, and relay or removal churn can move costs back onto
+the Replica. Compile-checked regression targets cover ordering, snapshot
+isolation through removal and expiry, insertion and relay updates. Runtime
+validation and performance measurements remain pending.
