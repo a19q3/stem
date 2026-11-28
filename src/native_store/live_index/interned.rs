@@ -29,6 +29,13 @@ impl Row {
         body_len + super::ROW_PAYLOAD_OVERHEAD
     }
 
+    #[cfg(feature = "native-live-cell-parent-index")]
+    pub(super) fn retained_bytes(&self) -> usize {
+        Self::cost(self.body.len())
+            .saturating_add(Descriptors::cost(&self.lock))
+            .saturating_add(self.types.as_ref().map_or(0, |types| Descriptors::cost(types)))
+    }
+
     pub(super) fn into_cell(self) -> Result<LiveCell> {
         let (prefix, data) = self.body.split_at(self.prefix_len);
         let types = self.types.as_deref().unwrap_or_default();

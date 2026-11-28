@@ -152,3 +152,50 @@ in each Linux crash mode with `--with-payments` and a target executable
 wrapper which adds `--live-cell-index-mib 16` to the `run` subcommand. Query
 `live_cell_index.active` after the restarted target has opened its database
 and check its exact Header using the ordinary offline verifier.
+
+## Keeping the prior durable Header resident
+
+A worker that acquired its RocksDB snapshot before a write can continue
+executing on the old Header while the Replica installs the new tip. The
+current Live Cell index returns a fallback for all such lookups after its
+Header advances, even for Cells untouched by the write. Earlier isolated
+measurements count the matching-Header fast path. They do not measure the
+frequency or cost of this transition during an overlapping job.
+
+The optional `native-live-cell-parent-index` feature keeps the before-image
+of each changed OutPoint for the immediately preceding durable Header.
+A present before-image supplies the old record. An explicit absent entry
+hides a newly created record. Untouched lookups read the current table.
+Both the current table and the sparse before-images are published under
+the same lock after the certified write returns. Speculative branch Cells
+take precedence over either durable view. A reader retains its original
+database snapshot for anything older or unavailable.
+
+The previous-Header view works with inline and interned Cells. It retains
+immutable owned buffers and charges their full estimated cost, including
+shared descriptors and the sorted key array, against the same
+`--live-cell-index-mib` limit. When a new table allocation would exceed that
+limit, drop the previous view before retrying the current update. The
+usual RocksDB fallback applies if the current index itself does not fit.
+Each advance discards the older journal. Reopen reconstructs only the
+current view from the authenticated database. Canonical Cell proof paths
+and the synchronous WAL transaction are shared by both builds.
+
+For a matched comparison, toggle only the feature and hold the Live Cell
+layout and budget, Patricia index, RocksDB settings, worker count and
+signed workload fixed. The relevant fixed-block control opens a snapshot
+before finalization, installs a write altering membership, then runs an
+identical preparation on the pinned view. Include an unaffected Cell, a
+spend, a creation, an absent Cell and a reader two Headers old. Use the
+existing paused-writer fixture to exercise natural overlaps and include
+a no-overlap control. Compare exact Header, receipts, Cell proof bytes,
+finality and recovery. `previous_header_lookups` includes both hits and
+authoritative absences. `previous_header_bytes` is included in the index's
+`accounted_bytes`. Record these alongside fallback counts, publication
+wall time, consensus control wait, RSS and worker CPU. Copying references
+and sorting changed OutPoints extend the publication lock, so the variant
+could regress runs that rarely query the previous Header.
+
+Regression targets were compiled for both memory layouts, exact old and
+new proofs, budget pressure, expiry after an additional durable write and
+reopening. Runtime qualification and independent replay remain pending.
