@@ -111,6 +111,8 @@ fn cancel(
 fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
     use super::lineage::FixtureLineage;
     use anyhow::Context;
+    use std::num::NonZeroUsize;
+    use stem::native_store::LiveCellIndexLayout;
 
     let mut fixture = Fixture::new()?;
     fixture.spec.limits.transaction_count = 16;
@@ -136,6 +138,13 @@ fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
         .enumerate()
         .map(|(index, command)| schedule(&fixture, index as u32, command))
         .collect::<Result<Vec<_>>>()?;
+    let mut payments = Vec::new();
+    let mut point = fixture.spend.clone();
+    for fee_count in 1..=10 {
+        let tx = fixture.signed(point, None, FUND - fee_count * FEE, None)?;
+        point = OutPoint::new(tx.id(&fixture.spec.network), 0);
+        payments.push(tx);
+    }
     let registrations = [dynamic.register(&fixture, 0)?, dynamic.register(&fixture, 1)?];
     let dir = tempfile::tempdir()?;
     let mut serial = Store::open(&dir.path().join("serial"), &fixture.spec, Retention::Archive)?;
@@ -144,27 +153,40 @@ fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
         &fixture.spec,
         Retention::Archive,
     )?;
+    let limit = NonZeroUsize::new(8).unwrap();
+    parallel.enable_live_cell_index_with_layout(limit, LiveCellIndexLayout::InternedScripts)?;
+    parallel.enable_cell_node_index(limit)?;
     for store in [&mut serial, &mut parallel] {
         store.commit(store.prepare(&registrations, TIME, false)?)?;
         store.commit(store.prepare(&reservations, TIME, false)?)?;
         store.commit(store.prepare(&[], target, false)?)?;
     }
     let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
-    let reference = serial.prepare(&[], target, false)?;
-    let candidate = workers.install(|| parallel.prepare(&[], target, true))?;
+    let reference = serial.prepare(&payments, target, false)?;
+    let candidate = workers.install(|| parallel.prepare(&payments, target, true))?;
     let (selected, leader) =
-        workers.install(|| parallel.build_proposal(Vec::<Transaction>::new(), target, 4096))?;
-    assert!(selected.is_empty());
+        workers.install(|| parallel.build_proposal(&payments, target, 64 * 1024))?;
+    assert!(
+        selected.iter().map(Transaction::as_slice)
+            .eq(payments.iter().map(Transaction::as_slice))
+    );
     assert_eq!(candidate.header(), reference.header());
     assert_eq!(leader.header(), reference.header());
     assert_eq!(candidate.receipts(), reference.receipts());
     assert_eq!(leader.receipts(), reference.receipts());
-    assert_eq!(candidate.receipts().len(), 3);
-    for receipt in candidate.receipts() {
+    assert_eq!(candidate.receipts().len(), payments.len() + 3);
+    for receipt in &candidate.receipts()[..3] {
         assert_eq!(Outcome::decode(&receipt.protocol_result)?, Outcome::Applied);
     }
     serial.commit(reference)?;
     parallel.commit(candidate)?;
+    let (expected_cell, expected_path) = serial.prove_cell(&point)?;
+    let (actual_cell, actual_path) = parallel.prove_cell(&point)?;
+    assert_eq!(
+        stem_ledger::record::encode_cell(&point, &expected_cell.context("missing serial payment output")?),
+        stem_ledger::record::encode_cell(&point, &actual_cell.context("missing resident payment output")?),
+    );
+    assert_eq!(expected_path.encode()?, actual_path.encode()?);
     for (id, version) in dynamic.ids.iter().zip([2, 1]) {
         let a = serial.prove_current_lineage(id)?;
         let b = parallel.prove_current_lineage(id)?;

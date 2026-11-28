@@ -49,6 +49,7 @@ pub(super) struct NodeIndex {
     shards: [Shard; SHARDS],
     active: AtomicBool,
     bytes: AtomicUsize,
+    #[cfg(feature = "jolteon-resident-node-publication")]
     nodes: AtomicUsize,
     limit_bytes: usize,
     recovery_us: u64,
@@ -72,6 +73,7 @@ impl NodeIndex {
             shards: std::array::from_fn(|_| Shard::default()),
             active: AtomicBool::new(true),
             bytes: AtomicUsize::new(0),
+            #[cfg(feature = "jolteon-resident-node-publication")]
             nodes: AtomicUsize::new(0),
             limit_bytes,
             recovery_us: 0,
@@ -103,6 +105,7 @@ impl NodeIndex {
         }
 
         let commitment = Commitment::new(store.network.unpack(), Namespace::Cells);
+        #[cfg(feature = "jolteon-resident-node-publication")]
         let mut loaded = 0;
         cursor.seek(prefix);
         while let Some(key) = cursor.key().filter(|key| key.starts_with(&prefix)) {
@@ -118,7 +121,10 @@ impl NodeIndex {
                 .get_mut()
                 .expect("Cell node shard")
                 .insert(id, node);
-            loaded += 1;
+            #[cfg(feature = "jolteon-resident-node-publication")]
+            {
+                loaded += 1;
+            }
             cursor.next();
         }
         if store.tip.state.cell_root.as_slice() != store.cells.empty_root() {
@@ -132,6 +138,7 @@ impl NodeIndex {
                 "missing committed Cell root node"
             );
         }
+        #[cfg(feature = "jolteon-resident-node-publication")]
         index.nodes.store(loaded, Ordering::Relaxed);
         index.recovery_us = started.elapsed().as_micros() as u64;
         Ok(index)
@@ -192,26 +199,33 @@ impl NodeIndex {
                 Some((id, value.as_deref()))
             })
         };
-        let mut counts = [0; SHARDS];
-        for (id, _) in node_edits() {
-            counts[slot(id)] += 1;
-        }
-        let mut by_shard = counts.map(Vec::with_capacity);
+        #[cfg(feature = "jolteon-resident-node-publication")]
+        let mut by_shard = {
+            let mut counts = [0; SHARDS];
+            for (id, _) in node_edits() {
+                counts[slot(id)] += 1;
+            }
+            counts.map(Vec::with_capacity)
+        };
+        #[cfg(not(feature = "jolteon-resident-node-publication"))]
+        let mut by_shard: [Vec<_>; SHARDS] = std::array::from_fn(|_| Vec::new());
         for (id, value) in node_edits() {
             by_shard[slot(id)].push((id, value));
         }
+        #[cfg(feature = "jolteon-resident-node-publication")]
         let mut nodes = self.nodes.load(Ordering::Relaxed);
         for (shard, changes) in self.shards.iter().zip(by_shard) {
             if changes.is_empty() {
                 continue;
             }
             let mut rows = shard.rows.write().expect("Cell node shard");
+            #[cfg(feature = "jolteon-resident-node-publication")]
             let old_len = rows.len();
             for (id, encoded) in changes {
                 if let Some(encoded) = encoded {
                     let count = rows.len() + 1;
                     if let Ok(node) = node_storage::canonical(encoded)
-                        && (count <= rows.capacity()
+                        && ((cfg!(feature = "jolteon-resident-node-publication") && count <= rows.capacity())
                             || rows.contains_key(id)
                             || self.reserve(&mut rows, count))
                     {
@@ -224,8 +238,12 @@ impl NodeIndex {
                 }
                 rows.remove(id);
             }
-            nodes = nodes - old_len + rows.len();
+            #[cfg(feature = "jolteon-resident-node-publication")]
+            {
+                nodes = nodes - old_len + rows.len();
+            }
         }
+        #[cfg(feature = "jolteon-resident-node-publication")]
         self.nodes.store(nodes, Ordering::Relaxed);
     }
 
@@ -235,14 +253,23 @@ impl NodeIndex {
             *shard.rows.write().expect("Cell node shard") = Rows::default();
         }
         self.bytes.store(0, Ordering::Relaxed);
+        #[cfg(feature = "jolteon-resident-node-publication")]
         self.nodes.store(0, Ordering::Relaxed);
         self.limit_bytes
     }
 
     pub(super) fn status(&self) -> CellNodeIndexStatus {
+        #[cfg(feature = "jolteon-resident-node-publication")]
+        let nodes = self.nodes.load(Ordering::Relaxed);
+        #[cfg(not(feature = "jolteon-resident-node-publication"))]
+        let nodes = self
+            .shards
+            .iter()
+            .map(|shard| shard.rows.read().expect("Cell node shard").len())
+            .sum();
         CellNodeIndexStatus {
             active: self.active.load(Ordering::Acquire),
-            nodes: self.nodes.load(Ordering::Relaxed),
+            nodes,
             accounted_bytes: self.bytes.load(Ordering::Relaxed),
             limit_bytes: self.limit_bytes,
             recovery_us: self.recovery_us,

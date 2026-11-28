@@ -461,6 +461,37 @@ pub(super) fn replica_binary() -> PathBuf {
         .map_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_stem")), PathBuf::from)
 }
 
+fn replica_storage_args() -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    for (variable, flag) in [
+        ("STEM_TEST_ROCKSDB_BLOCK_CACHE_MIB", "--rocksdb-block-cache-mib"),
+        ("STEM_TEST_LIVE_CELL_INDEX_MIB", "--live-cell-index-mib"),
+        ("STEM_TEST_CELL_NODE_INDEX_MIB", "--cell-node-index-mib"),
+    ] {
+        match std::env::var(variable) {
+            Ok(value) => {
+                let limit: std::num::NonZeroUsize = value.parse()
+                    .with_context(|| format!("invalid budget in {variable}"))?;
+                args.extend([flag.to_owned(), limit.to_string()]);
+            }
+            Err(std::env::VarError::NotPresent) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    match std::env::var("STEM_TEST_LIVE_CELL_INDEX_INTERN_SCRIPTS").as_deref() {
+        Ok("1") => {
+            anyhow::ensure!(
+                args.iter().any(|arg| arg == "--live-cell-index-mib"),
+                "interned Live Cells require STEM_TEST_LIVE_CELL_INDEX_MIB"
+            );
+            args.push("--live-cell-index-intern-scripts".into());
+        }
+        Ok("0") | Err(std::env::VarError::NotPresent) => {}
+        _ => anyhow::bail!("STEM_TEST_LIVE_CELL_INDEX_INTERN_SCRIPTS expects 0 or 1"),
+    }
+    Ok(args)
+}
+
 pub(super) fn start_network_configured(
     fixture: &mut Fixture,
     output: &Path,
@@ -477,6 +508,7 @@ pub(super) fn start_network_with_committee(
     mut keys: Vec<(SigningKey, i64)>,
     options: NetworkOptions,
 ) -> Result<(Vec<Process>, Vec<Client>)> {
+    let storage_args = replica_storage_args()?;
     let count = keys.len();
     keys.sort_by_key(|(key, _)| key.verifying_key().to_bytes());
     fixture.spec.development_validators = keys
@@ -529,6 +561,7 @@ pub(super) fn start_network_with_committee(
         if options.storage_metrics {
             command.arg("--storage-metrics");
         }
+        command.args(&storage_args);
         replicas.push(Process::spawn(
             &mut command,
             &output.join(format!("node-{index}.log")),

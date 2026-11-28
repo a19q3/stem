@@ -2983,10 +2983,7 @@ impl Store {
             retired,
             self.metrics.as_deref().map(|m| (m, Purpose::Finality)),
         )?;
-        if let Some(index) = &self.cell_nodes {
-            index.advance(&prepared.batch);
-        }
-        self.install_durable_tip(prepared);
+        self.install_durable_tip(prepared, false);
         Ok(())
     }
 
@@ -3010,7 +3007,11 @@ impl Store {
         let db = Arc::clone(&self.db);
         let cells = self.cells.clone();
         let metrics = self.metrics.clone();
-        let cell_nodes = self.cell_nodes.clone();
+        let cell_nodes = if cfg!(feature = "jolteon-resident-node-publication") {
+            self.cell_nodes.clone()
+        } else {
+            None
+        };
         Ok(move || {
             let started = Instant::now();
             sync_with_consensus(
@@ -3035,9 +3036,12 @@ impl Store {
         })
     }
 
-    pub(crate) fn install_durable_tip(&mut self, prepared: &Prepared) {
+    pub(crate) fn install_durable_tip(&mut self, prepared: &Prepared, node_publication_done: bool) {
         if let Some(index) = &mut self.live_index {
             index.advance(prepared.next.id(&self.network).unpack(), &prepared.live);
+        }
+        if !node_publication_done && let Some(index) = &self.cell_nodes {
+            index.advance(&prepared.batch);
         }
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
@@ -3809,7 +3813,7 @@ mod pipeline_store_tests {
             Ok(view.tip().clone())
         })?;
         assert_eq!(snapshot.as_ref(), Some(store.tip()));
-        store.install_durable_tip(&prepared);
+        store.install_durable_tip(&prepared, false);
         assert_eq!(store.tip(), prepared.header());
         assert!(store.certified_write(prepared, Vec::new(), Vec::new()).is_err());
         drop(store);
@@ -3904,9 +3908,14 @@ mod pipeline_store_tests {
                     let timing = std::thread::spawn(write)
                         .join()
                         .map_err(|_| anyhow::anyhow!("certified write panicked"))??;
-                    assert!(timing.cell_node_publication.is_some());
+                    assert_eq!(
+                        timing.cell_node_publication.is_some(),
+                        cfg!(feature = "jolteon-resident-node-publication"),
+                    );
                     assert_eq!(store.tip(), old.tip());
-                    assert!(store.cell_nodes.as_ref().unwrap().lookup(&next).is_some());
+                    if cfg!(feature = "jolteon-resident-node-publication") {
+                        assert!(store.cell_nodes.as_ref().unwrap().lookup(&next).is_some());
+                    }
                     pool.install(|| build(old, true))
                 })?
                 .context("missing snapshot for the old parent")?;

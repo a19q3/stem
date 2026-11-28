@@ -83,7 +83,7 @@ impl Replica {
                 window.clone().expect("known commit window"),
             )?;
         }
-        loop {
+        let node_publication_done = loop {
             tokio::select! {
                 biased;
                 result = &mut persistence => {
@@ -93,7 +93,7 @@ impl Replica {
                     if let Some(elapsed) = timing.cell_node_publication {
                         metrics.cell_node_publication.observe(elapsed);
                     }
-                    break;
+                    break timing.cell_node_publication.is_some();
                 }
                 event = inbox.recv_live(), if inbox.can_defer() => {
                     let event = event.context("replica transport stopped during commit")?;
@@ -114,8 +114,8 @@ impl Replica {
                     }
                 }
             }
-        }
-        self.store.install_durable_tip(&prepared);
+        };
+        self.store.install_durable_tip(&prepared, node_publication_done);
         let metrics = &mut self.execution.commit_jobs;
         metrics.acknowledged = metrics.acknowledged.saturating_add(1);
         Ok(())
