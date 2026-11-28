@@ -2371,17 +2371,15 @@ impl Store {
                 .height
                 .checked_add(1)
                 .context("JMT version overflow")?;
-            let (root, edits) = research_jmt::update(self, &cell_changes, version)?;
+            let update = research_jmt::update(
+                self,
+                &cell_changes,
+                version,
+                cfg!(feature = "native-jmt-observed-retirement"),
+            )?;
+            let root = update.root;
             let tree_done = Instant::now();
-            for (id, value) in &cell_changes {
-                if value.is_none() {
-                    let key = state_key(STATE_RECORD, Namespace::Cells, id);
-                    if self.read(key)?.is_some() {
-                        batch.delete(key);
-                    }
-                }
-            }
-            research_jmt::write(batch, edits, version)?;
+            update.write(self, batch, &cell_changes, version)?;
             return Ok((
                 root.0.pack(),
                 CellCommitmentTiming {
@@ -3982,6 +3980,100 @@ mod pipeline_store_tests {
             assert_eq!(audit["membership_queries"], 32);
             assert_eq!(audit["absence_queries"], 512);
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "native-jmt-observed-retirement")]
+    #[test]
+    fn jmt_leaf_observations_match_the_record_read_control() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let tree = Patricia::new(spec.network.clone(), Namespace::Cells);
+        let cell = Cell::new(
+            20_000_000_000,
+            ckb_types::packed::Script::default(),
+            vec![],
+            bytes::Bytes::new(),
+        )?;
+        let mut points = [0, 1, 2, 3].map(|index| OutPoint::new([17; 32].pack(), index));
+        let key = |point: &OutPoint| record::cell_key(&tree, point);
+        points.sort_unstable_by_key(key);
+        let [inserted, absent, speculative, old] = points;
+        // The first comparison inserts before the sole old leaf in sort
+        // order. JMT relocates that leaf before the deletion is processed.
+        spec.development_cells.push((old.clone(), cell.clone()));
+        let open = || Store::open_configured(
+            home.path(), &spec, Retention::Archive, false, None, true,
+        );
+        let mut store = open()?;
+        let context = |view: &Store, time| {
+            HeaderContext::after(
+                &spec.network, view.tip(), time, Tree::transactions(spec.network.clone(), &[])?.root(),
+            )
+        };
+        let plan = |view: &Store, live: &LiveChanges| -> Result<()> {
+            let mut changes = live.iter().map(|(point, row)| {
+                (key(point), row.as_ref().map(|row| record::cell_value(&tree, point, row)))
+            }).collect::<Vec<_>>();
+            changes.sort_unstable_by_key(|(id, _)| *id);
+            let version = view.tip.context.height + 1;
+            let update = |observed| -> Result<_> {
+                let update = research_jmt::update(view, &changes, version, observed)?;
+                let root = update.root;
+                let mut batch = Batch::default();
+                update.write(view, &mut batch, &changes, version)?;
+                Ok((root, batch))
+            };
+            let (expected, reference) = update(false)?;
+            let (actual, observed) = update(true)?;
+            assert_eq!(actual, expected);
+            assert_same_batch_writes(&reference, &observed);
+            let delete = |point| state_key(STATE_RECORD, Namespace::Cells, &key(point));
+            assert!(matches!(observed.lookup(&delete(&old)), Some(None)));
+            assert!(observed.lookup(&delete(&absent)).is_none());
+            if live.contains_key(&speculative) {
+                assert!(matches!(observed.lookup(&delete(&speculative)), Some(None)));
+            }
+            Ok(())
+        };
+        let row = |at: &HeaderContext| LiveCell {
+            cell: cell.clone(),
+            origin: Origin::new(&spec.network, at),
+        };
+        let start = context(&store, 1001)?;
+        let bare = LiveChanges::from([
+            (inserted.clone(), Some(row(&start))),
+            (old.clone(), None),
+            (absent.clone(), None),
+        ]);
+        plan(&store, &bare)?;
+
+        let mut overlay = store.overlay(None);
+        overlay.live.insert(speculative.clone(), Some(row(&start)));
+        let parent = Arc::new(store.finish_block(start, overlay, &[], vec![], 0, 0, false)?);
+        let second = store.on_branch(std::slice::from_ref(&parent), |view| {
+            let next = context(view, 1002)?;
+            let mut overlay = view.overlay(None);
+            overlay.live = LiveChanges::from([
+                (inserted.clone(), Some(row(&next))),
+                (speculative.clone(), None),
+                (old.clone(), None),
+                (absent.clone(), None),
+            ]);
+            plan(view, &overlay.live)?;
+            view.finish_block(next, overlay, &[], vec![], 0, 0, false)
+        })?;
+        store.commit_certified(&parent, &[], &[])?;
+        store.commit(second)?;
+        let tip = store.tip().id(&spec.network);
+        drop(store);
+        let mut store = open()?;
+        store.enable_live_cell_index(NonZeroUsize::new(1).unwrap())?;
+        assert!(store.live_cell(&inserted)?.is_some());
+        for removed in [old, speculative, absent] {
+            assert!(store.live_cell(&removed)?.is_none());
+        }
+        assert_eq!(store.tip().id(&spec.network), tip);
         Ok(())
     }
 

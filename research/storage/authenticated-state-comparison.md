@@ -270,3 +270,40 @@ The compile-checked reopen regression exercises both engines, both
 batch widths, bounded caches including a one-node limit, exact proof
 digests and accounting of avoided database calls. No runtime
 performance or recovery results have been collected for this change.
+
+### Reclaiming Live Cell rows from observed JMT leaves
+
+The replicated JMT control probes the exact parent record for every
+requested Cell deletion after building the JMT node batch. The probe
+distinguishes a real deletion from an OutPoint created and spent within
+the block, which has no parent row. Under
+`native-jmt-observed-retirement`, the mutation reader marks requested
+deletions when it decodes their leaves from the pinned parent. The
+upstream mutation cache supplies newly generated nodes separately. A
+leaf relocated inside one update was read from the parent before its
+relocation. One sorted entry per requested deletion suffices. Entries
+never observed in the parent produce no record tombstone.
+
+The optimized path stages the same sorted record tombstones for a
+consistent parent, followed by the same upstream stale-node and write
+batch. It uses the existing root, proof format, layout marker and
+synchronous WAL path. The proof audit and resident-index recovery
+continue independently rebuilding the root from canonical durable rows.
+The compile-checked comparison constructs the exact batch with both
+methods. It covers a leaf relocated before deletion, an absent row, a
+Cell created on a speculative parent, and preparation followed by
+durable commit and reopen.
+
+Compare the two JMT builds on the same signed workload, funded JMT
+image and resource settings. Set `STEM_RESEARCH_JMT=1` for both and add
+only `native-jmt-observed-retirement` to the build flags for the candidate.
+Keep the Patricia arm's flags unchanged. Use the existing maturity,
+replay and recovered-image proof audit procedures above. Compare Cell
+tree and batch wall times together, and capture process CPU, logical
+Live Cell point reads and peak RSS. The candidate replaces the extra
+per-deletion row probe with leaf-key comparisons during mutation.
+Its memory and comparison cost can outweigh read savings when the
+records already reside in the RocksDB cache. For identical transitions,
+verify exact JMT Header, receipts, encoded batch bytes and proof digest
+before interpreting the performance results. Runtime qualification
+and measurements remain pending.

@@ -54,6 +54,7 @@ native-incremental-cell-projection = []
 native-reclaim-cell-projection = ["native-incremental-cell-projection", "native-reuse-ordered-cell-writes"]
 native-execution-material-cache = ["stem-ledger/execution-material-cache"]
 native-research-jmt = ["dep:borsh", "dep:jmt"]
+native-jmt-observed-retirement = ["native-research-jmt"]
 
 [dependencies]
 anyhow.workspace = true
