@@ -631,6 +631,8 @@ impl Replica {
             } else {
                 self.backoff = 0;
             }
+            #[cfg(feature = "jolteon-cancel-stale-execution")]
+            self.cancel_stale_proposal();
         }
     }
 
@@ -1627,7 +1629,14 @@ impl Replica {
     }
 
     async fn tick(&mut self, inbox: &mut transport::Inbox) -> Result<()> {
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        self.cancel_stale_proposal();
         self.finalize(inbox).await?;
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        {
+            self.cancel_stale_proposal();
+            self.cancel_stale_candidate();
+        }
         if self.handoff_tip.is_some() || self.recovery.active {
             return Ok(());
         }

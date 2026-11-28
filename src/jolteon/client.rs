@@ -149,6 +149,12 @@ pub struct ProposalMetrics {
     #[serde(default)]
     pub stale_us: u64,
     #[serde(default)]
+    pub cancel_requested: u64,
+    #[serde(default)]
+    pub cancelled: u64,
+    #[serde(default)]
+    pub cancelled_us: u64,
+    #[serde(default)]
     pub commit_overlap_started: u64,
     #[serde(default)]
     pub commit_overlap_published: u64,
@@ -167,6 +173,12 @@ pub struct CandidateMetrics {
     pub stale: u64,
     #[serde(default)]
     pub stale_us: u64,
+    #[serde(default)]
+    pub cancel_requested: u64,
+    #[serde(default)]
+    pub cancelled: u64,
+    #[serde(default)]
+    pub cancelled_us: u64,
     pub invalid: u64,
     pub already_running: u64,
     #[serde(default)]

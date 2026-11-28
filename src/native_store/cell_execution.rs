@@ -473,7 +473,10 @@ impl Store {
             &mut remaining,
             &mut work,
             None,
-            |resolved, limit| self.cache.verify(resolved, limit, parallel_groups),
+            |resolved, limit| {
+                self.check_preparation_cancelled()?;
+                self.cache.verify(resolved, limit, parallel_groups)
+            },
             None,
             Some(view),
         )?;

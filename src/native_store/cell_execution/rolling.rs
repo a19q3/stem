@@ -301,6 +301,7 @@ impl Store {
         let result = rayon::in_place_scope_fifo(|scope| {
             let result = (|| -> Result<(usize, bool)> {
                 while prefix < count {
+                    self.check_preparation_cancelled()?;
                     let funded = self.cell_window_limit(width, *budget);
                     while submitted < count
                         && submitted - prefix < funded
