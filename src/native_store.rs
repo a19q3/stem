@@ -10,6 +10,8 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
+#[cfg(feature = "native-header-dep-memo")]
+use std::sync::RwLock;
 
 use anyhow::{Context, Result, ensure};
 use ckb_db::internal::{
@@ -112,6 +114,10 @@ const HEADER_ID: u8 = b'i';
 const STATE_NODE: u8 = b'n';
 const STATE_RECORD: u8 = b's';
 const MAX_CELL_PROOF_BATCH: usize = 1024;
+#[cfg(feature = "native-header-dep-memo")]
+const MAX_MEMOIZED_HEADER_DEPS: usize = 64;
+#[cfg(feature = "native-header-dep-memo")]
+type HeaderDepMemo = RwLock<HashMap<Key, (u64, Header)>>;
 const DEFAULT_VERIFICATION_CACHE_ENTRIES: usize = 4096;
 pub(crate) const JOLTEON_CYCLE_SCAN_LIMIT: Option<u64> =
     if cfg!(feature = "jolteon-bounded-cycle-scan") {
@@ -573,6 +579,8 @@ pub enum Retention {
 pub struct Store {
     db: Arc<DB>,
     read_options: Arc<ReadOptions>,
+    #[cfg(feature = "native-header-dep-memo")]
+    header_dep_memo: OnceLock<HeaderDepMemo>,
     #[cfg(feature = "native-reuse-rolling-parent-reads")]
     pinned_parent_reads: bool,
     metrics: Option<Arc<StorageMetrics>>,
@@ -1378,6 +1386,8 @@ impl Store {
         Ok(Self {
             db: Arc::new(db),
             read_options: Arc::new(ReadOptions::default()),
+            #[cfg(feature = "native-header-dep-memo")]
+            header_dep_memo: OnceLock::new(),
             #[cfg(feature = "native-reuse-rolling-parent-reads")]
             pinned_parent_reads: false,
             metrics,
@@ -1579,6 +1589,8 @@ impl Store {
         Self {
             db: self.db.clone(),
             read_options: self.read_options.clone(),
+            #[cfg(feature = "native-header-dep-memo")]
+            header_dep_memo: OnceLock::new(),
             #[cfg(feature = "native-reuse-rolling-parent-reads")]
             pinned_parent_reads: self.pinned_parent_reads,
             metrics: self.metrics.clone(),
@@ -2062,10 +2074,34 @@ impl Store {
     }
 
     fn resolve_header(&self, id: &Byte32, candidate: u64) -> Result<Header> {
+        #[cfg(feature = "native-header-dep-memo")]
+        let memo = self.header_dep_memo.get_or_init(HeaderDepMemo::default);
+        #[cfg(feature = "native-header-dep-memo")]
+        let key: Key = id.unpack();
+        #[cfg(feature = "native-header-dep-memo")]
+        if let Some((height, header)) = memo.read().expect("Header Dep memo").get(&key) {
+            self.check_header_dep_age(*height, candidate)?;
+            return Ok(header.clone());
+        }
         let height = self
             .read(index_key(HEADER_ID, id.as_slice()))?
             .context("unknown Header Dep")?;
         let height = u64::from_be_bytes(height.as_ref().try_into()?);
+        self.check_header_dep_age(height, candidate)?;
+        let header = self.header(height)?.context("missing indexed Header")?;
+        #[cfg(feature = "native-header-dep-memo")]
+        {
+            // Keep only decoded hits from this exact view. The ledger still
+            // checks the Header ID and validates ancestry for every use.
+            let mut entries = memo.write().expect("Header Dep memo");
+            if entries.len() < MAX_MEMOIZED_HEADER_DEPS {
+                entries.entry(key).or_insert_with(|| (height, header.clone()));
+            }
+        }
+        Ok(header)
+    }
+
+    fn check_header_dep_age(&self, height: u64, candidate: u64) -> Result<()> {
         let age = candidate
             .checked_sub(height)
             .context("Header Dep from the future")?;
@@ -2073,7 +2109,7 @@ impl Store {
             age != 0 && age <= self.limits.header_dep_age,
             "Header Dep outside consensus horizon"
         );
-        self.header(height)?.context("missing indexed Header")
+        Ok(())
     }
 
     fn node(&self, namespace: Namespace, id: &Key) -> Result<Option<node_storage::NodeRead>> {
@@ -4022,6 +4058,8 @@ impl Store {
         }
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
+        #[cfg(feature = "native-header-dep-memo")]
+        self.header_dep_memo.take();
         self.stake_inputs = Arc::clone(&prepared.stake_inputs);
         if !prepared.live.is_empty() {
             self.live_cache.invalidate(prepared.live.keys());
@@ -4428,6 +4466,7 @@ fn append_journal_row(
         feature = "native-commitment-pipeline",
         feature = "native-cell-subtree-parallel",
         feature = "native-batched-cell-prefetch",
+        feature = "native-header-dep-memo",
         feature = "native-parallel-cell-record-hashes",
         feature = "native-compact-prepared-cell-delta"
     )
@@ -4471,6 +4510,66 @@ mod pipeline_store_tests {
             },
             development_cells: Vec::new(),
         }
+    }
+
+    #[cfg(feature = "native-header-dep-memo")]
+    #[test]
+    fn header_dep_memo_is_scoped_to_the_exact_view_and_horizon() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let spec = spec();
+        let mut store = Store::open(home.path(), &spec, Retention::Recent(2))?;
+        let genesis = store.tip().clone();
+        let genesis_id = genesis.id(&spec.network);
+        for _ in 0..2 {
+            assert_eq!(store.resolve_header(&genesis_id, 1)?, genesis);
+        }
+        assert!(store.resolve_header(&genesis_id, 0).is_err());
+        assert!(store.resolve_header(&genesis_id, 3).is_err());
+
+        let first = Arc::new(store.prepare(&[], 1001, false)?);
+        let first_id = first.header().id(&spec.network);
+        let fork = Arc::new(store.prepare(&[], 1002, false)?);
+        let second = store.on_branch(std::slice::from_ref(&first), |view| {
+            assert!(view.header_dep_memo.get().is_none());
+            assert_eq!(view.resolve_header(&first_id, 2)?, *first.header());
+            assert_eq!(view.resolve_header(&first_id, 2)?, *first.header());
+            assert!(view.resolve_header(&first_id, 0).is_err());
+            view.prepare(&[], 1003, false)
+        })?;
+        store.on_branch(&[fork], |view| {
+            assert!(view.resolve_header(&first_id, 2).is_err());
+            let memo = view.header_dep_memo.get().unwrap().read().unwrap();
+            assert!(memo.is_empty());
+            Ok(())
+        })?;
+
+        store.commit_certified(&first, &[], &[])?;
+        assert!(store.header_dep_memo.get().is_none());
+        assert_eq!(store.resolve_header(&genesis_id, 2)?, genesis);
+        let db = Arc::clone(&store.db);
+        let snapshot = db.snapshot();
+        let mut options = ReadOptions::default();
+        options.set_snapshot(&snapshot);
+        let mut pinned = store.read_view(&[]);
+        pinned.read_options = Arc::new(options);
+        assert_eq!(pinned.resolve_header(&genesis_id, 2)?, genesis);
+
+        store.commit(second)?;
+        assert!(store.header_dep_memo.get().is_none());
+        assert!(store.header(0)?.is_none());
+        assert!(store.resolve_header(&genesis_id, 3).is_err());
+        assert_eq!(store.resolve_header(&first_id, 3)?, *first.header());
+        assert_eq!(pinned.resolve_header(&genesis_id, 2)?, genesis);
+        assert!(pinned.resolve_header(&genesis_id, 3).is_err());
+
+        let restored_home = tempfile::tempdir()?;
+        let mut restored = Store::open(restored_home.path(), &spec, Retention::Recent(2))?;
+        assert_eq!(restored.resolve_header(&genesis_id, 1)?, genesis);
+        restored.install_state(store.export_state()?, &store.tip().app_hash(&spec.network))?;
+        assert!(restored.header_dep_memo.get().is_none());
+        assert!(restored.resolve_header(&genesis_id, 2).is_err());
+        assert_eq!(restored.resolve_header(&first_id, 3)?, *first.header());
+        Ok(())
     }
 
     #[cfg(feature = "native-batched-cell-prefetch")]

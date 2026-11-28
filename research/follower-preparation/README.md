@@ -355,3 +355,36 @@ to separate any bucket-layout effects. Compilation covers matching
 member byte pointers and malformed data as well as the existing
 canonical read-order and conflict fixture. Runtime, replay and
 performance qualification are pending.
+
+## Reusing decoded Header dependencies within a state view
+
+`native-header-dep-memo` retains up to 64 decoded Header lookups by full
+Header ID in the current Store view. The first successful resolution
+uses the existing ID-to-height index and Header read. Later resolutions
+against the same view bypass both reads and decoding. A Leader that
+replays its selection during final preparation can reuse the same
+memo. Follower workers on the same view share it. Cold workers can
+read the same Header concurrently because the memo lock does not
+cover storage reads.
+
+Each branch or pinned state view starts with an empty memo. Durable
+tip installation and state restore discard old entries. Every use,
+including a hit, checks the original indexed height against the
+candidate's age limit. The ledger still verifies the full Header ID
+and ancestor height and hashes canonical Header bytes for transaction
+authorization. Unknown IDs and read or decode failures are retried
+through ordinary resolution.
+
+Compare `header-dep-control` and `header-dep-memo` at the same commit,
+using identical parent snapshots, proposal settings and worker counts.
+Include mixed-contract candidates sharing Header Deps, candidates with
+distinct recent Headers and payments without Header Deps. Compare exact
+selected transaction bytes, Headers, receipts and independent replay.
+Measure the Header index and Header read phases, CPU, preparation and
+peak memory. Concurrent misses can duplicate work. Warm hits still
+clone the decoded Header and use the shared read lock. Gains depend on
+reuse and on the cost of I/O and decoding relative to hashing and VM
+work. The compile-checked fixture covers repeated lookup, stale and
+future rejection, sibling branches, retention pruning, an older pinned
+view and authenticated state restore. Runtime, replay and performance
+measurements are pending.

@@ -227,6 +227,8 @@ impl Store {
                 .map(|m| (m, super::Purpose::Restore)),
         )?;
         self.tip = image.header;
+        #[cfg(feature = "native-header-dep-memo")]
+        self.header_dep_memo.take();
         #[cfg(feature = "native-hot-cell-node-cache")]
         {
             self.cell_node_header = self.tip.id(&self.network).unpack();
