@@ -119,3 +119,38 @@ existing write and proof regression targets. Runtime tests and replay
 were deferred for this iteration. Inline entries are wider than a
 vector handle, so resident journal size and locality must be measured
 for the actual mix of key lengths before changing the default.
+
+## Reducing certified batch construction work
+
+`native-prepared-cell-record-keys` retains the already-derived keys of
+created records in OutPoint order. The tree still sorts its own edits
+by key. On finality the writer pairs the retained keys with that same
+ordered immutable Cell delta. This saves one key hash per put and costs
+32 bytes of key payload per retained output, plus vector capacity.
+Tombstones, record bytes and ordered write operations use the existing
+paths. Patricia and the experimental JMT arm use the same Cell record
+keys and the same finality path.
+
+`jolteon-reuse-write-buffer` keeps one cleared RocksDB WriteBatch on
+the certified writer. A successful synchronous write or an abandoned
+state prebuild can provide the allocation for the next batch. The next
+batch rebuilds its contents and metrics from an empty WriteBatch. A
+failed write drops its buffer. Only batches with at most 8 MiB of
+serialized data are eligible for retention. The RocksDB backing capacity
+can be larger than the serialized size. The synchronous fallback,
+genesis and restore still assemble a fresh batch.
+
+Use the `baseline`, `prepared-cell-keys` and `reuse-write-buffer`
+matched builds. Repeat the writer comparison with prebuilding enabled
+in both arms. Measure state preparation, batch-construction CPU,
+`commit_jobs.reused_write_buffers` and peak RSS on full payments and
+larger Cell payloads. Compare the exact stored records, independently
+replayed Headers and receipts, logical batch bytes and WAL syncs.
+Recycling can increase idle memory or bring little gain when commit time
+is dominated by WAL synchronization. Keeping derived keys moves a small
+memory cost to every prepared branch, including one that is abandoned.
+
+The compile-checked regressions cover ordered Live Cell puts and deletes,
+recycling between commits, discarding an unselected prebuild and clean
+reopen after consecutive writes. Runtime regressions, interruption,
+independent replay and performance measurements remain pending.
