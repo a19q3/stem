@@ -6,10 +6,17 @@ use ckb_types::packed::OutPoint;
 use rayon::prelude::*;
 use stem_ledger::{BlockContext, LiveCell, Origin, Transaction, block::Receipt};
 
-use super::{Budget, LiveChanges, Overlay, Store, charge};
-use std::collections::{HashMap, hash_map::Entry};
+use super::{Budget, LiveChanges, Overlay, ProposalScan, Store, charge};
+use std::{
+    borrow::Borrow,
+    cell::Cell,
+    collections::{HashMap, hash_map::Entry},
+    iter::{Peekable, Zip},
+    time::Instant,
+    vec::IntoIter,
+};
 
-const MAX_WINDOW: usize = 32;
+const MAX_WINDOW: usize = u32::BITS as usize;
 const MAX_DECLARED_EDITS: usize = 64;
 pub(super) const MAX_SPECULATIVE_READ_BYTES: usize = 4 * 1024 * 1024;
 
@@ -43,6 +50,7 @@ pub(super) struct PrecedingCells<'a> {
     base: &'a LiveChanges,
     writes: &'a Writes,
     position: usize,
+    dependencies: Cell<u32>,
 }
 
 impl PrecedingCells<'_> {
@@ -56,16 +64,120 @@ impl PrecedingCells<'_> {
             let edit = cutoff
                 .checked_sub(1)
                 .map_or(&history.first, |i| &history.later[i]);
+            self.dependencies
+                .set(self.dependencies.get() | (1 << edit.position));
             return Some(edit.cell.as_ref());
         }
         self.base.get(point).map(Option::as_ref)
     }
 }
 
-struct Executed {
+pub(super) struct Executed {
     receipt: Receipt,
     cells: LiveChanges,
     remaining: Budget,
+    dependencies: u32,
+    position_bit: u32,
+}
+
+impl Executed {
+    fn adopt(
+        self,
+        slot: Budget,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        adopted: &mut u32,
+    ) -> Option<Receipt> {
+        // Every projected edit observed by this trial must already have been
+        // published. An ordered fallback does not certify its projection.
+        if self.dependencies & !*adopted != 0 {
+            return None;
+        }
+        let mut next = *budget;
+        next.charge_cell_work(slot, self.remaining).ok()?;
+        overlay.live.extend(self.cells);
+        *budget = next;
+        *adopted |= self.position_bit;
+        Some(self.receipt)
+    }
+}
+
+pub(super) struct ProposalWindow<T> {
+    ready: Zip<IntoIter<T>, IntoIter<Result<Executed>>>,
+    slot: Budget,
+    adopted: u32,
+}
+
+impl<T: Borrow<Transaction>> ProposalWindow<T> {
+    pub(super) fn new() -> Self {
+        Self {
+            ready: Vec::new().into_iter().zip(Vec::new()),
+            slot: Budget::empty(),
+            adopted: 0,
+        }
+    }
+
+    pub(super) fn next(
+        &mut self,
+        input: &mut Peekable<impl Iterator<Item = T>>,
+        store: &Store,
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        overlay: &Overlay,
+        budget: Budget,
+        wire_bytes: u64,
+        available: usize,
+        width: usize,
+        scan: &mut ProposalScan,
+    ) -> Result<Option<(T, Option<Result<Executed>>)>> {
+        if self.ready.len() == 0 {
+            let Some(first) = input.next() else {
+                return Ok(None);
+            };
+            let limit = store.cell_window_limit(width, budget).min(available);
+            let mut remaining = (budget.bytes, wire_bytes);
+            if limit < 2
+                || !store.reserve_proposal_cell(first.borrow(), &mut remaining)
+                || !input
+                    .peek()
+                    .is_some_and(|item| store.reserve_proposal_cell(item.borrow(), &mut remaining))
+            {
+                return Ok(Some((first, None)));
+            }
+            let mut items = Vec::with_capacity(limit);
+            items.push(first);
+            items.push(input.next().expect("peeked proposal transaction"));
+            while items.len() < limit
+                && input
+                    .peek()
+                    .is_some_and(|item| store.reserve_proposal_cell(item.borrow(), &mut remaining))
+            {
+                items.push(input.next().expect("peeked proposal transaction"));
+            }
+            let references: Vec<_> = items.iter().map(Borrow::borrow).collect();
+            let started = Instant::now();
+            let results =
+                store.execute_cell_window(&references, block, origin, width, budget, overlay)?;
+            scan.parallel_cell_us = scan
+                .parallel_cell_us
+                .saturating_add(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+            scan.parallel_cell_jobs = scan.parallel_cell_jobs.saturating_add(results.len() as u64);
+            self.ready = items.into_iter().zip(results);
+            self.slot = budget;
+            self.adopted = 0;
+        }
+        let (item, executed) = self.ready.next().expect("prepared proposal window");
+        Ok(Some((item, Some(executed))))
+    }
+
+    pub(super) fn adopt(
+        &mut self,
+        executed: Executed,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+    ) -> Option<Receipt> {
+        executed.adopt(self.slot, budget, overlay, &mut self.adopted)
+    }
 }
 
 impl Store {
@@ -86,6 +198,24 @@ impl Store {
                 .is_none_or(|bridge| tx.outputs().all(|cell| !bridge.is_burn(&cell.lock())))
     }
 
+    fn cell_window_limit(&self, width: usize, budget: Budget) -> usize {
+        let funded = usize::try_from(budget.cycles / self.limits.transaction_cycles.max(1))
+            .unwrap_or(usize::MAX);
+        width.saturating_mul(4).min(MAX_WINDOW).min(funded)
+    }
+
+    fn reserve_proposal_cell(&self, tx: &Transaction, remaining: &mut (u64, u64)) -> bool {
+        let len = tx.as_slice().len();
+        let entry = super::proposal_entry_bytes(len);
+        if len as u64 <= remaining.0 && entry <= remaining.1 && self.has_declared_cell_writes(tx) {
+            remaining.0 -= len as u64;
+            remaining.1 -= entry;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(super) fn prepare_cell_window(
         &self,
         transactions: &[Transaction],
@@ -98,19 +228,55 @@ impl Store {
         fees: &mut u64,
     ) -> Result<usize> {
         let slot = *budget;
-        let funded = usize::try_from(slot.cycles / self.limits.transaction_cycles.max(1))
-            .unwrap_or(usize::MAX);
         let count = transactions
             .iter()
-            .take(width.saturating_mul(4).min(MAX_WINDOW).min(funded))
+            .take(self.cell_window_limit(width, slot))
             .take_while(|tx| self.has_declared_cell_writes(tx))
             .count();
         if count < 2 {
             return Ok(0);
         }
         let window = &transactions[..count];
+        let completed = self.execute_cell_window(window, block, origin, width, slot, overlay)?;
+
+        let mut adopted = 0;
+        for (tx, prepared) in window.iter().zip(completed) {
+            let receipt = prepared
+                .ok()
+                .and_then(|work| work.adopt(slot, budget, overlay, &mut adopted));
+            let receipt = if let Some(receipt) = receipt {
+                receipt
+            } else {
+                self.stage(
+                    tx,
+                    block,
+                    origin,
+                    budget,
+                    overlay,
+                    None,
+                    |resolved, limit| self.cache.verify(resolved, limit, false),
+                )?
+            };
+            *fees = fees
+                .checked_add(receipt.fee)
+                .context("block fee overflow")?;
+            receipts.push(receipt);
+        }
+        Ok(count)
+    }
+
+    fn execute_cell_window<T: Borrow<Transaction> + Sync>(
+        &self,
+        window: &[T],
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        width: usize,
+        slot: Budget,
+        overlay: &Overlay,
+    ) -> Result<Vec<Result<Executed>>> {
         let mut writes = Writes::with_capacity(window.len() * 2);
         for (position, tx) in window.iter().enumerate() {
+            let tx = tx.borrow();
             for input in tx.inputs() {
                 record(
                     &mut writes,
@@ -136,7 +302,7 @@ impl Store {
                 );
             }
         }
-        let completed: Vec<Result<Executed>> = window
+        Ok(window
             .par_iter()
             .enumerate()
             .map(|(position, tx)| {
@@ -144,17 +310,18 @@ impl Store {
                     base: &overlay.live,
                     writes: &writes,
                     position,
+                    dependencies: Cell::new(0),
                 };
                 let mut remaining = slot;
                 let mut work = self.overlay(None);
                 let receipt = self.stage_transaction(
-                    tx,
+                    tx.borrow(),
                     block,
                     origin,
                     &mut remaining,
                     &mut work,
                     None,
-                    |resolved, limit| self.cache.verify(resolved, limit, count < width),
+                    |resolved, limit| self.cache.verify(resolved, limit, window.len() < width),
                     None,
                     Some(&view),
                 )?;
@@ -162,43 +329,11 @@ impl Store {
                     receipt,
                     cells: work.live,
                     remaining,
+                    dependencies: view.dependencies.get(),
+                    position_bit: 1 << position,
                 })
             })
-            .collect();
-
-        let mut use_speculation = true;
-        for (tx, prepared) in window.iter().zip(completed) {
-            let mut next = *budget;
-            let receipt = match prepared {
-                Ok(executed)
-                    if use_speculation
-                        && next.charge_cell_work(slot, executed.remaining).is_ok() =>
-                {
-                    overlay.live.extend(executed.cells);
-                    *budget = next;
-                    executed.receipt
-                }
-                _ => {
-                    // Once ordered execution takes over, subsequent jobs must
-                    // see its actual edits rather than the projected prefix.
-                    use_speculation = false;
-                    self.stage(
-                        tx,
-                        block,
-                        origin,
-                        budget,
-                        overlay,
-                        None,
-                        |resolved, limit| self.cache.verify(resolved, limit, false),
-                    )?
-                }
-            };
-            *fees = fees
-                .checked_add(receipt.fee)
-                .context("block fee overflow")?;
-            receipts.push(receipt);
-        }
-        Ok(count)
+            .collect())
     }
 }
 

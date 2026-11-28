@@ -847,6 +847,72 @@ fn projected_preparation_tracks_a_created_and_consumed_dep_group() -> Result<()>
         .err().context("expected parallel rejection")?;
     assert_eq!(parallel.to_string(), serial.to_string());
     assert!(serial.to_string().contains("not a Live Cell"));
+    #[cfg(feature = "native-leader-dependency-execution")]
+    {
+        let (selected, proposal) = pool.install(|| store.build_proposal(&invalid, TIME + 1, u64::MAX))?;
+        assert!(
+            selected.iter().map(Transaction::as_slice)
+                .eq(invalid[..2].iter().map(Transaction::as_slice))
+        );
+        let expected = store.prepare(&invalid[..2], TIME + 1, false)?;
+        assert_eq!(proposal.header(), expected.header());
+        assert_eq!(proposal.receipts(), expected.receipts());
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "native-leader-dependency-execution")]
+fn leader_parallel_selection_preserves_order_after_a_rejected_producer() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.block_cycles = 800_000_000;
+    let independent = OutPoint::new([6; 32].pack(), 0);
+    let funding = Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::new())?;
+    fixture.spec.development_cells.push((independent.clone(), funding));
+    let dir = tempfile::tempdir()?;
+    let store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+
+    let producer = fixture.signed(fixture.spend.clone(), None, FUND - FEE, None)?;
+    let child = fixture.signed(
+        OutPoint::new(producer.id(store.network()), 0),
+        None,
+        FUND - 2 * FEE,
+        None,
+    )?;
+    let rejected = producer.with_witnesses(vec![])?;
+    let replacement = fixture.signed(fixture.spend.clone(), None, FUND - 2 * FEE, None)?;
+    let ordinary = fixture.signed(independent.clone(), None, FUND - FEE, None)?;
+    let successor = fixture.signed(
+        OutPoint::new(ordinary.id(store.network()), 0),
+        None,
+        FUND - 2 * FEE,
+        None,
+    )?;
+    let spent = fixture.signed(independent, None, FUND - 2 * FEE, None)?;
+    let expected = [replacement.clone(), ordinary.clone(), successor.clone()];
+    let offered = [rejected, child, replacement, ordinary, successor, spent];
+
+    let serial = rayon::ThreadPoolBuilder::new().num_threads(1).build()?;
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    let wire_bytes = expected.iter().map(|tx| {
+        let bytes = tx.as_slice().len();
+        (1 + prost::length_delimiter_len(bytes) + bytes) as u64
+    }).sum::<u64>();
+    for limit in [wire_bytes, u64::MAX] {
+        let prepare = || store.build_proposal(&offered, TIME + 1, limit);
+        let (selected, result) = workers.install(prepare)?;
+        let (reference, original) = serial.install(prepare)?;
+        assert!(
+            selected.iter().map(Transaction::as_slice)
+                .eq(expected.iter().map(Transaction::as_slice))
+        );
+        assert!(
+            selected.iter().map(Transaction::as_slice)
+                .eq(reference.iter().map(Transaction::as_slice))
+        );
+        assert_eq!(result.header(), original.header());
+        assert_eq!(result.receipts(), original.receipts());
+    }
     Ok(())
 }
 

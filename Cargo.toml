@@ -29,6 +29,7 @@ native-candidate-cell-prefetch = []
 native-lineage-ready-prefix = []
 native-work-stealing = []
 native-dependency-execution = []
+native-leader-dependency-execution = []
 
 [dependencies]
 anyhow.workspace = true

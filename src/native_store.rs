@@ -59,7 +59,7 @@ use storage_metrics::{BatchBytes, Purpose, StorageMetrics};
 mod test_contract;
 
 use bridge::{Bridge, BridgeChanges, StagedBridge};
-use cell_execution::{MAX_SPECULATIVE_READ_BYTES, PrecedingCells};
+use cell_execution::{MAX_SPECULATIVE_READ_BYTES, PrecedingCells, ProposalWindow};
 pub use bridge::{BridgeGenesis, LaneGenesis, RecipientLock, lane_id};
 use staking::{StagedStake, StakeInputs, Staking};
 pub use staking::{StakeGenesis, stake_registry_policy};
@@ -130,6 +130,12 @@ pub struct ProposalScan {
     pub priority_spent_in_parent: u64,
     pub priority_spent_in_proposal: u64,
     pub priority_cycle_rejections: u64,
+    /// Workers may run ahead of the canonical scan. Count jobs separately
+    /// from results used or candidates that required ordered staging.
+    pub parallel_cell_jobs: u64,
+    pub parallel_cell_reused: u64,
+    pub parallel_cell_fallback: u64,
+    pub parallel_cell_us: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -176,6 +182,10 @@ impl ProposalScan {
         self.priority_spent_in_parent = self.priority_spent_in_parent.saturating_add(scan.priority_spent_in_parent);
         self.priority_spent_in_proposal = self.priority_spent_in_proposal.saturating_add(scan.priority_spent_in_proposal);
         self.priority_cycle_rejections = self.priority_cycle_rejections.saturating_add(scan.priority_cycle_rejections);
+        self.parallel_cell_jobs = self.parallel_cell_jobs.saturating_add(scan.parallel_cell_jobs);
+        self.parallel_cell_reused = self.parallel_cell_reused.saturating_add(scan.parallel_cell_reused);
+        self.parallel_cell_fallback = self.parallel_cell_fallback.saturating_add(scan.parallel_cell_fallback);
+        self.parallel_cell_us = self.parallel_cell_us.saturating_add(scan.parallel_cell_us);
     }
 }
 
@@ -2128,13 +2138,41 @@ impl Store {
         let mut reusable = due.commands.is_empty();
         let mut selected = Vec::new();
         let mut cycle_rejections = 0;
-        for item in transactions {
+        let width = if cfg!(feature = "native-leader-dependency-execution") {
+            rayon::current_num_threads()
+        } else {
+            1
+        };
+        let mut transactions = transactions.into_iter().peekable();
+        let mut window = ProposalWindow::new();
+        loop {
             if selected.len() + due.commands.len() == self.limits.transaction_count as usize
                 || budget.bytes == 0
                 || wire_bytes == 0
             {
                 break;
             }
+            let next = if width > 1 {
+                let available =
+                    self.limits.transaction_count as usize - selected.len() - due.commands.len();
+                window.next(
+                    &mut transactions,
+                    self,
+                    &block,
+                    &origin,
+                    &overlay,
+                    budget,
+                    wire_bytes,
+                    available,
+                    width,
+                    scan,
+                )?
+            } else {
+                transactions.next().map(|item| (item, None))
+            };
+            let Some((item, trial)) = next else {
+                break;
+            };
             let priority = u64::from(
                 cfg!(feature = "jolteon-aged-proposal-selection") && scan.inspected < scan.priority_candidates,
             );
@@ -2146,7 +2184,7 @@ impl Store {
             if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
                 continue;
             }
-            let entry_bytes = (1 + prost::length_delimiter_len(len) + len) as u64;
+            let entry_bytes = proposal_entry_bytes(len);
             let Some(next_wire) = wire_bytes.checked_sub(entry_bytes) else {
                 continue;
             };
@@ -2159,15 +2197,31 @@ impl Store {
                 && tx.keeper_action().is_none()
                 && tx.keeper_schedule().is_none()
                 && tx.lineage_batch().is_none();
-            match self.stage(
-                tx,
-                &block,
-                &origin,
-                &mut budget,
-                &mut overlay,
-                None,
-                |resolved, limit| self.cache.verify(resolved, limit, true),
-            ) {
+            let receipt = trial.and_then(|trial| {
+                let adopted = trial
+                    .ok()
+                    .and_then(|work| window.adopt(work, &mut budget, &mut overlay));
+                if adopted.is_some() {
+                    scan.parallel_cell_reused = scan.parallel_cell_reused.saturating_add(1);
+                } else {
+                    scan.parallel_cell_fallback = scan.parallel_cell_fallback.saturating_add(1);
+                }
+                adopted
+            });
+            let staged = if let Some(receipt) = receipt {
+                Ok(receipt)
+            } else {
+                self.stage(
+                    tx,
+                    &block,
+                    &origin,
+                    &mut budget,
+                    &mut overlay,
+                    None,
+                    |resolved, limit| self.cache.verify(resolved, limit, true),
+                )
+            };
+            match staged {
                 Ok(receipt) => {
                     scan.selected = scan.selected.saturating_add(1);
                     scan.priority_selected = scan.priority_selected.saturating_add(priority);
@@ -2499,7 +2553,14 @@ impl Store {
             Some(cell) => Ok(cell.clone()),
             None => self.live_cell(point),
         };
-        let preceding = if cfg!(feature = "native-dependency-execution") { preceding } else { None };
+        let preceding = if cfg!(any(
+            feature = "native-dependency-execution",
+            feature = "native-leader-dependency-execution"
+        )) {
+            preceding
+        } else {
+            None
+        };
         // Current candidate writes, including deletions, supersede all hints.
         let staged = |point: &OutPoint| {
             live.get(point)
@@ -2924,6 +2985,10 @@ fn charge(remaining: &mut u64, amount: u64, name: &str) -> Result<()> {
         .checked_sub(amount)
         .with_context(|| format!("{name} exceeded"))?;
     Ok(())
+}
+
+fn proposal_entry_bytes(len: usize) -> u64 {
+    (1 + prost::length_delimiter_len(len) + len) as u64
 }
 
 fn as_key(id: &Byte32) -> Key {
@@ -3436,16 +3501,16 @@ mod pipeline_store_tests {
         let store = Store::open(path.path(), &spec, Retention::Archive)?;
         let parent = Arc::new(store.prepare(std::slice::from_ref(&first), 1001, false)?);
         let mut scan = ProposalScan { priority_candidates: 3, ..ProposalScan::default() };
-        let (selected, proposal) = store
-            .pinned_view()
-            .build_proposal(
-                &[parent.clone()],
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        let (selected, proposal) = workers
+            .install(|| store.pinned_view().build_proposal(
+                std::slice::from_ref(&parent),
                 vec![first.clone(), missing, second.clone(), second.clone()],
                 1002,
                 4096,
                 &mut scan,
                 false,
-            )?
+            ))?
             .context("missing proposal snapshot")?;
         let expected = store.on_branch(&[parent], |view| {
             view.prepare(std::slice::from_ref(&second), 1002, false)
@@ -3457,6 +3522,11 @@ mod pipeline_store_tests {
         assert_eq!(
             (scan.inspected, scan.selected, scan.spent_in_parent, scan.spent_in_proposal),
             (4, 1, 1, 1)
+        );
+        #[cfg(feature = "native-leader-dependency-execution")]
+        assert_eq!(
+            (scan.parallel_cell_jobs, scan.parallel_cell_reused, scan.parallel_cell_fallback),
+            (3, 1, 2)
         );
         #[cfg(feature = "jolteon-aged-proposal-selection")]
         assert_eq!(
