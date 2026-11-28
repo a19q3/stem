@@ -5499,7 +5499,7 @@ mod pipeline_store_tests {
                             &mut overlay, &mut stats, true,
                             #[cfg(feature = "native-shared-cell-deps")]
                             &mut None,
-                            |tx, trial, budget, overlay, _| {
+                            |tx, trial, budget, overlay, canonical| {
                                 // Use exact ordered staging without marking the
                                 // declaration as certified for these positions.
                                 let forced = receipts.len() < 1 + usize::from(force_second);
@@ -5510,10 +5510,14 @@ mod pipeline_store_tests {
                                     receipts.push(receipt);
                                     return Ok(ProposalStep::Reused);
                                 }
-                                receipts.push(store.stage(
+                                receipts.push(store.stage_transaction(
                                     tx, &block, &origin, budget, overlay, None,
                                     |resolved, limit| store.cache.verify(resolved, limit, false),
+                                    None, Some(canonical),
+                                    #[cfg(feature = "native-compact-cell-trial-edits")]
+                                    None,
                                 )?);
+                                canonical.ordered_writes.expect("ordered declaration flag").set(false);
                                 Ok(ProposalStep::Ordered)
                             },
                         )
@@ -5560,8 +5564,14 @@ mod pipeline_store_tests {
                 })?;
                 assert_eq!(outcome, (4, false));
                 assert_eq!(stats.jobs, 4);
-                assert_eq!(stats.projected_transactions, 2);
-                assert_eq!(stats.retired_projection_edits, 2);
+                let (projected, retired) = if cfg!(feature = "native-leader-tail-cycle-shares") {
+                    // Tail reservations can submit the third job before the fold.
+                    (3, 4)
+                } else {
+                    (2, 2)
+                };
+                assert_eq!(stats.projected_transactions, projected);
+                assert_eq!(stats.retired_projection_edits, retired);
             }
         }
         #[cfg(all(
@@ -5857,10 +5867,14 @@ mod pipeline_store_tests {
             (4, 1, 1, 1)
         );
         #[cfg(feature = "native-leader-dependency-execution")]
-        assert_eq!(
-            (scan.parallel_cell_jobs, scan.parallel_cell_reused, scan.parallel_cell_fallback),
-            (3, 1, if cfg!(feature = "native-reuse-parent-spend-rejections") { 1 } else { 2 })
-        );
+        {
+            let jobs = if cfg!(feature = "native-rolling-leader-execution") { 4 } else { 3 };
+            let fallback = jobs - 1 - u64::from(cfg!(feature = "native-reuse-parent-spend-rejections"));
+            assert_eq!(
+                (scan.parallel_cell_jobs, scan.parallel_cell_reused, scan.parallel_cell_fallback),
+                (jobs, 1, fallback),
+            );
+        }
         #[cfg(feature = "native-reuse-parent-spend-rejections")]
         assert_eq!(scan.parallel_parent_rejections_reused, 1);
         #[cfg(feature = "jolteon-aged-proposal-selection")]
