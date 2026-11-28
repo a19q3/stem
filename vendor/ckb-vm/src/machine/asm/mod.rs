@@ -575,6 +575,8 @@ impl<R: AsmCoreMachineRevealer> AsmMachine<R> {
     fn run_inner(&mut self, mut shared: Option<&mut shared_trace::Cache>) -> Result<i8, Error> {
         let isa = self.machine.isa();
         let version = self.machine.version();
+        #[cfg(feature = "trace-cycle-reuse")]
+        let estimated_cycles = self.machine.estimated_cycles;
         if self.machine.isa() & ISA_MOP != 0 && self.machine.version() == VERSION0 {
             return Err(Error::InvalidVersion);
         }
@@ -600,9 +602,16 @@ impl<R: AsmCoreMachineRevealer> AsmMachine<R> {
                         let slot = cache.slot(isa, version, pc, code);
                         if let Some(cached) = cache.get(slot, isa, version, pc, code) {
                             let mut trace = cached.trace.clone();
-                            trace.cycles = 0;
-                            for &instruction in &trace.instructions[..cached.decoded] {
-                                trace.cycles += self.machine.instruction_cycle_func()(instruction);
+                            #[cfg(feature = "trace-cycle-reuse")]
+                            let keep_cycles = estimated_cycles && cached.estimated_cycles;
+                            #[cfg(not(feature = "trace-cycle-reuse"))]
+                            let keep_cycles = false;
+                            if !keep_cycles {
+                                trace.cycles = 0;
+                                let cost = self.machine.instruction_cycle_func();
+                                for &instruction in &trace.instructions[..cached.decoded] {
+                                    trace.cycles += cost(instruction);
+                                }
                             }
                             self.machine.inner_mut().as_mut().install_trace(trace);
                             continue;
@@ -649,7 +658,17 @@ impl<R: AsmCoreMachineRevealer> AsmMachine<R> {
                         && let Some(code) = shared_trace::code(self.machine.memory_mut(), pc)
                         && let Some(cache) = shared.as_deref_mut()
                     {
-                        cache.insert(slot, isa, version, code, length as usize, i, &trace);
+                        cache.insert(
+                            slot,
+                            isa,
+                            version,
+                            code,
+                            length as usize,
+                            i,
+                            &trace,
+                            #[cfg(feature = "trace-cycle-reuse")]
+                            estimated_cycles,
+                        );
                     }
                     self.machine.inner_mut().as_mut().install_trace(trace);
                 }

@@ -479,6 +479,8 @@ pub struct DefaultMachine<Inner> {
     // with Box solution for simplicity now. Later if this becomes an issue,
     // we can change to static dispatch.
     instruction_cycle_func: Box<InstructionCycleFunc>,
+    #[cfg(all(has_asm, feature = "trace-cycle-reuse"))]
+    estimated_cycles: bool,
     debugger: Option<Box<dyn Debugger<Inner>>>,
     syscalls: Vec<Box<dyn Syscalls<Inner>>>,
     exit_code: i8,
@@ -767,6 +769,8 @@ impl<Inner: SupportMachine> DefaultMachine<Inner> {
 pub struct DefaultMachineBuilder<Inner> {
     inner: Inner,
     instruction_cycle_func: Box<InstructionCycleFunc>,
+    #[cfg(all(has_asm, feature = "trace-cycle-reuse"))]
+    estimated_cycles: bool,
     debugger: Option<Box<dyn Debugger<Inner>>>,
     syscalls: Vec<Box<dyn Syscalls<Inner>>>,
     pause: Pause,
@@ -777,6 +781,8 @@ impl<Inner> DefaultMachineBuilder<Inner> {
         Self {
             inner,
             instruction_cycle_func: Box::new(|_| 0),
+            #[cfg(all(has_asm, feature = "trace-cycle-reuse"))]
+            estimated_cycles: false,
             debugger: None,
             syscalls: vec![],
             pause: Pause::new(),
@@ -788,7 +794,19 @@ impl<Inner> DefaultMachineBuilder<Inner> {
         instruction_cycle_func: Box<InstructionCycleFunc>,
     ) -> Self {
         self.instruction_cycle_func = instruction_cycle_func;
+        #[cfg(all(has_asm, feature = "trace-cycle-reuse"))]
+        {
+            self.estimated_cycles = false;
+        }
         self
+    }
+
+    /// Install the built-in, stateless instruction cost model.
+    pub fn estimate_instruction_cycles(self) -> Self {
+        let builder = self.instruction_cycle_func(Box::new(crate::cost_model::estimate_cycles));
+        #[cfg(all(has_asm, feature = "trace-cycle-reuse"))]
+        let builder = Self { estimated_cycles: true, ..builder };
+        builder
     }
 
     pub fn syscall(mut self, syscall: Box<dyn Syscalls<Inner>>) -> Self {
@@ -811,6 +829,8 @@ impl<Inner> DefaultMachineBuilder<Inner> {
             inner: self.inner,
             pause: self.pause,
             instruction_cycle_func: self.instruction_cycle_func,
+            #[cfg(all(has_asm, feature = "trace-cycle-reuse"))]
+            estimated_cycles: self.estimated_cycles,
             debugger: self.debugger,
             syscalls: self.syscalls,
             exit_code: 0,

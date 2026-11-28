@@ -8,11 +8,21 @@ publish = false
 
 [features]
 parallel-patricia = ["dep:rayon"]
+batched-patricia-proofs = []
+patricia-frontier-edit = ["parallel-patricia", "verified-patricia-cache"]
+verified-patricia-cache = ["dep:hashbrown"]
+compact-verified-journal = ["verified-patricia-cache"]
+segmented-verified-journal = ["compact-verified-journal"]
+execution-material-cache = []
+inline-cell-resolution = []
+lazy-cell-digests = []
+shared-dep-group-members = []
 
 [dependencies]
 anyhow.workspace = true
 ckb-hash.workspace = true
 ckb-types.workspace = true
+hashbrown = { version = "0.17", optional = true, default-features = false, features = ["inline-more"] }
 lru.workspace = true
 rayon = { workspace = true, optional = true }
 stem-stake = { path = "../stake", default-features = false }

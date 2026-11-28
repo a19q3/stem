@@ -13,6 +13,8 @@ use tokio::sync::mpsc;
 
 use super::{CommitWindow, Replica, Store, commit_overlap};
 use crate::native_store::{PinnedView, Prepared};
+#[cfg(feature = "jolteon-cancel-stale-execution")]
+use crate::native_store::{PreparationCancellation, PreparationCancelled};
 
 struct Binding {
     epoch: u64,
@@ -25,19 +27,13 @@ struct Binding {
 }
 
 impl Binding {
-    fn matches(
-        &self,
-        epoch: u64,
-        base: Point,
-        base_header: Hash32,
-        mut candidate: impl FnMut(Point) -> Option<(Point, Hash32, bool)>,
-    ) -> bool {
+    fn remaining(&self, epoch: u64, base: Point, base_header: Hash32) -> Option<&[Point]> {
         if self.epoch != epoch {
-            return false;
+            return None;
         }
         let suffix = if self.base == base {
             if self.base_header != base_header {
-                return false;
+                return None;
             }
             self.branch.as_slice()
         } else if cfg!(feature = "jolteon-commit-pipeline")
@@ -47,10 +43,23 @@ impl Binding {
             // The committed Point must be the exact certified prefix of the
             // pinned execution. The unfinished suffix is still speculative.
             let Some(index) = self.branch.iter().position(|point| *point == base) else {
-                return false;
+                return None;
             };
             &self.branch[index + 1..]
         } else {
+            return None;
+        };
+        Some(suffix)
+    }
+
+    fn matches(
+        &self,
+        epoch: u64,
+        base: Point,
+        base_header: Hash32,
+        mut candidate: impl FnMut(Point) -> Option<(Point, Hash32, bool)>,
+    ) -> bool {
+        let Some(suffix) = self.remaining(epoch, base, base_header) else {
             return false;
         };
         if suffix.is_empty() {
@@ -72,8 +81,19 @@ impl Binding {
     }
 }
 
+#[cfg(not(feature = "jolteon-cancel-stale-execution"))]
+type JobBinding = Binding;
+#[cfg(feature = "jolteon-cancel-stale-execution")]
+type JobBinding = Arc<Binding>;
+
+#[cfg(feature = "jolteon-cancel-stale-execution")]
+struct Active {
+    binding: Arc<Binding>,
+    cancellation: PreparationCancellation,
+}
+
 struct Job {
-    binding: Binding,
+    binding: JobBinding,
     state: PinnedView,
     ancestors: Vec<Arc<Prepared>>,
     time: u64,
@@ -81,7 +101,7 @@ struct Job {
 }
 
 pub(super) struct Completion {
-    binding: Binding,
+    binding: JobBinding,
     prepared: Result<Option<Prepared>>,
     elapsed: Duration,
     work: (Instant, Duration),
@@ -91,6 +111,8 @@ pub(super) struct Completion {
 pub(super) struct Pipeline {
     send: mpsc::Sender<Job>,
     running: bool,
+    #[cfg(feature = "jolteon-cancel-stale-execution")]
+    active: Option<Active>,
 }
 
 impl Pipeline {
@@ -132,6 +154,8 @@ impl Pipeline {
             Self {
                 send,
                 running: false,
+                #[cfg(feature = "jolteon-cancel-stale-execution")]
+                active: None,
             },
             results,
         ))
@@ -151,7 +175,7 @@ impl Pipeline {
             return Ok(false);
         }
         let target = *branch.last().context("empty preparation branch")?;
-        let binding = Binding {
+        let binding: JobBinding = Binding {
             epoch,
             base,
             base_header: store.tip().id(store.network()).unpack(),
@@ -159,32 +183,83 @@ impl Pipeline {
             target,
             parent: candidate.header.context.parent.unpack(),
             transactions: candidate.wire.transactions.clone(),
+        }
+        .into();
+        let state = store.pinned_view();
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        let active = Active {
+            binding: Arc::clone(&binding),
+            cancellation: PreparationCancellation::default(),
         };
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        let state = state.with_cancellation(active.cancellation.clone());
         self.send
             .try_send(Job {
                 binding,
-                state: store.pinned_view(),
+                state,
                 ancestors,
                 time: candidate.header.context.timestamp_ms,
                 commit,
             })
             .map_err(|_| anyhow::anyhow!("candidate preparation worker stopped"))?;
         self.running = true;
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        {
+            self.active = Some(active);
+        }
         Ok(true)
     }
 }
 
 impl Replica {
+    #[cfg(feature = "jolteon-cancel-stale-execution")]
+    pub(super) fn cancel_stale_candidate(&mut self) {
+        let Some(active) = self.candidate_pipeline.active.as_ref() else {
+            return;
+        };
+        if active.cancellation.is_cancelled() {
+            return;
+        }
+        let binding = &active.binding;
+        let epoch = self.committee.epoch();
+        // A new view can still use this exact candidate as an ancestor.
+        // Request cancellation only when the epoch or durable base excludes it.
+        let obsolete = binding.epoch != epoch
+            || (binding.base != self.finalized
+                && binding
+                    .remaining(
+                        epoch,
+                        self.finalized,
+                        self.store.tip().id(self.store.network()).unpack(),
+                    )
+                    .is_none_or(|suffix| suffix.is_empty()));
+        if obsolete && active.cancellation.cancel() {
+            let jobs = &mut self.execution.candidate_jobs;
+            jobs.cancel_requested = jobs.cancel_requested.saturating_add(1);
+        }
+    }
+
     pub(super) fn complete_preparation(&mut self, completion: Completion) -> Result<()> {
         ensure!(
             self.candidate_pipeline.running,
             "unexpected candidate completion"
         );
         self.candidate_pipeline.running = false;
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        {
+            self.candidate_pipeline.active = None;
+        }
         self.execution.candidate_verify.observe(completion.elapsed);
         let Completion {
             binding, prepared, elapsed, work, commit,
         } = completion;
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        if matches!(&prepared, Err(error) if error.is::<PreparationCancelled>()) {
+            let jobs = &mut self.execution.candidate_jobs;
+            jobs.cancelled = jobs.cancelled.saturating_add(1);
+            jobs.cancelled_us = jobs.cancelled_us.saturating_add(elapsed.as_micros() as u64);
+            return Ok(());
+        }
         if let Ok(Some(execution)) = &prepared {
             self.execution
                 .candidate_commitments
@@ -192,6 +267,9 @@ impl Replica {
             self.execution
                 .candidate_lineage
                 .record(execution.lineage_schedule());
+            self.execution
+                .candidate_cell_stream
+                .record(execution.cell_stream());
         }
         if !self.preparation_is_current(&binding) || matches!(prepared, Ok(None)) {
             let jobs = &mut self.execution.candidate_jobs;
@@ -224,6 +302,9 @@ impl Replica {
                 jobs.applied = jobs.applied.saturating_add(1);
                 if binding.base != self.finalized {
                     jobs.rebased = jobs.rebased.saturating_add(1);
+                    if let Some(index) = binding.branch.iter().position(|point| *point == self.finalized) {
+                        jobs.rebased_blocks = jobs.rebased_blocks.saturating_add((index + 1) as u64);
+                    }
                 }
                 let overlap = commit_overlap(commit.as_ref(), work);
                 if !overlap.is_zero() {

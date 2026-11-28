@@ -1,12 +1,16 @@
 //! CKB-VM host for Stem's native Strand ledger.
 
+mod cache;
 mod crypto;
 pub mod executor;
+#[cfg(feature = "rolling-script-groups")]
+mod group_schedule;
 
+pub use cache::{CacheLockStats, VerificationCache, VerificationCacheStats};
 pub use crypto::{CRYPTO_V1, SECP256K1_RECOVER, SECP256K1_RECOVERY_CYCLES};
 
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -18,7 +22,6 @@ use ckb_vm::{
     registers::{A0, A3, A4, A5, A7},
     snapshot2::DataSource,
 };
-use lru::LruCache;
 use rayon::prelude::*;
 use stem_ledger::{CapacityPolicy, Cell, ResolvedTransaction, ScriptGroupKind, block::Header};
 
@@ -207,6 +210,10 @@ fn verify_groups(
     } else {
         1
     };
+    #[cfg(feature = "rolling-script-groups")]
+    if workers > 1 && group_count > workers {
+        return group_schedule::verify(group_count, max_cycles, workers, estimates, run, observe);
+    }
     for start in (0..group_count).step_by(workers) {
         let end = (start + workers).min(group_count);
         let remaining = max_cycles - total;
@@ -220,17 +227,7 @@ fn verify_groups(
         let equal_share = remaining / (end - start) as u64;
         let results: Vec<_> = (start..end)
             .into_par_iter()
-            .map(|group| {
-                let limit = estimates
-                    .get(group)
-                    .copied()
-                    .flatten()
-                    .map_or(equal_share, |cycles| {
-                        cycles.saturating_mul(2).max(equal_share)
-                    })
-                    .min(remaining);
-                run(group, limit)
-            })
+            .map(|group| run(group, group_limit(estimates, group, equal_share, remaining)))
             .collect();
         for (index, result) in results.into_iter().enumerate() {
             let cycles = match result {
@@ -246,162 +243,13 @@ fn verify_groups(
     Ok(total)
 }
 
-/// Caches verified transactions and remembers recent Script Group costs for scheduling.
-pub struct VerificationCache {
-    crypto_v1: bool,
-    verified: Mutex<VerifiedTransactions>,
-    estimates: Mutex<LruCache<(u8, Byte32), u64>>,
-}
-
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
-pub struct VerificationCacheStats {
-    pub capacity: usize,
-    pub entries: usize,
-    pub hits: u64,
-    pub misses: u64,
-    pub wrong_parent: u64,
-}
-
-struct VerifiedTransactions {
-    entries: LruCache<Byte32, CachedVerification>,
-    hits: u64,
-    misses: u64,
-    wrong_parent: u64,
-}
-
-impl VerifiedTransactions {
-    fn lookup(&mut self, key: &Byte32, parent: &Byte32) -> Option<u64> {
-        if let Some(entry) = self.entries.get(key) {
-            if entry.parent.as_ref().is_none_or(|required| required == parent) {
-                self.hits = self.hits.saturating_add(1);
-                return Some(entry.cycles);
-            }
-            self.wrong_parent = self.wrong_parent.saturating_add(1);
-        }
-        self.misses = self.misses.saturating_add(1);
-        None
-    }
-}
-
-struct CachedVerification {
-    cycles: u64,
-    parent: Option<Byte32>,
-}
-
-impl VerificationCache {
-    pub fn new(capacity: usize) -> Self {
-        Self::for_genesis(capacity, false)
-    }
-
-    /// A cache belongs to one immutable set of genesis VM rules.
-    pub fn for_genesis(capacity: usize, crypto_v1: bool) -> Self {
-        Self {
-            crypto_v1,
-            verified: Mutex::new(VerifiedTransactions {
-                entries: LruCache::new(capacity),
-                hits: 0,
-                misses: 0,
-                wrong_parent: 0,
-            }),
-            estimates: Mutex::new(LruCache::new(capacity)),
-        }
-    }
-
-    pub fn crypto_v1_enabled(&self) -> bool {
-        self.crypto_v1
-    }
-
-    /// Resize the success cache independently of the per-group cost estimates.
-    pub fn resize_verified(&self, capacity: usize) {
-        self.verified
-            .lock()
-            .expect("VM cache lock")
-            .entries
-            .resize(capacity);
-    }
-
-    pub fn stats(&self) -> VerificationCacheStats {
-        let cache = self.verified.lock().expect("VM cache lock");
-        VerificationCacheStats {
-            capacity: cache.entries.cap(),
-            entries: cache.entries.len(),
-            hits: cache.hits,
-            misses: cache.misses,
-            wrong_parent: cache.wrong_parent,
-        }
-    }
-
-    pub fn verify(
-        &self,
-        tx: Arc<ResolvedTransaction>,
-        max_cycles: u64,
-        parallel: bool,
-    ) -> Result<u64> {
-        let key = tx.script_cache_key().clone();
-        let parent = tx.parent_id().clone();
-        let found = self
-            .verified
-            .lock()
-            .expect("VM cache lock")
-            .lookup(&key, &parent);
-        if let Some(cycles) = found {
-            return charge(0, cycles, max_cycles);
-        }
-
-        let parent_read = Arc::new(AtomicBool::new(false));
-        let cycles = if tx.groups().len() < 2 {
-            verify_groups(
-                tx,
-                max_cycles,
-                parallel,
-                self.crypto_v1,
-                &parent_read,
-                &[],
-                |_, _| {},
-            )?
-        } else {
-            let groups: Vec<_> = tx
-                .groups()
-                .iter()
-                .map(|group| (group.kind as u8, group.script.calc_script_hash()))
-                .collect();
-            let estimated = if parallel {
-                let mut cache = self.estimates.lock().expect("VM estimates lock");
-                groups.iter().map(|id| cache.get(id).copied()).collect()
-            } else {
-                Vec::new()
-            };
-            let mut measured = Vec::with_capacity(groups.len());
-            let cycles = verify_groups(
-                tx,
-                max_cycles,
-                parallel,
-                self.crypto_v1,
-                &parent_read,
-                &estimated,
-                |index, cost| {
-                    measured.push((index, cost));
-                },
-            )?;
-            let mut cache = self.estimates.lock().expect("VM estimates lock");
-            for (index, cost) in measured {
-                cache.put(groups[index].clone(), cost);
-            }
-            cycles
-        };
-        self.verified
-            .lock()
-            .expect("VM cache lock")
-            .entries
-            .put(
-                key,
-                CachedVerification {
-                    cycles,
-                    parent: parent_read.load(Ordering::Relaxed).then_some(parent),
-                },
-            );
-        Ok(cycles)
-    }
+fn group_limit(estimates: &[Option<u64>], group: usize, share: u64, remaining: u64) -> u64 {
+    estimates
+        .get(group)
+        .copied()
+        .flatten()
+        .map_or(share, |cycles| cycles.saturating_mul(2).max(share))
+        .min(remaining)
 }
 
 /// Identify a cycle-limit failure from a VM run or cached verification.

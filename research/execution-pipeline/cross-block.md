@@ -91,3 +91,127 @@ cargo build --release --locked --no-default-features \
 For a scheduling-only control, substitute `jolteon-commit-pipeline,jolteon-proposal-pipeline` for the cross-block feature. Omit the pipeline flags for the synchronous Cell-prefetch reference. For the integrated control, add `jolteon-admission-pipeline,native-commitment-pipeline,native-work-stealing,jolteon-certificate-experiment` to the paced configuration. Use the current checkout's release `native_store` test executable for the [driver and independent verifier](../storage/external/README.md#measure-and-replay), including the current Status fields. For the mature snapshot, use the [fixed funding fixture](../saturation/README.md#实验条件与复现) and stop all four validators after funding and before dispatch. Reopen independent copies for each arm and verify the funded Header and paid count before starting the timed offer.
 
 Final release binary SHA-256 values were `33d490d9ac76a671fa040e125b3db7f00743cd7ccdf9ac843a3b8317aa800368` for the synchronous reference, `f7cd758ed57f944fc70043775dd9fb0285de0e6ffaa7d4e1bbf263e5b6e57efc` for the paced three-stage control and `c39a0af5749881d21caac429300c6a3da92bbb594690d5034c35ef8ffac47c95` for the focused candidate. Reported native performance remains bounded by execution before voting, plus the consensus cadence and persistence budget.
+## Preparing the next proposal while its parent is being certified
+
+The `jolteon-pre-quorum-proposal` option gives the scheduled next-view
+Leader an earlier starting point. After that replica has independently
+executed an ordinary proposal and durably recorded and dispatched its own
+vote, it can use the prepared branch as input to its existing single Leader
+worker. It takes a bounded local mempool snapshot in the existing order.
+The replica can process parent votes while the worker builds a candidate.
+Recovery, seals, and a next block at a committee activation boundary skip
+this path.
+
+The speculative result is eligible only for the same epoch and next view
+with the exact voted parent certified. The Replica uses the existing exact
+prefix rebase if the database has advanced, checks the remaining branch,
+and attempts publication through the normal tick after finalization work.
+Pacing, timestamp validity and local vote journaling still apply. An
+intervening view, sibling QC or incompatible committed base cancels active
+work at existing safe boundaries or discards its result locally.
+
+The status counters `pre_quorum_started` and `pre_quorum_published` count
+jobs enqueued and actually published. For published jobs,
+`pre_quorum_overlap_us` counts the part of the worker's execution interval
+before the replica entered the certified target view. That boundary
+includes local QC journaling. Worker queue time and commit-window overlap
+are separate; the existing commit counters count jobs launched in that
+window and should not be used to infer overlap for these earlier jobs.
+
+Use a matched control built with
+`--features jolteon-exact-prefix-pipeline,jolteon-cancel-stale-execution`
+and change only the addition of `jolteon-pre-quorum-proposal`. Use the same
+funded state, signed workload, worker and core allocation, pipeline
+settings and block envelope in both arms. Compare pre-quorum reuse and
+compute overlap with discarded work, Leader queue and preparation times,
+CPU, common finality and backlog in the mature payment and mixed Type
+Group fixtures. Exercise a competing QC, timeout, writer pause and recovery
+with the independent replay and checkpoint validation controls.
+Lookahead can be short when the next Leader is the last validator to
+complete its vote or already holds a quorum. Copying the mempool
+snapshot and sharing the worker pool can add control delay, especially
+for late or replaced candidates. The compile-checked binding regression
+covers the waiting state, exact QC, timeout, sibling QC and one durable
+prefix advance. No new runtime or performance evidence has been collected.
+
+## Sharing the ordered mempool snapshot with the Leader worker
+
+The original asynchronous scheduler walks the entire mempool on the Replica
+thread and clones every transaction handle into a vector. That work happens
+before the worker starts, even if selection fills the block after visiting
+only part of the snapshot. Under `jolteon-shared-proposal-snapshot`, the
+Replica clones the root of a copy-on-write ordered map instead. The worker
+traverses the captured root lazily. The optional age-priority policy also
+captures the arrival-index root and the scheduling time, and uses the same
+256-entry promotion policy, order and counters as the vector path.
+
+Insertions, expirations, committed removals and relay metadata updates can
+continue against the current map. A scheduled job sees the membership and
+order it captured. It still evaluates every transaction it visits against
+the pinned execution branch, including current-block writes, budget limits
+and validity checks. One in-flight job can keep one older generation. Its
+snapshot is dropped on the worker before the completion is sent. Live
+admission retains its existing byte limit. Shared paths can add node
+allocations to updates, and a snapshot can retain removed transactions
+until the job finishes. These allocations and the worker's tree traversal
+need to be measured alongside the Replica time saved.
+
+For a matched pair, build the same revision with
+`--features jolteon-pre-quorum-proposal` and with
+`--features jolteon-pre-quorum-proposal,jolteon-shared-proposal-snapshot`.
+Hold age-priority, admission, execution, resident indexes and all limits
+constant. Compare both configurations again with age priority enabled.
+Use identical candidate inputs and timestamps for Header, receipt and
+charged-resource equivalence. In the sustained payment and mixed-contract
+runs, compare the new `proposal_jobs.snapshot_capture` histogram at similar
+mempool sizes (`proposal_jobs.snapshot_entries` sums the captured entry
+counts), as well as admission latency, control queue, selection time, CPU,
+RSS, backlog and independently verified finality. A worker that scans most
+entries may gain less, and relay or removal churn can move costs back onto
+the Replica. Compile-checked regression targets cover ordering, snapshot
+isolation through removal and expiry, insertion and relay updates. Runtime
+validation and performance measurements remain pending.
+
+## Prebuilding the certified state WriteBatch
+
+The state writes for an executed block are available before the finality
+journal and retired proposal ranges are known. With
+`jolteon-prebuilt-state-write`, the Replica can queue assembly of the
+state prefix for the executed high-QC block after installing its direct
+parent. The writer keeps one optional prefix on its own thread. It
+assembles the created Live Cell rows, prepared node edits, and Header and
+execution rows while the Replica can work on the successor. The queue
+leaves space for the certified write. The writer skips an unstarted
+prebuild when a certified write is already queued. A prebuild never
+invokes RocksDB's write or installs a state view.
+
+A finality request consumes a prefix only for the exact prepared object
+and after the usual committed-parent check. A miss discards any other
+prefix and assembles the state writes in the ordinary path. The certified
+writer appends fresh consensus records, proposal deduplication checks and
+retirement ranges, then submits one synchronous WAL batch in the
+original write order. State publication and acknowledgement follow the
+existing durable path. Both state engines and both Patricia journal
+layouts use the same assembly entry point.
+
+The earlier [critical-path probe](../critical-path/README.md#ranked-bottlenecks)
+measured 2.54 ms of mean batch assembly per measured write in sustained
+payments and 0.66 ms in mixed contracts. This option moves some assembly
+earlier and retains one extra encoded batch. It can waste work when the
+certified branch changes, and an active prebuild may delay a commit that
+arrives before assembly finishes. Compare the full commit interval
+alongside writer service time. The latter begins when the writer handles
+the certified request and excludes time spent waiting for a prebuild.
+
+Build the same revision on both arms and toggle only
+`jolteon-prebuilt-state-write`. Use the same state engine, journal
+layout, writer-side publication, signed workload and budgets. Record
+`commit_jobs.state_prebuilds`, the
+`commit_jobs.reused_state_build` histogram for consumed prefixes,
+durable write and finality latency, queueing, process CPU and peak RSS.
+Handle misses separately from reused work and compare WAL and finality
+records through the independent replay and recovery fixtures. The
+compile-checked regressions cover exact-prefix reuse, a sibling miss,
+large Cell and node writes, and the durable visibility boundary across
+an old snapshot. Runtime validation and performance measurements remain
+pending.

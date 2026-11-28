@@ -107,6 +107,125 @@ fn cancel(
 }
 
 #[test]
+#[cfg(any(
+    feature = "native-keeper-parallel-preparation",
+    feature = "native-reuse-keeper-proposal-prefix"
+))]
+fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
+    use super::lineage::FixtureLineage;
+    use anyhow::Context;
+    use std::num::NonZeroUsize;
+    use stem::native_store::LiveCellIndexLayout;
+
+    let mut fixture = Fixture::new()?;
+    fixture.spec.limits.transaction_count = 16;
+    let registry = FixtureLineage::fund(&mut fixture)?;
+    let dynamic = DynamicLineage::fund_using(&mut fixture, &registry, 4, 2, None)?;
+    fund_carriers(&mut fixture, 4)?;
+    fixture.spec.keeper.as_mut().unwrap().time = Some(KeeperTimePolicy {
+        per_height: 1,
+        max_delay_ms: 10_000,
+    });
+    let target = TIME + 100;
+    let height0 = dynamic.scheduled(&fixture, 0, (0, 0), 1, 4)?;
+    let height1 = dynamic.scheduled(&fixture, 1, (1, 1), 2, 4)?;
+    let timed = dynamic.signed(&fixture, 2, &[1], (0, 0), 3)?;
+    let timed = dynamic.sign_command(
+        &fixture,
+        timed.with_witnesses(vec![])?
+            .with_valid_before_height(12)?
+            .with_keeper_trigger(Trigger::Time(target))?,
+    )?;
+    let stale = dynamic.scheduled(&fixture, 3, (0, 0), 9, 4)?;
+    let reservations = [&height0, &height1, &stale, &timed]
+        .iter()
+        .enumerate()
+        .map(|(index, command)| schedule(&fixture, index as u32, command))
+        .collect::<Result<Vec<_>>>()?;
+    let mut payments = Vec::new();
+    let mut point = fixture.spend.clone();
+    for fee_count in 1..=10 {
+        let tx = fixture.signed(point, None, FUND - fee_count * FEE, None)?;
+        point = OutPoint::new(tx.id(&fixture.spec.network), 0);
+        payments.push(tx);
+    }
+    let registrations = [dynamic.register(&fixture, 0)?, dynamic.register(&fixture, 1)?];
+    let dir = tempfile::tempdir()?;
+    let mut serial = Store::open(&dir.path().join("serial"), &fixture.spec, Retention::Archive)?;
+    let mut parallel = Store::open(
+        &dir.path().join("parallel"),
+        &fixture.spec,
+        Retention::Archive,
+    )?;
+    let limit = NonZeroUsize::new(8).unwrap();
+    parallel.enable_live_cell_index_with_layout(limit, LiveCellIndexLayout::InternedScripts)?;
+    parallel.enable_cell_node_index(limit)?;
+    for store in [&mut serial, &mut parallel] {
+        store.commit(store.prepare(&registrations, TIME, false)?)?;
+        store.commit(store.prepare(&reservations, TIME, false)?)?;
+        store.commit(store.prepare(&[], target, false)?)?;
+    }
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+    let reference = serial.prepare(&payments, target, false)?;
+    let candidate = workers.install(|| parallel.prepare(&payments, target, true))?;
+    let (selected, leader) =
+        workers.install(|| parallel.build_proposal(&payments, target, 64 * 1024))?;
+    assert!(
+        selected.iter().map(Transaction::as_slice)
+            .eq(payments.iter().map(Transaction::as_slice))
+    );
+    assert_eq!(candidate.header(), reference.header());
+    assert_eq!(leader.header(), reference.header());
+    assert_eq!(candidate.receipts(), reference.receipts());
+    assert_eq!(leader.receipts(), reference.receipts());
+    assert_eq!(leader.submitted_receipts().len(), payments.len());
+    assert_eq!(candidate.receipts().len(), payments.len() + 4);
+    assert_eq!(
+        candidate.receipts()[..4]
+            .iter()
+            .map(|receipt| Outcome::decode(&receipt.protocol_result))
+            .collect::<Result<Vec<_>>>()?,
+        [Outcome::Applied, Outcome::Applied, Outcome::Skipped, Outcome::Applied]
+    );
+    serial.commit(reference)?;
+    parallel.commit(leader)?;
+    drop(parallel);
+    let parallel = Store::open(&dir.path().join("parallel"), &fixture.spec, Retention::Archive)?;
+    let (expected_transactions, expected_receipts) =
+        serial.execution(4)?.context("missing serial execution")?;
+    let (actual_transactions, actual_receipts) =
+        parallel.execution(4)?.context("missing reopened execution")?;
+    assert!(
+        actual_transactions.iter().map(Transaction::as_slice)
+            .eq(expected_transactions.iter().map(Transaction::as_slice))
+    );
+    assert_eq!(actual_receipts, expected_receipts);
+    let (expected_cell, expected_path) = serial.prove_cell(&point)?;
+    let (actual_cell, actual_path) = parallel.prove_cell(&point)?;
+    assert_eq!(
+        stem_ledger::record::encode_cell(&point, &expected_cell.context("missing serial payment output")?),
+        stem_ledger::record::encode_cell(&point, &actual_cell.context("missing resident payment output")?),
+    );
+    assert_eq!(expected_path.encode()?, actual_path.encode()?);
+    for (id, version) in dynamic.ids.iter().zip([2, 1]) {
+        let a = serial.prove_current_lineage(id)?;
+        let b = parallel.prove_current_lineage(id)?;
+        assert_eq!(a.system_path.encode()?, b.system_path.encode()?);
+        assert_eq!(b.head.context("missing settled Head")?.0.version, version);
+    }
+    assert!(parallel.prove_keeper_agenda()?.0.is_none());
+    assert!(parallel.prove_keeper_queue(4)?.0.is_none());
+    for point in &dynamic.fee_points {
+        let (expected, path) = serial.prove_keeper_reservation(point)?;
+        let (actual, actual_path) = parallel.prove_keeper_reservation(point)?;
+        assert!(actual.is_none());
+        assert_eq!(expected, actual);
+        assert_eq!(path.encode()?, actual_path.encode()?);
+    }
+    Ok(())
+}
+
+#[test]
 fn keeper_automatically_executes_committed_commands_after_restore() -> Result<()> {
     let mut fixture = Fixture::new()?;
     let dynamic = DynamicLineage::fund(&mut fixture, 5)?;
@@ -290,12 +409,33 @@ fn paired_signature_cannot_authorize_a_keeper_action() -> Result<()> {
 #[test]
 #[ignore = "matched local measurement of a configured idle Keeper and four due commands"]
 fn measure_keeper_slots() -> Result<()> {
+    use super::lineage::FixtureLineage;
     use std::time::Instant;
 
     const BLOCKS: usize = 31;
     const WIDTH: usize = 4;
+    let heads: usize = std::env::var("STEM_KEEPER_BENCH_HEADS")
+        .ok()
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(1);
+    let worker_count: usize = std::env::var("STEM_KEEPER_BENCH_WORKERS")
+        .ok()
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(1);
+    anyhow::ensure!(
+        (1..=WIDTH).contains(&heads) && worker_count != 0,
+        "invalid Keeper fixture size"
+    );
+    let workers = rayon::ThreadPoolBuilder::new().num_threads(worker_count).build()?;
     let mut fixture = Fixture::new()?;
-    let dynamic = DynamicLineage::fund(&mut fixture, BLOCKS * WIDTH)?;
+    let dynamic = if heads == 1 {
+        DynamicLineage::fund(&mut fixture, BLOCKS * WIDTH)?
+    } else {
+        let registry = FixtureLineage::fund(&mut fixture)?;
+        DynamicLineage::fund_using(&mut fixture, &registry, BLOCKS * WIDTH, heads, None)?
+    };
     fund_carriers(&mut fixture, (BLOCKS * WIDTH) as u32)?;
     let dir = tempfile::tempdir()?;
     let mut idle = Store::open(&dir.path().join("idle"), &fixture.spec, Retention::Archive)?;
@@ -304,9 +444,11 @@ fn measure_keeper_slots() -> Result<()> {
         &fixture.spec,
         Retention::Archive,
     )?;
-    let register = dynamic.register(&fixture, 0)?;
+    let registrations = (0..heads)
+        .map(|index| dynamic.register(&fixture, index))
+        .collect::<Result<Vec<_>>>()?;
     for store in [&mut idle, &mut active] {
-        store.commit(store.prepare(std::slice::from_ref(&register), TIME, false)?)?;
+        store.commit(store.prepare(&registrations, TIME, false)?)?;
     }
     let first_due = BLOCKS as u64 + 2;
     for height_offset in 0..BLOCKS {
@@ -314,7 +456,12 @@ fn measure_keeper_slots() -> Result<()> {
         let claims = (0..WIDTH)
             .map(|index| {
                 let i = height_offset * WIDTH + index;
-                let next = dynamic.scheduled(&fixture, i, (0, 1000), 1, due)?;
+                let next = if heads == 1 {
+                    dynamic.scheduled(&fixture, i, (0, 1000), 1, due)?
+                } else {
+                    let tx = dynamic.signed(&fixture, i, &[index % heads], (0, 1000), 1)?;
+                    dynamic.sign_command(&fixture, tx.with_witnesses(vec![])?.with_execute_at(due)?)?
+                };
                 schedule(&fixture, i as u32, &next)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -329,7 +476,11 @@ fn measure_keeper_slots() -> Result<()> {
         for slot in [index % 2, 1 - index % 2] {
             let store = if slot == 0 { &mut idle } else { &mut active };
             let start = Instant::now();
-            let block = store.prepare(&[], TIME, false)?;
+            let block = if worker_count > 1 {
+                workers.install(|| store.prepare(&[], TIME, true))?
+            } else {
+                store.prepare(&[], TIME, false)?
+            };
             timings[slot].push(start.elapsed().as_micros() as u64);
             if slot == 1 {
                 assert_eq!(block.receipts().len(), WIDTH);
@@ -354,6 +505,8 @@ fn measure_keeper_slots() -> Result<()> {
         "{}",
         serde_json::json!({
             "blocks": BLOCKS, "due_per_active_block": WIDTH,
+            "heads": heads, "workers": worker_count,
+            "parallel_preparation": cfg!(feature = "native-keeper-parallel-preparation"),
             "percentile_order": [50, 95, 99],
             "idle_prepare_us": values[0], "active_prepare_us": values[1],
             "idle_commit_us": values[2], "active_commit_us": values[3],

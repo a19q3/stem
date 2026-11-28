@@ -59,6 +59,52 @@ pub struct Proposal {
     pub seal: bool,
 }
 
+#[derive(Clone)]
+pub(super) struct ProposalBody {
+    message: Proposal,
+    #[cfg(feature = "jolteon-share-proposal-bytes")]
+    encoded: Bytes,
+}
+
+impl ProposalBody {
+    pub(super) fn decode(encoded: Bytes) -> Result<Self> {
+        let message = canonical_bytes(encoded.clone())?;
+        Ok(Self {
+            message,
+            #[cfg(feature = "jolteon-share-proposal-bytes")]
+            encoded,
+        })
+    }
+
+    pub(super) fn local(message: Proposal) -> Result<Self> {
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        {
+            let encoded = Bytes::from(message.encode_to_vec());
+            // Use the new body as the backing storage for the transaction
+            // slices. Locally encoded protobuf is canonical by construction.
+            let message = Proposal::decode(encoded.clone())?;
+            Ok(Self { message, encoded })
+        }
+        #[cfg(not(feature = "jolteon-share-proposal-bytes"))]
+        Ok(Self { message })
+    }
+
+    pub(super) fn record(&self) -> crate::native_store::ConsensusValue {
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        return self.encoded.clone();
+        #[cfg(not(feature = "jolteon-share-proposal-bytes"))]
+        self.message.encode_to_vec()
+    }
+}
+
+impl std::ops::Deref for ProposalBody {
+    type Target = Proposal;
+
+    fn deref(&self) -> &Self::Target {
+        &self.message
+    }
+}
+
 #[derive(Clone, Message)]
 pub struct Timeout {
     #[prost(uint64, tag = "1")]
@@ -159,7 +205,26 @@ mod tests {
         let proposal_offset = raw.len() - received.body.len();
         assert_eq!(received.body.as_ptr(), raw[proposal_offset..].as_ptr());
         let body = received.body;
-        let proposal: Proposal = canonical_bytes(body.clone())?;
+        let proposal = ProposalBody::decode(body.clone())?;
+        assert_eq!(&proposal.record()[..], body.as_ref());
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        assert_eq!(proposal.record().as_ptr(), body.as_ptr());
+
+        let local = ProposalBody::local(proposal.message.clone())?;
+        let local_bytes = local.record();
+        assert_eq!(&local_bytes[..], body.as_ref());
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        {
+            let tx_offset = local_bytes.len() - tx.as_slice().len();
+            assert_eq!(
+                local.transactions[0].as_ptr(),
+                local_bytes[tx_offset..].as_ptr()
+            );
+        }
+        let mut noncanonical_body = body.to_vec();
+        noncanonical_body.extend_from_slice(&[0x40, 0]); // Unknown protobuf field.
+        assert!(ProposalBody::decode(noncanonical_body.into()).is_err());
+
         let transaction = &proposal.transactions[0];
         let tx_offset = body.len() - transaction.len();
         assert_eq!(transaction.as_ptr(), body[tx_offset..].as_ptr());

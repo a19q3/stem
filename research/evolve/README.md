@@ -23,3 +23,49 @@ On held-out node 3, all five policies hit 66 of 162 requests at 64 slots. At 16 
 ## Review and rollback
 
 This workspace evaluates research implementations only. Review deterministic decisions and corpus hashes first, then paired distributions, memory and workload representativeness. A runtime candidate needs independent review of mixed-version, proof, restart and handoff evidence before adoption. The reference remains the normal code path. Re-run the reference to investigate a regression; the offline scripts and their output can be removed without changing database or wire formats.
+
+## VM result-cache concurrency
+
+The held-out eviction experiments above retain the original LRU policy.
+The runtime now supports a same-binary comparison of a local LRU and
+independent LRU shards for successful transaction verifications. Set
+`verification_cache_shards` in the replica configuration to a power of
+two between 1 and 64. The default is one shard. The full witnessed,
+resolved transaction key selects a shard. The original parent binding
+and charged cycles apply on every hit. A miss runs the usual verifier.
+
+The shard limits sum to the configured `verification_cache_entries`.
+Remainder entries go to the lowest-index shards. Each shard evicts its
+own least-recently-used entry. A zero-capacity shard falls through to
+ordinary verification. Script Group cost estimates retain the separate
+LRU and its original default capacity. The result-cache hit path borrows
+the resolved key and parent ID and copies them only on a miss.
+
+For contention attribution, set `verification_cache_lock_sampling` to
+true. The node status reports cumulative sample count, wait and hold
+nanoseconds, and sampled maxima separately for result and estimate
+locks. It samples approximately one access in 256 per thread and lock
+family. It mixes sample positions to cover both lookup and publication.
+Status reads and resizing are outside the sampled operations. The
+sampled wait includes scheduling and clock costs. Counter snapshots can
+differ slightly across shards and in-flight observations.
+
+Use the identical binary, signed corpus, genesis, scheduler and
+storage settings. Compare 1, 2, 4, 8, 16, 32 and 64 shards with the same
+result entry limit. Compare multiple worker counts and include cold
+and warmed payment, heterogeneous Type Group and parent-reading
+contracts. Collect per-window lock counter deltas alongside cache hit
+rate, verification CPU, confirmed throughput and peak RSS. Repeat the
+throughput controls with sampling disabled to estimate instrumentation
+cost. A fixed entry budget can produce different allocation sizes and
+earlier eviction in a hot shard. The separate estimate lock can still
+dominate on workloads with many uncached groups.
+
+The local load launcher accepts `STEM_TEST_VERIFICATION_CACHE_ENTRIES`,
+`STEM_TEST_VERIFICATION_CACHE_SHARDS` and
+`STEM_TEST_VERIFICATION_CACHE_LOCK_SAMPLING=1`. The recovery, finality
+and mixed workload acceptance conditions remain the existing ones.
+This candidate has a successful Release build and compiled regressions
+for total capacity, zero-quota eviction, lock sampling and parent-bound
+verification across shard layouts. Its runtime and throughput effects
+remain to be measured.

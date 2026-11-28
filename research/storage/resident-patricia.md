@@ -165,3 +165,227 @@ Use `--cell-node-index-mib 768` for the measured node index, and add
 `--live-cell-index-mib 1536` to reproduce the combined arm. Watch the two
 `active` status fields and account separately for each cache. Host size,
 workload and retention policy affect the operational memory budget.
+
+## Verified decoded resident nodes
+
+The `native-verified-cell-nodes` candidate stores decoded immutable Cell
+nodes in the resident index. The index checks the canonical encoding and
+content hash during recovery and during publication of committed inserts.
+A cache hit during traversal carries its content ID and network/namespace
+domain. The traversal validates that binding and reuses the decoded node.
+Disk reads, speculative overrides and staged edits keep the ordinary
+hash and encoding checks. Retired entries still fall back to the reader's
+pinned RocksDB snapshot. Proof generation encodes cached nodes using the
+same canonical representation and independent proof verification still
+checks every node hash.
+
+Each shard stores one domain for its whole table. Index budgeting uses
+the decoded entry width and the actual table allocation sizes. Stored
+RocksDB rows, the atomic WAL operation, Header commitments and proofs
+use the existing formats.
+
+The earlier fixed-size churn study recorded 39,607 median node requests
+per edit, with every resident request resolving from memory. The new
+path removes repeated cryptographic work from those resident hits.
+It also adds content authentication to publishing new rows, currently
+under each shard's write lock. Measure the read savings alongside
+publication time, write-lock contention and fallback rate. Proof
+generation re-encodes the decoded rows, so compare it separately.
+
+Use a same-source Release build with this feature off and on. Use the
+same signed corpus, `--cell-node-index-mib`, RocksDB cache, worker count
+and Live Cell settings. Include payments and mixed Type Groups, and
+collect matched fixed-block traversal timings before comparing the
+network runs. Vary `jolteon-resident-node-publication` separately to
+measure which side of the durable acknowledgement absorbs the extra
+publish work. Compare exact encoded Header, receipts, proof paths,
+charged cycles and node journals with the byte-reader control.
+
+The compiled regressions cover mismatched node IDs and domains,
+malformed nodes, mixed resident and raw reads, ordered reclamation,
+exact proof bytes and fallback to an older pinned snapshot. This
+candidate has build evidence. Runtime correctness and the net change
+in traversal, publication and proof costs remain to be measured.
+
+## Demand-filled fallback after a residency limit
+
+With `native-hot-cell-node-cache`, a Store configured with
+`--cell-node-index-mib` starts a bounded read-through cache if the
+complete Cell node index cannot be retained. Recovery stops counting
+once the number of records alone exceeds the budget, before any full
+table is allocated. The fallback starts cold. Each RocksDB node
+admitted to the cache is verified against its content ID and tree
+domain, and reads still honor the candidate branch before consulting
+the cache. The System tree uses its existing reader.
+
+Each cache shard is allocated on demand and has a fixed number of
+slots, limited by its share of the configured budget and by 2,048
+slots. An allocation failure leaves that shard on disk reads. A
+collision replaces the old slot. There is no second resident index.
+After a durable commit, the cache removes node deletions and carries
+other rows into the new Header view. The Header match is checked
+under the shard lock on lookup and fill. A lagging worker uses its
+own RocksDB snapshot and cannot publish rows into the new view.
+Snapshot restoration retires the old cache.
+
+Compare builds with `native-verified-cell-nodes` in both arms and
+the fallback feature in one arm. Keep the RocksDB block cache and the
+Cell node budget fixed. Use a tree that exceeds the full index budget,
+repeated proofs or overlapping candidate blocks, and sustained churn
+that displaces entries. Record preparation and proof time, CPU,
+hot-cache hits and misses, node counts and accounted bytes, precise
+batch equality and reopened proofs. `cell_node_index.hot_cache`
+reports the fallback separately from full residency. A direct-mapped
+cache trades predictable memory for collisions, and invalidation adds
+work to durable-tip installation. An earlier recovery cutoff shows
+that full caching is infeasible. It provides no full-database recovery
+audit. Runtime, replay and performance evidence are pending.
+
+## Generated Cell node journals
+
+The `native-verified-cell-journal` candidate carries immutable Cell nodes
+from the Patricia updater into speculative descendants and the certified
+writer. The updater hashes each new node in canonical form and retains
+the decoded value and its content ID. Only the updater can create a
+generated journal. Each journal is scoped to the exact network and
+namespace. Its original content IDs and tombstones remain sorted in the
+same order as the byte journal.
+
+A descendant checks its ancestors newest first, including deletion
+entries. Generated nodes carry their ID and domain into the tree reader.
+The committed resident index publishes the same decoded nodes after
+WAL acknowledgement. Publication compares the ID and domain for each
+entry and skips byte decoding and cryptographic rehashing of generated
+nodes. Disk and recovery reads still authenticate canonical bytes.
+Old branches keep their pinned snapshots and state-proof output remains
+canonical.
+
+At the original position in the atomic WriteBatch, the writer encodes
+Cell nodes into one reusable stack buffer and writes the same compact
+RocksDB keys and values. The original write order and synchronous WAL
+call apply to both layouts. The prepared block retains a single typed
+Cell node journal in this mode. The normal byte journal remains the
+control, with the earlier verified resident lookup enabled in both builds.
+
+Use identical resource envelopes, worker counts, index budgets and
+signed corpora to compare `native-verified-cell-nodes` and
+`native-verified-cell-journal`. Collect the block's traversal and batch
+timings alongside certified write time, publication time, serialized
+WAL bytes and RSS at multiple in-flight depths. Account for encoding
+moving into durable write preparation. Measure memory under churn since
+the decoded journal stores fixed-width node values alongside tombstones.
+Compare a disk-only arm and both choices for certified writer
+publication separately.
+
+The compile-checked regressions compare the generated journal against
+the byte journal for mixed updates, exact Cell roots and proof paths.
+They also compare the durable compact bytes and reclaimed keys, and
+read the prior state from its pinned snapshot during certified write.
+Performance, memory impact and runtime parity remain to be measured.
+
+### Compact generated node journal
+
+The generated-journal control stores a decoded node slot alongside every
+content ID, including deletions. It builds a sorted BTreeMap after
+collecting the per-subtree edits. The `native-compact-patricia-journal`
+candidate builds the content IDs and tombstones in a separate vector
+from the generated nodes. A put stores an index into the node vector.
+A deletion stores only its content ID and empty slot. Subtree joins
+adjust the right-hand indexes and concatenate the vectors. One stable
+sort orders the lightweight entries and retains the last edit per ID.
+Ancestor reads use binary search on that index, and the writer and
+resident publication iterate the same sorted edits.
+
+The option changes the in-memory representation of the verified
+journal, including intermediate subtree output. The Patricia updater
+still hashes every generated node in canonical form. The domain and
+content ID checks, compact RocksDB encoding, durable write order and
+the synchronous WAL boundary follow the existing generated-journal
+path. The same layout backs serial and parallel updates. The
+compile-checked regressions cover subtree joins, absent IDs,
+tombstone precedence, exact previous-value callbacks, proof paths
+and byte-level durable parity.
+
+Compare `native-verified-cell-journal` against the same build with
+`native-compact-patricia-journal` added. Keep the worker, resident index,
+RocksDB cache, writer publication options and signed workloads fixed.
+Record allocations and peak RSS during subtree joins and at different
+in-flight branch depths. Measure Patricia edit and ordering time,
+speculative lookup, certified write time, and committed node
+publication. Compare the full node delta, proofs and durable bytes
+against the control and run the existing recovery and replay checks.
+Sorting can allocate temporary index storage, and binary search may
+change the cost of sparse reads. Compare peak memory as well as the
+retained journal footprint. Runtime validation and performance
+measurements remain pending.
+
+### Streaming verified edits into the resident shards
+
+The normal publisher groups every edit into shard vectors. When the
+certified writer publication option is enabled, it also counts the
+edits first to preallocate those vectors. With
+`native-stream-node-publication`, the resident index uses the high bits
+of the content ID for shard assignment. The verified journal already
+uses ascending content IDs, so each shard receives one contiguous run.
+The publisher consumes that run directly under one shard lock and
+continues with the next run. Stored byte edits still use the grouping
+path. The streaming path accepts both verified journal layouts.
+
+The shard operation still applies ordered deletions and insertions,
+validates generated IDs and domains, checks the existing allocation
+limit and retires the index on failure. Publication runs after the
+synchronous WAL succeeds, either on the certified writer or during
+installation on the Replica. An older pinned view can read reclaimed
+IDs from its RocksDB snapshot. The new shard mapping also applies to
+startup and point lookup.
+
+Toggle `native-stream-node-publication` while holding
+`native-verified-cell-journal`, the journal layout, writer publication
+setting and all memory budgets fixed. Compare allocation counts,
+`commit_jobs.cell_node_publication` for the certified writer arm,
+publish and pinned lookup latency, RSS and common finality. Repeat with
+the normal and compact generated journals. Different high and low
+hash bits can change per-shard capacity rounding, so record accounted
+bytes and residency for both controls. The change removes grouping
+work from publication. Hash-table updates and shard lock holds still
+need measurement under concurrent proof and execution reads.
+
+The compile-checked regression compares streamed edits with grouped
+byte edits on the same shard layout. It covers resident inserts and
+tombstones, exact membership and absence proofs, an older snapshot
+across the write, and both publication locations. Runtime checks and
+performance measurements remain pending.
+
+### Segmented generated node journals
+
+`native-segmented-patricia-journal` builds on the compact generated
+journal. A parallel subtree join transfers ownership of the populated
+child node buffers. Only the compact lookup entries are appended and
+their segment positions adjusted. New parent nodes use a separate
+buffer. The stable content-ID sort keeps the same last edit, including
+tombstones. Reads and publication locate the same authenticated node
+through its segment and row position.
+
+The layout changes how locally generated node bodies are retained and
+merged. Every content ID still comes from canonical node encoding. The
+journal presents the same sorted bytes and tombstones to the existing
+read, compact RocksDB writer and resident publication paths. The WAL
+synchronization point follows the existing certified write.
+
+Compare `native-compact-patricia-journal` with
+`native-segmented-patricia-journal` on the same funded parent, signed
+workload, pinned state and cache allowances. Use one worker as the serial
+control and 2, 4 and 8 for the parallel comparison. Measure subtree join
+and edit CPU, allocation traffic, peak RSS, speculative read time and
+certified batch construction. Hold stream publication and write-buffer
+reuse fixed. Check exact root, previous-value callbacks, journal bytes,
+proof paths and recovered state before comparing latency and finality.
+A segmented location stores one extra machine word per entry. Multiple
+buffers can retain spare capacity, and indirect lookups can cost more in
+read-heavy or single-worker cases.
+
+The compile-checked merge regression checks nested joins, retained
+allocation identity, duplicate IDs and deletions. The existing Patricia
+mutation differential covers serial and parallel roots, ordered
+callbacks, exact node writes and proofs. Runtime and performance results
+remain pending.

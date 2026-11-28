@@ -227,12 +227,18 @@ impl Store {
                 .map(|m| (m, super::Purpose::Restore)),
         )?;
         self.tip = image.header;
+        #[cfg(feature = "native-header-dep-memo")]
+        self.header_dep_memo.take();
+        #[cfg(feature = "native-hot-cell-node-cache")]
+        {
+            self.cell_node_header = self.tip.id(&self.network).unpack();
+        }
         self.stake_inputs = Arc::default();
-        self.live_cache.lock().expect("Live Cell cache").clear();
+        self.live_cache.clear();
         self.history = frontier;
         if let Some(index) = self.live_index.take() {
-            let limit = index.retire();
-            self.live_index = Some(super::IndexView::recover(self, limit)?);
+            let (limit, layout, workers) = index.retire();
+            self.live_index = Some(super::IndexView::recover(self, limit, layout, workers)?);
         }
         if let Some(index) = self.cell_nodes.take() {
             let limit = index.retire();

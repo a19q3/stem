@@ -122,3 +122,254 @@ Work Stealing reduced cold process CPU from 451.83–452.10 ms to 433.67 ms. Col
 All 320 preparations in this comparison matched the independent serial oracle on the Header, receipts and cycles. The alternate reader patches were experimental and the report records their results.
 
 The final release workspace run with all Cargo features passed 543 tests across 26 suites. Thirty explicitly ignored fixtures were outside that run. The network and offline experiments above were run separately.
+
+## Shared dependency reads
+
+The `native-shared-cell-deps` candidate gives the dependency-scheduled
+Leader and Follower a read-only cache of frequently reused Cell Deps.
+Each proposal build or candidate preparation creates one cache lazily
+when its first ordinary parallel window or run begins. Later windows
+reuse that cache against the same underlying parent view. Legacy paths
+and protocol transactions continue to use their normal lookup path.
+
+The plan samples up to 64 eligible transactions and 1,024 declarations.
+It selects repeated Code and Dep Group OutPoints by frequency and uses
+any remaining slots to prefetch members of shared groups. It attempts
+at most 32 distinct OutPoints at 128 KiB per retained record. Read or
+decode errors and oversized records take the canonical lookup path.
+Committed disk reads use pinned point reads so oversized values can be
+skipped before materialization. The cache never inserts speculative
+values into the global Live Cell cache.
+
+Resolution still checks ordered writes and tombstones ahead of the
+cached parent values. It expands the actual Dep Group for the current
+transaction, checks every member and charges the original logical reads,
+bytes and cycles. Group contents used in planning are lookup hints.
+The Leader and Follower still verify the transaction and apply its
+effects in canonical order. Candidate and proposal counters report
+planned and cached points, retained record bytes, served lookups and
+build time. Cached absence counts as a retained lookup result.
+A served lookup can replace a resident or branch read, so the counter
+does not directly measure RocksDB reads avoided.
+
+Use the same source and signed workload with and without
+`native-shared-cell-deps`. Enable `native-dependency-execution` and
+`native-leader-dependency-execution` in both arms. Hold
+`native-rolling-cell-execution` and all resident index settings fixed.
+Compare independent payments, shared Dep Groups and mixed Type Groups
+with distinct dependencies. Report exact Headers, receipts, charged
+resources and old-branch rejection alongside matched phase time, CPU,
+RocksDB activity and peak RSS. The first sample may miss later contracts,
+and the extra table and sampling can cost more than they save on runs
+with little dependency reuse. Measure disk and resident-index runs
+separately.
+
+The compile-checked regressions compare the parallel and serial paths
+for shared direct and group dependencies. They also cover a group
+consumed earlier in the same block or on the speculative parent,
+including Leader selection under a dependency conflict. Runtime
+regressions and performance measurements remain pending.
+
+### Refreshing dependency hints during rolling preparation
+
+The optional `native-rolling-dependency-hints` feature refreshes the
+candidate lookup plan as rolling workers reach a new band of up to 64
+ordinary transactions. It also resamples the start of a later rolling
+run. Matching plans keep the same immutable table. A changed plan
+carries over matching cached parent results and reads the additional
+points from the same pinned view. Workers already queued keep their
+original table, so a refresh needs no completion barrier. Both
+versions use the same ordered writes and speculative tombstones
+ahead of any parent hint. Ordered fallbacks retain the run's starting
+table and use the normal resolver for other lookups.
+
+The transaction band is wider than the maximum reorder window of 32.
+At most two rolling band tables can be referenced by the current
+workers. The ordered fallback may also hold the run's initial table.
+Each table retains up to 32 result records with the original per-record
+size bound. A resident read error now leaves no hint, allowing the
+canonical lookup to report it.
+
+Toggle this feature over the existing shared-dependency configuration
+with the same rolling Leader and Follower. `rolling_samples` counts
+plans checked after initialization, `rolling_rebuilds` counts changed
+tables, and `rolling_carried` counts reused results. In this arm the
+original planned, cached and byte counters sum across successfully
+built tables. They measure lookup preparation, while `hits` counts
+served lookups. Compare workloads with the same dependency set across
+the block and workloads that switch groups after the first band.
+Sampling on the coordinator and retaining two tables during a boundary
+can offset the benefits. The compile-checked fixture switches from
+direct Code deps to a repeated Dep Group and compares both rolling
+paths against serial execution. Runtime, replay and performance
+evidence are pending.
+
+## Reusing the owned RocksDB Live Cell buffer
+
+The optional `native-owned-live-cell-reads` feature targets committed
+Cell lookups that fall through the candidate, resident and decoded
+caches. The ordinary RocksDB point-read API returns a C-allocated copy
+of the whole record. The decoder keeps that allocation and gives the
+canonical Cell body a shared slice. The fixed OutPoint and Origin
+fields are decoded as before. It validates the same Cell bytes and
+checks that the stored OutPoint matches the requested key before the
+record can enter the decoded cache.
+
+The adapter consumes only the owned point-read value from the locked
+`ckb-rocksdb` binding. RocksDB returns a malloc allocation independent
+of the database, snapshot or thread. Its destructor calls
+`rocksdb_free` on the original allocation. Candidate prefetch
+continues to copy from its short-lived pinned lookup. The compiled
+fixture checks physical Cell byte ownership and exact encoding after
+closing the database and moving the record to another thread.
+
+Compare the feature against the same binary configuration and input
+order, using ordinary payments and contract inputs with larger Data.
+Include decoded-cache misses, pinned candidate prefetch hits and
+resident-index hits to distinguish coverage. Record lookup CPU,
+allocations, RSS and phase time alongside exact Headers, receipts,
+proofs and replay. The point read still makes RocksDB's original copy,
+and the shared slice retains the fixed record prefix. For very small
+Cells the extra ownership wrapper may offset the saved byte copy.
+Runtime, replay and performance evidence are pending.
+
+## Computing Cell digests independently
+
+The optional `native-lazy-cell-digests` feature stores separate lazy
+slots for the digest of the canonical Cell encoding and the digest of
+its raw Data. Transaction authorization and VM verification-cache keys
+request the complete Cell digest. Program addressing and the VM Data
+hash syscall can request the Data digest. Both use the existing
+CKB-personalized BLAKE2b and hash their original bytes. The scheduler
+and VM still charge the same logical resource costs.
+
+An inline resident Live Cell copied out of a candidate buffer keeps
+the two digest slots. Those slots contain only the digests. The copy
+owns its Cell bytes, so the memo does not retain a transaction buffer.
+The interned-script layout still reconstructs each queried Cell from
+its preserved byte fragments.
+
+Compare the two builds at identical fixed-block and sustained settings.
+Include payments, Data-bearing contract inputs and repeated Code deps.
+Report CPU and wall time in resolution and VM, exact Headers, receipt
+and proof equality, and memory for warm and cold resident indexes.
+The separate slots use more metadata per Cell. A workload that requests
+both digests can see additional memo lookups, so the saved computation
+depends on which digests actual scripts request. The compile-checked
+fixture covers empty and nonempty Data, both first-use orders and
+detached byte ownership. Runtime, replay and performance are pending.
+
+## Inline Cell resolution bookkeeping
+
+The ordinary resolver inserts consumed inputs and resolved Code OutPoints
+into two hash sets. It also indexes every Script Group in a sorted map.
+`native-inline-cell-resolution` keeps up to four keys in each set without
+allocating a table. It promotes to the same hash-set representation for
+larger sets, including expanded Dep Groups. A sole Script Group is built
+directly. On a second distinct group, the builder moves to the original
+map, keyed by kind and exact packed Script bytes. The resolver still
+distinguishes Lock and Type groups with the same Script.
+
+For a one-input, one-Code, one-Lock payment these changes remove two
+transient hash tables and the grouping tree. The final inputs, code and
+groups still use the existing resolved representation. Exact dependency
+lookup and commitment order, duplicate and consumed-OutPoint checks,
+logical reads, Cell byte charges and Script Group ordering continue
+through the same paths. Ledger fixtures exercise a Dep Group that
+exceeds the inline limit, duplicate and consumed checks after promotion,
+and canonical group indices after the sole group moves to the map.
+
+Build `cell-execution` and `inline-resolution` at the same revision.
+Compare resolved payment and heterogeneous Type Group blocks on pinned
+parents with the same Cell and VM cache budgets. Include large Dep Groups
+and transactions with many distinct scripts. Report allocation counts,
+resolver and Script Group CPU and wall times, exact receipts and
+independent replay. The linear scan and promotion add work on larger
+sets. The static allocation difference in the ordinary case does not
+measure block or network performance. Regression targets were compiled.
+Runtime checks, replay and performance measurements remain pending.
+
+## Retired pinned MultiGet Cell prefetch
+
+The pinned MultiGet trial used four to sixteen RocksDB misses per call
+and the same existing branch and resident cache precedence. The older
+one-call `multi_get_opt` trial had already regressed cold and partially
+cached preparation. The pinned variant was tested separately on a
+warmed, disk-backed 65,536-Cell image with two workers and a 256 MiB
+RocksDB cache. Each timed round ran 2,048 windows with deterministic
+present and absent keys. The two readers returned the same sampled
+canonical records. In two A/B/B/A pairs, median batched wall time
+increased by 6.2%, 30.5% and 65.7% at widths 4, 16 and 64 respectively.
+
+The production path continues to use parallel pinned point reads.
+With a resident index, the normal Follower input prefetch is bypassed
+and the batch path has little opportunity to reduce database reads.
+The candidate and its separate column-family opening path were removed.
+The full timings are preserved in the
+[frozen comparison](../storage/frozen-native-jmt/README.md#retired-prefetch-candidate).
+
+## Slicing verified Dep Group members
+
+With `native-shared-dep-group-members`, the ledger validates the full
+CKB OutPointVec in the resolved Cell's Data, then slices the retained
+bytes for each 36-byte OutPoint. Both canonical authorization and the
+Leader and Follower prefetch planner use this parser. Each transaction
+still loads its dependency at the actual position, resolves members in
+encoded order, rejects duplicates and consumed members, and charges
+the same logical reads and bytes. Authorization commits the same field
+bytes in the same order.
+
+`native-inline-live-cache-keys` stores the full OutPoint directly in
+decoded Live Cell cache buckets. This independently selectable layout
+is required by the slicing arm so a cached member key cannot retain
+its source Cell or transaction buffer past preparation. Snapshots,
+sharding, invalidation and entry and byte caps continue through their
+existing paths.
+
+Compare the `dep-members-control` and `dep-members-sliced` builds, with
+the inline decoded cache keys enabled in both. Use shared groups with
+several members, groups consumed or introduced by an earlier
+transaction, mixed direct dependencies and ordinary payment controls.
+Check exact Header, receipts, logical charges and authorization replay.
+Measure resolver CPU and wall time, allocation counts and peak RSS.
+Slices replace copies for each visited member, and the shared Bytes
+buffer still has reference-count traffic. Single-member groups and
+Code-only workloads may see little benefit. Compare the inline cache
+keys independently with and without `native-inline-live-cache-keys`
+to separate any bucket-layout effects. Compilation covers matching
+member byte pointers and malformed data as well as the existing
+canonical read-order and conflict fixture. Runtime, replay and
+performance qualification are pending.
+
+## Reusing decoded Header dependencies within a state view
+
+`native-header-dep-memo` retains up to 64 decoded Header lookups by full
+Header ID in the current Store view. The first successful resolution
+uses the existing ID-to-height index and Header read. Later resolutions
+against the same view bypass both reads and decoding. A Leader that
+replays its selection during final preparation can reuse the same
+memo. Follower workers on the same view share it. Cold workers can
+read the same Header concurrently because the memo lock does not
+cover storage reads.
+
+Each branch or pinned state view starts with an empty memo. Durable
+tip installation and state restore discard old entries. Every use,
+including a hit, checks the original indexed height against the
+candidate's age limit. The ledger still verifies the full Header ID
+and ancestor height and hashes canonical Header bytes for transaction
+authorization. Unknown IDs and read or decode failures are retried
+through ordinary resolution.
+
+Compare `header-dep-control` and `header-dep-memo` at the same commit,
+using identical parent snapshots, proposal settings and worker counts.
+Include mixed-contract candidates sharing Header Deps, candidates with
+distinct recent Headers and payments without Header Deps. Compare exact
+selected transaction bytes, Headers, receipts and independent replay.
+Measure the Header index and Header read phases, CPU, preparation and
+peak memory. Concurrent misses can duplicate work. Warm hits still
+clone the decoded Header and use the shared read lock. Gains depend on
+reuse and on the cost of I/O and decoding relative to hashing and VM
+work. The compile-checked fixture covers repeated lookup, stale and
+future rejection, sibling branches, retention pruning, an older pinned
+view and authenticated state restore. Runtime, replay and performance
+measurements are pending.

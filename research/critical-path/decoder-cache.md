@@ -263,3 +263,39 @@ The sustained comparison ran the final-source build first and the uninstrumented
 | Baseline | 2,991.93 | 4.687 s | 849.78 s | 137.81 ms | 263.74 ms | 44.66 ms |
 
 Trace reuse cut validator CPU by 4.0%, mean Follower preparation by 8.1% and mean control queue wait by 11.4% in this sustained pair. p99 improved 7.6%. Mean admission check fell from 166.19 to 161.93 μs. Both runs acknowledged and finalized all 720,000 payments, with no local view timeouts. The common TPS difference was 0.14%. The near-fixed arrival rate constrains what this pair can say about capacity. The p99 direction is a result of one sustained pair, and mixed p99 varied. Keep the implementation on the optimisation branch for its repeated CPU savings and sustained preparation improvement. The cache uses about 0.45 MiB per participating thread on x86-64. Extra memory and CKB portability remain part of evaluating other deployments.
+
+## Reuse the built-in cycle total
+
+The shipped byte-verified trace path retains a decoded template but
+recomputes every instruction's cost when it installs a shared hit.
+The branch's optional `native-trace-cycle-reuse` build lets the native
+scheduler keep the cached instruction-cycle total when it uses the
+same built-in estimate function as the machine that produced the
+template.
+
+The builder selects that function directly and records its
+provenance. Installing any custom callback clears the marker.
+Templates warmed by a custom callback are repriced, even for a
+machine now using the built-in model. A custom callback also
+reprices a template warmed by the built-in model. The existing
+lookup still checks PC, ISA, VM version, executable permissions and
+all remembered code bytes including decoder lookahead. The trace
+runner continues guest execution and handles cycle limits, syscalls,
+VM reset and installed trace invalidation in the usual paths.
+
+Build the same source and workload with and without
+`native-trace-cycle-reuse`. Keep traced core reuse, worker placement,
+transaction caches, group scheduling and storage settings fixed.
+Compare warm repeated Locks and heterogeneous Type Groups, with a
+cold-code control. Compare execution status, exact charged cycles,
+receipts and independent finality. Profile the trace-hit path and
+`estimate_cycles` separately from total candidate and admission CPU.
+This candidate only saves work on a matching template with the
+built-in cost provenance. It may have little effect on overall
+validation when trace misses or cryptographic work dominate.
+
+Compile-checked reusable VM regressions exercise built-in-to-custom
+and custom-to-built-in transitions on identical executable bytes,
+explicit callback override, fresh-machine cycle comparison and
+existing core reset tests. Runtime regression, independent replay
+and timing comparisons for this flag are pending.

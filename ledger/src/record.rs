@@ -1,19 +1,21 @@
 //! Canonical Live Cell records and their Patricia proof binding.
 
 use anyhow::{Context, Result};
-use ckb_types::{packed::OutPoint, prelude::Entity};
+use ckb_types::{bytes::Bytes, packed::OutPoint, prelude::Entity};
 
 use crate::{
     Cell, LiveCell, Origin,
     patricia::{Key, Patricia, Proof},
 };
 
-fn cell_parts<'a>(
-    point: &'a OutPoint,
-    origin: &'a [u8; Origin::LEN],
-    cell: &'a Cell,
-) -> [&'a [u8]; 3] {
-    [point.as_slice(), origin, cell.as_slice()]
+/// Borrow the three consecutive parts of the canonical Live Cell record.
+pub fn with_cell_parts<T>(
+    point: &OutPoint,
+    record: &LiveCell,
+    use_parts: impl FnOnce([&[u8]; 3]) -> T,
+) -> T {
+    let origin = record.origin.encode();
+    use_parts([point.as_slice(), &origin, record.cell.as_slice()])
 }
 
 pub fn encode_cell(point: &OutPoint, record: &LiveCell) -> Vec<u8> {
@@ -24,29 +26,43 @@ pub fn encode_cell(point: &OutPoint, record: &LiveCell) -> Vec<u8> {
 
 /// Replace a scratch buffer with the canonical Live Cell record.
 pub fn encode_cell_into(point: &OutPoint, record: &LiveCell, bytes: &mut Vec<u8>) {
-    let origin = record.origin.encode();
-    let parts = cell_parts(point, &origin, &record.cell);
-    bytes.clear();
-    bytes.reserve(parts.iter().map(|part| part.len()).sum());
-    for part in parts {
-        bytes.extend_from_slice(part);
-    }
+    with_cell_parts(point, record, |parts| {
+        bytes.clear();
+        bytes.reserve(parts.iter().map(|part| part.len()).sum());
+        for part in parts {
+            bytes.extend_from_slice(part);
+        }
+    });
 }
 
 pub fn decode_cell(bytes: &[u8]) -> Result<(OutPoint, LiveCell)> {
+    let (point, origin, cell) = decode_cell_prefix(bytes)?;
+    Ok((
+        point,
+        LiveCell {
+            cell: Cell::from_slice(cell)?,
+            origin,
+        },
+    ))
+}
+
+/// Validate an owned canonical record, retaining the existing Cell body buffer.
+pub fn decode_cell_bytes(bytes: Bytes) -> Result<(OutPoint, LiveCell)> {
+    let (point, origin, cell) = decode_cell_prefix(&bytes)?;
+    let cell = Cell::from_bytes(bytes.slice_ref(cell))?;
+    Ok((point, LiveCell { cell, origin }))
+}
+
+/// Decode the fixed record fields and borrow the Cell body for validation by
+/// the caller. This keeps the Cell payload independent of the key and origin.
+pub fn decode_cell_prefix(bytes: &[u8]) -> Result<(OutPoint, Origin, &[u8])> {
     let (point, rest) = bytes
         .split_at_checked(OutPoint::TOTAL_SIZE)
         .context("truncated Cell OutPoint")?;
     let (origin, cell) = rest
         .split_at_checked(Origin::LEN)
         .context("truncated Cell origin")?;
-    Ok((
-        OutPoint::from_slice(point)?,
-        LiveCell {
-            cell: Cell::from_slice(cell)?,
-            origin: Origin::decode(origin)?,
-        },
-    ))
+    Ok((OutPoint::from_slice(point)?, Origin::decode(origin)?, cell))
 }
 
 pub fn cell_key(tree: &Patricia, point: &OutPoint) -> Key {
@@ -54,7 +70,7 @@ pub fn cell_key(tree: &Patricia, point: &OutPoint) -> Key {
 }
 
 pub fn cell_value(tree: &Patricia, point: &OutPoint, record: &LiveCell) -> Key {
-    tree.value_hash_parts(&cell_parts(point, &record.origin.encode(), &record.cell))
+    with_cell_parts(point, record, |parts| tree.value_hash_parts(&parts))
 }
 
 pub fn verify_cell(

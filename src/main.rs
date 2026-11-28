@@ -112,6 +112,12 @@ enum Command {
         /// Memory budget for the verified Live Cell index, in MiB.
         #[arg(long, value_name = "MIB")]
         live_cell_index_mib: Option<NonZeroUsize>,
+        /// Share exact Lock and TypeSet bytes within the resident index.
+        #[arg(long, requires = "live_cell_index_mib")]
+        live_cell_index_intern_scripts: bool,
+        /// Local workers for decoding and verifying Live Cell index recovery.
+        #[arg(long, requires = "live_cell_index_mib")]
+        live_cell_recovery_workers: Option<NonZeroUsize>,
         /// Memory budget for the verified Cell Patricia node index, in MiB.
         #[arg(long, value_name = "MIB")]
         cell_node_index_mib: Option<NonZeroUsize>,
@@ -326,6 +332,8 @@ fn main() -> Result<()> {
             storage_metrics,
             rocksdb_block_cache_mib,
             live_cell_index_mib,
+            live_cell_index_intern_scripts,
+            live_cell_recovery_workers,
             cell_node_index_mib,
         } => {
             let spec = native_spec::load(&genesis)?;
@@ -347,7 +355,14 @@ fn main() -> Result<()> {
                 rocksdb_block_cache_mib,
             )?;
             if let Some(limit) = live_cell_index_mib {
-                store.enable_live_cell_index(limit)?;
+                use stem::native_store::LiveCellIndexLayout;
+                let layout = if live_cell_index_intern_scripts {
+                    LiveCellIndexLayout::InternedScripts
+                } else {
+                    LiveCellIndexLayout::Inline
+                };
+                let workers = live_cell_recovery_workers.map_or(1, NonZeroUsize::get);
+                store.configure_live_cell_index(limit, layout, workers)?;
             }
             if let Some(limit) = cell_node_index_mib {
                 store.enable_cell_node_index(limit)?;

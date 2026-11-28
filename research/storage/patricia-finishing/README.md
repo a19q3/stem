@@ -81,3 +81,145 @@ python3 tools/jolteon_localnet.py --binary "$buffered_node" --alternate-binary "
 python3 "$study/reopen.py" --output "$run" --candidate "$buffered_node" --reference "$indexed_node" --archive reopen-repeat.json.xz
 node "$study/reopen.mjs" /path/to/built/wasm reopen-repeat.json.xz
 ```
+
+## Compact prepared write journal
+
+The default write journal allocates one key buffer per row. The first
+speculative lookup also builds a hash index with a copy of every key.
+The earlier 2,048-payment child recorded 11,700 node writes. This is
+a count for that fixture and does not establish how much allocation
+accounts for in the current critical path.
+
+Build with `native-compact-write-journal` to store keys up to 34 bytes in
+the journal row. This covers the namespace and content ID of all
+canonical Patricia nodes and state records. Longer keys use a heap
+buffer. The lookup table retains the position of the newest write and
+compares the full key in the immutable journal, including for
+tombstones. The certified writer consumes the same key bytes and the
+same ordered puts and deletes. This comparison also covers versioned
+JMT keys and the System journal. Generated Patricia journals still use
+their dedicated typed path when enabled.
+
+Use the [fixed parent and child fixture](#reproduction) with the same
+source, signed corpus, resident index settings and worker budget. Toggle
+only the new flag. Compare a committed parent, a speculative parent
+with its first lookup and repeated reads of the same prepared parent.
+Take per-thread CPU and wall measurements for preparation, write-batch
+construction and WAL sync. Record allocations and peak RSS across
+multiple pending candidates. Also compare the generated Cell node
+journal separately, since it already bypasses the general Cell node
+lookup. Repeat for the JMT experiment with the same corpus and budget.
+
+Compare the parent and child Headers, receipts, charged resources,
+durable keys and values, and proof bytes between same-engine arms.
+Include certified durability and reopen controls. The targeted
+regression checks inline and out-of-line keys, ordered writes, repeated
+keys, deletes and absent lookup. It has been compiled alongside the
+existing write and proof regression targets. Runtime tests and replay
+were deferred for this iteration. Inline entries are wider than a
+vector handle, so resident journal size and locality must be measured
+for the actual mix of key lengths before changing the default.
+
+## Reducing certified batch construction work
+
+`native-prepared-cell-record-keys` retains the already-derived keys of
+created records in OutPoint order. The tree still sorts its own edits
+by key. On finality the writer pairs the retained keys with that same
+ordered immutable Cell delta. This saves one key hash per put and costs
+32 bytes of key payload per retained output, plus vector capacity.
+Tombstones, record bytes and ordered write operations use the existing
+paths. Patricia and the experimental JMT arm use the same Cell record
+keys and the same finality path.
+
+`jolteon-reuse-write-buffer` keeps one cleared RocksDB WriteBatch on
+the certified writer. A successful synchronous write or an abandoned
+state prebuild can provide the allocation for the next batch. The next
+batch rebuilds its contents and metrics from an empty WriteBatch. A
+failed write drops its buffer. Only batches with at most 8 MiB of
+serialized data are eligible for retention. The RocksDB backing capacity
+can be larger than the serialized size. The synchronous fallback,
+genesis and restore still assemble a fresh batch.
+
+Use the `baseline`, `prepared-cell-keys` and `reuse-write-buffer`
+matched builds. Repeat the writer comparison with prebuilding enabled
+in both arms. Measure state preparation, batch-construction CPU,
+`commit_jobs.reused_write_buffers` and peak RSS on full payments and
+larger Cell payloads. Compare the exact stored records, independently
+replayed Headers and receipts, logical batch bytes and WAL syncs.
+Recycling can increase idle memory or bring little gain when commit time
+is dominated by WAL synchronization. Keeping derived keys moves a small
+memory cost to every prepared branch, including one that is abandoned.
+
+The compile-checked regressions cover ordered Live Cell puts and deletes,
+recycling between commits, discarding an unselected prebuild and clean
+reopen after consecutive writes. Runtime regressions, interruption,
+independent replay and performance measurements remain pending.
+
+## Vectored writes for large Cell records
+
+`native-vectored-cell-writes` writes a new Live Cell whose canonical Cell
+body is at least 4 KiB by supplying the packed OutPoint, encoded Origin
+and Cell body to RocksDB as three slices. The RocksDB write batch appends
+the parts as a single default-column-family put. The existing state key,
+value format, put order, metrics and synchronous WAL boundary apply.
+Smaller Cell bodies continue through the reused contiguous scratch buffer.
+Both authenticated-state engines share this write-batch assembly.
+
+The candidate removes one intermediate copy of each eligible value and
+avoids growing the contiguous scratch buffer for those values. RocksDB's
+vectored C wrapper allocates small arrays of slice descriptors, and the
+write batch still holds the complete records. The 4 KiB cutoff is a
+candidate setting, and its crossover in a mixed block is unmeasured.
+
+Build both arms from the same source and toggle only
+`native-vectored-cell-writes`. Use identical signed contracts, memory
+allowances, worker settings and certified writer options. Compare small
+payments, larger typed Cells and mixed block sizes around the cutoff.
+Record batch assembly time and CPU, allocations, peak RSS, WAL sync and
+bytes and common finality. Compare exact Headers, ordered receipts, batch
+bytes and proofs through independently verified reopen. Repeat this
+ablation for each authenticated-state engine before ranking them.
+
+The regression
+`vectored_cell_records_match_contiguous_batches_and_durable_rows`
+covers the exact serialized batch, synchronous database writes and reopen,
+including Cell sizes immediately around the cutoff and the protocol
+maximum. The regression target and native and JMT builds passed compile
+checks. The RocksDB static archives export the exact C entry point.
+Runtime and performance results remain pending.
+
+## Parallel Cell record hashing
+
+`native-parallel-cell-record-hashes` computes canonical OutPoint keys
+and new Live Cell value hashes on the existing execution worker pool.
+It activates during parallel preparation with at least two workers and
+256 changed entries. The indexed collection uses a minimum split grain
+of 128 entries and retains LiveChanges map order so the write batch can
+pair each creation with its prepared key. The existing sort then hands
+the same changes to the selected authenticated-state backend. Explicit
+serial preparation keeps the serial hash path. Both native Patricia
+and experimental JMT use the same prehash stage.
+
+With `native-compact-prepared-cell-delta`, the worker pool traverses
+contiguous slices of the same OutPoint-ordered array used by the durable
+writer. The Cell commitment can build that array alongside the System
+commitment and receipt encoding when the commitment pipeline is enabled.
+The position table for branch lookups is built after the commitment
+succeeds. `cell_keys` includes building the array, hashing and sorting.
+
+Compare `prepared-cell-keys` and `parallel-cell-hashes` at identical
+worker, state, block and network budgets. Record `cell_keys`,
+`cell_tree`, `cell_batch`, candidate preparation, total validator CPU,
+peak RSS, and finality across sustained payments and mixed contracts.
+Include one worker and blocks below the threshold, plus churn consisting
+mostly of deletions. Compare the combined `compact-parallel-cell-hashes`
+arm against both individual arms. The map-only path allocates a temporary
+reference array. Parallel scheduling and collecting references can cost
+more than they save for small records, skewed payloads or contention
+with VM and state work. The cutoff and grain are experimental.
+
+The existing serial versus parallel commitment fixture now includes
+large Cell bodies alongside ordinary records and checks exact Header
+and batch equality, including precomputed writer-key order when enabled.
+The authenticated root calculation and durable write path keep their
+existing encodings. Runtime, replay and performance results are pending.

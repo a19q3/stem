@@ -7,10 +7,12 @@ use anyhow::{Context, Result, bail, ensure};
 
 use crate::protocol::{Certificate, Operation};
 use ckb_hash::{blake2b_256, new_blake2b};
+#[cfg(feature = "shared-dep-group-members")]
+use ckb_types::packed::OutPointVec;
 use ckb_types::{
     bytes::Bytes,
     core::{DepType, ScriptHashType},
-    packed::{Byte32, CellDep, OutPoint, Script},
+    packed::{Byte32, CellDep, OutPoint, OutPointVecReader, Script},
     prelude::*,
 };
 
@@ -107,17 +109,33 @@ pub const MAX_RESOLVED_CELL_BYTES: usize = 128 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub struct Cell {
     encoded: wire::Cell,
-    hashes: Arc<OnceLock<CellHashes>>,
+    hashes: Arc<CellDigestCache>,
 }
 
+#[cfg(not(feature = "lazy-cell-digests"))]
+type CellDigestCache = OnceLock<CellHashes>;
+#[cfg(feature = "lazy-cell-digests")]
+type CellDigestCache = CellHashes;
+
 #[derive(Debug)]
+#[cfg(not(feature = "lazy-cell-digests"))]
 struct CellHashes {
     content: Byte32,
     data: Byte32,
 }
 
+#[derive(Debug, Default)]
+#[cfg(feature = "lazy-cell-digests")]
+struct CellHashes {
+    content: OnceLock<Byte32>,
+    data: OnceLock<Byte32>,
+}
+
 impl Cell {
     pub fn content_hash(&self) -> &Byte32 {
+        #[cfg(feature = "lazy-cell-digests")]
+        return self.hashes.content.get_or_init(|| blake2b_256(self.as_slice()).pack());
+        #[cfg(not(feature = "lazy-cell-digests"))]
         &self.hashes().content
     }
 
@@ -161,6 +179,26 @@ impl Cell {
         Self::from_entity(wire::Cell::from_slice(bytes)?)
     }
 
+    /// Validate an owned canonical buffer without taking another copy.
+    pub fn from_bytes(bytes: Bytes) -> Result<Self> {
+        ensure!(bytes.len() <= MAX_CELL_BYTES, "Cell exceeds byte limit");
+        wire::CellReader::verify(&bytes)?;
+        Self::from_entity(wire::Cell::new_unchecked(bytes))
+    }
+
+    /// Borrow the exact canonical prefix, Lock, TypeSet and length-prefixed Data.
+    /// An absent TypeSet contributes no bytes to the encoding.
+    pub fn canonical_parts(&self) -> [&[u8]; 4] {
+        let fields = self.encoded.as_reader();
+        let types = fields.type_scripts();
+        [
+            &self.as_slice()[..wire::Cell::HEADER_SIZE + wire::Uint64::TOTAL_SIZE],
+            fields.lock().as_slice(),
+            if types.is_empty() { &[] } else { types.as_slice() },
+            fields.data().as_slice(),
+        ]
+    }
+
     fn validated_entity(encoded: wire::Cell) -> Self {
         Self {
             encoded,
@@ -171,9 +209,15 @@ impl Cell {
     /// Own just this validated Cell's bytes, independently of a transaction
     /// buffer it may have been sliced from.
     pub fn detached(&self) -> Self {
-        Self::validated_entity(wire::Cell::new_unchecked(Bytes::copy_from_slice(
-            self.as_slice(),
-        )))
+        let encoded = wire::Cell::new_unchecked(Bytes::copy_from_slice(self.as_slice()));
+        #[cfg(feature = "lazy-cell-digests")]
+        {
+            // The digest state owns only hashes. It cannot keep the source
+            // transaction bytes alive after the resident Cell is detached.
+            Self { encoded, hashes: Arc::clone(&self.hashes) }
+        }
+        #[cfg(not(feature = "lazy-cell-digests"))]
+        Self::validated_entity(encoded)
     }
 
     fn from_entity(encoded: wire::Cell) -> Result<Self> {
@@ -248,6 +292,23 @@ impl Cell {
         self.encoded.data().raw_data()
     }
 
+    /// Interpret the entire Data field as the CKB Dep Group encoding.
+    pub fn dep_group_members(&self) -> Result<impl ExactSizeIterator<Item = OutPoint> + '_> {
+        #[cfg(feature = "shared-dep-group-members")]
+        {
+            let data = self.data();
+            OutPointVecReader::from_slice(&data)?;
+            // The packed iterator slices the verified buffer for each member.
+            Ok(OutPointVec::new_unchecked(data).into_iter())
+        }
+        #[cfg(not(feature = "shared-dep-group-members"))]
+        {
+            let members = OutPointVecReader::from_slice(self.encoded.as_reader().data().raw_data())?;
+            Ok((0..members.len()).map(move |index| members.get_unchecked(index).to_entity()))
+        }
+    }
+
+    #[cfg(not(feature = "lazy-cell-digests"))]
     fn hashes(&self) -> &CellHashes {
         self.hashes.get_or_init(|| CellHashes {
             content: blake2b_256(self.as_slice()).pack(),
@@ -256,6 +317,12 @@ impl Cell {
     }
 
     pub fn data_hash(&self) -> &Byte32 {
+        #[cfg(feature = "lazy-cell-digests")]
+        return self.hashes.data.get_or_init(|| {
+            let cell = self.encoded.as_reader();
+            blake2b_256(cell.data().raw_data()).pack()
+        });
+        #[cfg(not(feature = "lazy-cell-digests"))]
         &self.hashes().data
     }
 
@@ -327,9 +394,20 @@ struct ParsedLineageCommand {
     commitment: OnceLock<[u8; 32]>,
 }
 
+#[cfg(feature = "execution-material-cache")]
+#[derive(Debug)]
+struct ExecutionMaterial {
+    network: Byte32,
+    id: OnceLock<Byte32>,
+    commitment: OnceLock<[u8; 32]>,
+    outputs: OnceLock<Box<[Cell]>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Transaction {
     encoded: wire::Transaction,
+    #[cfg(feature = "execution-material-cache")]
+    execution_material: Option<Arc<ExecutionMaterial>>,
     lineage_command: Option<Arc<ParsedLineageCommand>>,
     lineage_intent: Option<Arc<lineage::Intent>>,
     lineage_batch: Option<Arc<[Transaction]>>,
@@ -537,6 +615,8 @@ impl Transaction {
             .map(Arc::new);
         let mut tx = Self {
             encoded,
+            #[cfg(feature = "execution-material-cache")]
+            execution_material: None,
             lineage_command,
             lineage_intent,
             lineage_batch: None,
@@ -724,6 +804,29 @@ impl Transaction {
         self.encoded.as_bytes()
     }
 
+    /// Share data derived from these immutable bytes across candidate tasks.
+    /// Callers can keep the original transaction in long-lived queues.
+    #[cfg(feature = "execution-material-cache")]
+    pub fn with_execution_material(&self, network: &Byte32) -> Self {
+        let mut tx = self.clone();
+        if tx.lineage_command.is_none() && self.material_for(network).is_none() {
+            tx.execution_material = Some(Arc::new(ExecutionMaterial {
+                network: network.clone(),
+                id: OnceLock::new(),
+                commitment: OnceLock::new(),
+                outputs: OnceLock::new(),
+            }));
+        }
+        tx
+    }
+
+    #[cfg(feature = "execution-material-cache")]
+    fn material_for(&self, network: &Byte32) -> Option<&ExecutionMaterial> {
+        self.execution_material
+            .as_deref()
+            .filter(|material| &material.network == network)
+    }
+
     fn command_hashes(&self, network: &Byte32) -> Option<&ParsedLineageCommand> {
         let parsed = self.lineage_command.as_deref()?;
         (parsed.network.get_or_init(|| network.clone()) == network).then_some(parsed)
@@ -738,6 +841,10 @@ impl Transaction {
                 &[self.encoded.raw().as_slice(), references.as_slice()],
             )
         };
+        #[cfg(feature = "execution-material-cache")]
+        if let Some(material) = self.material_for(network_id) {
+            return material.id.get_or_init(compute).clone();
+        }
         match self.command_hashes(network_id) {
             Some(parsed) => parsed.id.get_or_init(compute).clone(),
             None => compute(),
@@ -756,6 +863,10 @@ impl Transaction {
                 &[self.as_slice()],
             )
         };
+        #[cfg(feature = "execution-material-cache")]
+        if let Some(material) = self.material_for(network_id) {
+            return *material.commitment.get_or_init(compute);
+        }
         match self.command_hashes(network_id) {
             Some(parsed) => *parsed.commitment.get_or_init(compute),
             None => compute(),
@@ -1137,7 +1248,7 @@ impl Transaction {
             network,
             &[
                 self.id(network).as_slice(),
-                fee_cell.hashes().content.as_slice(),
+                fee_cell.content_hash().as_slice(),
             ],
         ))
     }
@@ -1215,11 +1326,26 @@ impl Transaction {
     }
 
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = Cell> {
-        self.encoded
-            .raw()
-            .outputs()
-            .into_iter()
-            .map(Cell::validated_entity)
+        let encoded = self.encoded.raw().outputs();
+        #[cfg(feature = "execution-material-cache")]
+        {
+            let material = self.execution_material.as_deref();
+            (0..encoded.len()).map(move |index| {
+                if let Some(material) = material {
+                    let outputs = material.outputs.get_or_init(|| {
+                        encoded
+                            .clone()
+                            .into_iter()
+                            .map(Cell::validated_entity)
+                            .collect()
+                    });
+                    return outputs[index].clone();
+                }
+                Cell::validated_entity(encoded.get(index).expect("validated output index"))
+            })
+        }
+        #[cfg(not(feature = "execution-material-cache"))]
+        encoded.into_iter().map(Cell::validated_entity)
     }
 
     pub fn witnesses(&self) -> impl ExactSizeIterator<Item = GroupWitness> {
@@ -1809,7 +1935,7 @@ impl ResolvedTransaction {
             for cells in [&self.inputs, &self.cell_deps] {
                 hash.update(&(cells.len() as u64).to_le_bytes());
                 for live in cells {
-                    hash.update(live.cell.hashes().content.as_slice());
+                    hash.update(live.cell.content_hash().as_slice());
                     hash.update(&live.origin.encode());
                 }
             }
@@ -1929,41 +2055,63 @@ pub fn derive_script_groups<'a>(
     inputs: impl IntoIterator<Item = &'a Cell>,
     outputs: impl IntoIterator<Item = &'a Cell>,
 ) -> Result<Vec<ScriptGroup>> {
-    let mut groups = BTreeMap::new();
+    let mut groups = ScriptGroups::default();
     for (index, input) in inputs.into_iter().enumerate() {
-        get_group(&mut groups, ScriptGroupKind::Lock, input.lock())
+        groups
+            .get(ScriptGroupKind::Lock, input.lock())
             .inputs
             .push(index);
         for script in input.type_scripts() {
-            get_group(&mut groups, ScriptGroupKind::Type, script)
-                .inputs
-                .push(index);
+            groups.get(ScriptGroupKind::Type, script).inputs.push(index);
         }
     }
     for (index, output) in outputs.into_iter().enumerate() {
         for script in output.type_scripts() {
-            get_group(&mut groups, ScriptGroupKind::Type, script)
-                .outputs
-                .push(index);
+            groups.get(ScriptGroupKind::Type, script).outputs.push(index);
         }
     }
-    ensure!(groups.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
-    Ok(groups.into_values().collect())
+    groups.into_sorted()
 }
 
-fn get_group(
-    groups: &mut BTreeMap<(ScriptGroupKind, Bytes), ScriptGroup>,
-    kind: ScriptGroupKind,
-    script: Script,
-) -> &mut ScriptGroup {
-    groups
-        .entry((kind, script.as_bytes()))
-        .or_insert(ScriptGroup {
+#[derive(Default)]
+struct ScriptGroups {
+    by_script: BTreeMap<(ScriptGroupKind, Bytes), ScriptGroup>,
+    #[cfg(feature = "inline-cell-resolution")]
+    sole: Option<ScriptGroup>,
+}
+
+impl ScriptGroups {
+    fn get(&mut self, kind: ScriptGroupKind, script: Script) -> &mut ScriptGroup {
+        let group = |script| ScriptGroup {
             kind,
             script,
             inputs: Vec::new(),
             outputs: Vec::new(),
-        })
+        };
+        #[cfg(feature = "inline-cell-resolution")]
+        if self.by_script.is_empty() {
+            if self.sole.as_ref().is_none_or(|first| {
+                first.kind == kind && first.script.as_slice() == script.as_slice()
+            }) {
+                return self.sole.get_or_insert_with(|| group(script));
+            }
+            let first = self.sole.take().expect("sole Script Group");
+            self.by_script
+                .insert((first.kind, first.script.as_bytes()), first);
+        }
+        self.by_script
+            .entry((kind, script.as_bytes()))
+            .or_insert_with(|| group(script))
+    }
+
+    fn into_sorted(self) -> Result<Vec<ScriptGroup>> {
+        #[cfg(feature = "inline-cell-resolution")]
+        if let Some(group) = self.sole {
+            return Ok(vec![group]);
+        }
+        ensure!(self.by_script.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
+        Ok(self.by_script.into_values().collect())
+    }
 }
 
 fn sum_capacity<'a>(mut cells: impl Iterator<Item = &'a Cell>) -> Result<u64> {
@@ -2118,6 +2266,77 @@ mod tests {
         assert!(make(vec![], vec![], vec![input.clone(), input.clone()]).is_err());
         assert!(make(vec![dep.clone(), dep], vec![], vec![input.clone()]).is_err());
         assert!(make(vec![], vec![header.clone(), header], vec![input]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lazy-cell-digests")]
+    fn lazy_digests_share_exact_values_across_detached_cells() -> Result<()> {
+        for size in [0, 1, 128, 16_384] {
+            let data = Bytes::from(vec![13; size]);
+            let cell = Cell::new(100_000_000_000, script(0), vec![script(1)], data.clone())?;
+            let content_hash: Byte32 = blake2b_256(cell.as_slice()).pack();
+            let data_hash: Byte32 = blake2b_256(&data).pack();
+            assert_eq!(cell.content_hash(), &content_hash);
+            assert!(cell.hashes.data.get().is_none());
+
+            let detached = cell.detached();
+            assert_eq!(detached.as_slice(), cell.as_slice());
+            assert_ne!(detached.as_slice().as_ptr(), cell.as_slice().as_ptr());
+            assert!(Arc::ptr_eq(&cell.hashes, &detached.hashes));
+            assert_eq!(detached.data_hash(), &data_hash);
+            assert_eq!(cell.hashes.data.get(), Some(&data_hash));
+
+            let reopened = Cell::from_slice(cell.as_slice())?;
+            assert_eq!(reopened.data_hash(), &data_hash);
+            assert!(reopened.hashes.content.get().is_none());
+            assert_eq!(reopened.content_hash(), &content_hash);
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "execution-material-cache")]
+    fn reuses_execution_material_without_dropping_network_or_witness_binding() -> Result<()> {
+        let network = [6; 32].pack();
+        let other = [7; 32].pack();
+        let tx = Transaction::new(
+            vec![],
+            vec![],
+            vec![CellInput::new(OutPoint::new([1; 32].pack(), 0), None)],
+            vec![Cell::new(
+                100_000_000_000,
+                script(0),
+                vec![script(1), script(2)],
+                Bytes::from_static(b"cell data"),
+            )?],
+            vec![],
+        )?;
+        let view = tx.with_execution_material(&network);
+        let clone = view.with_execution_material(&network);
+        assert_eq!(view.as_slice(), tx.as_slice());
+        for id in [&network, &other] {
+            assert_eq!(view.id(id), tx.id(id));
+            assert_eq!(view.commitment(id), tx.commitment(id));
+        }
+        assert_ne!(view.id(&network), view.id(&other));
+        assert_ne!(view.commitment(&network), view.commitment(&other));
+        assert!(tx.execution_material.is_none());
+
+        let canonical = tx.outputs().next().context("output")?;
+        let projected = view.outputs().next().context("projected output")?;
+        let resolved = clone.outputs().next().context("resolved output")?;
+        assert_eq!(projected.as_slice(), canonical.as_slice());
+        assert!(Arc::ptr_eq(&projected.hashes, &resolved.hashes));
+
+        let signed = view.with_witnesses(vec![GroupWitness {
+            group_index: 0,
+            proof_data: Bytes::new(),
+            seal: Bytes::from_static(b"witness"),
+        }])?;
+        assert_eq!(signed.id(&network), view.id(&network));
+        assert_ne!(signed.commitment(&network), view.commitment(&network));
+        assert!(signed.execution_material.is_none());
         Ok(())
     }
 
@@ -2314,6 +2533,40 @@ mod tests {
         assert!(verified.groups()[1].outputs.is_empty());
         assert_eq!(verified.groups()[0].script, verified.groups()[1].script);
         assert!(resolve(3).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn script_group_order_keeps_locks_and_types_separate() -> Result<()> {
+        let lock = script(9);
+        let lower = script(2);
+        let plain = Cell::new(1_000_000_000, lock.clone(), vec![], Bytes::new())?;
+        let typed = Cell::new(
+            1_000_000_000,
+            lock.clone(),
+            vec![lock.clone(), lower.clone()],
+            Bytes::new(),
+        )?;
+        let single = derive_script_groups([&plain, &plain], [&plain])?;
+        assert_eq!(
+            single,
+            [ScriptGroup {
+                kind: ScriptGroupKind::Lock,
+                script: lock.clone(),
+                inputs: vec![0, 1],
+                outputs: vec![],
+            }],
+        );
+        let groups = derive_script_groups([&plain, &typed], [&typed])?;
+        assert_eq!(groups[0], single[0]);
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[1].script, lower);
+        assert_eq!(groups[2].script, lock);
+        for group in &groups[1..] {
+            assert_eq!(group.kind, ScriptGroupKind::Type);
+            assert_eq!(group.inputs, [1]);
+            assert_eq!(group.outputs, [0]);
+        }
         Ok(())
     }
 

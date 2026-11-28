@@ -16,7 +16,7 @@ use stem_ledger::{Transaction, block::Header};
 use stem_stake::Hash32;
 
 use super::wire;
-use crate::native_store::{CommitmentTiming, LineageSchedule, ProposalScan};
+use crate::native_store::{CellStreamStats, CommitmentTiming, LineageSchedule, ProposalScan};
 
 const IDLE_SUBMISSION_CONNECTIONS: usize = 4;
 
@@ -88,6 +88,8 @@ pub struct ExecutionMetrics {
     #[serde(default)]
     pub proposal_jobs: ProposalMetrics,
     #[serde(default)]
+    pub proposal_retry_frame_hits: u64,
+    #[serde(default)]
     pub proposal_scan: ProposalScan,
     #[serde(default)]
     pub proposal_commitments: CommitmentMetrics,
@@ -96,6 +98,8 @@ pub struct ExecutionMetrics {
     pub candidate_commitments: CommitmentMetrics,
     #[serde(default)]
     pub candidate_lineage: LineageSchedule,
+    #[serde(default)]
+    pub candidate_cell_stream: CellStreamStats,
     #[serde(default)]
     pub control_queue: LatencyHistogram,
     #[serde(default)]
@@ -136,20 +140,44 @@ impl CommitmentMetrics {
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
 pub struct CommitMetrics {
     pub acknowledged: u64,
+    #[serde(default)]
+    pub overlap_eligible_writes: u64,
     pub descendants: u64,
     pub status_replies: u64,
     pub deferred_events: u64,
     #[serde(default)]
     pub persistence: LatencyHistogram,
+    #[serde(default)]
+    pub state_prebuilds: u64,
+    #[serde(default)]
+    pub reused_state_build: LatencyHistogram,
+    #[serde(default)]
+    pub reused_write_buffers: u64,
+    #[serde(default)]
+    pub cell_node_publication: LatencyHistogram,
+    #[serde(default)]
+    pub live_cell_publication: LatencyHistogram,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
 pub struct ProposalMetrics {
     pub started: u64,
+    #[serde(default)]
+    pub snapshot_capture: LatencyHistogram,
+    #[serde(default)]
+    pub snapshot_entries: u64,
+    #[serde(default)]
+    pub worker_service: LatencyHistogram,
     pub published: u64,
     pub stale: u64,
     #[serde(default)]
     pub stale_us: u64,
+    #[serde(default)]
+    pub cancel_requested: u64,
+    #[serde(default)]
+    pub cancelled: u64,
+    #[serde(default)]
+    pub cancelled_us: u64,
     #[serde(default)]
     pub commit_overlap_started: u64,
     #[serde(default)]
@@ -157,7 +185,15 @@ pub struct ProposalMetrics {
     #[serde(default)]
     pub commit_overlap_us: u64,
     #[serde(default)]
+    pub pre_quorum_started: u64,
+    #[serde(default)]
+    pub pre_quorum_published: u64,
+    #[serde(default)]
+    pub pre_quorum_overlap_us: u64,
+    #[serde(default)]
     pub rebased: u64,
+    #[serde(default)]
+    pub rebased_blocks: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
@@ -167,10 +203,18 @@ pub struct CandidateMetrics {
     pub stale: u64,
     #[serde(default)]
     pub stale_us: u64,
+    #[serde(default)]
+    pub cancel_requested: u64,
+    #[serde(default)]
+    pub cancelled: u64,
+    #[serde(default)]
+    pub cancelled_us: u64,
     pub invalid: u64,
     pub already_running: u64,
     #[serde(default)]
     pub rebased: u64,
+    #[serde(default)]
+    pub rebased_blocks: u64,
     #[serde(default)]
     pub commit_overlap_applied: u64,
     #[serde(default)]
@@ -200,6 +244,16 @@ pub struct CertificateExperimentMetrics {
     pub parent_tc_checks: u64,
     pub quorum_frame: FrameReuseMetrics,
     pub timeout_frame: FrameReuseMetrics,
+    #[serde(default)]
+    pub current_qc_hits: u64,
+    #[serde(default)]
+    pub current_tc_hits: u64,
+    #[serde(default)]
+    pub recent_qc_hits: u64,
+    #[serde(default)]
+    pub recent_qc_inserts: u64,
+    #[serde(default)]
+    pub vote_frame_encodes_saved: u64,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -238,6 +292,8 @@ pub struct Status {
     pub verification_cache: Option<stem_vm::VerificationCacheStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_cell_index: Option<crate::native_store::LiveCellIndexStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_cell_cache: Option<crate::native_store::PinnedCellCacheStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell_node_index: Option<crate::native_store::CellNodeIndexStatus>,
 }

@@ -77,7 +77,6 @@ mod tests {
     use ckb_vm::{
         CoreMachine, DefaultMachineBuilder, ISA_B, ISA_IMC, ISA_MOP, RISCV_PAGESIZE,
         bytes::Bytes,
-        cost_model::estimate_cycles,
         machine::{VERSION0, VERSION1, VERSION2},
         memory::{FLAG_EXECUTABLE, FLAG_FREEZED, Memory},
     };
@@ -102,7 +101,7 @@ mod tests {
         load_at_same_address(&mut core, program);
         M::new(
             DefaultMachineBuilder::new(core)
-                .instruction_cycle_func(Box::new(estimate_cycles))
+                .estimate_instruction_cycles()
                 .build(),
         )
     }
@@ -211,6 +210,7 @@ mod tests {
             let mut core = allocate(ISA_IMC | ISA_B | ISA_MOP, VERSION2, 10_000);
             load_at_same_address(&mut core, &program);
             DefaultMachineBuilder::new(core)
+                .estimate_instruction_cycles()
                 .instruction_cycle_func(Box::new(|_| 31))
                 .build()
         };
@@ -220,5 +220,33 @@ mod tests {
         assert_eq!(fresh.run(), Ok(7));
         assert_eq!(reused.inner_mut().cycles(), 3 * 31);
         assert_eq!(reused.inner_mut().cycles(), fresh.inner_mut().cycles());
+    }
+
+    #[cfg(feature = "trace-cycle-reuse")]
+    #[test]
+    fn estimate_does_not_reuse_cycles_warmed_by_a_custom_model() {
+        let program = [0x0130_0513, 0x05d0_0893, 0x0000_0073];
+        let mut core = allocate_core(ISA_IMC | ISA_B | ISA_MOP, VERSION2, 10_000);
+        load_at_same_address(&mut core, &program);
+        let mut custom = ReusableMachine::new(
+            DefaultMachineBuilder::new(core)
+                .instruction_cycle_func(Box::new(|_| 31))
+                .build(),
+        );
+        assert_eq!(custom.run(), Ok(19));
+        assert_eq!(custom.inner_mut().cycles(), 3 * 31);
+        drop(custom);
+
+        let mut estimated = machine::<ReusableMachine>(allocate_core, VERSION2, 10_000, &program);
+        let mut fresh = machine::<AsmMachine>(
+            <Box<AsmCoreMachine> as SupportMachine>::new,
+            VERSION2,
+            10_000,
+            &program,
+        );
+        assert_eq!(estimated.run(), Ok(19));
+        assert_eq!(fresh.run(), Ok(19));
+        assert_eq!(estimated.inner_mut().cycles(), fresh.inner_mut().cycles());
+        assert_ne!(estimated.inner_mut().cycles(), 3 * 31);
     }
 }

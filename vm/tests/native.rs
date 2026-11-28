@@ -227,17 +227,19 @@ fn block_context_uses_committed_parent_time_and_partitions_cache() -> Result<()>
         // including their creation origins, are identical.
         assert_eq!(accepted.script_cache_key(), rejected.script_cache_key());
         assert_ne!(accepted.parent_id(), rejected.parent_id());
-        let cache = VerificationCache::new(4);
         let expected = verify(accepted.clone(), CYCLE_LIMIT, false)?;
-        pool.install(|| -> Result<()> {
-            assert_eq!(cache.verify(accepted.clone(), CYCLE_LIMIT, true)?, expected);
-            assert!(cache.verify(rejected, CYCLE_LIMIT, true).is_err());
-            assert_eq!(cache.verify(accepted, expected, true)?, expected);
-            Ok(())
-        })?;
-        let stats = cache.stats();
-        assert_eq!((stats.hits, stats.misses, stats.wrong_parent), (1, 2, 1));
-        assert_eq!((stats.entries, stats.capacity), (1, 4));
+        for shards in [1, 4] {
+            let cache = VerificationCache::for_genesis_with_layout(4, false, shards, false)?;
+            pool.install(|| -> Result<()> {
+                assert_eq!(cache.verify(accepted.clone(), CYCLE_LIMIT, true)?, expected);
+                assert!(cache.verify(rejected.clone(), CYCLE_LIMIT, true).is_err());
+                assert_eq!(cache.verify(accepted.clone(), expected, true)?, expected);
+                Ok(())
+            })?;
+            let stats = cache.stats();
+            assert_eq!((stats.hits, stats.misses, stats.wrong_parent), (1, 2, 1));
+            assert_eq!((stats.entries, stats.capacity, stats.shards), (1, 4, shards));
+        }
     }
     Ok(())
 }
@@ -520,7 +522,11 @@ fn multi_asset_settlement_runs_every_group_with_real_signature() -> Result<()> {
     println!("five Type Script Groups across two assets: {serial} cycles");
     assert_eq!(pool.install(|| verify(tx.clone(), serial, true))?, serial);
     assert!(verify(tx.clone(), serial - 1, false).is_err());
-    assert!(pool.install(|| verify(tx, serial - 1, true)).is_err());
+    let error = pool.install(|| verify(tx, serial - 1, true)).unwrap_err();
+    #[cfg(feature = "rolling-script-groups")]
+    assert!(stem_vm::is_cycle_limit(&error));
+    #[cfg(not(feature = "rolling-script-groups"))]
+    let _ = error;
 
     let stripped = network.signed(
         inputs.clone(),

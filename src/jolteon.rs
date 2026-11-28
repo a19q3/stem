@@ -24,13 +24,16 @@ use stem_stake::{
     },
 };
 
-use crate::native_store::{Prepared, Store};
+use crate::native_store::{ConsensusValue, Prepared, Store};
 
 #[cfg(feature = "jolteon-admission-pipeline")]
 mod admission_pipeline;
 #[cfg(feature = "jolteon-candidate-pipeline")]
 mod candidate_pipeline;
-#[cfg(feature = "jolteon-certificate-experiment")]
+#[cfg(any(
+    feature = "jolteon-certificate-experiment",
+    feature = "jolteon-shared-certificate-path"
+))]
 mod certificate_experiment;
 mod client;
 #[cfg(feature = "jolteon-commit-pipeline")]
@@ -49,6 +52,11 @@ use mempool::Mempool;
 use recovery::{BranchHorizon, Recovery};
 use transport::{Incoming, Network};
 
+#[cfg(feature = "jolteon-retain-verified-quorums")]
+type VerifiedQuorum = Arc<Quorum>;
+#[cfg(not(feature = "jolteon-retain-verified-quorums"))]
+type VerifiedQuorum = Quorum;
+
 pub use client::LatencyHistogram as AdmissionLatency;
 pub use client::{
     AdmissionMetrics, AdmissionPipelineMetrics, Certificate, CertificateExperimentMetrics, Client,
@@ -66,16 +74,43 @@ const RELAY_RETRIES_PER_TICK: usize = 8;
 const MAX_VERIFICATION_CACHE_ENTRIES: usize = 131_072;
 
 #[cfg(any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"))]
-type CommitWindow = Arc<std::sync::OnceLock<(Instant, Duration)>>;
+type CommitSpan = (Instant, Duration);
+#[cfg(feature = "jolteon-exact-prefix-pipeline")]
+type CommitWindow = Arc<std::sync::Mutex<Vec<CommitSpan>>>;
+#[cfg(all(
+    not(feature = "jolteon-exact-prefix-pipeline"),
+    any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"),
+))]
+type CommitWindow = Arc<std::sync::OnceLock<CommitSpan>>;
+
+#[cfg(feature = "jolteon-commit-pipeline")]
+fn record_commit_span(window: &CommitWindow, span: CommitSpan) {
+    #[cfg(feature = "jolteon-exact-prefix-pipeline")]
+    window.lock().expect("commit timeline").push(span);
+    #[cfg(not(feature = "jolteon-exact-prefix-pipeline"))]
+    let _ = window.set(span);
+}
 
 #[cfg(any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"))]
-fn commit_overlap(window: Option<&CommitWindow>, (start, elapsed): (Instant, Duration)) -> Duration {
-    let Some(&(commit_start, commit_elapsed)) = window.and_then(|window| window.get()) else {
+fn commit_overlap(window: Option<&CommitWindow>, (start, elapsed): CommitSpan) -> Duration {
+    let Some(window) = window else {
         return Duration::ZERO;
     };
-    (start + elapsed)
-        .min(commit_start + commit_elapsed)
-        .saturating_duration_since(start.max(commit_start))
+    let overlap = |&(commit_start, commit_elapsed): &CommitSpan| {
+        (start + elapsed)
+            .min(commit_start + commit_elapsed)
+            .saturating_duration_since(start.max(commit_start))
+    };
+    #[cfg(feature = "jolteon-exact-prefix-pipeline")]
+    {
+        // One writer records disjoint intervals. The gaps between two
+        // certified writes contribute no overlap to the worker.
+        window.lock().expect("commit timeline").iter().map(overlap).sum()
+    }
+    #[cfg(not(feature = "jolteon-exact-prefix-pipeline"))]
+    {
+        window.get().map_or(Duration::ZERO, overlap)
+    }
 }
 
 #[derive(Deserialize)]
@@ -99,6 +134,12 @@ pub struct Config {
     /// Track first and repeated local relay admissions for a controlled workload.
     #[serde(default)]
     pub measure_relay_admission: bool,
+    /// Independent local result-cache LRU shards. The default is one.
+    #[serde(default)]
+    pub verification_cache_shards: Option<usize>,
+    /// Sample VM result and cost-estimate lock wait and hold times.
+    #[serde(default)]
+    pub verification_cache_lock_sampling: bool,
 }
 
 #[derive(Deserialize)]
@@ -169,9 +210,9 @@ impl std::fmt::Display for StorageFault {
 impl std::error::Error for StorageFault {}
 
 struct Checked {
-    wire: wire::Proposal,
+    wire: wire::ProposalBody,
     header: Header,
-    parent: Quorum,
+    parent: VerifiedQuorum,
 }
 
 struct Candidate {
@@ -218,7 +259,7 @@ struct Replica {
     #[cfg(feature = "jolteon-proposal-pipeline")]
     proposal_pipeline: proposal_pipeline::Pipeline,
     journal: wire::Journal,
-    high: Quorum,
+    high: VerifiedQuorum,
     certificate: Option<TimeoutCertificate>,
     finalized: Point,
     view: u64,
@@ -227,16 +268,21 @@ struct Replica {
     proposal_interval: Duration,
     backoff: u32,
     announced: Instant,
+    #[cfg(feature = "jolteon-share-proposal-bytes")]
+    announced_proposal: Option<(u64, Point, Arc<Vec<u8>>)>,
     handoff_requested: Option<Instant>,
-    handoff_tip: Option<Quorum>,
+    handoff_tip: Option<VerifiedQuorum>,
     pending: Option<CommitteeChange>,
     candidates: BTreeMap<Point, Candidate>,
     preferred: BTreeMap<u64, Point>,
     votes: BTreeMap<Point, BTreeMap<u16, [u8; 64]>>,
     observed_votes: HashMap<(u64, u16), (Point, Share)>,
-    timeouts: BTreeMap<u64, BTreeMap<u16, (Quorum, Share)>>,
+    timeouts: BTreeMap<u64, BTreeMap<u16, (VerifiedQuorum, Share)>>,
     certificates: HashSet<Hash32>,
-    #[cfg(feature = "jolteon-certificate-experiment")]
+    #[cfg(any(
+        feature = "jolteon-certificate-experiment",
+        feature = "jolteon-shared-certificate-path"
+    ))]
     certificate_experiment: certificate_experiment::Cache,
     requests: HashMap<Point, Instant>,
     mempool: Mempool,
@@ -252,7 +298,7 @@ struct Replica {
     recovery: Recovery,
 }
 
-pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
+pub fn run(mut store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
     let mempool_max_bytes = config.mempool_max_bytes.unwrap_or(MAX_MEMPOOL_BYTES);
     ensure!(
         (stem_ledger::MAX_TRANSACTION_BYTES..=MAX_MEMPOOL_BYTES).contains(&mempool_max_bytes),
@@ -263,8 +309,12 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
             (1..=MAX_VERIFICATION_CACHE_ENTRIES).contains(&entries),
             "invalid verification cache entry limit"
         );
-        store.resize_verification_cache(entries);
     }
+    store.configure_verification_cache(
+        config.verification_cache_entries,
+        config.verification_cache_shards.unwrap_or(1),
+        config.verification_cache_lock_sampling,
+    )?;
     let genesis_members = members(&store)?;
     let genesis_committee = Committee::new(
         store.network().unpack(),
@@ -359,7 +409,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 history_window,
                 ..Default::default()
             };
-            store.persist_consensus(&[(STATE.to_vec(), journal.encode_to_vec())])?;
+            store.persist_consensus(&[(STATE.to_vec(), journal.encode_to_vec().into())])?;
             journal
         }
     };
@@ -392,7 +442,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
     };
     let handoff_tip = store
         .consensus_record(&known_handoff_key(committee.epoch()))?
-        .map(|raw| committee.verify_handoff(&raw).map(|(_, _, seal)| seal))
+        .map(|raw| committee.verify_handoff(&raw).map(|(_, _, seal)| seal.into()))
         .transpose()?;
     let routes = directory.routes(&active);
     let member = (!journal.observer_only)
@@ -479,12 +529,14 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 key,
                 net,
                 journal,
-                high,
+                high: high.into(),
                 certificate,
                 finalized,
                 view: 0,
                 since: Instant::now(),
                 announced: Instant::now(),
+                #[cfg(feature = "jolteon-share-proposal-bytes")]
+                announced_proposal: None,
                 handoff_requested: None,
                 handoff_tip,
                 pending,
@@ -508,7 +560,10 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 observed_votes: HashMap::new(),
                 timeouts: BTreeMap::new(),
                 certificates: HashSet::new(),
-                #[cfg(feature = "jolteon-certificate-experiment")]
+                #[cfg(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                ))]
                 certificate_experiment: Default::default(),
                 requests: HashMap::new(),
                 mempool: Mempool::default(),
@@ -580,12 +635,12 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
 }
 
 impl Replica {
-    fn save(&self, proposal: Option<(Point, &wire::Proposal)>) -> Result<()> {
-        let mut records = vec![(STATE.to_vec(), self.journal.encode_to_vec())];
+    fn save(&self, proposal: Option<(Point, &wire::ProposalBody)>) -> Result<()> {
+        let mut records = vec![(STATE.to_vec(), self.journal.encode_to_vec().into())];
         if let Some((point, proposal)) = proposal {
             records.push((
                 proposal_key(self.committee.epoch(), point),
-                proposal.encode_to_vec(),
+                proposal.record(),
             ));
         }
         self.store.persist_consensus(&records).context(StorageFault)
@@ -596,16 +651,34 @@ impl Replica {
         let next = self.high.point.view.max(transition).saturating_add(1);
         if next > self.view {
             self.view = next;
+            #[cfg(feature = "jolteon-share-proposal-bytes")]
+            {
+                self.announced_proposal = None;
+            }
             self.since = Instant::now();
             if transition >= self.high.point.view && transition != 0 {
                 self.backoff = (self.backoff + 1).min(3);
             } else {
                 self.backoff = 0;
             }
+            #[cfg(feature = "jolteon-cancel-stale-execution")]
+            self.cancel_stale_proposal();
         }
     }
 
-    fn qc(&mut self, raw: &[u8]) -> Result<Quorum> {
+    fn qc(&mut self, raw: &[u8]) -> Result<VerifiedQuorum> {
+        // Startup, learning and handoff install the authenticated high QC
+        // alongside its canonical journal bytes.
+        #[cfg(feature = "jolteon-shared-certificate-path")]
+        if let Some(high) =
+            self.certificate_experiment.reuse_quorum(&self.high, &self.journal.high, raw)
+        {
+            return Ok(high);
+        }
+        #[cfg(feature = "jolteon-retain-verified-quorums")]
+        if let Some(quorum) = self.certificate_experiment.recent_quorum(raw) {
+            return Ok(quorum);
+        }
         let quorum = Quorum::decode(raw, self.committee.size())?;
         let id = ckb_hash::blake2b_256(raw);
         if !self.certificates.contains(&id) {
@@ -615,17 +688,29 @@ impl Replica {
             }
             self.certificates.insert(id);
         }
+        let quorum: VerifiedQuorum = quorum.into();
+        #[cfg(feature = "jolteon-retain-verified-quorums")]
+        self.certificate_experiment.remember_quorum(raw, &quorum);
         Ok(quorum)
     }
 
-    fn learn_quorum(&mut self, quorum: Quorum) -> Result<()> {
+    fn learn_quorum(&mut self, quorum: VerifiedQuorum) -> Result<()> {
+        self.learn_quorum_body(quorum, None)
+    }
+
+    fn learn_quorum_body(
+        &mut self,
+        quorum: VerifiedQuorum,
+        encoded: Option<Vec<u8>>,
+    ) -> Result<()> {
+        debug_assert!(encoded.as_ref().is_none_or(|body| *body == quorum.encode()));
         if quorum.point.view == self.high.point.view {
             ensure!(
                 quorum.point == self.high.point,
                 "conflicting certificates for one view"
             );
         } else if quorum.point.view > self.high.point.view {
-            self.journal.high = quorum.encode();
+            self.journal.high = encoded.unwrap_or_else(|| quorum.encode());
             self.high = quorum;
             self.save(None)?;
             self.enter();
@@ -634,6 +719,11 @@ impl Replica {
     }
 
     fn learn_tc(&mut self, tc: TimeoutCertificate) -> Result<()> {
+        self.learn_tc_body(tc, None)
+    }
+
+    fn learn_tc_body(&mut self, tc: TimeoutCertificate, encoded: Option<Vec<u8>>) -> Result<()> {
+        debug_assert!(encoded.as_ref().is_none_or(|body| *body == tc.encode()));
         if self
             .certificate
             .as_ref()
@@ -641,8 +731,8 @@ impl Replica {
         {
             return Ok(());
         }
-        self.learn_quorum(tc.high.clone())?;
-        self.journal.certificate = tc.encode();
+        self.learn_quorum(tc.high.clone().into())?;
+        self.journal.certificate = encoded.unwrap_or_else(|| tc.encode());
         if self.timeout_views.len() == 256 {
             self.timeout_views.pop_front();
         }
@@ -655,7 +745,7 @@ impl Replica {
 
     fn check_proposal(
         &mut self,
-        proposal: wire::Proposal,
+        proposal: wire::ProposalBody,
     ) -> Result<(Point, Checked, Option<TimeoutCertificate>)> {
         let header = Header::decode(&proposal.header)?;
         ensure!(
@@ -718,7 +808,7 @@ impl Replica {
         ))
     }
 
-    fn admit_proposal(&mut self, proposal: wire::Proposal, peer: u16) -> Result<()> {
+    fn admit_proposal(&mut self, proposal: wire::ProposalBody, peer: u16) -> Result<()> {
         let (point, checked, tc) = self.check_proposal(proposal)?;
         if point.view <= self.finalized.view {
             return Ok(());
@@ -808,7 +898,7 @@ impl Replica {
                     .consensus_record(&proposal_key(self.committee.epoch(), point))
                     .context(StorageFault)?
                 {
-                    let proposal = wire::canonical_bytes(raw.into())?;
+                    let proposal = wire::ProposalBody::decode(raw.into())?;
                     let (actual, checked, _) = self.check_proposal(proposal)?;
                     ensure!(actual == point, "wrong persisted candidate");
                     self.candidates.insert(
@@ -916,6 +1006,9 @@ impl Replica {
                 self.execution
                     .candidate_lineage
                     .record(prepared.lineage_schedule());
+                self.execution
+                    .candidate_cell_stream
+                    .record(prepared.cell_stream());
                 ensure!(
                     prepared.header() == &proposal.header,
                     "candidate execution differs from the signed Header"
@@ -971,7 +1064,7 @@ impl Replica {
         let mut durable = Vec::new();
         let commit_count = batches.len() - usize::from(!child.wire.seal);
         #[cfg(feature = "jolteon-commit-pipeline")]
-        let overlap = commit_count == 1
+        let overlap = (commit_count == 1 || cfg!(feature = "jolteon-exact-prefix-pipeline"))
             && !child.wire.seal
             && !self.recovery.active
             && self.handoff_tip.is_none()
@@ -979,6 +1072,9 @@ impl Replica {
             && pending.as_ref().is_none_or(|change| {
                 child.header.context.height.saturating_add(1) < change.activation_height
             });
+        #[cfg(feature = "jolteon-commit-pipeline")]
+        let window = (overlap && cfg!(feature = "jolteon-cross-block-pipeline"))
+            .then(CommitWindow::default);
         let proof = if child.wire.seal {
             let change = pending.context("terminal execution has no successor")?;
             let (announcement, path) = self
@@ -1009,14 +1105,14 @@ impl Replica {
             for point in &branch[commit_count..] {
                 durable.push((
                     proposal_key(old_epoch, *point),
-                    self.candidates[point].proposal.wire.encode_to_vec(),
+                    self.candidates[point].proposal.wire.record(),
                 ));
             }
             handoff
         } else {
             durable.push((
                 proposal_key(old_epoch, high.point),
-                child.wire.encode_to_vec(),
+                child.wire.record(),
             ));
             FinalityProof {
                 parent_header: self.candidates[&parent].proposal.wire.header.clone(),
@@ -1042,7 +1138,7 @@ impl Replica {
                 .checked_add(proposal.transactions.len() as u64)
                 .context("transaction counter overflow")?;
             let mut records = vec![
-                (proposal_key(old_epoch, *point), proposal.encode_to_vec()),
+                (proposal_key(old_epoch, *point), proposal.record()),
                 (
                     finality_key(height),
                     wire::Finalized {
@@ -1051,7 +1147,8 @@ impl Replica {
                         handoff: successor.is_some(),
                         view: point.view,
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec()
+                    .into(),
                 ),
             ];
             records.append(&mut durable);
@@ -1069,13 +1166,13 @@ impl Replica {
                     proposal_floor: journal.proposal_floor,
                     ..Default::default()
                 };
-                records.push((handoff_key(old_epoch), proof.clone()));
+                records.push((handoff_key(old_epoch), proof.clone().into()));
                 let announced = known_handoff_key(old_epoch);
                 let mut end = announced.clone();
                 end.push(0);
                 retired.push(announced..end);
             }
-            records.push((STATE.to_vec(), journal.encode_to_vec()));
+            records.push((STATE.to_vec(), journal.encode_to_vec().into()));
             let started = Instant::now();
             #[cfg(feature = "jolteon-commit-pipeline")]
             self.write_certified(
@@ -1083,7 +1180,8 @@ impl Replica {
                 Arc::clone(prepared),
                 records,
                 retired,
-                overlap.then_some((branch.as_slice(), batches.as_slice())),
+                overlap.then_some((&branch[index..], &batches[index..])),
+                window.clone(),
             )
             .await
             .context(StorageFault)?;
@@ -1118,10 +1216,13 @@ impl Replica {
                 .then(|| self.directory.member(&change.members))
                 .flatten();
             self.net.epoch = change.epoch;
-            self.high = committee.genesis_quorum();
+            self.high = committee.genesis_quorum().into();
             self.finalized = self.high.point;
             self.committee = committee;
-            #[cfg(feature = "jolteon-certificate-experiment")]
+            #[cfg(any(
+                feature = "jolteon-certificate-experiment",
+                feature = "jolteon-shared-certificate-path"
+            ))]
             self.certificate_experiment.reset();
             self.pending = None;
             self.handoff_tip = None;
@@ -1222,15 +1323,22 @@ impl Replica {
         if !seal && !self.observe_time(point.view, time) {
             return Ok(());
         }
-        if self.execute(&branch)?.is_none() {
+        let Some(execution) = self.execute(&branch)? else {
             return Ok(());
-        }
+        };
+        #[cfg(not(feature = "jolteon-pre-quorum-proposal"))]
+        drop(execution);
         if !seal && !self.observe_time(point.view, time) {
             return Ok(());
         }
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &self.candidates[&point].proposal.wire)))?;
-        self.dispatch_vote(point)
+        self.dispatch_vote(point)?;
+        #[cfg(feature = "jolteon-pre-quorum-proposal")]
+        if !seal {
+            self.prepare_next_view(point, branch, execution)?;
+        }
+        Ok(())
     }
 
     fn observe_time(&mut self, view: u64, time: u64) -> bool {
@@ -1252,13 +1360,24 @@ impl Replica {
         let body = [point.encode().as_slice(), &share.encode()].concat();
         let collector = self.committee.leader(point.view)?;
         let next = self.committee.leader(point.view.saturating_add(1))?;
-        if let Some(peer) = self.routes[usize::from(collector)] {
-            self.net.send(peer, wire::VOTE, body.clone());
-        }
-        if next != collector
-            && let Some(peer) = self.routes[usize::from(next)]
+        #[cfg(feature = "jolteon-shared-certificate-path")]
         {
-            self.net.send(peer, wire::VOTE, body);
+            let collector_route = self.routes[usize::from(collector)];
+            let next_route = if next == collector { None } else { self.routes[usize::from(next)] };
+            let routes = [collector_route, next_route];
+            let sent = self.net.send_shared_vote(routes, body);
+            self.certificate_experiment.vote_frame_encodes_saved += sent.saturating_sub(1) as u64;
+        }
+        #[cfg(not(feature = "jolteon-shared-certificate-path"))]
+        {
+            if let Some(peer) = self.routes[usize::from(collector)] {
+                self.net.send(peer, wire::VOTE, body.clone());
+            }
+            if next != collector
+                && let Some(peer) = self.routes[usize::from(next)]
+            {
+                self.net.send(peer, wire::VOTE, body);
+            }
         }
         if member == collector || member == next {
             self.accept_vote(point, share)?;
@@ -1298,7 +1417,7 @@ impl Replica {
                 ]
                 .concat();
                 self.store
-                    .persist_consensus(&[(key, raw)])
+                    .persist_consensus(&[(key, raw.into())])
                     .context(StorageFault)?;
             }
             return Ok(());
@@ -1311,8 +1430,17 @@ impl Replica {
         let votes = self.votes.entry(point).or_default();
         votes.insert(share.member, share.signature);
         if let Ok(qc) = self.committee.assemble_quorum(point, votes) {
-            self.net.broadcast(wire::QUORUM, qc.encode());
-            self.learn_quorum(qc)?;
+            #[cfg(feature = "jolteon-shared-certificate-path")]
+            {
+                let body = qc.encode();
+                self.certificate_experiment.quorum_frame.send(&self.net, wire::QUORUM, &body);
+                self.learn_quorum_body(qc.into(), Some(body))?;
+            }
+            #[cfg(not(feature = "jolteon-shared-certificate-path"))]
+            {
+                self.net.broadcast(wire::QUORUM, qc.encode());
+                self.learn_quorum(qc.into())?;
+            }
         }
         Ok(())
     }
@@ -1342,11 +1470,10 @@ impl Replica {
                 .values()
                 .map(|(high, _)| high)
                 .max_by_key(|high| high.point.view)
-                .unwrap()
-                .clone();
+                .expect("quorum has timeout votes");
             let tc = TimeoutCertificate {
                 view: report.view,
-                high,
+                high: Quorum::clone(high),
                 votes: votes
                     .values()
                     .map(|(high, share)| TimeoutVote {
@@ -1356,8 +1483,17 @@ impl Replica {
                     .collect(),
             };
             self.committee.verify_timeout_certificate(&tc)?;
-            self.net.broadcast(wire::TIMEOUT_CERTIFICATE, tc.encode());
-            self.learn_tc(tc)?;
+            #[cfg(feature = "jolteon-shared-certificate-path")]
+            {
+                let body = tc.encode();
+                self.certificate_experiment.timeout_frame.send(&self.net, wire::TIMEOUT_CERTIFICATE, &body);
+                self.learn_tc_body(tc, Some(body))?;
+            }
+            #[cfg(not(feature = "jolteon-shared-certificate-path"))]
+            {
+                self.net.broadcast(wire::TIMEOUT_CERTIFICATE, tc.encode());
+                self.learn_tc(tc)?;
+            }
         }
         Ok(())
     }
@@ -1393,7 +1529,7 @@ impl Replica {
         self.accept_timeout(&raw)
     }
 
-    fn proposal_parent(&self) -> Result<Option<(Quorum, Vec<u8>)>> {
+    fn proposal_parent(&self) -> Result<Option<(VerifiedQuorum, Vec<u8>)>> {
         if self.handoff_tip.is_some()
             || self.recovery.active
             || Some(self.committee.leader(self.view)?) != self.member
@@ -1503,7 +1639,7 @@ impl Replica {
 
     fn publish_proposal(
         &mut self,
-        parent: Quorum,
+        parent: VerifiedQuorum,
         tc: Vec<u8>,
         header: Header,
         transactions: Vec<Transaction>,
@@ -1533,6 +1669,7 @@ impl Replica {
                 .to_vec(),
             seal,
         };
+        let proposal = wire::ProposalBody::local(proposal)?;
         self.admit_proposal(proposal.clone(), self.directory.own)?;
         self.candidates
             .get_mut(&point)
@@ -1540,15 +1677,61 @@ impl Replica {
             .execution = execution;
         self.journal.vote = point.encode().to_vec();
         self.save(Some((point, &proposal)))?;
-        self.net.broadcast(wire::PROPOSAL, proposal.encode_to_vec());
+        self.broadcast_durable_proposal(point, proposal.record());
         self.dispatch_vote(point)
     }
 
+    // The caller has synced this body with its vote or read it from the journal.
+    fn broadcast_durable_proposal(&mut self, _point: Point, body: ConsensusValue) {
+        #[cfg(not(feature = "jolteon-share-proposal-bytes"))]
+        self.net.broadcast(wire::PROPOSAL, body);
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        {
+            let epoch = self.committee.epoch();
+            let frame = self.net.frame(epoch, wire::PROPOSAL, body);
+            self.net.broadcast_frame(wire::PROPOSAL, Arc::clone(&frame));
+            self.announced_proposal = Some((epoch, _point, frame));
+        }
+    }
+
+    fn announce_voted_proposal(&mut self, vote: Point) -> Result<()> {
+        if Some(self.committee.leader(vote.view)?) != self.member {
+            return Ok(());
+        }
+        let epoch = self.committee.epoch();
+        #[cfg(feature = "jolteon-share-proposal-bytes")]
+        if let Some((prior_epoch, prior_point, frame)) = &self.announced_proposal
+            && (*prior_epoch, *prior_point) == (epoch, vote)
+        {
+            self.net.broadcast_frame(wire::PROPOSAL, Arc::clone(frame));
+            self.execution.proposal_retry_frame_hits =
+                self.execution.proposal_retry_frame_hits.saturating_add(1);
+            return Ok(());
+        }
+        if let Some(raw) = self
+            .store
+            .consensus_record(&proposal_key(epoch, vote))
+            .context(StorageFault)?
+        {
+            self.broadcast_durable_proposal(vote, raw.into());
+        }
+        Ok(())
+    }
+
     async fn tick(&mut self, inbox: &mut transport::Inbox) -> Result<()> {
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        self.cancel_stale_proposal();
         self.finalize(inbox).await?;
+        #[cfg(feature = "jolteon-cancel-stale-execution")]
+        {
+            self.cancel_stale_proposal();
+            self.cancel_stale_candidate();
+        }
         if self.handoff_tip.is_some() || self.recovery.active {
             return Ok(());
         }
+        #[cfg(feature = "jolteon-prebuilt-state-write")]
+        self.prebuild_certified_state();
         if let Some(&point) = self.preferred.get(&self.view) {
             // Invalid candidate execution is a view failure. The pacemaker still runs.
             if let Err(error) = self.vote_for(point) {
@@ -1564,26 +1747,38 @@ impl Replica {
         }
         if self.announced.elapsed() >= Duration::from_millis(350) {
             self.announced = Instant::now();
-            #[cfg(feature = "jolteon-certificate-experiment")]
+            #[cfg(any(
+                feature = "jolteon-certificate-experiment",
+                feature = "jolteon-shared-certificate-path"
+            ))]
             self.certificate_experiment.quorum_frame.send(
                 &self.net,
                 wire::QUORUM,
                 &self.journal.high,
             );
-            #[cfg(not(feature = "jolteon-certificate-experiment"))]
+            #[cfg(not(any(
+                feature = "jolteon-certificate-experiment",
+                feature = "jolteon-shared-certificate-path"
+            )))]
             self.net.broadcast(wire::QUORUM, self.high.encode());
             if let Some(_tc) = self
                 .certificate
                 .as_ref()
                 .filter(|tc| tc.view >= self.high.point.view)
             {
-                #[cfg(feature = "jolteon-certificate-experiment")]
+                #[cfg(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                ))]
                 self.certificate_experiment.timeout_frame.send(
                     &self.net,
                     wire::TIMEOUT_CERTIFICATE,
                     &self.journal.certificate,
                 );
-                #[cfg(not(feature = "jolteon-certificate-experiment"))]
+                #[cfg(not(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                )))]
                 self.net.broadcast(wire::TIMEOUT_CERTIFICATE, _tc.encode());
             }
             if !self.journal.timeout.is_empty() {
@@ -1595,14 +1790,7 @@ impl Replica {
             if !self.journal.vote.is_empty() {
                 let vote = Point::decode(&self.journal.vote)?;
                 if vote.view == self.view {
-                    if let Some(raw) = self
-                        .store
-                        .consensus_record(&proposal_key(self.committee.epoch(), vote))
-                        .context(StorageFault)?
-                        && Some(self.committee.leader(vote.view)?) == self.member
-                    {
-                        self.net.broadcast(wire::PROPOSAL, raw);
-                    }
+                    self.announce_voted_proposal(vote)?;
                     self.dispatch_vote(vote)?;
                 }
             }
@@ -1749,12 +1937,12 @@ impl Replica {
                 if self.handoff_tip.is_none() {
                     let (_, _, seal) = self.committee.verify_handoff(&frame.body)?;
                     self.store
-                        .persist_consensus(&[(known_handoff_key(epoch), frame.body.to_vec())])
+                        .persist_consensus(&[(known_handoff_key(epoch), frame.body.to_vec().into())])
                         .context(StorageFault)?;
-                    self.handoff_tip = Some(seal);
+                    self.handoff_tip = Some(seal.into());
                 }
             }
-            wire::PROPOSAL => self.admit_proposal(wire::canonical_bytes(frame.body)?, peer)?,
+            wire::PROPOSAL => self.admit_proposal(wire::ProposalBody::decode(frame.body)?, peer)?,
             wire::REPLAY => self.accept_replay(peer, &frame.body)?,
             wire::VOTE => {
                 let (point, share) = frame
@@ -1773,6 +1961,12 @@ impl Replica {
             }
             wire::TIMEOUT => self.accept_timeout(&frame.body)?,
             wire::TIMEOUT_CERTIFICATE => {
+                #[cfg(feature = "jolteon-shared-certificate-path")]
+                if self.certificate.is_some()
+                    && self.certificate_experiment.known_timeout(&self.journal.certificate, &frame.body)
+                {
+                    return Ok(());
+                }
                 let tc = TimeoutCertificate::decode(&frame.body, self.committee.size())?;
                 if self
                     .certificate
@@ -1893,6 +2087,10 @@ impl Replica {
         let tip = self.store.tip();
         match kind {
             wire::STATUS => {
+                #[cfg(feature = "jolteon-resident-cell-publication")]
+                let live_cell_index = self.store.try_live_cell_index_status();
+                #[cfg(not(feature = "jolteon-resident-cell-publication"))]
+                let live_cell_index = self.store.live_cell_index_status();
                 let status = json!({
                     "height": tip.context.height, "epoch": self.committee.epoch(), "view": self.view,
                     "high_view": self.high.point.view, "member": self.member,
@@ -1917,10 +2115,14 @@ impl Replica {
                     "relay_attribution": self.relay_attribution.as_ref().map(|m| m.metrics()),
                     "execution": self.execution,
                     "verification_cache": self.store.verification_cache_stats(),
-                    "live_cell_index": self.store.live_cell_index_status(),
+                    "live_cell_index": live_cell_index,
+                    "pinned_cell_cache": self.store.pinned_cell_cache_status(),
                     "cell_node_index": self.store.cell_node_index_status(),
                 });
-                #[cfg(feature = "jolteon-certificate-experiment")]
+                #[cfg(any(
+                    feature = "jolteon-certificate-experiment",
+                    feature = "jolteon-shared-certificate-path"
+                ))]
                 let status = {
                     let mut value = status;
                     value["certificate_experiment"] = json!(&self.certificate_experiment);

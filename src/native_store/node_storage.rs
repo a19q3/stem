@@ -1,23 +1,31 @@
 //! The local RocksDB representation of canonical Patricia nodes.
 
 use anyhow::{Result, bail, ensure};
+use stem_stake::patricia::MAX_NODE_BYTES;
 
 const PREFIX_BYTES: usize = 32;
 const CHILD_BYTES: usize = 64;
 const PREFIX_START: usize = 2;
 const CHILD_START: usize = PREFIX_START + PREFIX_BYTES;
-const BRANCH_BYTES: usize = CHILD_START + CHILD_BYTES;
+const BRANCH_BYTES: usize = MAX_NODE_BYTES;
 const LEAF_BYTES: usize = 1 + CHILD_BYTES;
 
 pub(super) fn compact(mut node: Vec<u8>) -> Vec<u8> {
+    let len = compact_bytes(&mut node).len();
+    node.truncate(len);
+    node
+}
+
+pub(super) fn compact_bytes(node: &mut [u8]) -> &[u8] {
     // The Patricia editor produces canonical bytes. All omitted prefix
     // bytes are zero, including when the prefix ends at bit zero.
-    if let [1, bits, ..] = node.as_slice() {
-        let end = PREFIX_START + usize::from(*bits).div_ceil(8);
+    if let [1, bits, ..] = *node {
+        let end = PREFIX_START + usize::from(bits).div_ceil(8);
         node.copy_within(CHILD_START.., end);
-        node.truncate(end + CHILD_BYTES);
+        &node[..end + CHILD_BYTES]
+    } else {
+        node
     }
-    node
 }
 
 #[derive(Clone)]
@@ -30,6 +38,18 @@ impl AsRef<[u8]> for CanonicalNode {
     fn as_ref(&self) -> &[u8] {
         &self.bytes[..self.len]
     }
+}
+
+#[cfg(feature = "native-verified-cell-nodes")]
+pub(super) type NodeRead = stem_ledger::patricia::NodeRead<CanonicalNode>;
+#[cfg(not(feature = "native-verified-cell-nodes"))]
+pub(super) type NodeRead = CanonicalNode;
+
+pub(super) fn read(stored: &[u8]) -> Result<NodeRead> {
+    let node = canonical(stored)?;
+    #[cfg(feature = "native-verified-cell-nodes")]
+    let node = NodeRead::raw(node);
+    Ok(node)
 }
 
 pub(super) fn canonical(stored: &[u8]) -> Result<CanonicalNode> {

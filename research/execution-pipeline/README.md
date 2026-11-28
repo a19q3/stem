@@ -201,6 +201,85 @@ All 88,320 offers were acknowledged and commonly confirmed. The independent veri
 
 The fixed and prefix node SHA-256 fingerprints were `4dcaace5a54e1e31fc65e54fc16ff99f5f75d8e86838b54913c616af9b0ff44b` and `b72d2492b6eee4b0daff9db05c122fa01d074e9727a0d24c938ba29c7ba9ba9a`. The shared harness was `763e5cca220c1b00ecf35e043abf6b6e5cc4777f50adfe3b4762b4159197fd3d`. The corpus BLAKE2b digests in profile order were `05ae79e53ccd0a36d533e8fb8be1a4482a4c6e9ff900440153347db10e727018`, `5c123328a612417505bcedfdec7fd415bd34cb724944997adf53b5ddc1154a92`, `9eea13c024e0cd20b895406b0304b9c8d5d5e9c6adbde93b2366538bd866963a` and `eb8f0a0506166ee10811269c3bf5477d33139654889a0143e9e367fc2a090cfa`.
 
+#### Dependency lookahead across conflicting Heads
+
+`native-lineage-dependency-lookahead` lets the Follower materialize independent commands located after a conflict in the ordered block. A bounded plan records the earliest accepted prefix needed by each command. It accounts for fee inputs, direct Cell Deps, each target's starting Head and the possible successor OutPoints of earlier commands. The plan includes the old Head because fee-only rollback can leave it live. A direct dependency on a proposed Head also waits for earlier commands that could consume that Head. Dep Groups, Keeper schedules and atomic batch wrappers remain ordered boundaries. A window with a common Head skips this planner.
+
+Independent attempts read the same accepted overlay. Results wait for their signed transaction positions. Final validation, resource charges, fees, Head writes and rollback still use ordered staging. A failed attempt or a tighter resource budget returns to the ordinary materializer. The `candidate_lineage` status adds `lookahead_commands` for jobs started past a gap, `lookahead_reused` for adopted materializations and `lookahead_fallbacks` for attempted jobs repeated in order.
+
+Compiled regressions cover a reader waiting for a possible successor's consumption while an unrelated command can start. The existing block fixtures also compile with the new feature, covering Exact versions, competing parents, fee-output dependencies, Dep Groups, multilateral rollback and resource exhaustion. Runtime tests, replay and load qualification are pending.
+
+Compare the existing fixed and prefix schedulers with the lookahead feature in separate builds and the same branch, corpus and worker counts. Use interleaved active Heads to exercise work beyond a gap, a single-market AMM to measure the shared-Head control, and multiple markets to measure independent contract execution. Record access-analysis and materialization time, reused attempts, discarded work, CPU and common finality. The planner holds possible successors and completed materializations within a bounded window. Conservative conflicts and planning overhead may offset savings under highly serial, small or offer-limited workloads. The earlier measurements still support the existing default.
+
+#### Rolling Lineage materialization
+
+`native-rolling-lineage-execution` uses the same ordered-prefix access
+plan with a refillable queue. The Follower waits for the current
+position when it needs that result. Later workers can continue while
+the coordinator validates and applies an earlier materialization. As
+the accepted prefix advances, ready positions can enter without an
+all-worker barrier. Ineligible commands, Keeper schedules and atomic
+Lineage batches still use the existing paths.
+
+A job captures the specific Head records, fee-input and direct-Cell-Dep
+overrides, and selected Head Cell overrides from its eligible prefix.
+Head records loaded for the access plan supply unchanged targets.
+The captured edits include tombstones. Other cells come from the
+same candidate-parent view. In-flight and completed-but-unsettled jobs
+both count toward the worker-width bound. Each submission also checks
+the remaining cycle budget. The signed order controls settlement,
+final Script validation, logical reads, fees and rollback. A worker
+failure or a tighter ordered budget takes the ordinary materializer.
+
+Compare `contract-execution` with `rolling-lineage` from the
+[matched builds](../native-v1-integration.md#matched-builds). Use
+interleaved conflicting Heads and independent markets, the shared-Head
+AMM control and a multi-market CLOB load. Hold the parent, signed
+commands, workers, cache budgets and block limits fixed. Compare
+ordered receipts, exact Headers, post-commit Head proofs and independent
+replay. In `candidate_lineage`, measure `rolling_wait_us` (coordinator
+wall time waiting for the current result), `rolling_worker_us` (sum
+of task elapsed times), `rolling_peak_outstanding` and
+`lookahead_reused`. The worker and wait timings can overlap.
+Capturing overrides, moving jobs and buffering results add work.
+A shared Head or a saturated resource budget constrains overlap.
+The snapshot and existing ordered-oracle regressions have compile
+coverage. Runtime regressions, replay and load qualification are pending.
+
+#### Leader Lineage materialization
+
+`native-leader-lineage-execution` uses the same bounded scheduler
+inside Leader proposal selection. It visits the supplied candidates in
+their original order. A planned dependency waits for all possible
+earlier mutations to have been visited. A candidate rejected by the
+greedy scan publishes no Cell or Head edits. Later jobs capture the
+actual accepted prefix, including a retained Head after rejection or
+fee-only rollback. The planner already includes every possible Head
+successor and direct Cell access. If it cannot inspect a dependency,
+the buffered suffix is handled by ordinary ordered selection.
+Keeper schedules and atomic wrappers still use their existing paths.
+
+Materializations are adopted through the original proposal scan after
+its byte and logical read limits permit the candidate. Accepted count,
+wire limits, age-priority order, error handling and final receipts
+continue through that scan. A planning window starts after any buffered
+ordinary Cell candidate results are consumed. An early proposal stop
+cancels remaining queued work. A valid worker result can save
+materialization while the full authorization and application still
+run at the ordered position.
+
+Compare `rolling-lineage` and `leader-lineage` with the same funded
+mempool snapshot, workers and block limits. Include a rejected earlier
+command on the same Head, a reader of a refund from an accepted
+transaction, unrelated Heads and the single-Head AMM control. Check
+selected bytes, exact Headers, receipts, final Head proofs and
+independent replay. Measure `proposal_scan.lineage` for useful worker
+results, ordered fallbacks and current-position wait alongside Leader
+selection CPU and wall time. Spending work on candidates that the
+Leader later rejects can erase savings. The rejected-predecessor
+regression and existing Follower comparison have compile coverage.
+Runtime validation, replay and performance remain pending.
+
 ## Certified Commit Pipeline
 
 `jolteon-commit-pipeline` enables the Follower worker and delegates each certified synchronous RocksDB batch to one writer per replica. The batch contains execution, the finality proof, pruning and the next journal. The Replica installs the new tip and journal only after acknowledgement. It can serve status from the previous acknowledged state meanwhile. It queues requests that would read certified state or write the journal, with backpressure at eight events or two maximum frame lengths. Handoffs and recovery use the same ordered write acknowledgement.
@@ -398,3 +477,122 @@ python3 research/execution-pipeline/analyze.py
 ```
 
 The analysis uses the signed archive, initial and final per-node counters, timeout-view snapshots, and process accounting from each run. Capture `member`, `timeout_views`, `last_untimely_view`, `height` and `epoch` from the driver's initial and final status arrays for `views.json`. The mean control wait runs from a complete peer control frame at the transport to the Replica taking that frame. This includes inbound control-queue backpressure. Local timeout counts record persisted local timeout votes. Stale results remain in preparation service timing, which excludes waiting for the main loop to consume a finished result.
+
+## Reusing work across an exact certified prefix
+
+The `jolteon-exact-prefix-pipeline` candidate extends the existing
+single-write overlap to an ordinary contiguous sequence of certified
+writes. The Replica can start a successor job during that sequence and
+continues acknowledging each synchronous write in order. Recovery,
+committee handoff and execution close to the activation boundary keep
+the existing scheduling guards.
+
+If a worker acquires its snapshot after durability has advanced, it can
+skip any already-durable prefix of its scheduled ancestors. It verifies
+parent linkage and height for every skipped block and compares the full
+durable Header bytes. It then executes on the remaining speculative
+suffix. The rebased read uses a fresh private Cell cache and the exact
+Header for the bounded resident index. A replaced branch or unexpected
+durable tip returns no artifact. A Leader completion still has to match
+the current epoch, view, parent, certified Point and remaining branch.
+A Follower completion retains its exact transaction and execution
+checks. The existing durable vote and publication gates still apply.
+
+Eligible consecutive writes share timing intervals from the single
+writer. Worker overlap sums the intersections with actual write service
+intervals and excludes the gaps between them. The status adds
+`overlap_eligible_writes` for acknowledged writes eligible for this
+scheduling and `rebased_blocks` for durable ancestors traversed by
+successfully reused jobs. Existing counters still distinguish scheduled,
+discarded and published work. The timeline measures jobs scheduled
+during an eligible write sequence.
+
+Compare the feature with the existing `jolteon-cross-block-pipeline`
+default using the same Leader and Follower schedulers, resident indexes,
+workload and hardware. Include ordinary one-block finalization, a
+known-prefix catch-up with consecutive writes, a sibling replacement,
+and the existing delayed-WAL restart controls. Compare exact signed
+Headers, receipts, consensus journal, CKB checkpoints and independent
+replay. Normal load may seldom advance more than one durable block
+at a time. Look at the actual eligible-write and reused-job counters
+before attributing a throughput or finality change.
+
+Compiled regressions exercise one and two committed ancestors, a
+disconnected prefix, a spent Cell previously cached at the old pin,
+Leader epoch and view checks, and overlap timing across a write gap.
+Runtime regressions, matched throughput and durability trials remain
+pending.
+
+## Cancelling obsolete preparation
+
+The optional `jolteon-cancel-stale-execution` feature lets the Replica signal
+a running Leader or Follower preparation job when its result can no longer
+be used. A Leader job can stop when its epoch, view or QC parent changes,
+its view deadline expires, or durability advances outside its eligible
+branch. A Follower job can stop when its epoch changes, the committed
+branch excludes it, or its target has already become durable. Follower
+work survives a view change if its exact branch can still be used.
+An eligible durable prefix can still be reused.
+
+The job checks its token at snapshot, transaction, worker-dispatch and
+commitment boundaries. A VM or storage operation already in progress can
+finish. Running jobs still release their slots by reporting completion
+to the Replica. The worker returns a distinct cancellation result, which
+does not count as an invalid candidate. Jobs that finish before observing
+the request still pass through exact result matching. Cancellation never
+installs a prepared batch or changes vote persistence.
+
+The status records `cancel_requested`, `cancelled` and `cancelled_us` for
+Leader and Follower work. The last field is elapsed preparation time
+for jobs that acknowledged cancellation, measured from dequeue to result.
+It includes waits and does not measure worker CPU or time saved.
+
+For comparison, build the same source with and without the cancellation
+feature. Hold the worker count, exact-prefix option and workload fixed.
+Include a no-timeout control, a Leader worker delayed across a view expiry,
+an in-branch durable advance, and finalization of a sibling branch.
+Measure request and acknowledgement counts, stale execution, useful
+reuse, VM-worker CPU and control-message wait. Recheck signed Headers,
+receipts and finality using the independent verifier and include recovery.
+Low-churn runs may have few opportunities for cancellation. Check for
+unnecessary re-execution before considering a default change.
+
+The snapshot regression covers cancellation before work begins and
+after preparation returns, followed by clean preparation on the
+authoritative Store. The regression target was compiled. Runtime
+behavior and performance have not been measured for this candidate.
+
+#### Lineage Cell read reuse
+
+`native-reuse-lineage-cell-reads` uses the already-read fee record for
+Lineage preflight and the preflight's exact Executor Cell for materialization.
+The fee change also applies when booking a Keeper reservation. Fee
+authorization, the signed Executor data hash and logical read accounting
+use their existing rules.
+
+When the ordered stage materializes a command locally, it retains up to
+32 successful Cell reads and four MiB of canonical record bytes. The same
+stage can then re-resolve inputs and dependencies from those records.
+Current staged reads, including deletions, take precedence. The cache is
+scoped to that staging call and excludes output collision checks and
+reads brought back by background materializations. Each background
+materialization can still avoid its own repeated fee and Executor reads.
+Final resolution, failure and refund handling, charged reads, bytes and
+cycles follow the canonical path.
+
+Compare the same command corpus with and without the flag. Use an ordered
+single-Head workload, disjoint Heads with the same rolling scheduler in
+both arms, and mixed atomic commands and Keeper wakes. Keep resident
+layouts, shared caches, worker allocation and resource limits fixed.
+Record Cell resolver CPU and wall time, candidate and proposal timing,
+and peak RSS with both cold and warm Cell records. Compare the complete
+Headers, ordered receipts, charged resources, Cell and Head proofs and
+independent replay before interpreting performance. A Resident Cell or
+hot decoded-cache hit already avoids disk I/O. In that case, temporary
+map lookups and retained references may cost more than the saved work.
+
+The scoped-cache unit test covers exact keys, error fallback and
+entry-limit exhaustion. Existing integration targets cover ordered
+latest and exact Heads, stale dependencies, fee-only rollback and
+dependent Keeper wakes. Compile checks cover the control and candidate.
+Runtime and performance results remain pending.

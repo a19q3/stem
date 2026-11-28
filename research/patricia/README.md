@@ -16,6 +16,59 @@ A flushed RocksDB snapshot with 16,384 Live Cells served 1,024 queries with pres
 
 Four native replicas exercised the query path after a two-Type-script spend. The response proved the new output's membership and returned the same absence proof for both occurrences of the spent input. The reopened-store test also compared batched and standalone results in caller order. The read-count reduction measures proof lookup. [Issue #4](https://github.com/a19q3/stem/issues/4)
 
+### Batched reads for shared-prefix proofs
+
+`native-batched-patricia-proofs` adds a traversal for immutable native
+Cell proof batches. It walks the same shared prefixes and groups
+requested node IDs from each tree frontier in chunks of up to 64.
+The Store resolves branch entries and resident node hits before
+sending remaining requests to RocksDB with the same read options.
+Four or more disk lookups use one MultiGet call. Smaller sets use
+point reads.
+
+Each returned node is authenticated against its requested ID and tree.
+Each emitted record is checked against the leaf value. Membership,
+absence, duplicate requests and caller order retain the same
+`PatriciaPath` bytes. The compile-checked fixtures compare full
+paths across grouped reads and cover a pinned RocksDB view after
+its newer tip commits. The archived JMT proof path has its own reader.
+
+Compare the existing shared-prefix traversal against this feature at
+widths 1, 12, 32, 128 and 1,024 on identical committed states.
+Use uniform and clustered keys with resident nodes, warm RocksDB and
+cold RocksDB. Record storage calls, keys per call, proof wall time, CPU,
+allocations and exact output equality. This traversal consumes fetched
+nodes directly. The [earlier two-pass edit experiment](#bounded-rocksdb-prefetch-before-editing)
+found a regression even with fewer storage calls. Fully resident or
+narrow proof batches may also see little benefit from the additional
+buffering. Runtime and replay evidence are pending.
+
+### Grouping the Live Cell records behind proofs
+
+`native-batched-cell-proof-records` groups the actual Live Cell lookup
+after proof traversal. The requested OutPoints keep their original
+positions. Each unique OutPoint uses the same branch, resident and
+decoded-cache precedence as a single lookup. Remaining committed
+records use point reads or MultiGet in groups of up to eight. The
+Store reuses the key from proof traversal and checks the record hash
+once per OutPoint. Duplicate queries still return separate proof
+paths, and a missing leaf still requires checking record absence.
+
+Committed records from disk enter the decoded cache after proof
+binding succeeds. The feature supports both the ordinary and owned
+RocksDB record decoders. The compile-checked fixtures cover duplicate
+positions, a disk row present behind an absence proof, and batch
+proofs from a pinned view after the next block commits.
+
+Compare with and without the option at the same committed root,
+using uniform and repeated or clustered OutPoints. Hold node
+batching and the owned record decoder constant for the comparison.
+Record live-record point and batch calls, duplicate share, lookup
+CPU, RSS and total response time and verify exact output bytes.
+Small requests or resident state may gain little. MultiGet holds
+multiple raw values until each group is decoded, while a group never
+exceeds eight unique records. Runtime and replay evidence are pending.
+
 ## Parallel Cell subtree mutation
 
 The optional `native-cell-subtree-parallel` feature gives Cell commitment work to the existing Rayon pool used by the Leader and Follower. A partition can run concurrently when every change fits the existing compressed prefix and each child has at least 128 changes. The two children receive disjoint key ranges and bounded shares of the available workers. Each child reads the same immutable parent view and buffers node edits and previous values. The parent joins left before right, then applies the existing compression rule. Small or one-sided batches and changes extending an existing prefix use the serial editor. The System tree, node encoding, durable batch ordering and state proof format use the existing paths.
@@ -142,6 +195,35 @@ The probe at `5c697c2` compared direct `get_opt` calls with two RocksDB prefetch
 Each of the 144 measured edits matched the canonical root and exact node writes and deletes. Both prefetch methods read the same key set as the direct editor. Fewer RocksDB calls still led to longer total edits in every fixture. Retain point reads. The result covers the two-pass prefetch and edit design. An editor that consumes fetched nodes directly would need a separate comparison.
 
 The experiment retained its patch and raw samples outside the repository. The executable SHA-256 is `637ce66750643cbf7987ef4c27f65f3ad4a4886295c3df532fde3ff2d4d7ac80` and the sample JSON SHA-256 is `07a8ba85f481b5f3d62158c1136608d5a189dfc10ead495d2cfef02cad746860`.
+
+## Editing directly from batched node reads
+
+`native-patricia-frontier-edit` gives large parallel Cell updates a
+bounded batch of authenticated upper-branch reads. Requests use the
+same branch, resident and committed-snapshot lookup path as the
+batched proof reader. The editor retains each checked node and its
+change slice, then uses those nodes to settle the planned branches.
+It passes already-checked subtree roots to the ordinary editor at
+terminal pieces. This skips the second lookup and authentication of
+planned nodes from the earlier prefetch experiment.
+
+The experiment retains up to 511 pieces and issues at most 64 node
+IDs per read. A branch with fewer than eight edits in either child,
+or a diverging compressed prefix, uses the existing editor below
+that point. The original threshold still governs parallel joins.
+Each worker produces a separate journal, with left work joined
+before right and the parent. The serial callback order for touched
+leaves is preserved. The compiled differential fixture checks every
+node edit and callback, and rejects repeated reads of planned nodes.
+
+Compare the option over `native-verified-cell-journal` with the same
+worker count, caches, node journal and authenticated state. Use
+payments, clustered mixed contracts and skewed edit sets at fixed
+block sizes. Record call count, node reads, tree CPU and wall time,
+allocations, committed batch equality and reopened proofs. Planning
+the upper levels serially can delay the first child work, and the
+frontier adds buffered nodes even with full residency. Runtime and
+independent replay are pending.
 
 ## Original in-memory experiment
 
