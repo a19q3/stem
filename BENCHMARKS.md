@@ -2356,6 +2356,16 @@ Reproduce the live checks with `keeper_load::sustained_keeper_load`, 24 payments
 
 Runtime checks and performance qualification are pending. For a fixed-state comparison, compile the native Store test target with and without the feature, then run `keeper::measure_keeper_slots` with `STEM_KEEPER_BENCH_WORKERS=4`. Match `STEM_KEEPER_BENCH_HEADS=4` for independent work and `STEM_KEEPER_BENCH_HEADS=1` for the shared-Head control. Compare identical slot budgets and charged cycles. Measure due preparation and finality alongside planning time, worker CPU and retries under mixed ordinary payments. Small or dependent bursts may pay planning costs with few reusable results, and the Leader still repeats due execution during full proposal replay.
 
+#### Reusing the Keeper prefix in Leader proposals
+
+`native-reuse-keeper-proposal-prefix` extends the Leader's provisional state reuse to blocks whose due commands are single, one-shot Lineage commands. After selection, the Leader commits the ordered Keeper prefix and selected transactions to the transaction root, updates each surviving output's origin to the final Header context and persists all execution records in the same order as serial replay. Height, parent time, canonical slot charging and reservation writes use the existing due path. Retry policies, atomic plans and proposals that already require a full replay still take that path. Followers still validate the proposal independently.
+
+The ordinary Lineage envelope has no Header Deps, and its Executor receives the candidate height and parent time. The fee authorization and resulting Cell scripts can also read the committed parent, which is already fixed during selection. VM cache keys may include the provisional origins of same-block inputs, so this feature does not reinterpret cached entries as verification under a different context. It preserves the already computed transitions and receipts.
+
+For correctness, run `cargo test --locked --release --test native_store --features native-reuse-keeper-proposal-prefix,native-keeper-parallel-preparation keeper_prepares_across_an_ordered_head_dependency`. The fixture compares the Leader, Follower and serial replay across dependent height wakes, a stale wake, a timed wake and a payment chain. It commits the Leader result, reopens the database and compares stored execution, Cell proofs, Lineage Heads and reservation proofs.
+
+For performance, run the same `keeper_load::sustained_keeper_load` profiles with matching funded state and worker settings, adding only `native-reuse-keeper-proposal-prefix`. Count avoided due replays with `execution.proposal_scan.keeper_prefix_reused`, check that confirmation, cycles and fees match, and measure Leader build wall time and CPU. The candidate can save repeated work on blocks that contain due commands. It adds no execution slots and the unchanged replay path limits the gain on retry and atomic workloads. This iteration compiled the regression target. Runtime checks, independent replay and performance measurements are pending.
+
 ## CKB checkpoint publisher handoff
 
 Revision `01df462` ran two publishers with separate fee keys and

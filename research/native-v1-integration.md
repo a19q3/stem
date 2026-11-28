@@ -26,6 +26,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Leader Lineage materialization | `native-leader-lineage-execution` | Reuse ready Lineage work through greedy Leader selection [Comparison notes](execution-pipeline/README.md#leader-lineage-materialization) |
 | Rolling Lineage materialization | `native-rolling-lineage-execution` | Refill ready materialization jobs during ordered settlement on the accepted prefix [Comparison notes](execution-pipeline/README.md#rolling-lineage-materialization) |
 | Lineage and Keeper | `45028dc` | Independent Head lookahead and one-shot wake preparation [Keeper notes](../BENCHMARKS.md#parallel-preparation-of-independent-due-commands) |
+| Leader Keeper prefix reuse | `native-reuse-keeper-proposal-prefix` | Reuse settled one-shot wakes when finishing the selected proposal [Keeper notes](../BENCHMARKS.md#reusing-the-keeper-prefix-in-leader-proposals) |
 | Certificates and votes | `34e4743` | Shared direct frames and exact current-certificate reuse [Communication notes](certificates/README.md#sharing-certificates-and-direct-vote-frames) |
 | Resident Patricia publication | `0eba67f` | Publish on the certified writer after WAL sync or on the Replica when it installs the durable tip [Resident Patricia notes](storage/resident-patricia.md) |
 | Prebuilt finality state writes | `jolteon-prebuilt-state-write` | Assemble one certified state prefix before the atomic finality write [Comparison notes](execution-pipeline/cross-block.md#prebuilding-the-certified-state-writebatch) |
@@ -67,6 +68,7 @@ shared_proposal_snapshot=jolteon-shared-proposal-snapshot
 contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
 rolling_lineage=native-rolling-lineage-execution
 leader_lineage=native-leader-lineage-execution
+keeper_prefix=native-reuse-keeper-proposal-prefix
 publication=jolteon-resident-node-publication
 prebuilt_state_write=jolteon-prebuilt-state-write
 prepared_cell_keys=native-prepared-cell-record-keys
@@ -110,6 +112,7 @@ build shared-proposal-snapshot --features "$pre_quorum,$shared_proposal_snapshot
 build contract-execution --features "$contracts"
 build rolling-lineage --features "$contracts,$rolling_lineage"
 build leader-lineage --features "$contracts,$rolling_lineage,$leader_lineage"
+build keeper-prefix --features "$contracts,$keeper_prefix"
 build publication --features "$publication"
 build prebuilt-state-write --features "$prebuilt_state_write"
 build prepared-cell-keys --features "$prepared_cell_keys"
@@ -124,7 +127,7 @@ build node-publication-control --features "$verified_journal,$publication"
 build node-publication-stream --features "$verified_journal,$publication,$stream_node_publication"
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$rolling_lineage,$leader_lineage,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$certificates"
+build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

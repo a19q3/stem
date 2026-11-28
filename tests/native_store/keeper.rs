@@ -107,7 +107,10 @@ fn cancel(
 }
 
 #[test]
-#[cfg(feature = "native-keeper-parallel-preparation")]
+#[cfg(any(
+    feature = "native-keeper-parallel-preparation",
+    feature = "native-reuse-keeper-proposal-prefix"
+))]
 fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
     use super::lineage::FixtureLineage;
     use anyhow::Context;
@@ -117,8 +120,8 @@ fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
     let mut fixture = Fixture::new()?;
     fixture.spec.limits.transaction_count = 16;
     let registry = FixtureLineage::fund(&mut fixture)?;
-    let dynamic = DynamicLineage::fund_using(&mut fixture, &registry, 3, 2, None)?;
-    fund_carriers(&mut fixture, 3)?;
+    let dynamic = DynamicLineage::fund_using(&mut fixture, &registry, 4, 2, None)?;
+    fund_carriers(&mut fixture, 4)?;
     fixture.spec.keeper.as_mut().unwrap().time = Some(KeeperTimePolicy {
         per_height: 1,
         max_delay_ms: 10_000,
@@ -133,7 +136,8 @@ fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
             .with_valid_before_height(12)?
             .with_keeper_trigger(Trigger::Time(target))?,
     )?;
-    let reservations = [&height0, &height1, &timed]
+    let stale = dynamic.scheduled(&fixture, 3, (0, 0), 9, 4)?;
+    let reservations = [&height0, &height1, &stale, &timed]
         .iter()
         .enumerate()
         .map(|(index, command)| schedule(&fixture, index as u32, command))
@@ -174,12 +178,28 @@ fn keeper_prepares_across_an_ordered_head_dependency() -> Result<()> {
     assert_eq!(leader.header(), reference.header());
     assert_eq!(candidate.receipts(), reference.receipts());
     assert_eq!(leader.receipts(), reference.receipts());
-    assert_eq!(candidate.receipts().len(), payments.len() + 3);
-    for receipt in &candidate.receipts()[..3] {
-        assert_eq!(Outcome::decode(&receipt.protocol_result)?, Outcome::Applied);
-    }
+    assert_eq!(leader.submitted_receipts().len(), payments.len());
+    assert_eq!(candidate.receipts().len(), payments.len() + 4);
+    assert_eq!(
+        candidate.receipts()[..4]
+            .iter()
+            .map(|receipt| Outcome::decode(&receipt.protocol_result))
+            .collect::<Result<Vec<_>>>()?,
+        [Outcome::Applied, Outcome::Applied, Outcome::Skipped, Outcome::Applied]
+    );
     serial.commit(reference)?;
-    parallel.commit(candidate)?;
+    parallel.commit(leader)?;
+    drop(parallel);
+    let parallel = Store::open(&dir.path().join("parallel"), &fixture.spec, Retention::Archive)?;
+    let (expected_transactions, expected_receipts) =
+        serial.execution(4)?.context("missing serial execution")?;
+    let (actual_transactions, actual_receipts) =
+        parallel.execution(4)?.context("missing reopened execution")?;
+    assert!(
+        actual_transactions.iter().map(Transaction::as_slice)
+            .eq(expected_transactions.iter().map(Transaction::as_slice))
+    );
+    assert_eq!(actual_receipts, expected_receipts);
     let (expected_cell, expected_path) = serial.prove_cell(&point)?;
     let (actual_cell, actual_path) = parallel.prove_cell(&point)?;
     assert_eq!(

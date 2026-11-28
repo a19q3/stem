@@ -129,6 +129,25 @@ pub(super) struct Due {
     agenda: Option<Vec<AgendaEntry>>,
 }
 
+impl Due {
+    pub(super) fn can_rebind_proposal(&self) -> bool {
+        self.commands.is_empty()
+            || (cfg!(feature = "native-reuse-keeper-proposal-prefix")
+                && self.commands.iter().all(|command| {
+                    // Single Lineage commands have no Header Deps or Since
+                    // lock and their Executor sees only height and parent time.
+                    command.lineage_command().is_some()
+                        && command.header_deps().len() == 0
+                        && command
+                            .lineage_intent()
+                            .is_none_or(|intent| intent.batch.is_none())
+                        && command
+                            .keeper_schedule()
+                            .is_some_and(|schedule| schedule.retry.is_none())
+                }))
+    }
+}
+
 impl Stage {
     fn queue(&self, store: &Store, height: u64) -> Result<(Vec<Transaction>, u64)> {
         if let Some(queue) = self.queues.get(&height) {
