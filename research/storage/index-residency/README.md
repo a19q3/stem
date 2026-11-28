@@ -83,6 +83,3 @@ runtime allocation exceeds the budget, keep the usable entries and let
 individual misses reach RocksDB. The fixed-budget storage comparison
 supports retention under load. The remaining Leader variance warrants its
 own matched experiment.
-
-The [two-host follow-up](../two-host-validation/README.md) uses this
-build and the same authenticated workload over a direct Wi-Fi LAN.
