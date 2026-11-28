@@ -1039,6 +1039,23 @@ fn lineage_prefix_keeps_live_dependencies_versions_and_fee_only_rollback() -> Re
             if index == 5 { lineage::Outcome::Rejected } else { lineage::Outcome::Applied },
         );
     }
+    #[cfg(feature = "native-leader-lineage-execution")]
+    {
+        // A command that expects a future Head is skipped by the Leader.
+        // Its predicted successor must neither be adopted nor hide the old Head.
+        let skipped = dynamic.signed(&fixture, 9, &[0], (7, 7), 1)?;
+        let offered = std::iter::once(&skipped).chain(ordered.iter());
+        let (selected, proposal) = pool.install(|| {
+            threaded.build_proposal(offered, TIME + 1, 1024 * 1024)
+        })?;
+        assert_eq!(
+            selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+            ordered.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+        );
+        assert_eq!(proposal.header(), expected.header());
+        assert_eq!(proposal.receipts(), expected.receipts());
+    }
+
     serial.commit(expected)?;
     threaded.commit(actual)?;
     for (id, version) in dynamic.ids.iter().zip([2, 1, 1, 1, 1, 2]) {

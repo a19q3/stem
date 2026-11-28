@@ -155,6 +155,7 @@ pub struct ProposalScan {
     pub parallel_parent_rejections_reused: u64,
     pub parallel_cell_us: u64,
     pub rolling_cells: CellStreamStats,
+    pub lineage: LineageSchedule,
     pub dependency_reads: DependencyReadStats,
     pub keeper_wakes: KeeperWakeMetrics,
 }
@@ -328,6 +329,7 @@ impl ProposalScan {
             .saturating_add(scan.parallel_parent_rejections_reused);
         self.parallel_cell_us = self.parallel_cell_us.saturating_add(scan.parallel_cell_us);
         self.rolling_cells.record(scan.rolling_cells);
+        self.lineage.record(scan.lineage);
         self.dependency_reads.record(scan.dependency_reads);
         self.keeper_wakes.record(scan.keeper_wakes);
     }
@@ -896,6 +898,8 @@ enum ProposalTrial<T> {
     Ordered,
     Recheck,
     Ready(T),
+    #[cfg(feature = "native-leader-lineage-execution")]
+    Lineage(Option<lineage::Materialized>, bool),
     #[cfg(feature = "native-reuse-parent-spend-rejections")]
     Missing(OutPoint),
 }
@@ -915,6 +919,8 @@ impl<T> ProposalTrial<T> {
             Self::Ordered => ProposalTrial::Ordered,
             Self::Recheck => ProposalTrial::Recheck,
             Self::Ready(result) => ProposalTrial::Ready(ready(result)),
+            #[cfg(feature = "native-leader-lineage-execution")]
+            Self::Lineage(material, attempted) => ProposalTrial::Lineage(material, attempted),
             #[cfg(feature = "native-reuse-parent-spend-rejections")]
             Self::Missing(point) => ProposalTrial::Missing(point),
         }
@@ -2639,6 +2645,18 @@ impl Store {
             {
                 break;
             }
+            #[cfg(feature = "native-leader-lineage-execution")]
+            if window.is_empty()
+                && let Some(stopped) = self.stage_lineage_proposal(
+                    &mut transactions, &block, &origin, &mut budget, &mut overlay,
+                    &mut progress, scan, due.commands.len(),
+                )?
+            {
+                if stopped {
+                    break;
+                }
+                continue;
+            }
             #[cfg(feature = "native-rolling-leader-execution")]
             if width > 1
                 && let Some(stopped) = self.stage_rolling_proposal(
@@ -2753,6 +2771,16 @@ impl Store {
                 scan.parallel_parent_rejections_reused.saturating_add(1);
             return Ok(ProposalStep::RejectedParentSpend);
         }
+        #[cfg(feature = "native-leader-lineage-execution")]
+        let (trial, material) = match trial {
+            ProposalTrial::Lineage(material, attempted) => (
+                ProposalTrial::Ordered,
+                self.reuse_lineage_materialization(material, *budget, attempted, &mut scan.lineage),
+            ),
+            ordinary => (ordinary, None),
+        };
+        #[cfg(not(feature = "native-leader-lineage-execution"))]
+        let material = None;
         let had_trial = !matches!(trial, ProposalTrial::Ordered);
         let receipt = match trial {
             ProposalTrial::Ready(adopt) => adopt(budget, overlay),
@@ -2772,7 +2800,7 @@ impl Store {
             (None, Some(view)) => self.stage_transaction(
                 tx, block, origin, budget, overlay, None, verify, None, Some(view),
             ),
-            (None, None) => self.stage(tx, block, origin, budget, overlay, None, verify),
+            (None, None) => self.stage(tx, block, origin, budget, overlay, material, verify),
         };
         match staged {
             Ok(receipt) => {

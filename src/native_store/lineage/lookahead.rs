@@ -10,38 +10,42 @@ use stem_ledger::{BlockContext, Origin, Transaction, block::Receipt};
 use super::{Materialized, access_plan::plan, current_head};
 use crate::native_store::{Budget, LineageSchedule, Overlay, Store};
 
+#[cfg(feature = "native-leader-lineage-execution")]
+mod leader;
 #[cfg(feature = "native-rolling-lineage-execution")]
 mod rolling;
 
 const MAX_LOOKAHEAD: usize = 32;
 
+struct Window {
+    prefix: Vec<usize>,
+    #[cfg(feature = "native-rolling-lineage-execution")]
+    initial_heads: super::Heads,
+}
+
 impl Store {
-    pub(in crate::native_store) fn prepare_lineage_lookahead(
+    fn funded_lineage_jobs(&self, width: usize, budget: Budget) -> usize {
+        usize::try_from(budget.cycles / self.limits.transaction_cycles.max(1))
+            .unwrap_or(usize::MAX)
+            .min(width)
+    }
+
+    fn lineage_window_limit(&self, width: usize, budget: Budget) -> usize {
+        if self.funded_lineage_jobs(width, budget) < 2 {
+            return 0;
+        }
+        width.saturating_mul(4).min(MAX_LOOKAHEAD)
+    }
+
+    fn plan_lineage_window(
         &self,
         transactions: &[Transaction],
-        block: &BlockContext<'_>,
-        origin: &Origin,
-        width: usize,
-        budget: &mut Budget,
-        overlay: &mut Overlay,
-        receipts: &mut Vec<Receipt>,
-        fees: &mut u64,
+        overlay: &Overlay,
         stats: &mut LineageSchedule,
-    ) -> Result<usize> {
-        let limit = self.limits.transaction_cycles;
-        let max_jobs = |budget: Budget| {
-            usize::try_from(budget.cycles / limit.max(1))
-                .unwrap_or(usize::MAX)
-                .min(width)
-        };
-        let horizon = transactions
-            .len()
-            .min(width.saturating_mul(4))
-            .min(MAX_LOOKAHEAD);
-        if horizon < 2 || max_jobs(*budget) < 2 {
-            return Ok(0);
+    ) -> Option<Window> {
+        if transactions.len() < 2 {
+            return None;
         }
-        let transactions = &transactions[..horizon];
         let common = transactions[0]
             .lineage_command()
             .expect("Lineage segment")
@@ -57,7 +61,7 @@ impl Store {
             })
         }) {
             // This window is chained through one shared Head.
-            return Ok(0);
+            return None;
         }
         let started = Instant::now();
         #[cfg(feature = "native-rolling-lineage-execution")]
@@ -74,32 +78,61 @@ impl Store {
             },
         );
         stats.access_analysis_us += started.elapsed().as_micros() as u64;
-        if !prefix
+        prefix
             .iter()
             .enumerate()
             .any(|(position, &required)| required < position)
-        {
+            .then_some(Window {
+                prefix,
+                #[cfg(feature = "native-rolling-lineage-execution")]
+                initial_heads,
+            })
+    }
+
+    pub(in crate::native_store) fn prepare_lineage_lookahead(
+        &self,
+        transactions: &[Transaction],
+        block: &BlockContext<'_>,
+        origin: &Origin,
+        width: usize,
+        budget: &mut Budget,
+        overlay: &mut Overlay,
+        receipts: &mut Vec<Receipt>,
+        fees: &mut u64,
+        stats: &mut LineageSchedule,
+    ) -> Result<usize> {
+        let horizon = transactions
+            .len()
+            .min(self.lineage_window_limit(width, *budget));
+        let transactions = &transactions[..horizon];
+        let Some(window) = self.plan_lineage_window(transactions, overlay, stats) else {
             return Ok(0);
-        }
+        };
 
         #[cfg(feature = "native-rolling-lineage-execution")]
-        return self.prepare_rolling_lineage_window(
-            transactions,
-            &prefix,
-            &initial_heads,
-            block,
-            origin,
-            budget,
-            overlay,
-            receipts,
-            fees,
-            stats,
-            max_jobs,
-        );
+        {
+            self.drive_lineage_window(
+                transactions,
+                &window,
+                block,
+                width,
+                budget,
+                overlay,
+                stats,
+                |tx, budget, overlay, stats, material, attempted| {
+                    self.settle_lineage_lookahead(
+                        tx, block, origin, budget, overlay, receipts, fees, stats, material,
+                        attempted,
+                    )?;
+                    Ok(false)
+                },
+            )?;
+            Ok(window.prefix.len())
+        }
         #[cfg(not(feature = "native-rolling-lineage-execution"))]
         self.prepare_lineage_waves(
             transactions,
-            &prefix,
+            &window.prefix,
             block,
             origin,
             budget,
@@ -107,7 +140,7 @@ impl Store {
             receipts,
             fees,
             stats,
-            max_jobs,
+            |budget| self.funded_lineage_jobs(width, budget),
         )
     }
 
@@ -190,19 +223,7 @@ impl Store {
     ) -> Result<()> {
         // Worker errors and tighter resources use the existing ordered path.
         // Successful materialization alone publishes no effects.
-        let material = material.filter(|work| {
-            budget.cycles >= self.limits.transaction_cycles
-                && work.reads <= budget.reads
-                && work.read_bytes <= budget.read_bytes
-        });
-        if material.is_some() {
-            stats.lookahead_reused += 1;
-        } else {
-            stats.serial_commands += 1;
-            if attempted {
-                stats.lookahead_fallbacks += 1;
-            }
-        }
+        let material = self.reuse_lineage_materialization(material, *budget, attempted, stats);
         let receipt = self.stage(
             tx,
             block,
@@ -217,6 +238,29 @@ impl Store {
             .context("block fee overflow")?;
         receipts.push(receipt);
         Ok(())
+    }
+
+    pub(in crate::native_store) fn reuse_lineage_materialization(
+        &self,
+        material: Option<Materialized>,
+        budget: Budget,
+        attempted: bool,
+        stats: &mut LineageSchedule,
+    ) -> Option<Materialized> {
+        let material = material.filter(|work| {
+            budget.cycles >= self.limits.transaction_cycles
+                && work.reads <= budget.reads
+                && work.read_bytes <= budget.read_bytes
+        });
+        if material.is_some() {
+            stats.lookahead_reused += 1;
+        } else {
+            stats.serial_commands += 1;
+            if attempted {
+                stats.lookahead_fallbacks += 1;
+            }
+        }
+        material
     }
 }
 
