@@ -2008,41 +2008,63 @@ pub fn derive_script_groups<'a>(
     inputs: impl IntoIterator<Item = &'a Cell>,
     outputs: impl IntoIterator<Item = &'a Cell>,
 ) -> Result<Vec<ScriptGroup>> {
-    let mut groups = BTreeMap::new();
+    let mut groups = ScriptGroups::default();
     for (index, input) in inputs.into_iter().enumerate() {
-        get_group(&mut groups, ScriptGroupKind::Lock, input.lock())
+        groups
+            .get(ScriptGroupKind::Lock, input.lock())
             .inputs
             .push(index);
         for script in input.type_scripts() {
-            get_group(&mut groups, ScriptGroupKind::Type, script)
-                .inputs
-                .push(index);
+            groups.get(ScriptGroupKind::Type, script).inputs.push(index);
         }
     }
     for (index, output) in outputs.into_iter().enumerate() {
         for script in output.type_scripts() {
-            get_group(&mut groups, ScriptGroupKind::Type, script)
-                .outputs
-                .push(index);
+            groups.get(ScriptGroupKind::Type, script).outputs.push(index);
         }
     }
-    ensure!(groups.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
-    Ok(groups.into_values().collect())
+    groups.into_sorted()
 }
 
-fn get_group(
-    groups: &mut BTreeMap<(ScriptGroupKind, Bytes), ScriptGroup>,
-    kind: ScriptGroupKind,
-    script: Script,
-) -> &mut ScriptGroup {
-    groups
-        .entry((kind, script.as_bytes()))
-        .or_insert(ScriptGroup {
+#[derive(Default)]
+struct ScriptGroups {
+    by_script: BTreeMap<(ScriptGroupKind, Bytes), ScriptGroup>,
+    #[cfg(feature = "inline-cell-resolution")]
+    sole: Option<ScriptGroup>,
+}
+
+impl ScriptGroups {
+    fn get(&mut self, kind: ScriptGroupKind, script: Script) -> &mut ScriptGroup {
+        let group = |script| ScriptGroup {
             kind,
             script,
             inputs: Vec::new(),
             outputs: Vec::new(),
-        })
+        };
+        #[cfg(feature = "inline-cell-resolution")]
+        if self.by_script.is_empty() {
+            if self.sole.as_ref().is_none_or(|first| {
+                first.kind == kind && first.script.as_slice() == script.as_slice()
+            }) {
+                return self.sole.get_or_insert_with(|| group(script));
+            }
+            let first = self.sole.take().expect("sole Script Group");
+            self.by_script
+                .insert((first.kind, first.script.as_bytes()), first);
+        }
+        self.by_script
+            .entry((kind, script.as_bytes()))
+            .or_insert_with(|| group(script))
+    }
+
+    fn into_sorted(self) -> Result<Vec<ScriptGroup>> {
+        #[cfg(feature = "inline-cell-resolution")]
+        if let Some(group) = self.sole {
+            return Ok(vec![group]);
+        }
+        ensure!(self.by_script.len() <= MAX_SCRIPT_GROUPS, "too many Script Groups");
+        Ok(self.by_script.into_values().collect())
+    }
 }
 
 fn sum_capacity<'a>(mut cells: impl Iterator<Item = &'a Cell>) -> Result<u64> {
@@ -2438,6 +2460,40 @@ mod tests {
         assert!(verified.groups()[1].outputs.is_empty());
         assert_eq!(verified.groups()[0].script, verified.groups()[1].script);
         assert!(resolve(3).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn script_group_order_keeps_locks_and_types_separate() -> Result<()> {
+        let lock = script(9);
+        let lower = script(2);
+        let plain = Cell::new(1_000_000_000, lock.clone(), vec![], Bytes::new())?;
+        let typed = Cell::new(
+            1_000_000_000,
+            lock.clone(),
+            vec![lock.clone(), lower.clone()],
+            Bytes::new(),
+        )?;
+        let single = derive_script_groups([&plain, &plain], [&plain])?;
+        assert_eq!(
+            single,
+            [ScriptGroup {
+                kind: ScriptGroupKind::Lock,
+                script: lock.clone(),
+                inputs: vec![0, 1],
+                outputs: vec![],
+            }],
+        );
+        let groups = derive_script_groups([&plain, &typed], [&typed])?;
+        assert_eq!(groups[0], single[0]);
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[1].script, lower);
+        assert_eq!(groups[2].script, lock);
+        for group in &groups[1..] {
+            assert_eq!(group.kind, ScriptGroupKind::Type);
+            assert_eq!(group.inputs, [1]);
+            assert_eq!(group.outputs, [0]);
+        }
         Ok(())
     }
 

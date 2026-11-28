@@ -11,6 +11,7 @@ parallel-patricia = ["dep:rayon"]
 verified-patricia-cache = ["dep:hashbrown"]
 compact-verified-journal = ["verified-patricia-cache"]
 execution-material-cache = []
+inline-cell-resolution = []
 
 [dependencies]
 anyhow.workspace = true
