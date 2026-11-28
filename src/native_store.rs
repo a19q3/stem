@@ -34,6 +34,8 @@ use stem_vm::VerificationCache;
 
 mod bridge;
 mod cell_execution;
+#[cfg(feature = "native-batched-cell-proof-records")]
+mod cell_proof_records;
 mod cell_query;
 #[cfg(feature = "native-owned-live-cell-reads")]
 mod cell_read;
@@ -1906,29 +1908,40 @@ impl Store {
     }
 
     pub fn live_cell(&self, point: &OutPoint) -> Result<Option<LiveCell>> {
+        if let Some(record) = self.live_cell_in_memory(point)? {
+            return Ok(record);
+        }
+        let record = self.read_stored_live_cell(point, &self.live_cell_key(point))?;
+        self.remember_committed_live_cell(point, record.as_ref());
+        Ok(record)
+    }
+
+    // Outer None requests a database lookup. An inner None is authoritative.
+    fn live_cell_in_memory(&self, point: &OutPoint) -> Result<Option<Option<LiveCell>>> {
         if let Some(cell) = self.branch_cell(point) {
-            return Ok(cell.clone());
+            return Ok(Some(cell.clone()));
         }
         if let Some(index) = &self.live_index
             && let Some(cell) = index.lookup(point).context(StateReadFault)?
         {
-            return Ok(cell);
-        }
-        if let Some(cell) = self.cached_live_cell(point) {
             return Ok(Some(cell));
         }
-        // Only committed records enter this shared cache. The newest candidate
-        // above is authoritative even when its value is a deletion.
-        let found = self
-            .db
-            .get_opt(self.live_cell_key(point), &self.read_options)
+        Ok(self.cached_live_cell(point).map(Some))
+    }
+
+    fn read_stored_live_cell(&self, point: &OutPoint, key: &[u8]) -> Result<Option<LiveCell>> {
+        self.db
+            .get_opt(key, &self.read_options)
             .context(StateReadFault)?
             .map(|bytes| Self::decode_live_cell_value(point, bytes))
-            .transpose()?;
-        if let Some(cell) = &found {
+            .transpose()
+    }
+
+    fn remember_committed_live_cell(&self, point: &OutPoint, cell: Option<&LiveCell>) {
+        // Candidate rows must never enter the shared committed cache.
+        if let Some(cell) = cell {
             self.live_cache.insert(point.clone(), cell.clone());
         }
-        Ok(found)
     }
 
     fn branch_cell(&self, point: &OutPoint) -> Option<&Option<LiveCell>> {
@@ -2000,6 +2013,10 @@ impl Store {
         };
         #[cfg(not(feature = "native-batched-patricia-proofs"))]
         let proofs = self.cells.edit(root, |id| self.node(Namespace::Cells, id)).prove_many(&keys)?;
+        #[cfg(feature = "native-batched-cell-proof-records")]
+        if points.len() > 1 {
+            return self.bind_cell_proof_records(points, &keys, proofs);
+        }
         points
             .iter()
             .zip(proofs)
@@ -2009,14 +2026,21 @@ impl Store {
 
     fn live_cell_for_proof(&self, point: &OutPoint, actual: Option<Key>) -> Result<Option<LiveCell>> {
         let record = self.live_cell(point)?;
+        self.verify_live_cell_for_proof(point, actual, record.as_ref())?;
+        Ok(record)
+    }
+
+    fn verify_live_cell_for_proof(
+        &self,
+        point: &OutPoint,
+        actual: Option<Key>,
+        record: Option<&LiveCell>,
+    ) -> Result<()> {
         ensure!(
-            actual
-                == record
-                    .as_ref()
-                    .map(|record| record::cell_value(&self.cells, point, record)),
+            actual == record.map(|record| record::cell_value(&self.cells, point, record)),
             "Live Cell record differs from its authenticated value"
         );
-        Ok(record)
+        Ok(())
     }
 
     pub fn header(&self, height: u64) -> Result<Option<Header>> {
@@ -5563,6 +5587,44 @@ mod pipeline_store_tests {
         }
         limited.commit(proposal)?;
         assert!(limited.prepare(std::slice::from_ref(&fourth), 1002, false).is_ok());
+        Ok(())
+    }
+
+    #[cfg(feature = "native-batched-cell-proof-records")]
+    #[test]
+    fn grouped_proof_records_check_absence_and_preserve_duplicate_positions() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let cell = Cell::new(
+            20_000_000_000,
+            ckb_types::packed::Script::default(),
+            vec![],
+            bytes::Bytes::new(),
+        )?;
+        let point = |index| OutPoint::new([51; 32].pack(), index);
+        spec.development_cells.push((point(1), cell.clone()));
+        let store = Store::open(home.path(), &spec, Retention::Archive)?;
+        let points = [point(1), point(2), point(3), point(1), point(4), point(5)];
+        let proved = store.prove_cells(&points)?;
+        assert_eq!(
+            proved.iter().map(|(cell, _)| cell.is_some()).collect::<Vec<_>>(),
+            [true, false, false, true, false, false],
+        );
+        assert_eq!(proved[0].1, proved[3].1);
+        for (point, (cell, proof)) in points.iter().zip(proved) {
+            assert!(record::verify_cell(
+                &store.cells, &as_key(&store.tip.state.cell_root), point, cell.as_ref(), &proof,
+            ));
+        }
+
+        // Absence proofs still check the record store. None of these four
+        // absent points is retained in the decoded cache.
+        let absent = &points[1];
+        let orphan = LiveCell { cell, origin: Origin::new(&store.network, &store.tip.context) };
+        store.db.put(store.live_cell_key(absent), record::encode_cell(absent, &orphan))?;
+        let error = store.prove_cells(&points).err().context("accepted an orphan record")?;
+        assert!(error.to_string().contains("differs from its authenticated value"));
+        assert!(store.cached_live_cell(absent).is_none());
         Ok(())
     }
 
