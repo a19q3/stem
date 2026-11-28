@@ -2815,7 +2815,7 @@ impl Store {
             let root = update.root;
             let jmt_reads = update.reads;
             let tree_done = Instant::now();
-            update.write(self, batch, &cell_changes, version)?;
+            update.write(self, batch, &live, version)?;
             return Ok((
                 live,
                 root.0.pack(),
@@ -4812,11 +4812,12 @@ mod pipeline_store_tests {
             }).collect::<Vec<_>>();
             changes.sort_unstable_by_key(|(id, _)| *id);
             let version = view.tip.context.height + 1;
+            let live = PreparedCells::from(live.clone());
             let update = |observed, memo_nodes| -> Result<_> {
                 let update = research_jmt::update(view, &changes, version, observed, memo_nodes)?;
                 let (root, reads) = (update.root, update.reads);
                 let mut batch = Batch::default();
-                update.write(view, &mut batch, &changes, version)?;
+                update.write(view, &mut batch, &live, version)?;
                 Ok((root, batch, reads))
             };
             let (expected, reference, _) = update(false, 0)?;
@@ -4837,7 +4838,7 @@ mod pipeline_store_tests {
             let delete = |point| state_key(STATE_RECORD, Namespace::Cells, &key(point));
             assert!(matches!(observed.lookup(&delete(&old)), Some(None)));
             assert!(observed.lookup(&delete(&absent)).is_none());
-            if live.contains_key(&speculative) {
+            if live.get(&speculative).is_some() {
                 assert!(matches!(observed.lookup(&delete(&speculative)), Some(None)));
             }
             Ok(())
@@ -5746,7 +5747,7 @@ mod pipeline_store_tests {
                             &mut overlay, &mut stats, true,
                             #[cfg(feature = "native-shared-cell-deps")]
                             &mut None,
-                            |tx, trial, budget, overlay, _| {
+                            |tx, trial, budget, overlay, canonical| {
                                 // Use exact ordered staging without marking the
                                 // declaration as certified for these positions.
                                 let forced = receipts.len() < 1 + usize::from(force_second);
@@ -5757,10 +5758,14 @@ mod pipeline_store_tests {
                                     receipts.push(receipt);
                                     return Ok(ProposalStep::Reused);
                                 }
-                                receipts.push(store.stage(
+                                receipts.push(store.stage_transaction(
                                     tx, &block, &origin, budget, overlay, None,
                                     |resolved, limit| store.cache.verify(resolved, limit, false),
+                                    None, Some(canonical),
+                                    #[cfg(feature = "native-compact-cell-trial-edits")]
+                                    None,
                                 )?);
+                                canonical.ordered_writes.expect("ordered declaration flag").set(false);
                                 Ok(ProposalStep::Ordered)
                             },
                         )
@@ -5807,8 +5812,14 @@ mod pipeline_store_tests {
                 })?;
                 assert_eq!(outcome, (4, false));
                 assert_eq!(stats.jobs, 4);
-                assert_eq!(stats.projected_transactions, 2);
-                assert_eq!(stats.retired_projection_edits, 2);
+                let (projected, retired) = if cfg!(feature = "native-leader-tail-cycle-shares") {
+                    // Tail reservations can submit the third job before the fold.
+                    (3, 4)
+                } else {
+                    (2, 2)
+                };
+                assert_eq!(stats.projected_transactions, projected);
+                assert_eq!(stats.retired_projection_edits, retired);
             }
         }
         #[cfg(all(
@@ -6104,10 +6115,14 @@ mod pipeline_store_tests {
             (4, 1, 1, 1)
         );
         #[cfg(feature = "native-leader-dependency-execution")]
-        assert_eq!(
-            (scan.parallel_cell_jobs, scan.parallel_cell_reused, scan.parallel_cell_fallback),
-            (3, 1, if cfg!(feature = "native-reuse-parent-spend-rejections") { 1 } else { 2 })
-        );
+        {
+            let jobs = if cfg!(feature = "native-rolling-leader-execution") { 4 } else { 3 };
+            let fallback = jobs - 1 - u64::from(cfg!(feature = "native-reuse-parent-spend-rejections"));
+            assert_eq!(
+                (scan.parallel_cell_jobs, scan.parallel_cell_reused, scan.parallel_cell_fallback),
+                (jobs, 1, fallback),
+            );
+        }
         #[cfg(feature = "native-reuse-parent-spend-rejections")]
         assert_eq!(scan.parallel_parent_rejections_reused, 1);
         #[cfg(feature = "jolteon-aged-proposal-selection")]

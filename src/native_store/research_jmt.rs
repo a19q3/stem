@@ -23,7 +23,7 @@ use stem_ledger::{
 
 use super::{
     Batch, HEADER, JMT_NODE, JmtMutationReads, MARKER, MAX_CELL_PROOF_BATCH, STATE_RECORD, STORAGE_LAYOUT, Spec,
-    Store, TIP, index_key, state_key,
+    PreparedCells, Store, TIP, index_key, state_key,
 };
 
 mod proof_audit;
@@ -218,7 +218,7 @@ impl Update {
         self,
         store: &Store,
         batch: &mut Batch,
-        changes: &[(Key, Option<Key>)],
+        live: &PreparedCells,
         version: u64,
     ) -> Result<()> {
         let Some(edits) = self.edits else {
@@ -235,13 +235,22 @@ impl Update {
                 }
             }
         } else {
-            for (id, value) in changes {
-                if value.is_none() {
-                    let key = state_key(STATE_RECORD, Namespace::Cells, id);
-                    if store.read(key)?.is_some() {
-                        batch.delete(key);
-                    }
+            let mut retired = Vec::new();
+            for (point, _) in live.iter().filter(|(_, row)| row.is_none()) {
+                let id = record::cell_key(&store.cells, point);
+                let key = state_key(STATE_RECORD, Namespace::Cells, &id);
+                // Speculative Cell rows can live only in the prepared delta.
+                let present = match store.branch_cell(point) {
+                    Some(row) => row.is_some(),
+                    None => store.read(key)?.is_some(),
+                };
+                if present {
+                    retired.push(id);
                 }
+            }
+            retired.sort_unstable();
+            for id in retired {
+                batch.delete(state_key(STATE_RECORD, Namespace::Cells, &id));
             }
         }
         write(batch, edits, version, store.cell_storage.fixed_jmt_root())
