@@ -272,6 +272,33 @@ Regression targets were compiled for both memory layouts, exact old and
 new proofs, budget pressure, expiry after an additional durable write and
 reopening. Runtime qualification and independent replay remain pending.
 
+#### Moving removed rows into the prior-Header journal
+
+`native-live-cell-move-previous` transfers the owned row from each
+changed OutPoint's table removal directly to the journal. It saves a
+hash-table lookup and reference-count updates per resident before-image.
+The interned layout releases each removed row's descriptor ownership in
+the active table while the moved row keeps its own descriptor references.
+The same journal captures explicit absences for creates and sorts keys by
+their full packed bytes before the publisher releases the write lock.
+
+The journal's budget still comes from the table size before removal and
+charges the same rows and descriptors. If capture exceeds that budget,
+the partial journal is discarded and removals continue to completion.
+Pinned readers fall back to their RocksDB snapshot when the complete
+journal is unavailable. The durable write and recovery paths are shared.
+
+Compare `prior-durable-cells` and `moved-before-images` with identical
+funded inputs, layouts, index budgets, churn, and commit pipelines. For
+the certified writer, add `jolteon-resident-cell-publication` to both
+builds and record `commit_jobs.live_cell_publication`, previous-Header
+coverage, snapshot fallbacks, RSS, and CPU time. Compare with and without
+pinned readers and at headroom levels that retain or discard the journal.
+Sorting, allocation, and descriptor bookkeeping still occur under the
+publication lock and can limit the effect. Current evidence is restricted
+to compilation. Runtime replay on both layouts and measured gains are
+pending.
+
 ### Sharing the pinned Live Cell cache
 
 Leader, Follower and background admission pin their RocksDB reads to an
