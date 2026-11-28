@@ -37,6 +37,22 @@ capacity and occupancy, cumulative hit and miss counts, and the subset of
 misses caused by a different parent. Hits include lookups whose cached cycle
 charge exceeds the current budget. Counters start at zero on process restart.
 
+Set `--live-cell-index-mib MIB` to enable the optional resident Live Cell
+index. On startup the replica scans the durable Live Cell records and checks
+them against the committed Header's Cell root before using the index. The
+index answers lookups at its committed Header, including absence. Candidate
+changes take precedence, and older pinned views use their RocksDB snapshots.
+The replica applies changes to the resident index after the durable batch
+has committed.
+
+Status reports `live_cell_index.active`, the indexed Cell count, accounted
+bytes, budget, recovery time in microseconds, and cumulative hit, absence and
+fallback counts. A startup or commit that exceeds the budget leaves the
+replica using RocksDB for the rest of the process. The budget covers the
+index's table and owned records. Allow separate memory for the RocksDB
+block cache, trial execution, pinned readers and allocator overhead. Restart
+with the option to rebuild the index.
+
 ```sh
 stem run --initialize --home /srv/stem/app --genesis /srv/stem/stem.json \
   --configuration /srv/stem/replicas.json --key-file /srv/stem/validator.key

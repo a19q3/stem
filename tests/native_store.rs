@@ -890,6 +890,141 @@ fn candidate_branch_executes_outputs_without_mutating_the_finalized_store() -> R
 }
 
 #[test]
+fn resident_live_cell_index_matches_branches_commit_and_reopen() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let indexed_path = tempfile::tempdir()?;
+    let reference_path = tempfile::tempdir()?;
+    let mut indexed = Store::open(indexed_path.path(), &fixture.spec, Retention::Archive)?;
+    let reference = Store::open(reference_path.path(), &fixture.spec, Retention::Archive)?;
+    let budget = std::num::NonZeroUsize::new(4).unwrap();
+    indexed.enable_live_cell_index(budget)?;
+    let initial = indexed.live_cell_index_status().unwrap();
+    assert!(initial.active);
+
+    let first = fixture.signed(fixture.spend.clone(), None, FUND - FEE, None)?;
+    let fork = fixture.signed(fixture.spend.clone(), None, FUND - 2 * FEE, None)?;
+    let output = OutPoint::new(first.id(indexed.network()), 0);
+    let first = std::sync::Arc::new(indexed.prepare(&[first.clone()], TIME, true)?);
+    let fork = std::sync::Arc::new(indexed.prepare(&[fork], TIME + 1, true)?);
+    let child = fixture.signed(output.clone(), None, FUND - 2 * FEE, None)?;
+    let successor = OutPoint::new(child.id(indexed.network()), 0);
+    let first_path = std::slice::from_ref(&first);
+    indexed.on_branch(first_path, |view| {
+        assert!(view.live_cell(&fixture.spend)?.is_none());
+        assert!(view.prove_cell(&output)?.0.is_some());
+        Ok(())
+    })?;
+    indexed.on_branch(std::slice::from_ref(&fork), |view| {
+        assert!(view.live_cell(&output)?.is_none());
+        assert!(view.prepare(std::slice::from_ref(&child), TIME + 2, true).is_err());
+        Ok(())
+    })?;
+    assert!(indexed.live_cell(&fixture.spend)?.is_some());
+    assert!(indexed.live_cell(&output)?.is_none());
+    let other_parent = std::sync::Arc::new(reference.prepare(
+        &[fixture.signed(fixture.spend.clone(), None, FUND - FEE, None)?],
+        TIME, false,
+    )?);
+    let oracle = reference.on_branch(&[other_parent], |view| {
+        view.prepare(std::slice::from_ref(&child), TIME + 2, false)
+    })?;
+    let prepared = indexed.on_branch(first_path, |view| view.prepare(&[child], TIME + 2, true))?;
+    assert_eq!(prepared.header(), oracle.header());
+    assert_eq!(prepared.receipts(), oracle.receipts());
+    indexed.commit(std::sync::Arc::try_unwrap(first).ok().context("shared parent")?)?;
+    assert!(indexed.live_cell(&fixture.spend)?.is_none());
+    assert!(indexed.live_cell(&output)?.is_some());
+    indexed.commit(prepared)?;
+    let (record, proof) = indexed.prove_cell(&successor)?;
+    let record = record.context("indexed successor missing")?;
+    let measured = indexed.live_cell_index_status().unwrap();
+    assert_eq!(measured.entries, initial.entries);
+    assert!(measured.accounted_bytes <= measured.limit_bytes);
+    assert!(measured.hits > 0 && measured.absent > 0);
+    drop(indexed);
+
+    let mut reopened = Store::open(indexed_path.path(), &fixture.spec, Retention::Archive)?;
+    reopened.enable_live_cell_index(budget)?;
+    assert_eq!(reopened.tip(), oracle.header());
+    assert!(reopened.live_cell(&output)?.is_none());
+    let (after, after_proof) = reopened.prove_cell(&successor)?;
+    assert_eq!(after.context("recovered successor missing")?.cell.as_slice(), record.cell.as_slice());
+    assert_eq!(proof.encode()?, after_proof.encode()?);
+    Ok(())
+}
+
+#[test]
+fn resident_index_budget_falls_back_to_verified_durable_cells() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let point = OutPoint::new([89; 32].pack(), 0);
+    let cell = Cell::new(
+        20_000_000_000_000, fixture.lock.clone(), vec![], Bytes::from(vec![9; (1 << 20) + 1]),
+    )?;
+    fixture.spec.development_cells.push((point.clone(), cell.clone()));
+    let dir = tempfile::tempdir()?;
+    let mut store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+    store.enable_live_cell_index(std::num::NonZeroUsize::new(1).unwrap())?;
+    let status = store.live_cell_index_status().unwrap();
+    assert!(!status.active && status.entries == 0 && status.accounted_bytes == 0);
+    assert_eq!(store.prove_cell(&point)?.0.context("durable large Cell missing")?.cell.as_slice(), cell.as_slice());
+    assert_eq!(store.live_cell_index_status().unwrap().fallbacks, 1);
+    Ok(())
+}
+
+#[test]
+fn resident_index_budget_exhaustion_during_commit_preserves_new_state() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.spec.capacity.bond_per_byte = 1_000;
+    fixture.spec.limits.cell_write_bytes = 2 << 20;
+    fixture.spec.development_cells.push((
+        OutPoint::new([91; 32].pack(), 0),
+        Cell::new(FUND, fixture.lock.clone(), vec![], Bytes::from(vec![8; 700 << 10]))?,
+    ));
+    let dir = tempfile::tempdir()?;
+    let mut store = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+    let budget = std::num::NonZeroUsize::new(1).unwrap();
+    store.enable_live_cell_index(budget)?;
+    assert!(store.live_cell_index_status().unwrap().active);
+
+    let cell = Cell::new(
+        FUND - FEE,
+        fixture.lock.clone(),
+        vec![],
+        Bytes::from(vec![9; 400 << 10]),
+    )?;
+    let tx = fixture.seal(Transaction::new(
+        fixture.deps.clone(),
+        vec![],
+        vec![CellInput::new(fixture.spend.clone(), None)],
+        vec![cell.clone()],
+        vec![],
+    )?)?;
+    let created = OutPoint::new(tx.id(store.network()), 0);
+    let prepared = store.prepare(&[tx], TIME, true)?;
+    assert!(store.live_cell_index_status().unwrap().active);
+    store.commit(prepared)?;
+    assert!(!store.live_cell_index_status().unwrap().active);
+    assert!(store.live_cell(&fixture.spend)?.is_none());
+    assert_eq!(
+        store.live_cell(&created)?.context("missing committed Cell")?.cell.as_slice(),
+        cell.as_slice()
+    );
+    let (record, proof) = store.prove_cell(&created)?;
+    drop(store);
+
+    let mut reopened = Store::open(dir.path(), &fixture.spec, Retention::Archive)?;
+    reopened.enable_live_cell_index(std::num::NonZeroUsize::new(4).unwrap())?;
+    assert!(reopened.live_cell_index_status().unwrap().active);
+    let (recovered, recovered_proof) = reopened.prove_cell(&created)?;
+    assert_eq!(
+        recovered.context("missing recovered Cell")?.cell.as_slice(),
+        record.context("missing prepared Cell")?.cell.as_slice()
+    );
+    assert_eq!(recovered_proof.encode()?, proof.encode()?);
+    Ok(())
+}
+
+#[test]
 fn vm_crypto_activation_changes_genesis_and_reopen_checks_it() -> Result<()> {
     let mut fixture = Fixture::new()?;
     let old_path = tempfile::tempdir()?;

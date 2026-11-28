@@ -168,6 +168,14 @@ impl Cell {
         }
     }
 
+    /// Own just this validated Cell's bytes, independently of a transaction
+    /// buffer it may have been sliced from.
+    pub fn detached(&self) -> Self {
+        Self::validated_entity(wire::Cell::new_unchecked(Bytes::copy_from_slice(
+            self.as_slice(),
+        )))
+    }
+
     fn from_entity(encoded: wire::Cell) -> Result<Self> {
         Self::validate(encoded.as_reader())?;
         Ok(Self::validated_entity(encoded))

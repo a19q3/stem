@@ -109,6 +109,9 @@ enum Command {
         /// Override the local RocksDB block cache capacity in MiB.
         #[arg(long, value_name = "MIB")]
         rocksdb_block_cache_mib: Option<NonZeroUsize>,
+        /// Memory budget for the verified Live Cell index, in MiB.
+        #[arg(long, value_name = "MIB")]
+        live_cell_index_mib: Option<NonZeroUsize>,
     },
     /// Export the trusted genesis and initial Jolteon committee for light clients.
     JolteonTrust {
@@ -319,6 +322,7 @@ fn main() -> Result<()> {
             history_window,
             storage_metrics,
             rocksdb_block_cache_mib,
+            live_cell_index_mib,
         } => {
             let spec = native_spec::load(&genesis)?;
             let config = bridge_cli::read_json_limited(&configuration, 64 * 1024)?;
@@ -331,13 +335,16 @@ fn main() -> Result<()> {
                 metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
                 "application home must be a private directory with mode 0700"
             );
-            let store = stem::native_store::Store::open_with_block_cache(
+            let mut store = stem::native_store::Store::open_with_block_cache(
                 &home.join("db"),
                 &spec,
                 node_retention(archive, history_window),
                 storage_metrics,
                 rocksdb_block_cache_mib,
             )?;
+            if let Some(limit) = live_cell_index_mib {
+                store.enable_live_cell_index(limit)?;
+            }
             stem::jolteon::run(store, key, config, initialize)
         }
         Command::JolteonTrust { genesis } => {

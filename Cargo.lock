@@ -3662,6 +3662,7 @@ dependencies = [
  "ckb-vm",
  "clap",
  "ed25519-dalek",
+ "hashbrown 0.17.0",
  "hex",
  "prost",
  "rand 0.8.6",

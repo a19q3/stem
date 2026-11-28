@@ -47,6 +47,47 @@ impl Patricia {
         self.commitment.record_key(name)
     }
 
+    /// Rebuild the canonical root from sorted records in one pass. The frontier
+    /// holds at most one unfinished branch per bit of the key.
+    pub fn root_from_sorted_records(
+        &self,
+        records: impl IntoIterator<Item = Result<(Key, Key)>>,
+    ) -> Result<Key> {
+        let mut records = records.into_iter();
+        let Some((mut previous, value)) = records.next().transpose()? else {
+            return Ok(self.empty_root());
+        };
+        let leaf = |key, value| self.node_hash(&Node::Leaf { key, value }.encode());
+        let branch = |prefix: &Key, bits, left, right| {
+            self.node_hash(
+                &Node::Branch {
+                    prefix: canonical_prefix(prefix, bits),
+                    bits,
+                    children: [left, right],
+                }
+                .encode(),
+            )
+        };
+        let mut right = leaf(previous, value);
+        let mut frontier: Vec<(u8, Key)> = Vec::new();
+        for record in records {
+            let (key, value) = record?;
+            ensure!(previous < key, "unordered or duplicate Patricia records");
+            let split = difference(&previous, &key).expect("different record keys");
+            while frontier.last().is_some_and(|(bits, _)| *bits > split) {
+                let (bits, left) = frontier.pop().expect("unfinished Patricia branch");
+                right = branch(&previous, bits, left, right);
+            }
+            frontier.push((split, right));
+            previous = key;
+            right = leaf(key, value);
+        }
+        while let Some((bits, left)) = frontier.pop() {
+            right = branch(&previous, bits, left, right);
+        }
+        Ok(right)
+    }
+
     pub fn edit<Read, Value>(&self, root: Key, read: Read) -> Edit<'_, Read>
     where
         Read: FnMut(&Key) -> Result<Option<Value>>,
@@ -548,6 +589,26 @@ fn difference(left: &Key, right: &Key) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_root_matches_the_canonical_batch_builder() -> Result<()> {
+        let tree = Patricia::new(Byte32::default(), Namespace::Cells);
+        let mut leaves: Vec<_> = (0..2048u16)
+            .map(|value| (tree.record_key(&value.to_le_bytes()), tree.value_hash(&value.to_be_bytes())))
+            .collect();
+        leaves.sort_unstable_by_key(|(key, _)| *key);
+        for count in [0, 1, 2, 3, 31, 256, 513, 2048] {
+            let records = &leaves[..count];
+            let changes: Vec<_> = records.iter().map(|&(key, value)| (key, Some(value))).collect();
+            let (root, _) = tree.batch_update(
+                tree.empty_root(), |_| Ok(None::<Vec<u8>>), &changes, |_, _, _| {},
+            )?;
+            assert_eq!(tree.root_from_sorted_records(records.iter().copied().map(Ok))?, root);
+        }
+        assert!(tree.root_from_sorted_records([Ok(leaves[1]), Ok(leaves[0])]).is_err());
+        assert!(tree.root_from_sorted_records([Ok(leaves[1]), Ok(leaves[1])]).is_err());
+        Ok(())
+    }
 
     #[test]
     fn batch_rewrites_shared_paths_once_and_preserves_proofs() -> Result<()> {

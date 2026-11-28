@@ -1849,6 +1849,7 @@ impl Replica {
                     "admission": self.admission,
                     "execution": self.execution,
                     "verification_cache": self.store.verification_cache_stats(),
+                    "live_cell_index": self.store.live_cell_index_status(),
                 });
                 #[cfg(feature = "jolteon-certificate-experiment")]
                 let status = {

@@ -45,6 +45,7 @@ ckb-types.workspace = true
 ed25519-dalek.workspace = true
 clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
+hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
 prost = "0.13"
 rand.workspace = true
 rayon.workspace = true

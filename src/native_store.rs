@@ -41,6 +41,9 @@ mod keeper;
 pub use keeper::{KeeperPolicy, KeeperTimePolicy};
 mod lineage;
 pub use stem_ledger::lineage::LineageProof;
+mod live_index;
+pub use live_index::LiveCellIndexStatus;
+use live_index::IndexView;
 mod node_storage;
 mod staking;
 mod state_snapshot;
@@ -380,6 +383,7 @@ pub struct Store {
     cache: Arc<VerificationCache>,
     branch: Vec<Arc<Prepared>>,
     live_cache: Arc<Mutex<LiveCache>>,
+    live_index: Option<IndexView>,
 }
 
 #[cfg(any(
@@ -479,6 +483,9 @@ impl PinnedView {
         let mut view = self.0.read_view(&branch[..skip]);
         // The accepted prefix is already in the snapshot.
         view.branch.clear();
+        if skip != 0 && let Some(index) = &mut view.live_index {
+            index.at_header(view.tip.id(&view.network).unpack());
+        }
         // The private view and its options are dropped before the snapshot.
         // Its Live Cell cache and committed stake inputs are private to this view.
         view.read_options = Arc::new(options);
@@ -952,6 +959,7 @@ impl Store {
             limits: spec.limits,
             fees: spec.fees,
             live_cache: Arc::default(),
+            live_index: None,
             cache: Arc::new(VerificationCache::for_genesis(4096, spec.vm_crypto_v1)),
             branch: Vec::new(),
         })
@@ -970,6 +978,18 @@ impl Store {
             .as_ref()
             .map(|metrics| metrics.sample())
             .transpose()
+    }
+
+    /// Recover the optional, bounded resident index against the durable root.
+    pub fn enable_live_cell_index(&mut self, limit_mib: NonZeroUsize) -> Result<()> {
+        ensure!(self.branch.is_empty() && self.live_index.is_none(), "Live Cell index already configured or view is speculative");
+        let limit = limit_mib.get().checked_mul(1 << 20).context("Live Cell index budget overflow")?;
+        self.live_index = Some(IndexView::recover(self, limit)?);
+        Ok(())
+    }
+
+    pub fn live_cell_index_status(&self) -> Option<LiveCellIndexStatus> {
+        self.live_index.as_ref().map(IndexView::status)
     }
 
     pub fn tip(&self) -> &Header {
@@ -1067,6 +1087,7 @@ impl Store {
             cache: self.cache.clone(),
             branch: branch.to_vec(),
             live_cache: Arc::clone(&self.live_cache),
+            live_index: self.live_index.clone(),
         }
     }
 
@@ -1339,6 +1360,9 @@ impl Store {
         if let Some(cell) = self.branch_cell(point) {
             return Ok(cell.clone());
         }
+        if let Some(cell) = self.live_index.as_ref().and_then(|index| index.lookup(point)) {
+            return Ok(cell);
+        }
         if let Some(cell) = self.cached_live_cell(point) {
             return Ok(Some(cell));
         }
@@ -1540,7 +1564,9 @@ impl Store {
         };
 
         let work_stealing = cfg!(feature = "native-work-stealing") && width > 1;
-        let prefetch_cells = cfg!(feature = "native-candidate-cell-prefetch") && width > 1;
+        let prefetch_cells = cfg!(feature = "native-candidate-cell-prefetch")
+            && width > 1
+            && !self.live_index.as_ref().is_some_and(IndexView::resident);
         let mut lineage_schedule = LineageSchedule::default();
         // Account for previous validation before admitting a dynamic wave.
         // Disjoint commands may materialize together when each has its full limit.
@@ -1701,6 +1727,12 @@ impl Store {
                 .as_ref()
                 .is_none_or(|cell| LiveCache::record_bytes(cell) <= MAX_RECORD_BYTES)
                 .then(|| cell.clone());
+        }
+        if let Some(cell) = self.live_index.as_ref().and_then(|index| index.lookup(point)) {
+            return cell
+                .as_ref()
+                .is_none_or(|cell| LiveCache::record_bytes(cell) <= MAX_RECORD_BYTES)
+                .then_some(cell);
         }
         if let Some(cell) = self.cached_live_cell(point) {
             return (LiveCache::record_bytes(&cell) <= MAX_RECORD_BYTES).then_some(Some(cell));
@@ -2731,6 +2763,9 @@ impl Store {
     }
 
     pub(crate) fn install_durable_tip(&mut self, prepared: &Prepared) {
+        if let Some(index) = &mut self.live_index {
+            index.advance(prepared.next.id(&self.network).unpack(), &prepared.live);
+        }
         self.history = prepared.history.clone();
         self.tip = prepared.next.clone();
         self.stake_inputs = Arc::clone(&prepared.stake_inputs);
@@ -3114,6 +3149,47 @@ mod pipeline_store_tests {
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-cross-block-pipeline")]
+    #[test]
+    fn resident_index_uses_rocksdb_for_a_superseded_pinned_reader() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let point = OutPoint::new([24; 32].pack(), 0);
+        let cell = Cell::new(20_000_000_000, ckb_types::packed::Script::default(), vec![], bytes::Bytes::new())?;
+        spec.development_cells.push((point.clone(), cell.clone()));
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        store.enable_live_cell_index(NonZeroUsize::new(2).unwrap())?;
+        let pinned = store.pinned_view();
+        let next = store.prepare(&[], 1001, false)?;
+        pinned.with_snapshot(|view| {
+            assert!(view.live_index.as_ref().unwrap().resident());
+            store.commit(next)?;
+            assert!(!view.live_index.as_ref().unwrap().resident());
+            assert_eq!(view.live_cell(&point)?.context("old Cell missing")?.cell.as_slice(), cell.as_slice());
+            Ok(())
+        })?.context("old snapshot missing")?;
+        let status = store.live_cell_index_status().unwrap();
+        assert_eq!(status.fallbacks, 1);
+        assert_eq!(status.entries, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn resident_index_rejects_valid_records_outside_the_durable_commitment() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut store = Store::open(home.path(), &spec(), Retention::Archive)?;
+        let point = OutPoint::new([25; 32].pack(), 0);
+        let cell = LiveCell {
+            cell: Cell::new(20_000_000_000, ckb_types::packed::Script::default(), vec![], bytes::Bytes::new())?,
+            origin: Origin::new(&store.network, &store.tip.context),
+        };
+        store.db.put(store.live_cell_key(&point), record::encode_cell(&point, &cell))?;
+        let error = store.enable_live_cell_index(NonZeroUsize::new(2).unwrap()).unwrap_err();
+        assert!(error.to_string().contains("authenticated Cell root"));
+        assert!(store.live_cell_index_status().is_none());
         Ok(())
     }
 

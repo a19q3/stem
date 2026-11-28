@@ -224,6 +224,8 @@ pub struct Status {
     pub execution: ExecutionMetrics,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_cache: Option<stem_vm::VerificationCacheStats>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_cell_index: Option<crate::native_store::LiveCellIndexStatus>,
 }
 
 #[derive(Debug, Deserialize)]
