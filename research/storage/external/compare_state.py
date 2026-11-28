@@ -11,9 +11,11 @@ import tempfile
 if __package__:
     from .drive import digest
     from .qualify import parse_endpoint
+    from .runtime import read_runtime
 else:
     from drive import digest
     from qualify import parse_endpoint
+    from runtime import read_runtime
 
 
 ENGINES = {"patricia": "compact-patricia", "jmt": "sha256-jmt-0.12"}
@@ -37,12 +39,56 @@ def observation(path):
             if min(delta.values()) < 0:
                 raise ValueError(f"{path}: RocksDB counters decreased during measurement")
             storage.append(delta)
+    settings = ("history_window", "live_cell_index", "cell_node_index", "verification_cache")
+    node_status = {
+        label: [{name: status[name] for name in settings if name in status}
+                for status in report.get(label, {}).get("statuses", ())]
+        for label in ("before", "after")
+    }
     return {
         "load": report["load"],
+        "reported_node_resources": node_status,
         "limits": report["limits"],
         "external_endpoints": [parse_endpoint(address) for address in report["external_endpoints"]],
         "rocksdb_counters_by_replica": storage,
     }
+
+
+def check_reported_resources(runtime, observation):
+    """Check published resource settings and retain observed index residency."""
+    cache_profiles = []
+    mib = 1 << 20
+    for when, statuses in observation["reported_node_resources"].items():
+        profiles = []
+        for node, status in zip(runtime["replicas"], statuses, strict=True):
+            config = node["configuration"]
+            if config["storage_metrics"] != observation["load"]["measured"]:
+                raise ValueError(f"{when}: storage metric settings differ for {node['endpoint']}")
+            if status["history_window"] != config["history_window"]:
+                raise ValueError(f"{when}: reported retention differs for {node['endpoint']}")
+            for field, allowance in (
+                ("live_cell_index", config["live_cell_index_mib"]),
+                ("cell_node_index", config["cell_node_index_mib"]),
+            ):
+                reported = status[field]
+                limit = None if reported is None else reported["limit_bytes"]
+                if limit != (allowance * mib if allowance is not None else None):
+                    raise ValueError(f"{when}: reported {field} budget differs for {node['endpoint']}")
+            live = status["live_cell_index"]
+            if live is not None:
+                layout = "interned_scripts" if config["live_cell_index_intern_scripts"] else "inline"
+                if live["layout"] != layout or live["recovery_workers"] != config["live_cell_recovery_workers"]:
+                    raise ValueError(f"{when}: reported Live Cell configuration differs for {node['endpoint']}")
+            cache = status["verification_cache"]
+            profiles.append({
+                "capacity": cache["capacity"],
+                "shards": cache["shards"],
+                "lock_sample_interval": cache["lock_sample_interval"],
+            })
+        cache_profiles.append(profiles)
+    if cache_profiles[0] != cache_profiles[1]:
+        raise ValueError("reported verification cache configuration changed during measurement")
+    return cache_profiles[0]
 
 
 def replay(args, engine, report, scratch):
@@ -76,6 +122,8 @@ def main():
         parser.add_argument(f"--{name}", type=Path, required=True)
     for name in ("binary", "patricia-home", "jmt-home"):
         parser.add_argument(f"--{name}", type=Path)
+    parser.add_argument("--patricia-runtime", type=Path)
+    parser.add_argument("--jmt-runtime", type=Path)
     parser.add_argument("--proof-batch-width", type=int, default=32)
     parser.add_argument("--jmt-proof-cache-nodes", type=int, default=0)
     args = parser.parse_args()
@@ -114,6 +162,30 @@ def main():
     if (left is None) != (right is None):
         parser.error("RocksDB counter coverage differs across arms")
 
+    runtime_paths = (args.patricia_runtime, args.jmt_runtime)
+    runtimes = (None, None)
+    if any(runtime_paths):
+        if not all(runtime_paths):
+            parser.error("supply runtime evidence for both engine arms")
+        try:
+            runtimes = tuple(read_runtime(path, report, endpoints)
+                             for path, report in zip(runtime_paths, reports, strict=True))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            parser.error(f"validator runtime: {error}")
+        for field in ("cpu_ticks_per_second", "driver_cpu_affinity"):
+            if runtimes[0][field] != runtimes[1][field]:
+                parser.error(f"engine arms disagree on driver {field}")
+        for left, right in zip(*(runtime["replicas"] for runtime in runtimes), strict=True):
+            if left["configuration"] != right["configuration"]:
+                parser.error(f"engine arms disagree on validator configuration for {left['endpoint']}")
+        try:
+            verification = [check_reported_resources(runtime, observed)
+                            for runtime, observed in zip(runtimes, observations, strict=True)]
+        except (ValueError, KeyError, TypeError) as error:
+            parser.error(f"reported resources: {error}")
+        if verification[0] != verification[1]:
+            parser.error("engine arms disagree on reported verification cache configuration")
+
     with tempfile.TemporaryDirectory() as tmp:
         verified = [replay(args, engine, path, Path(tmp)) for engine, path in zip(ENGINES, reports, strict=True)]
     for field in ("network", "workload_id"):
@@ -128,11 +200,15 @@ def main():
         "harness_sha256": plan["harness_sha256"],
         "matched_load": observations[0]["load"],
         "matched_limits": observations[0]["limits"],
+        "matched_runtime_resources": True if all(runtime_paths) else None,
         "same_confirmed_set_at_drain": verified[0]["confirmed_set_blake2b"] == verified[1]["confirmed_set_blake2b"],
         "engines": {
             engine: {"replay": replayed, "report_sha256": digest(path),
-                     "rocksdb_counters_by_replica": observed["rocksdb_counters_by_replica"]}
-            for engine, replayed, path, observed in zip(ENGINES, verified, reports, observations, strict=True)
+                     "rocksdb_counters_by_replica": observed["rocksdb_counters_by_replica"],
+                     "runtime": runtime, "reported_node_resources": observed["reported_node_resources"]}
+            for engine, replayed, path, observed, runtime in zip(
+                ENGINES, verified, reports, observations, runtimes, strict=True
+            )
         },
     }
     if audit_recovery:

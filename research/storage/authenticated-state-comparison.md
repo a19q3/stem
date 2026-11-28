@@ -224,13 +224,18 @@ a stopped archive validator from each run for the audit. Switch
 
 ```sh
 python3 research/storage/external/drive.py --harness "$harness" --contracts "$contracts" \
-    --engine patricia measure --trial trial --output patricia-measurement
+    --engine patricia measure --trial trial --output patricia-measurement \
+    --replica-pid "$patricia_pid0" --replica-pid "$patricia_pid1" \
+    --replica-pid "$patricia_pid2" --replica-pid "$patricia_pid3"
 python3 research/storage/external/drive.py --harness "$harness" --contracts "$contracts" \
-    --engine jmt measure --trial trial --output jmt-measurement
+    --engine jmt measure --trial trial --output jmt-measurement \
+    --replica-pid "$jmt_pid0" --replica-pid "$jmt_pid1" \
+    --replica-pid "$jmt_pid2" --replica-pid "$jmt_pid3"
 python3 research/storage/external/compare_state.py \
     --harness "$harness" --contracts "$contracts" --trial trial \
     --patricia-report patricia-measurement/stem-storage-*/report.json \
     --jmt-report jmt-measurement/stem-storage-*/report.json \
+    --patricia-runtime patricia-measurement/runtime.json --jmt-runtime jmt-measurement/runtime.json \
     --binary "$stem" --patricia-home "$patricia_archive" --jmt-home "$jmt_archive" \
     --proof-batch-width 32 --output paired-state.json
 ```
@@ -242,10 +247,29 @@ authenticates each measured history from its own genesis, and computes
 the first-observed finality rate, acknowledged backlog and write-to-common latency. It records
 whether the two arms finalized the same set of measured payments. Raw
 reports include per-replica WAL, flush and compaction deltas. Newly packed
-reports retain the resource limits for paired replay, and the raw reports
-are needed for storage counters. Record CPU, peak RSS, physical I/O and
-the launch configuration alongside the JSON. Replica configuration and
-observational timings require operator evidence.
+reports retain consensus limits for paired replay, and the raw reports
+are needed for storage counters.
+
+Use one local validator PID per prepared endpoint in peer order and keep
+the same genesis and configuration files for startup and measurement.
+The driver checks Linux listening socket ownership and compares process
+identity at the start and end. It records the executable digest, CPU
+affinity masks, readable cgroup-v2 limits, cache and retention launch
+settings, process CPU ticks and I/O counters over the driver run, and
+the process lifetime peak RSS. The runtime sidecar binds to the raw
+report digest. It contains no key path or raw process arguments.
+The operator needs access to the local validator procfs entries.
+
+The paired validator compares the reported verification cache, retention,
+and resident index budgets with both sidecars and retains each node's
+observed index residency. An index losing residency with the same limit
+is an outcome of the workload. Historical reports can still be replayed
+with `matched_runtime_resources` unset. Runtime observations record
+process attributes and sampled OS limits. They do not measure device
+write amplification, cache temperature, CPU frequency, or contention
+between processes. Keep those controls and collect physical device
+counters separately when needed. The paired resource code passes
+Python syntax and command-line checks. Runtime qualification remains pending.
 
 When both archive homes are supplied, the command reads their databases
 without mutating them. It verifies the certificate on each durable tip

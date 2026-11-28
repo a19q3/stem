@@ -12,16 +12,13 @@ import tempfile
 
 if __package__:
     from .qualify import host_inventory
+    from .runtime import file_digest as digest, finish_runtime, sample_runtime
 else:
     from qualify import host_inventory
+    from runtime import file_digest as digest, finish_runtime, sample_runtime
 
 
 V1_RATES = {"baseline": 1800, "sustainable": 3000, "overload": 3300}
-
-
-def digest(path):
-    with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def main():
@@ -58,6 +55,8 @@ def main():
                     reuse_submissions=True, pause_on_full=False, shard_senders=False, ready_senders=True)
     measure = phases.add_parser("measure")
     measure.add_argument("--output", type=Path, required=True, help="new directory for this measurement")
+    measure.add_argument("--replica-pid", type=int, action="append",
+                         help="capture one local validator PID per prepared endpoint, in peer order")
     verify = phases.add_parser("verify")
     verify.add_argument("--report", type=Path, required=True)
     verify.add_argument("--verified-output", type=Path, help="write the verified Header ID and replay summary")
@@ -110,6 +109,14 @@ def main():
         if args.phase == "measure":
             args.output.mkdir(mode=0o700)
             (args.output / "driver.json").write_text(json.dumps({"harness_sha256": harness_hash}) + "\n")
+    runtime_before = None
+    if args.phase == "measure" and args.replica_pid:
+        endpoints = [peer["address"] for peer in json.loads(topology.read_bytes())["peers"]]
+        try:
+            runtime_before = sample_runtime(args.replica_pid, endpoints, plan)
+        except (OSError, ValueError, KeyError) as error:
+            parser.error(f"validator runtime: {error}")
+
     with tempfile.TemporaryDirectory() as scratch:
         env = {k: v for k, v in os.environ.items() if not k.startswith("STEM_STORAGE_")}
         if args.engine == "jmt":
@@ -144,6 +151,13 @@ def main():
         (trial / "trial.json").write_text(json.dumps(plan, indent=2) + "\n")
     elif args.phase == "measure":
         report, = args.output.glob("stem-storage-*/report.json")
+        if runtime_before is not None:
+            try:
+                after = sample_runtime(args.replica_pid, endpoints, plan)
+                evidence = finish_runtime(runtime_before, after, report)
+            except (OSError, ValueError, KeyError) as error:
+                parser.error(f"validator runtime: {error}")
+            (args.output / "runtime.json").write_text(json.dumps(evidence, indent=2) + "\n")
         print(report)
 
 
