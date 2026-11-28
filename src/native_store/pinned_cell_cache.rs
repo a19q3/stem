@@ -3,16 +3,15 @@
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "native-pinned-cell-cache-inheritance")]
-use std::{
-    collections::HashSet,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ckb_types::{packed::Byte32, prelude::*};
 use stem_ledger::block::Header;
 #[cfg(feature = "native-pinned-cell-cache-inheritance")]
 use {ckb_types::packed::OutPoint, stem_ledger::LiveCell};
 
+#[cfg(feature = "native-pinned-cell-cache-inheritance")]
+use super::cell_change_index::ChangedOutPoints;
 use super::{LiveCache, PinnedCellCacheStatus, Prepared};
 
 #[derive(Default)]
@@ -56,32 +55,30 @@ impl SnapshotCache {
 #[cfg(feature = "native-pinned-cell-cache-inheritance")]
 pub(super) struct PreviousRows {
     cells: Arc<LiveCache>,
-    changed: HashSet<[u8; OutPoint::TOTAL_SIZE]>,
+    changed: Arc<ChangedOutPoints>,
     hits: AtomicU64,
 }
 
 #[cfg(feature = "native-pinned-cell-cache-inheritance")]
 impl PreviousRows {
     fn new(cells: &Arc<LiveCache>, transition: &Prepared) -> Option<Self> {
-        const MAX_CHANGES: usize = 16_384;
-        if transition.live.len() > MAX_CHANGES {
-            return None;
-        }
-        let mut changed = HashSet::new();
-        changed.try_reserve(transition.live.len()).ok()?;
-        for point in transition.live.keys() {
-            changed.insert(point.as_slice().try_into().ok()?);
-        }
         Some(Self {
             cells: Arc::clone(cells),
-            changed,
+            changed: Arc::clone(transition.changed_pinned_outpoints()?),
             hits: AtomicU64::new(0),
         })
     }
 
+    #[cfg(test)]
+    pub(super) fn uses_prepared_changes(&self, transition: &Prepared) -> bool {
+        transition
+            .changed_pinned_outpoints()
+            .is_some_and(|changed| Arc::ptr_eq(&self.changed, changed))
+    }
+
     pub(super) fn lookup(&self, point: &OutPoint) -> Option<Option<LiveCell>> {
         let key: &[u8; OutPoint::TOTAL_SIZE] = point.as_slice().try_into().ok()?;
-        if self.changed.contains(key) {
+        if self.changed.position(key, &mut None).is_some() {
             return None;
         }
         let row = self.cells.lookup(point)?;

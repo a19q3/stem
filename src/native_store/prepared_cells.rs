@@ -1,53 +1,58 @@
 //! Compact, immutable Cell changes shared by all readers of one candidate.
 
-use std::{
-    hash::{BuildHasher, RandomState},
-    sync::LazyLock,
-};
+#[cfg(feature = "native-pinned-cell-cache-inheritance")]
+use std::sync::Arc;
 
 use ckb_types::{packed::OutPoint, prelude::*};
-use hashbrown::HashTable;
 use rayon::prelude::*;
 use stem_ledger::LiveCell;
 
 use super::LiveChanges;
-
-const MIN_INDEX_ENTRIES: usize = 128;
-const MAX_INDEX_ENTRIES: usize = 16_384;
-static POINT_HASHER: LazyLock<RandomState> = LazyLock::new(RandomState::new);
+#[cfg(not(feature = "native-pinned-cell-cache-inheritance"))]
+use super::cell_change_index::CellPositions;
+#[cfg(feature = "native-pinned-cell-cache-inheritance")]
+use super::cell_change_index::ChangedOutPoints;
 
 type Entry = (OutPoint, Option<LiveCell>);
 
 pub(super) struct PreparedCells {
     ordered: Vec<Entry>,
-    positions: Option<HashTable<u32>>,
+    #[cfg(not(feature = "native-pinned-cell-cache-inheritance"))]
+    positions: Option<CellPositions>,
+    #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+    changed: Option<Arc<ChangedOutPoints>>,
 }
 
 impl From<LiveChanges> for PreparedCells {
     fn from(changes: LiveChanges) -> Self {
         Self {
             ordered: changes.into_iter().collect(),
+            #[cfg(not(feature = "native-pinned-cell-cache-inheritance"))]
             positions: None,
+            #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+            changed: None,
         }
     }
 }
 
 impl PreparedCells {
     pub(super) fn with_index(mut self) -> Self {
-        let ordered = &self.ordered;
-        let hash_position = |&index: &u32| hash(&ordered[index as usize].0);
-        let mut positions = HashTable::new();
-        self.positions = if (MIN_INDEX_ENTRIES..=MAX_INDEX_ENTRIES).contains(&ordered.len())
-            && positions.try_reserve(ordered.len(), hash_position).is_ok()
+        #[cfg(feature = "native-pinned-cell-cache-inheritance")]
         {
-            for (position, (point, _)) in ordered.iter().enumerate() {
-                positions.insert_unique(hash(point), position as u32, hash_position);
-            }
-            Some(positions)
-        } else {
-            None
-        };
+            self.changed = ChangedOutPoints::build(&self);
+        }
+        #[cfg(not(feature = "native-pinned-cell-cache-inheritance"))]
+        if self.len() >= 128 {
+            self.positions = CellPositions::build(self.len(), |position| {
+                point_bytes(&self.ordered[position].0)
+            });
+        }
         self
+    }
+
+    #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+    pub(super) fn changed_outpoints(&self) -> Option<&Arc<ChangedOutPoints>> {
+        self.changed.as_ref()
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -82,16 +87,22 @@ impl PreparedCells {
         point: &OutPoint,
         hash_once: &mut Option<u64>,
     ) -> Option<&Option<LiveCell>> {
-        let position = if let Some(positions) = &self.positions {
-            let hash = *hash_once.get_or_insert_with(|| hash(point));
-            *positions.find(hash, |&index| {
-                self.ordered[index as usize].0.cmp(point).is_eq()
-            })? as usize
-        } else {
-            self.ordered
-                .binary_search_by(|(key, _)| key.cmp(point))
-                .ok()?
-        };
+        #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+        if let Some(changed) = &self.changed {
+            let position = changed.position(point_bytes(point), hash_once)?;
+            return Some(&self.ordered[position].1);
+        }
+        #[cfg(not(feature = "native-pinned-cell-cache-inheritance"))]
+        if let Some(positions) = &self.positions {
+            let position = positions.position(point_bytes(point), hash_once, |position| {
+                point_bytes(&self.ordered[position].0)
+            })?;
+            return Some(&self.ordered[position].1);
+        }
+        let position = self
+            .ordered
+            .binary_search_by(|(key, _)| key.cmp(point))
+            .ok()?;
         Some(&self.ordered[position].1)
     }
 
@@ -101,9 +112,9 @@ impl PreparedCells {
     }
 }
 
-fn hash(point: &OutPoint) -> u64 {
+fn point_bytes(point: &OutPoint) -> &[u8] {
     // Use the two fixed-width fields compared by OutPoint::cmp.
-    POINT_HASHER.hash_one(&point.as_slice()[..OutPoint::TOTAL_SIZE])
+    &point.as_slice()[..OutPoint::TOTAL_SIZE]
 }
 
 #[cfg(test)]
@@ -111,6 +122,7 @@ mod tests {
     use stem_ledger::{Cell, Origin};
 
     use super::*;
+    use crate::native_store::cell_change_index::MAX_CHANGES;
 
     #[test]
     fn preserves_live_map_order_and_distinguishes_deletions_from_misses() -> anyhow::Result<()> {
@@ -128,12 +140,20 @@ mod tests {
                 context_id: Default::default(),
             },
         };
-        for (len, indexed) in [(32, false), (256, true), (MAX_INDEX_ENTRIES + 1, false)] {
+        for len in [0, 32, 256, MAX_CHANGES + 1] {
             let mut edits: LiveChanges = (0..len as u32).rev().map(|i| (point(i), None)).collect();
-            edits.insert(point(1), Some(cell.clone()));
+            if len > 1 {
+                edits.insert(point(1), Some(cell.clone()));
+            }
             let ordered = edits.keys().cloned().collect::<Vec<_>>();
             let prepared = PreparedCells::from(edits).with_index();
-            assert_eq!(prepared.positions.is_some(), indexed);
+            #[cfg(not(feature = "native-pinned-cell-cache-inheritance"))]
+            assert_eq!(
+                prepared.positions.is_some(),
+                (128..=MAX_CHANGES).contains(&len)
+            );
+            #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+            assert_eq!(prepared.changed_outpoints().is_some(), len <= MAX_CHANGES);
             assert_eq!(prepared.keys().cloned().collect::<Vec<_>>(), ordered);
             assert!(prepared.get(&point(len as u32)).is_none());
             for key in &ordered {

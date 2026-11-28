@@ -34,6 +34,10 @@ use stem_vm::VerificationCache;
 
 mod bridge;
 mod cell_execution;
+#[cfg(any(feature = "native-compact-prepared-cell-delta", feature = "native-pinned-cell-cache-inheritance"))]
+mod cell_change_index;
+#[cfg(feature = "native-pinned-cell-cache-inheritance")]
+use cell_change_index::ChangedOutPoints;
 #[cfg(feature = "native-batched-cell-proof-records")]
 mod cell_proof_records;
 mod cell_query;
@@ -805,6 +809,8 @@ pub struct Prepared {
     committee_change: Option<CommitteeChange>,
     stake_inputs: Arc<OnceLock<StakeInputs>>,
     live: PreparedCells,
+    #[cfg(all(feature = "native-pinned-cell-cache-inheritance", not(feature = "native-compact-prepared-cell-delta")))]
+    changed_pinned_outpoints: Option<Arc<ChangedOutPoints>>,
     #[cfg(feature = "native-prepared-live-cell-ownership")]
     detached_live_records: bool,
     batch: Batch,
@@ -1016,6 +1022,14 @@ struct LineageBatchMember<'a> {
 }
 
 impl Prepared {
+    #[cfg(feature = "native-pinned-cell-cache-inheritance")]
+    fn changed_pinned_outpoints(&self) -> Option<&Arc<ChangedOutPoints>> {
+        #[cfg(feature = "native-compact-prepared-cell-delta")]
+        return self.live.changed_outpoints();
+        #[cfg(not(feature = "native-compact-prepared-cell-delta"))]
+        self.changed_pinned_outpoints.as_ref()
+    }
+
     fn live_records_detached(&self) -> bool {
         #[cfg(feature = "native-prepared-live-cell-ownership")]
         return self.detached_live_records;
@@ -2534,6 +2548,11 @@ impl Store {
             self.check_preparation_cancelled()?;
             live.with_index()
         };
+        #[cfg(all(feature = "native-pinned-cell-cache-inheritance", not(feature = "native-compact-prepared-cell-delta")))]
+        let changed_pinned_outpoints = {
+            self.check_preparation_cancelled()?;
+            ChangedOutPoints::build(&live)
+        };
         Ok(Prepared {
             parent: self.tip.id(&self.network),
             next,
@@ -2544,6 +2563,8 @@ impl Store {
             committee_change: system.committee_change,
             stake_inputs: system.stake_inputs,
             live,
+            #[cfg(all(feature = "native-pinned-cell-cache-inheritance", not(feature = "native-compact-prepared-cell-delta")))]
+            changed_pinned_outpoints,
             #[cfg(feature = "native-prepared-live-cell-ownership")]
             detached_live_records,
             batch,
@@ -4521,6 +4542,7 @@ mod pipeline_store_tests {
             original.with_branch_snapshot(std::slice::from_ref(&first), true, |fresh, suffix| {
                 assert!(suffix.is_empty());
                 assert_eq!(fresh.tip(), first.header());
+                assert!(fresh.previous_pinned_cells.as_ref().unwrap().uses_prepared_changes(&first));
                 assert!(fresh.live_cache.lookup(&point(1)).is_none());
                 assert!(fresh.live_cell(&point(1))?.is_some());
                 assert!(fresh.live_cache.lookup(&point(1)).flatten().is_some());
