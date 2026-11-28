@@ -216,7 +216,7 @@ impl Replica {
                 checked?.context("missing transaction from admission snapshot")?
             } else {
                 self.pipeline.metrics.rechecked = self.pipeline.metrics.rechecked.saturating_add(1);
-                self.check_admission(&raw, true)?
+                self.check_admission(&raw, id, true)?
             };
             self.mempool.insert(id, tx)?;
         }

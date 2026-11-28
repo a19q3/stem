@@ -110,3 +110,6 @@ The next useful isolation is the relayed admission lane. Hold the queue
 budget fixed and count repeated wire identities separately from first-seen
 validations before changing admission scheduling. Compare confirmation,
 rejects and total completions over the same offer and drain windows.
+
+The [fixed-budget follow-up](../relay-attribution/README.md) measures
+first and repeated relays and compares the optional client worker.

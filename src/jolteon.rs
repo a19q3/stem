@@ -40,6 +40,7 @@ mod peer_discovery;
 #[cfg(feature = "jolteon-proposal-pipeline")]
 mod proposal_pipeline;
 mod recovery;
+mod relay_attribution;
 pub mod snapshot;
 mod transport;
 mod wire;
@@ -53,6 +54,7 @@ pub use client::{
     AdmissionMetrics, AdmissionPipelineMetrics, Certificate, CertificateExperimentMetrics, Client,
     ExecutionMetrics, FrameReuseMetrics, LatencyHistogram, QueryResult, Status, SubmissionProgress,
 };
+pub use relay_attribution::Metrics as RelayAttributionMetrics;
 
 const STATE: &[u8] = b"state";
 const BODY: &[u8] = b"body";
@@ -94,6 +96,9 @@ pub struct Config {
     /// Maximum encoded bytes awaiting local proposal selection.
     #[serde(default)]
     pub mempool_max_bytes: Option<usize>,
+    /// Track first and repeated local relay admissions for a controlled workload.
+    #[serde(default)]
+    pub measure_relay_admission: bool,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +242,7 @@ struct Replica {
     mempool: Mempool,
     mempool_max_bytes: usize,
     admission: AdmissionMetrics,
+    relay_attribution: Option<relay_attribution::Attribution>,
     #[cfg(feature = "jolteon-admission-pipeline")]
     pipeline: admission_pipeline::Pipeline,
     execution: ExecutionMetrics,
@@ -508,6 +514,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 mempool: Mempool::default(),
                 mempool_max_bytes,
                 admission: AdmissionMetrics::default(),
+                relay_attribution: config.measure_relay_admission.then(Default::default),
                 #[cfg(feature = "jolteon-admission-pipeline")]
                 pipeline,
                 execution: ExecutionMetrics::default(),
@@ -1091,7 +1098,11 @@ impl Replica {
                 self.pending = Some(change.clone());
             }
             for tx in &self.candidates[point].proposal.wire.transactions {
-                self.mempool.remove(&ckb_hash::blake2b_256(tx));
+                let id = ckb_hash::blake2b_256(tx);
+                self.mempool.remove(&id);
+                if let Some(attribution) = &mut self.relay_attribution {
+                    attribution.finalized(id);
+                }
             }
             let context = &prepared.header().context;
             self.mempool.expire(context.height, context.timestamp_ms);
@@ -1781,6 +1792,8 @@ impl Replica {
     }
 
     fn insert_tx(&mut self, raw: &Bytes, client: bool) -> Result<Hash32> {
+        use relay_attribution::Outcome;
+
         let requests = if client {
             &mut self.admission.client_requests
         } else {
@@ -1789,10 +1802,14 @@ impl Replica {
         *requests = requests.saturating_add(1);
         let id = ckb_hash::blake2b_256(raw);
         if self.mempool.contains(&id) {
+            self.observe_admission(id, client, Outcome::PoolHit);
             return Ok(id);
         }
-        self.admission_capacity(raw.len(), client)?;
-        let tx = self.check_admission(raw, client)?;
+        if let Err(error) = self.admission_capacity(raw.len(), client) {
+            self.observe_admission(id, client, Outcome::Capacity);
+            return Err(error);
+        }
+        let tx = self.check_admission(raw, id, client)?;
         self.mempool.insert(id, tx)?;
         Ok(id)
     }
@@ -1814,16 +1831,38 @@ impl Replica {
         Ok(())
     }
 
-    fn check_admission(&mut self, raw: &Bytes, client: bool) -> Result<Transaction> {
-        let tx = Transaction::from_bytes(raw.clone())?;
+    fn check_admission(&mut self, raw: &Bytes, id: Hash32, client: bool) -> Result<Transaction> {
+        use relay_attribution::Outcome;
+
+        let tx = match Transaction::from_bytes(raw.clone()) {
+            Ok(tx) => tx,
+            Err(error) => {
+                self.observe_admission(id, client, Outcome::DecodeError);
+                return Err(error);
+            }
+        };
+        let height = self.store.tip().context.height;
         let started = Instant::now();
         let checked = self.store.check(&tx);
-        self.record_admission_check(
+        let elapsed_us = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+        self.record_admission_check(client, elapsed_us);
+        self.observe_admission(
+            id,
             client,
-            started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
+            Outcome::Checked {
+                height,
+                elapsed_us,
+                passed: checked.is_ok(),
+            },
         );
         checked?;
         Ok(tx)
+    }
+
+    fn observe_admission(&mut self, id: Hash32, client: bool, outcome: relay_attribution::Outcome) {
+        if !client && let Some(attribution) = &mut self.relay_attribution {
+            attribution.record(id, outcome);
+        }
     }
 
     fn record_admission_check(&mut self, client: bool, verification_us: u64) {
@@ -1875,6 +1914,7 @@ impl Replica {
                     "mempool_bytes": self.mempool.bytes(),
                     "mempool_max_bytes": self.mempool_max_bytes,
                     "admission": self.admission,
+                    "relay_attribution": self.relay_attribution.as_ref().map(|m| m.metrics()),
                     "execution": self.execution,
                     "verification_cache": self.store.verification_cache_stats(),
                     "live_cell_index": self.store.live_cell_index_status(),

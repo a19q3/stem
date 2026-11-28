@@ -1,0 +1,794 @@
+{
+  "base": "b85c6e0c776d77e219a5032468dd892ea8516668",
+  "binaries": {
+    "harness": "73ab98159e8f6cea77501b65f97b29487b2789547d0e37e16a9a8cc1d4d7aed3",
+    "inline": "32d7848964fde48d9c184a25739d2bf43574f40ca996f19bfedecd40a2fec712",
+    "worker": "58f0829f8626b78cfded032ac9b8b30e7ecf6562ced3665d8757050878cd5e8f"
+  },
+  "drain_cutoff_us": 95000000,
+  "fixed_pool_cap_bytes": 16777216,
+  "funding_proof_sha256": "a1fc5c785e100d66c79f4972761d59cebe5cbcbf8f7e5208ceb0a6cc67fd03b5",
+  "runs": [
+    {
+      "admission_thread_cpu_seconds": 0.0,
+      "archive_header_count": 198,
+      "archive_sha256": "db9776055dfdf02ce65107794e48f05297498160715dab8561b84df6dc8e492a",
+      "cell_node_index_coverage_by_replica": [
+        {
+          "first_inactive": {
+            "at_us": 74826696,
+            "height": 747
+          },
+          "last_active": {
+            "accounted_bytes": 779224064,
+            "at_us": 74747928,
+            "height": 746,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 73723201,
+            "height": 746
+          },
+          "last_active": {
+            "accounted_bytes": 760218624,
+            "at_us": 73671188,
+            "height": 745,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 73671188,
+            "height": 746
+          },
+          "last_active": {
+            "accounted_bytes": 760218624,
+            "at_us": 73508279,
+            "height": 745,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 74826696,
+            "height": 747
+          },
+          "last_active": {
+            "accounted_bytes": 769721344,
+            "at_us": 74747928,
+            "height": 746,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        }
+      ],
+      "client_check_elapsed_us": 36019519,
+      "client_worker": null,
+      "counter_window_us": [
+        19902713,
+        59850930
+      ],
+      "counts": {
+        "accepted": 246792,
+        "confirmed": 200704,
+        "confirmed_at_60s": 310376,
+        "confirmed_at_95s": 398440,
+        "offered": 339875,
+        "pending_at_20s": 60180,
+        "pending_at_60s": 106268,
+        "pending_at_95s": 18437
+      },
+      "cpu_seconds": 263.45,
+      "funded_header": "c901000000000000e902ea22a20100002711b8b3c1b3876a468f5188ecc7c8af1d4c464d246108a9eeaf2f9436e35478e4dff49395b07bc83c1bec41eb299c8ab43c12e45001455a2d49adfab9bff05f1b9284f3bd82e88aca3b76cb440b8a37cb25241524ee721545bba4f313ce33c3600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6d551e6650e7a5702c2e33d89df9f18a84de5728e4bb76cd02297d30a04babd75e9c400d03342f1874651dae01bb8eadcbdda2ade142d160561c9740908ece72b",
+      "funded_height": 457,
+      "independent_replay": "Verified 510000 writes, 416877 acknowledgements, 398440 finalized payments, 310376 in the offer window (5172.93 TPS), at certified height 769",
+      "latency_samples": 235784,
+      "latency_us": {
+        "50": 1589684,
+        "95": 52667084,
+        "99": 65632686
+      },
+      "observer_errors": 0,
+      "proc_window_us": [
+        19678115,
+        59722282
+      ],
+      "relay": {
+        "first": {
+          "after_finality": 376,
+          "after_finality_checks": 376,
+          "capacity_rejections": 189334,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 278788,
+            "elapsed_us": 34470273,
+            "passed": 278412
+          },
+          "frames": 468122,
+          "pool_hits": 0,
+          "repeated_new_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        },
+        "repeated": {
+          "after_finality": 3,
+          "after_finality_checks": 3,
+          "capacity_rejections": 2008,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 791,
+            "elapsed_us": 120110,
+            "passed": 791
+          },
+          "frames": 83359,
+          "pool_hits": 80557,
+          "repeated_new_height": {
+            "count": 3,
+            "elapsed_us": 6,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        }
+      },
+      "relay_identities_at_drain_per_replica": [
+        412656,
+        412087,
+        411638,
+        410461
+      ],
+      "relay_retries": 108184,
+      "run": "1-inline",
+      "stage": {
+        "admission.client_queue": {
+          "count": 340042,
+          "elapsed_us": 4538670880,
+          "mean_ms": 13.347383205604014
+        },
+        "admission.client_service": {
+          "count": 340042,
+          "elapsed_us": 37813085,
+          "mean_ms": 0.11120121926115009
+        },
+        "execution.candidate_verify": {
+          "count": 294,
+          "elapsed_us": 66297487,
+          "mean_ms": 225.50165646258503
+        },
+        "execution.commit_jobs.persistence": {
+          "count": 392,
+          "elapsed_us": 17356259,
+          "mean_ms": 44.27617091836734
+        },
+        "execution.control_queue": {
+          "count": 2994,
+          "elapsed_us": 16246952,
+          "mean_ms": 5.426503674014696
+        },
+        "execution.proposal": {
+          "count": 98,
+          "elapsed_us": 14014278,
+          "mean_ms": 143.0028367346939
+        }
+      },
+      "terminal_height": 769,
+      "transport_drops": 828,
+      "view_timeouts": 0,
+      "window_client_errors": {
+        "mempool capacity exceeded": 93032
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    },
+    {
+      "admission_thread_cpu_seconds": 36.45,
+      "archive_header_count": 189,
+      "archive_sha256": "6a629ae1880c49a2b08af44fc435567e35c745b3b2b2d45ccf4fa707245288ad",
+      "cell_node_index_coverage_by_replica": [
+        {
+          "first_inactive": {
+            "at_us": 81427739,
+            "height": 745
+          },
+          "last_active": {
+            "accounted_bytes": 769721344,
+            "at_us": 81313194,
+            "height": 744,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 82742455,
+            "height": 746
+          },
+          "last_active": {
+            "accounted_bytes": 779224064,
+            "at_us": 82690873,
+            "height": 745,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 81427739,
+            "height": 745
+          },
+          "last_active": {
+            "accounted_bytes": 779224064,
+            "at_us": 81313194,
+            "height": 744,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 81427739,
+            "height": 745
+          },
+          "last_active": {
+            "accounted_bytes": 750715904,
+            "at_us": 81313194,
+            "height": 744,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        }
+      ],
+      "client_check_elapsed_us": 36230971,
+      "client_worker": {
+        "coalesced": 0,
+        "dispatched": 225665,
+        "full": 0,
+        "rechecked": 728,
+        "snapshot_misses": 0
+      },
+      "counter_window_us": [
+        19911375,
+        59964256
+      ],
+      "counts": {
+        "accepted": 222860,
+        "confirmed": 186368,
+        "confirmed_at_60s": 286442,
+        "confirmed_at_95s": 380650,
+        "offered": 340000,
+        "pending_at_20s": 69801,
+        "pending_at_60s": 106293,
+        "pending_at_95s": 12086
+      },
+      "cpu_seconds": 244.3,
+      "funded_header": "c901000000000000e902ea22a20100002711b8b3c1b3876a468f5188ecc7c8af1d4c464d246108a9eeaf2f9436e35478e4dff49395b07bc83c1bec41eb299c8ab43c12e45001455a2d49adfab9bff05f1b9284f3bd82e88aca3b76cb440b8a37cb25241524ee721545bba4f313ce33c3600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6d551e6650e7a5702c2e33d89df9f18a84de5728e4bb76cd02297d30a04babd75e9c400d03342f1874651dae01bb8eadcbdda2ade142d160561c9740908ece72b",
+      "funded_height": 457,
+      "independent_replay": "Verified 510000 writes, 392736 acknowledgements, 380650 finalized payments, 286442 in the offer window (4774.03 TPS), at certified height 759",
+      "latency_samples": 215866,
+      "latency_us": {
+        "50": 1612805,
+        "95": 53221796,
+        "99": 66629552
+      },
+      "observer_errors": 0,
+      "proc_window_us": [
+        19653033,
+        59697906
+      ],
+      "relay": {
+        "first": {
+          "after_finality": 1,
+          "after_finality_checks": 1,
+          "capacity_rejections": 205859,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 242227,
+            "elapsed_us": 33515817,
+            "passed": 242226
+          },
+          "frames": 448086,
+          "pool_hits": 0,
+          "repeated_new_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        },
+        "repeated": {
+          "after_finality": 1,
+          "after_finality_checks": 1,
+          "capacity_rejections": 3011,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 2351,
+            "elapsed_us": 400014,
+            "passed": 2351
+          },
+          "frames": 86578,
+          "pool_hits": 81215,
+          "repeated_new_height": {
+            "count": 1,
+            "elapsed_us": 3,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        }
+      },
+      "relay_identities_at_drain_per_replica": [
+        389922,
+        389575,
+        389594,
+        389203
+      ],
+      "relay_retries": 110632,
+      "run": "2-worker",
+      "stage": {
+        "admission.client_queue": {
+          "count": 340949,
+          "elapsed_us": 2262186088,
+          "mean_ms": 6.634969124414502
+        },
+        "admission.client_service": {
+          "count": 341064,
+          "elapsed_us": 1246340738,
+          "mean_ms": 3.65427233011986
+        },
+        "execution.candidate_verify": {
+          "count": 270,
+          "elapsed_us": 58394817,
+          "mean_ms": 216.27710000000002
+        },
+        "execution.commit_jobs.persistence": {
+          "count": 361,
+          "elapsed_us": 15685865,
+          "mean_ms": 43.45114958448753
+        },
+        "execution.control_queue": {
+          "count": 2853,
+          "elapsed_us": 9142123,
+          "mean_ms": 3.2043894146512444
+        },
+        "execution.proposal": {
+          "count": 91,
+          "elapsed_us": 16683285,
+          "mean_ms": 183.3328021978022
+        }
+      },
+      "terminal_height": 759,
+      "transport_drops": 1489,
+      "view_timeouts": 0,
+      "window_client_errors": {
+        "mempool capacity exceeded": 117264
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    },
+    {
+      "admission_thread_cpu_seconds": 42.64,
+      "archive_header_count": 226,
+      "archive_sha256": "70a61920c44ac3692d44ad9619c81825c3ca29b4b32502e5f8085bc37802591f",
+      "cell_node_index_coverage_by_replica": [
+        {
+          "first_inactive": {
+            "at_us": 68104723,
+            "height": 746
+          },
+          "last_active": {
+            "accounted_bytes": 788726784,
+            "at_us": 68051762,
+            "height": 745,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 66430521,
+            "height": 744
+          },
+          "last_active": {
+            "accounted_bytes": 788726784,
+            "at_us": 66329282,
+            "height": 743,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 66430521,
+            "height": 744
+          },
+          "last_active": {
+            "accounted_bytes": 760218624,
+            "at_us": 66329282,
+            "height": 743,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 66430521,
+            "height": 744
+          },
+          "last_active": {
+            "accounted_bytes": 760218624,
+            "at_us": 66329282,
+            "height": 743,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        }
+      ],
+      "client_check_elapsed_us": 42114003,
+      "client_worker": {
+        "coalesced": 0,
+        "dispatched": 260083,
+        "full": 0,
+        "rechecked": 1300,
+        "snapshot_misses": 0
+      },
+      "counter_window_us": [
+        19986719,
+        59967003
+      ],
+      "counts": {
+        "accepted": 258140,
+        "confirmed": 215040,
+        "confirmed_at_60s": 327908,
+        "confirmed_at_95s": 427914,
+        "offered": 340000,
+        "pending_at_20s": 56876,
+        "pending_at_60s": 99976,
+        "pending_at_95s": 0
+      },
+      "cpu_seconds": 281.92,
+      "funded_header": "c901000000000000e902ea22a20100002711b8b3c1b3876a468f5188ecc7c8af1d4c464d246108a9eeaf2f9436e35478e4dff49395b07bc83c1bec41eb299c8ab43c12e45001455a2d49adfab9bff05f1b9284f3bd82e88aca3b76cb440b8a37cb25241524ee721545bba4f313ce33c3600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6d551e6650e7a5702c2e33d89df9f18a84de5728e4bb76cd02297d30a04babd75e9c400d03342f1874651dae01bb8eadcbdda2ade142d160561c9740908ece72b",
+      "funded_height": 457,
+      "independent_replay": "Verified 510000 writes, 427914 acknowledgements, 427914 finalized payments, 327908 in the offer window (5465.13 TPS), at certified height 795",
+      "latency_samples": 257914,
+      "latency_us": {
+        "50": 1290205,
+        "95": 52035148,
+        "99": 64305308
+      },
+      "observer_errors": 0,
+      "proc_window_us": [
+        19622370,
+        59668479
+      ],
+      "relay": {
+        "first": {
+          "after_finality": 4,
+          "after_finality_checks": 4,
+          "capacity_rejections": 172428,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 321450,
+            "elapsed_us": 44897366,
+            "passed": 321446
+          },
+          "frames": 493878,
+          "pool_hits": 0,
+          "repeated_new_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        },
+        "repeated": {
+          "after_finality": 7,
+          "after_finality_checks": 7,
+          "capacity_rejections": 1592,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 1394,
+            "elapsed_us": 233385,
+            "passed": 1394
+          },
+          "frames": 87009,
+          "pool_hits": 84016,
+          "repeated_new_height": {
+            "count": 7,
+            "elapsed_us": 24,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        }
+      },
+      "relay_identities_at_drain_per_replica": [
+        427914,
+        427914,
+        427914,
+        427914
+      ],
+      "relay_retries": 107120,
+      "run": "3-worker",
+      "stage": {
+        "admission.client_queue": {
+          "count": 340056,
+          "elapsed_us": 2914423997,
+          "mean_ms": 8.57042368609876
+        },
+        "admission.client_service": {
+          "count": 340195,
+          "elapsed_us": 1591854007,
+          "mean_ms": 4.679239868310821
+        },
+        "execution.candidate_verify": {
+          "count": 315,
+          "elapsed_us": 66786616,
+          "mean_ms": 212.02100317460318
+        },
+        "execution.commit_jobs.persistence": {
+          "count": 420,
+          "elapsed_us": 18229510,
+          "mean_ms": 43.403595238095235
+        },
+        "execution.control_queue": {
+          "count": 3058,
+          "elapsed_us": 20095442,
+          "mean_ms": 6.571432962720732
+        },
+        "execution.proposal": {
+          "count": 105,
+          "elapsed_us": 12307954,
+          "mean_ms": 117.21860952380953
+        }
+      },
+      "terminal_height": 795,
+      "transport_drops": 1788,
+      "view_timeouts": 0,
+      "window_client_errors": {
+        "mempool capacity exceeded": 82086
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    },
+    {
+      "admission_thread_cpu_seconds": 0.0,
+      "archive_header_count": 223,
+      "archive_sha256": "0244f930c5d25d23619cb07e09bc269497fdc15b436c2c0b6f8a45f26b87e169",
+      "cell_node_index_coverage_by_replica": [
+        {
+          "first_inactive": {
+            "at_us": 69292082,
+            "height": 744
+          },
+          "last_active": {
+            "accounted_bytes": 779224064,
+            "at_us": 69196811,
+            "height": 743,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 69292082,
+            "height": 744
+          },
+          "last_active": {
+            "accounted_bytes": 760218624,
+            "at_us": 69196811,
+            "height": 743,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 69292082,
+            "height": 744
+          },
+          "last_active": {
+            "accounted_bytes": 779224064,
+            "at_us": 69196811,
+            "height": 743,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        },
+        {
+          "first_inactive": {
+            "at_us": 69292082,
+            "height": 744
+          },
+          "last_active": {
+            "accounted_bytes": 769721344,
+            "at_us": 69196811,
+            "height": 743,
+            "limit_bytes": 805306368,
+            "nodes": 2880003
+          }
+        }
+      ],
+      "client_check_elapsed_us": 36269450,
+      "client_worker": null,
+      "counter_window_us": [
+        19931316,
+        59993738
+      ],
+      "counts": {
+        "accepted": 253767,
+        "confirmed": 208896,
+        "confirmed_at_60s": 318656,
+        "confirmed_at_95s": 423226,
+        "offered": 340304,
+        "pending_at_20s": 59680,
+        "pending_at_60s": 104551,
+        "pending_at_95s": 0
+      },
+      "cpu_seconds": 266.47,
+      "funded_header": "c901000000000000e902ea22a20100002711b8b3c1b3876a468f5188ecc7c8af1d4c464d246108a9eeaf2f9436e35478e4dff49395b07bc83c1bec41eb299c8ab43c12e45001455a2d49adfab9bff05f1b9284f3bd82e88aca3b76cb440b8a37cb25241524ee721545bba4f313ce33c3600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c6d551e6650e7a5702c2e33d89df9f18a84de5728e4bb76cd02297d30a04babd75e9c400d03342f1874651dae01bb8eadcbdda2ade142d160561c9740908ece72b",
+      "funded_height": 457,
+      "independent_replay": "Verified 510000 writes, 423226 acknowledgements, 423226 finalized payments, 318656 in the offer window (5310.93 TPS), at certified height 791",
+      "latency_samples": 253530,
+      "latency_us": {
+        "50": 1480061,
+        "95": 52827795,
+        "99": 64781132
+      },
+      "observer_errors": 0,
+      "proc_window_us": [
+        19604865,
+        59646998
+      ],
+      "relay": {
+        "first": {
+          "after_finality": 218,
+          "after_finality_checks": 216,
+          "capacity_rejections": 185412,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 289565,
+            "elapsed_us": 36050882,
+            "passed": 289349
+          },
+          "frames": 474977,
+          "pool_hits": 0,
+          "repeated_new_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        },
+        "repeated": {
+          "after_finality": 7,
+          "after_finality_checks": 6,
+          "capacity_rejections": 851,
+          "decode_errors": 0,
+          "first_check": {
+            "count": 713,
+            "elapsed_us": 104995,
+            "passed": 713
+          },
+          "frames": 81342,
+          "pool_hits": 79772,
+          "repeated_new_height": {
+            "count": 6,
+            "elapsed_us": 14,
+            "passed": 0
+          },
+          "repeated_same_height": {
+            "count": 0,
+            "elapsed_us": 0,
+            "passed": 0
+          }
+        }
+      },
+      "relay_identities_at_drain_per_replica": [
+        423226,
+        423226,
+        423226,
+        423226
+      ],
+      "relay_retries": 105296,
+      "run": "4-inline",
+      "stage": {
+        "admission.client_queue": {
+          "count": 340794,
+          "elapsed_us": 4941386628,
+          "mean_ms": 14.499629183612388
+        },
+        "admission.client_service": {
+          "count": 340794,
+          "elapsed_us": 38071551,
+          "mean_ms": 0.11171426433563972
+        },
+        "execution.candidate_verify": {
+          "count": 306,
+          "elapsed_us": 67936924,
+          "mean_ms": 222.01609150326797
+        },
+        "execution.commit_jobs.persistence": {
+          "count": 408,
+          "elapsed_us": 19118185,
+          "mean_ms": 46.858296568627445
+        },
+        "execution.control_queue": {
+          "count": 2975,
+          "elapsed_us": 30437070,
+          "mean_ms": 10.230947899159665
+        },
+        "execution.proposal": {
+          "count": 101,
+          "elapsed_us": 11558018,
+          "mean_ms": 114.43582178217822
+        }
+      },
+      "terminal_height": 791,
+      "transport_drops": 1346,
+      "view_timeouts": 0,
+      "window_client_errors": {
+        "mempool capacity exceeded": 86774
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    }
+  ],
+  "scoring_window_us": [
+    20000000,
+    60000000
+  ],
+  "trial": {
+    "genesis_sha256": "b22086da6308a3bbcd6439dbf3bdc8c109fed65fc61ab41c066f371921c96ee3",
+    "harness_sha256": "73ab98159e8f6cea77501b65f97b29487b2789547d0e37e16a9a8cc1d4d7aed3",
+    "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+    "storage_settings": {
+      "BLOCK_CYCLES": 4000000000,
+      "BLOCK_TRANSACTIONS": 2048,
+      "CADENCE": 100,
+      "COMPLETE_VOLUME": 1,
+      "DRAIN": 35,
+      "FUNDED_CELLS": 1440000,
+      "PAUSE_ON_FULL": 0,
+      "PAYMENT_DATA_BYTES": 0,
+      "PREFUND_PAYMENTS": 1,
+      "RATE": 8500,
+      "READY_SENDERS": 1,
+      "REPLICAS": 4,
+      "REUSE_SUBMISSIONS": 1,
+      "SECONDS": 60,
+      "SENDERS": 256,
+      "SHARD_SENDERS": 0,
+      "VM_WORKERS": 2
+    },
+    "topology_sha256": "3a236c3568eab1ad45906c7a6652eb6bbd4c7aa364f446a25008a833223cc944"
+  }
+}

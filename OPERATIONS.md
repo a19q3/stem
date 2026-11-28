@@ -43,6 +43,11 @@ in the mempool. It accepts 524,288 through 16,777,216 bytes and defaults to
 transaction validation. Status reports the effective cap and separate counts
 of capacity rejections for each source.
 
+For controlled benchmarks, set `measure_relay_admission` to `true` to
+publish first and repeated relay metrics in local status. Each replica
+tracks up to 524,288 signed-wire identities and reports overflow. The
+measurement adds a bounded in-memory table and defaults to disabled.
+
 Set `--live-cell-index-mib MIB` to enable the optional resident Live Cell
 index. On startup the replica scans the durable Live Cell records and checks
 them against the committed Header's Cell root before using the index. The

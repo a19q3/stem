@@ -227,6 +227,8 @@ pub struct Status {
     pub mempool_max_bytes: Option<usize>,
     pub admission: Option<AdmissionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_attribution: Option<super::RelayAttributionMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_pipeline: Option<AdmissionPipelineMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub certificate_experiment: Option<CertificateExperimentMetrics>,
