@@ -654,7 +654,7 @@ archive index, then independently rebuilds it. The four-validator restart
 fixture produced identical proofs after both operations and independently
 authenticated height 1 against the certificate at height 13. It rejected a
 wrong requested height, an altered inclusion node and a different trusted
-network. Transaction and receipt indexing require separate proof checks.
+network.
 
 `stem stake delegation-proof` accepts `--strand-output position.strand` for a single delegation principal or an absent position. Check it against the root from the authenticated Registry entry using `stem stake verify-delegation-proof --network NETWORK --root ROOT --proof position.strand`. The returned identity includes the registry, validator, owner and nonce. An authenticated zero principal proves absence at that root.
 
@@ -779,6 +779,32 @@ A separate payer can sign its Lock Group with `--sponsor-max-debit SHANNONS` aft
 `stem wallet find` discovers by complete Lock or Type Script hash in a local, read-only application database. Repeat the returned height and cursor for a consistent page sequence. Query selected OutPoints through ABCI for corresponding authenticated proofs.
 
 With `prove=true`, `/stem/cell` returns a hex Strand `PatriciaPath` in its `proof` field. `/stem/execution` returns a hex Strand `ExecutionProof` with one position and count for both Merkle paths. Verify each proof against the corresponding root in the authenticated Stem Header.
+
+Save the decoded `value` from a `/stem/execution` query with `prove=true` as
+`execution.json`. Authenticate its exact transaction and receipt position
+against a certificate for the execution Header or a later checkpoint.
+
+```sh
+stem checkpoint verify-execution --trust trusted-network.json \
+  --finality two-chain.json --execution execution.json --height 5 --index 0 \
+  --history execution-history.strand
+```
+
+Omit `--history` when the certificate authenticates the requested height
+directly. For an older height, produce the Strand history proof at the
+certificate's containing height with `stem checkpoint history`. The offline
+checker authenticates the full witnessed transaction and receipt bytes at
+the same index, compares that index with the request, and emits the canonical
+transaction ID, fee, cycles and protocol result. The native and WASM tools
+use the same execution verifier. The authenticated block position and
+receipt can be stored alongside the block and checkpoint IDs as index
+provenance.
+
+The four-replica archive fixture checked transaction index 0 at height 5
+against both its exact certificate and a checkpoint at height 13. All four
+replicas returned matching execution bytes. The native and WASM verifiers
+rejected the substituted receipt. The native checker also rejected a
+different index and an older height without a history proof.
 
 For multiple Live Cell proofs at the current height, query `/stem/cells` with `prove=true` and concatenate 1–12 packed OutPoints in the input bytes. The response value is a JSON array of `cell` and `proof` entries in request order. A missing Cell has a null `cell` and a Patricia absence path. Use the returned height to fetch the authenticated Header and verify each path. Split requests if the aggregate Cell and proof bytes exceed 4 MiB.
 

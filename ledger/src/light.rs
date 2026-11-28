@@ -9,10 +9,12 @@ use stem_stake::{
 };
 
 use crate::{
-    block::Header,
+    Transaction,
+    block::{Header, Receipt},
     hash,
     history::HistoricalHeaderProof,
     patricia::{Namespace, Patricia, Proof},
+    proof::InclusionProof,
 };
 
 pub const EXTINGUISHED_FEES_KEY: &[u8] = b"fees/extinguished";
@@ -119,9 +121,51 @@ impl VerifiedHeader {
         proof.verify(&self.network, &self.header.state.history_root.unpack())
     }
 
+    pub fn historical_header(&self, height: u64, proof: &HistoricalHeaderProof) -> Result<Self> {
+        self.verify_history(height, proof)?;
+        Ok(Self {
+            header: proof.header.clone(),
+            network: self.network.clone(),
+            trust: self.trust.clone(),
+        })
+    }
+
+    /// Verify the witnessed transaction and receipt at the same committed position.
+    pub fn verify_execution(
+        &self,
+        transaction: &[u8],
+        receipt: &[u8],
+        proof: &[u8],
+    ) -> Result<VerifiedExecution> {
+        let transaction = Transaction::from_slice(transaction)?;
+        let receipt = Receipt::decode(receipt)?;
+        let (transaction_path, receipt_path) = InclusionProof::decode_execution_pair(proof)?;
+        ensure!(
+            transaction_path.verify_execution(
+                &self.network,
+                &self.header.execution(),
+                &transaction,
+                &receipt_path,
+                &receipt
+            ),
+            "execution proof does not match the authenticated Header"
+        );
+        Ok(VerifiedExecution {
+            id: transaction.id(&self.network),
+            position: transaction_path.position,
+            receipt,
+        })
+    }
+
     pub fn same_trust_anchor(&self, other: &Self) -> bool {
         self.trust == other.trust
     }
+}
+
+pub struct VerifiedExecution {
+    pub id: Byte32,
+    pub position: u32,
+    pub receipt: Receipt,
 }
 
 pub fn verify_system_record(

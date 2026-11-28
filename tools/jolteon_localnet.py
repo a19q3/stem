@@ -389,6 +389,29 @@ def scenario(args):
             assert int(fee_record["extinguished_shannons"], 16) == 140 * admitted, fee_record
             report["fee_calibration"] = {"shannons_per_payment": 140, "encoded_bytes": len(binary(payments[0])),
                                          "underpriced": fee_rejection, "at_height": agreed_height, "proof": fee_record}
+        if getattr(args, "check_authenticated_history", False):
+            for height in range(1, agreed_height):
+                request = json.dumps({"path": "/stem/transactions", "height": height}).encode()
+                result = rpc(peers[-1], QUERY, request)
+                ids = json.loads(bytes.fromhex(result["value"]))
+                if not ids:
+                    continue
+                request = json.dumps({
+                    "path": "/stem/execution", "height": height,
+                    "data": hex_bytes(struct.pack("<I", 0)), "prove": True,
+                }).encode()
+                responses = [rpc(port, QUERY, request) for port in peers]
+                assert responses[0]["height"] == height and all(r == responses[0] for r in responses)
+                execution = json.loads(bytes.fromhex(responses[0]["value"]))
+                assert execution["proof"] and any(
+                    bytes.fromhex(execution["transaction"]) == binary(payment) for payment in payments
+                )
+                write_json(args.output / "execution.json", execution)
+                proof = rpc(peers[-1], FINALITY, struct.pack("<Q", height))
+                write_json(args.output / "execution-certificate.json", proof["proof"])
+                report["execution_sample"] = {"height": height, "transaction_id": "0x" + ids[0]}
+                break
+            assert "execution_sample" in report, "fixture did not retain a finalized payment"
         write_json(args.output / "jolteon-report.json", report)
         return report
     finally:
@@ -425,11 +448,11 @@ def check_authenticated_history(args, report):
     network = json.loads(trust.read_text())["network_id"]
     proof = output / "history.strand"
 
-    def produce(path, height, destination):
+    def produce(path, height, destination, header=1):
         return json.loads(run(
             args.binary, "checkpoint", "history", "--archive-db", archive,
             "--index", path, "--network", network, "--height", str(height),
-            "--header", "1", "--strand-output", destination,
+            "--header", str(header), "--strand-output", destination,
         ))
 
     # Synchronize in a separate process, reopen and advance, then rebuild from scratch.
@@ -476,6 +499,52 @@ def check_authenticated_history(args, report):
     })
 
 
+    sample = report["execution_sample"]
+    transaction_height = sample["height"]
+    execution_history = output / "execution-history.strand"
+    produce(index, checkpoint_height, execution_history, header=transaction_height)
+    execution_path = output / "execution.json"
+
+    def verify_execution(index=0, path=execution_path, certificate="two-chain.json", historical=True, error=None):
+        command = [
+            args.binary, "checkpoint", "verify-execution", "--trust", trust,
+            "--finality", output / certificate, "--execution", path,
+            "--height", str(transaction_height), "--index", str(index),
+        ]
+        if historical:
+            command += ["--history", execution_history]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        if error is not None:
+            assert result.returncode != 0 and error in result.stderr and not result.stdout, result
+            return result.stderr.strip()
+        result.check_returncode()
+        return json.loads(result.stdout)
+
+    execution = verify_execution()
+    assert execution["transaction_id"] == sample["transaction_id"] and execution["height"] == transaction_height
+    direct_certificate = json.loads(run(
+        args.binary, "jolteon-proof", "--genesis", output / "genesis.json",
+        "--proof", output / "execution-certificate.json",
+    ))
+    if direct_certificate["height"] == transaction_height:
+        direct = verify_execution(certificate="execution-certificate.json", historical=False)
+        keys = ("header_id", "position", "transaction_id", "fee", "cycles", "protocol_result")
+        assert all(direct[key] == execution[key] for key in keys)
+    else:
+        direct = None
+
+    tampered = output / "execution-tampered.json"
+    wrong_receipt = json.loads(execution_path.read_text())
+    wrong_receipt["receipt"] = "000000"
+    write_json(tampered, wrong_receipt)
+    write_json(output / "authenticated-execution.json", {
+        "historical": execution, "direct": direct,
+        "wrong_index": verify_execution(index=1, error="position differs from the request"),
+        "missing_history": verify_execution(historical=False, error="requires a matching checkpoint"),
+        "wrong_receipt": verify_execution(path=tampered, error="does not match the authenticated Header"),
+    })
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ("binary", "lock", "output"):
@@ -491,7 +560,7 @@ def main():
     parser.add_argument("--check-pruning", action="store_true")
     parser.add_argument("--check-readiness", action="store_true")
     parser.add_argument("--check-authenticated-history", action="store_true",
-                        help="verify archive index resume, rebuild and portable proofs after replicas stop")
+                        help="verify rebuilt archive proofs and historical execution after replicas stop")
     parser.add_argument("--port", type=int, default=22000)
     parser.add_argument("--cadence", type=int, default=200)
     parser.add_argument("--timeout", type=int, default=850)

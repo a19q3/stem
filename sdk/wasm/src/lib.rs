@@ -10,12 +10,9 @@ use ckb_types::{
 };
 use stem_bridge_wire::intercell::Message;
 use stem_ledger::{
-    Transaction,
-    block::Receipt,
     light::{self, EXTINGUISHED_FEES_KEY, FinalityVerifier, VerifiedHeader},
     lineage::{self, Head, LineageProof},
     patricia::{Namespace, Patricia, Proof},
-    proof::InclusionProof,
     protocol::{BridgeBacking, VaultRevenue},
     record,
 };
@@ -148,26 +145,10 @@ impl AuthenticatedHeader {
         receipt: &[u8],
         proof: &[u8],
     ) -> Result<VerifiedExecution, JsError> {
-        js((|| {
-            let tx = Transaction::from_slice(transaction)?;
-            let receipt = Receipt::decode(receipt)?;
-            let (tx_proof, receipt_proof) = InclusionProof::decode_execution_pair(proof)?;
-            ensure!(
-                tx_proof.verify_execution(
-                    self.0.network(),
-                    &self.0.header().execution(),
-                    &tx,
-                    &receipt_proof,
-                    &receipt
-                ),
-                "execution proof does not match the authenticated Header"
-            );
-            Ok(VerifiedExecution {
-                id: tx.id(self.0.network()),
-                position: tx_proof.position,
-                receipt,
-            })
-        })())
+        js(self
+            .0
+            .verify_execution(transaction, receipt, proof)
+            .map(VerifiedExecution))
     }
 
     #[wasm_bindgen(js_name = verifyIntercell)]
@@ -358,37 +339,33 @@ fn verify_cell(header: &VerifiedHeader, point: &[u8], raw: &[u8], proof: &[u8]) 
 }
 
 #[wasm_bindgen]
-pub struct VerifiedExecution {
-    id: Byte32,
-    position: u32,
-    receipt: Receipt,
-}
+pub struct VerifiedExecution(light::VerifiedExecution);
 
 #[wasm_bindgen]
 impl VerifiedExecution {
     #[wasm_bindgen(getter)]
     pub fn fee(&self) -> u64 {
-        self.receipt.fee
+        self.0.receipt.fee
     }
 
     #[wasm_bindgen(getter)]
     pub fn cycles(&self) -> u64 {
-        self.receipt.cycles
+        self.0.receipt.cycles
     }
 
     #[wasm_bindgen(getter)]
     pub fn position(&self) -> u32 {
-        self.position
+        self.0.position
     }
 
     #[wasm_bindgen(js_name = transactionId)]
     pub fn transaction_id(&self) -> Vec<u8> {
-        self.id.as_slice().to_vec()
+        self.0.id.as_slice().to_vec()
     }
 
     #[wasm_bindgen(js_name = protocolResult)]
     pub fn protocol_result(&self) -> Vec<u8> {
-        self.receipt.protocol_result.to_vec()
+        self.0.receipt.protocol_result.to_vec()
     }
 }
 
