@@ -15,6 +15,8 @@ use stem_stake::patricia::{
 };
 pub use stem_stake::patricia::{Key, Namespace};
 
+#[cfg(feature = "batched-patricia-proofs")]
+mod batched_proof;
 mod node_value;
 use node_value::checked_node;
 pub use node_value::NodeValue;
@@ -506,16 +508,7 @@ where
             return Ok(());
         }
         let node = self.load(&id, |node, bytes| {
-            if let Some(bytes) = bytes {
-                for &(_, index) in queries {
-                    proofs[index].1.nodes.push(bytes.to_vec());
-                }
-            } else {
-                let encoded = node.encode();
-                for &(_, index) in queries {
-                    proofs[index].1.nodes.push(encoded.clone());
-                }
-            }
+            append_proof_node(&node, bytes, queries, proofs);
             node
         })?;
         match node {
@@ -532,12 +525,7 @@ where
                 children,
             } => {
                 ensure!(usize::from(bits) >= depth, "invalid Patricia path depth");
-                let prefix_for = |&(key, _): &(Key, usize)| canonical_prefix(&key, bits);
-                let start = queries.partition_point(|query| prefix_for(query) < prefix);
-                let end = queries.partition_point(|query| prefix_for(query) <= prefix);
-                let matches = &queries[start..end];
-                let pivot = matches.partition_point(|(key, _)| side(key, bits) == 0);
-                let (left, right) = matches.split_at(pivot);
+                let (left, right) = split_proof_queries(queries, prefix, bits);
                 let child_depth = usize::from(bits) + 1;
                 self.prove_sorted(children[0], left, child_depth, proofs)?;
                 self.prove_sorted(children[1], right, child_depth, proofs)?;
@@ -695,6 +683,38 @@ where
             }
         })
     }
+}
+
+fn append_proof_node(
+    node: &Node,
+    bytes: Option<&[u8]>,
+    queries: &[(Key, usize)],
+    proofs: &mut [(Option<Key>, Proof)],
+) {
+    let mut append = |bytes: &[u8]| {
+        for &(_, index) in queries {
+            proofs[index].1.nodes.push(bytes.to_vec());
+        }
+    };
+    if let Some(bytes) = bytes {
+        append(bytes);
+    } else {
+        let mut buffer = [0; MAX_NODE_BYTES];
+        append(node.encode_into(&mut buffer));
+    }
+}
+
+fn split_proof_queries(
+    queries: &[(Key, usize)],
+    prefix: Key,
+    bits: u8,
+) -> (&[(Key, usize)], &[(Key, usize)]) {
+    let prefix_for = |&(key, _): &(Key, usize)| canonical_prefix(&key, bits);
+    let start = queries.partition_point(|query| prefix_for(query) < prefix);
+    let end = queries.partition_point(|query| prefix_for(query) <= prefix);
+    let matches = &queries[start..end];
+    let pivot = matches.partition_point(|(key, _)| side(key, bits) == 0);
+    matches.split_at(pivot)
 }
 
 fn check_change_order(changes: &[(Key, Option<Key>)]) -> Result<()> {

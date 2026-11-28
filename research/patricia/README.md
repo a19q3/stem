@@ -16,6 +16,33 @@ A flushed RocksDB snapshot with 16,384 Live Cells served 1,024 queries with pres
 
 Four native replicas exercised the query path after a two-Type-script spend. The response proved the new output's membership and returned the same absence proof for both occurrences of the spent input. The reopened-store test also compared batched and standalone results in caller order. The read-count reduction measures proof lookup. [Issue #4](https://github.com/a19q3/stem/issues/4)
 
+### Batched reads for shared-prefix proofs
+
+`native-batched-patricia-proofs` adds a traversal for immutable native
+Cell proof batches. It walks the same shared prefixes and groups
+requested node IDs from each tree frontier in chunks of up to 64.
+The Store resolves branch entries and resident node hits before
+sending remaining requests to RocksDB with the same read options.
+Four or more disk lookups use one MultiGet call. Smaller sets use
+point reads.
+
+Each returned node is authenticated against its requested ID and tree.
+Each emitted record is checked against the leaf value. Membership,
+absence, duplicate requests and caller order retain the same
+`PatriciaPath` bytes. The compile-checked fixtures compare full
+paths across grouped reads and cover a pinned RocksDB view after
+its newer tip commits. The archived JMT proof path has its own reader.
+
+Compare the existing shared-prefix traversal against this feature at
+widths 1, 12, 32, 128 and 1,024 on identical committed states.
+Use uniform and clustered keys with resident nodes, warm RocksDB and
+cold RocksDB. Record storage calls, keys per call, proof wall time, CPU,
+allocations and exact output equality. This traversal consumes fetched
+nodes directly. The [earlier two-pass edit experiment](#bounded-rocksdb-prefetch-before-editing)
+found a regression even with fewer storage calls. Fully resident or
+narrow proof batches may also see little benefit from the additional
+buffering. Runtime and replay evidence are pending.
+
 ## Parallel Cell subtree mutation
 
 The optional `native-cell-subtree-parallel` feature gives Cell commitment work to the existing Rayon pool used by the Leader and Follower. A partition can run concurrently when every change fits the existing compressed prefix and each child has at least 128 changes. The two children receive disjoint key ranges and bounded shares of the available workers. Each child reads the same immutable parent view and buffers node edits and previous values. The parent joins left before right, then applies the existing compression rule. Small or one-sided batches and changes extending an existing prefix use the serial editor. The System tree, node encoding, durable batch ordering and state proof format use the existing paths.

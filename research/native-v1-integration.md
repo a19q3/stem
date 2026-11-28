@@ -40,6 +40,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Resident Patricia publication | `0eba67f` | Publish on the certified writer after WAL sync or on the Replica when it installs the durable tip [Resident Patricia notes](storage/resident-patricia.md) |
 | Prebuilt finality state writes | `jolteon-prebuilt-state-write` | Assemble one certified state prefix before the atomic finality write [Comparison notes](execution-pipeline/cross-block.md#prebuilding-the-certified-state-writebatch) |
 | Verified resident nodes | `native-verified-cell-nodes` | Authenticate decoded nodes at cache insertion and reuse them by content ID [Comparison notes](storage/resident-patricia.md#verified-decoded-resident-nodes) |
+| Batched Patricia proof reads | `native-batched-patricia-proofs` | Group proof-frontier RocksDB misses while preserving canonical proof bytes [Comparison notes](patricia/README.md#batched-reads-for-shared-prefix-proofs) |
 | Prepared Cell record keys | `native-prepared-cell-record-keys` | Reuse created Cell keys from the commitment on finality [Comparison notes](storage/patricia-finishing/README.md#reducing-certified-batch-construction-work) |
 | Vectored Cell writes | `native-vectored-cell-writes` | Append large canonical records without a contiguous scratch copy [Comparison notes](storage/patricia-finishing/README.md#vectored-writes-for-large-cell-records) |
 | Reuse certified writer buffer | `jolteon-reuse-write-buffer` | Clear and recycle a bounded write buffer on the existing writer [Comparison notes](storage/patricia-finishing/README.md#reducing-certified-batch-construction-work) |
@@ -96,6 +97,7 @@ pinned_cache=native-shared-pinned-cell-cache
 sharded_cache=native-sharded-live-cache
 inline_outpoints=native-inline-outpoint-index
 verified_nodes=native-verified-cell-nodes
+batched_proofs=native-batched-patricia-proofs
 verified_journal=native-verified-cell-journal
 compact_patricia_journal=native-compact-patricia-journal
 segmented_patricia_journal=native-segmented-patricia-journal
@@ -151,6 +153,7 @@ build shared-pinned-cells --features "$pinned_cache"
 build sharded-pinned-cells --features "$pinned_cache,$sharded_cache"
 build inline-outpoints --features "$inline_outpoints"
 build verified-nodes --features "$verified_nodes"
+build batched-patricia-proofs --features "$batched_proofs"
 build verified-journal --features "$verified_journal"
 build compact-patricia-journal --features "$verified_journal,$compact_patricia_journal"
 build segmented-patricia-journal --features "$segmented_patricia_journal"
@@ -159,7 +162,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$batched_proofs,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
