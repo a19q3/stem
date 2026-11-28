@@ -1,5 +1,9 @@
 //! One bounded follower-preparation job at a time. The worker never votes or commits.
-use std::{sync::Arc, thread, time::Instant};
+use std::{
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, ensure};
 use bytes::Bytes;
@@ -7,7 +11,7 @@ use ckb_types::prelude::*;
 use stem_stake::{Hash32, jolteon::Point};
 use tokio::sync::mpsc;
 
-use super::{Replica, Store};
+use super::{CommitWindow, Replica, Store, commit_overlap};
 use crate::native_store::{PinnedView, Prepared};
 
 struct Binding {
@@ -73,12 +77,15 @@ struct Job {
     state: PinnedView,
     ancestors: Vec<Arc<Prepared>>,
     time: u64,
+    commit: Option<CommitWindow>,
 }
 
 pub(super) struct Completion {
     binding: Binding,
     prepared: Result<Option<Prepared>>,
-    elapsed: std::time::Duration,
+    elapsed: Duration,
+    work: (Instant, Duration),
+    commit: Option<CommitWindow>,
 }
 
 pub(super) struct Pipeline {
@@ -97,18 +104,23 @@ impl Pipeline {
             .spawn(move || {
                 while let Some(job) = jobs.blocking_recv() {
                     let started = Instant::now();
-                    let prepared = workers.install(|| {
-                        job.state.prepare_candidate(
+                    let (prepared, work) = workers.install(|| {
+                        let executing = Instant::now();
+                        let result = job.state.prepare_candidate(
                             &job.ancestors,
                             &job.binding.transactions,
                             job.time,
-                        )
+                            job.commit.is_some(),
+                        );
+                        (result, (executing, executing.elapsed()))
                     });
                     if complete
                         .blocking_send(Completion {
                             binding: job.binding,
                             prepared,
                             elapsed: started.elapsed(),
+                            work,
+                            commit: job.commit,
                         })
                         .is_err()
                     {
@@ -133,6 +145,7 @@ impl Pipeline {
         branch: &[Point],
         candidate: &super::Checked,
         ancestors: Vec<Arc<Prepared>>,
+        commit: Option<CommitWindow>,
     ) -> Result<bool> {
         if self.running {
             return Ok(false);
@@ -153,6 +166,7 @@ impl Pipeline {
                 state: store.pinned_view(),
                 ancestors,
                 time: candidate.header.context.timestamp_ms,
+                commit,
             })
             .map_err(|_| anyhow::anyhow!("candidate preparation worker stopped"))?;
         self.running = true;
@@ -169,7 +183,7 @@ impl Replica {
         self.candidate_pipeline.running = false;
         self.execution.candidate_verify.observe(completion.elapsed);
         let Completion {
-            binding, prepared, ..
+            binding, prepared, elapsed, work, commit,
         } = completion;
         if let Ok(Some(execution)) = &prepared {
             self.execution
@@ -180,8 +194,9 @@ impl Replica {
                 .record(execution.lineage_schedule());
         }
         if !self.preparation_is_current(&binding) || matches!(prepared, Ok(None)) {
-            self.execution.candidate_jobs.stale =
-                self.execution.candidate_jobs.stale.saturating_add(1);
+            let jobs = &mut self.execution.candidate_jobs;
+            jobs.stale = jobs.stale.saturating_add(1);
+            jobs.stale_us = jobs.stale_us.saturating_add(elapsed.as_micros() as u64);
             return Ok(());
         }
         let candidate = self
@@ -189,6 +204,9 @@ impl Replica {
             .get_mut(&binding.target)
             .context("missing prepared candidate")?;
         if candidate.execution.is_some() {
+            let jobs = &mut self.execution.candidate_jobs;
+            jobs.stale = jobs.stale.saturating_add(1);
+            jobs.stale_us = jobs.stale_us.saturating_add(elapsed.as_micros() as u64);
             return Ok(());
         }
         let verified = prepared.and_then(|result| {
@@ -202,11 +220,15 @@ impl Replica {
         match verified {
             Ok(prepared) => {
                 candidate.execution = Some(Arc::new(prepared));
-                self.execution.candidate_jobs.applied =
-                    self.execution.candidate_jobs.applied.saturating_add(1);
+                let jobs = &mut self.execution.candidate_jobs;
+                jobs.applied = jobs.applied.saturating_add(1);
                 if binding.base != self.finalized {
-                    let jobs = &mut self.execution.candidate_jobs;
                     jobs.rebased = jobs.rebased.saturating_add(1);
+                }
+                let overlap = commit_overlap(commit.as_ref(), work);
+                if !overlap.is_zero() {
+                    jobs.commit_overlap_applied = jobs.commit_overlap_applied.saturating_add(1);
+                    jobs.commit_overlap_us = jobs.commit_overlap_us.saturating_add(overlap.as_micros() as u64);
                 }
             }
             Err(error) => {

@@ -10,12 +10,13 @@ use anyhow::{Context, Result, anyhow};
 use stem_stake::jolteon::Point;
 use tokio::sync::{mpsc, oneshot};
 
-use super::{Incoming, Replica, can_vote_at, transport::Inbox, wire};
+use super::{CommitWindow, Incoming, Replica, can_vote_at, transport::Inbox, wire};
 use crate::native_store::Prepared;
 
 struct Write {
     persist: Box<dyn FnOnce() -> Result<()> + Send>,
     done: oneshot::Sender<Result<Duration>>,
+    window: Option<CommitWindow>,
 }
 
 pub(super) struct Writer(mpsc::Sender<Write>);
@@ -26,7 +27,12 @@ impl Writer {
         thread::Builder::new().name("stem-commit".into()).spawn(move || {
             while let Some(job) = jobs.blocking_recv() {
                 let start = Instant::now();
-                let result = (job.persist)().map(|()| start.elapsed());
+                let result = (job.persist)();
+                let elapsed = start.elapsed();
+                if let Some(window) = job.window {
+                    let _ = window.set((start, elapsed));
+                }
+                let result = result.map(|()| elapsed);
                 if job.done.send(result).is_err() {
                     break;
                 }
@@ -38,12 +44,14 @@ impl Writer {
     fn submit(
         &self,
         persist: impl FnOnce() -> Result<()> + Send + 'static,
+        window: Option<CommitWindow>,
     ) -> Result<oneshot::Receiver<Result<Duration>>> {
         let (done, completion) = oneshot::channel();
         self.0
             .try_send(Write {
                 persist: Box::new(persist),
                 done,
+                window,
             })
             .map_err(|_| anyhow!("certified writer is unavailable"))?;
         Ok(completion)
@@ -62,9 +70,19 @@ impl Replica {
         let write = self
             .store
             .certified_write(Arc::clone(&prepared), records, retired)?;
-        let mut persistence = self.commit_writer.submit(write)?;
+        let window = (cfg!(feature = "jolteon-cross-block-pipeline") && descendants.is_some())
+            .then(CommitWindow::default);
+        let mut persistence = self.commit_writer.submit(write, window.clone())?;
         if let Some((branch, ancestors)) = descendants {
-            self.prepare_commit_descendant(branch, ancestors)?;
+            self.prepare_commit_descendant(branch, ancestors, window.clone())?;
+            // Construction can start against the known certified branch.
+            // The Replica processes the result after the write is acknowledged.
+            #[cfg(feature = "jolteon-cross-block-pipeline")]
+            self.prepare_commit_proposal(
+                branch,
+                ancestors,
+                window.clone().expect("known commit window"),
+            )?;
         }
         loop {
             tokio::select! {
@@ -83,7 +101,7 @@ impl Replica {
                         metrics.status_replies = metrics.status_replies.saturating_add(1);
                     } else if descendants.is_some() && self.cache_commit_descendant(&event) {
                         let (branch, ancestors) = descendants.expect("known commit branch");
-                        self.prepare_commit_descendant(branch, ancestors)?;
+                        self.prepare_commit_descendant(branch, ancestors, window.clone())?;
                     } else {
                         // In particular, keep journal writes and finality reads
                         // behind the same ordered acknowledgement.
@@ -140,6 +158,7 @@ impl Replica {
         &mut self,
         branch: &[Point],
         ancestors: &[Arc<Prepared>],
+        commit: Option<CommitWindow>,
     ) -> Result<()> {
         let Some(target) = self.preferred.get(&self.view) else {
             return Ok(());
@@ -166,6 +185,7 @@ impl Replica {
             &path,
             proposal,
             ancestors.to_vec(),
+            commit,
         )? {
             let jobs = &mut self.execution.candidate_jobs;
             jobs.started = jobs.started.saturating_add(1);

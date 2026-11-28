@@ -1,5 +1,7 @@
 # Non-blocking Jolteon candidate preparation
 
+The [cross-block follow-up](cross-block.md) measures actual overlap between certified writes and successor construction, with matched mature-state payment trials.
+
 The candidate feature moves follower preparation off the Replica event loop. A dedicated dispatch thread uses the replica's existing Rayon VM pool. The Replica continues handling peer messages, advancing the pacemaker and writing its journal. It schedules only the earliest unprepared candidate on the requested branch, with one slot for the whole job and its result. The existing branch horizon, frame size and native resource budgets also apply. Leader construction, certified RocksDB commit and admission ran synchronously in the original Follower comparison. [Implementation](../../src/jolteon/candidate_pipeline.rs) · [Admission experiment](../admission/pipeline/README.md)
 
 ```mermaid

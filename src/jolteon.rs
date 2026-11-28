@@ -63,6 +63,19 @@ const MAX_PROPOSAL_BYTES: u64 = 16 * 1024 * 1024;
 const RELAY_RETRIES_PER_TICK: usize = 8;
 const MAX_VERIFICATION_CACHE_ENTRIES: usize = 131_072;
 
+#[cfg(any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"))]
+type CommitWindow = Arc<std::sync::OnceLock<(Instant, Duration)>>;
+
+#[cfg(any(feature = "jolteon-proposal-pipeline", feature = "jolteon-candidate-pipeline"))]
+fn commit_overlap(window: Option<&CommitWindow>, (start, elapsed): (Instant, Duration)) -> Duration {
+    let Some(&(commit_start, commit_elapsed)) = window.and_then(|window| window.get()) else {
+        return Duration::ZERO;
+    };
+    (start + elapsed)
+        .min(commit_start + commit_elapsed)
+        .saturating_duration_since(start.max(commit_start))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -428,6 +441,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
             let (pipeline, mut admission_done) = admission_pipeline::Pipeline::start()?;
             let workers = Arc::new(rayon::ThreadPoolBuilder::new()
                 .num_threads(config.vm_workers)
+                .thread_name(|index| format!("stem-exec-{index}"))
                 .build()?);
             #[cfg(feature = "jolteon-candidate-pipeline")]
             let (candidate_pipeline, mut candidate_done) =
@@ -854,6 +868,7 @@ impl Replica {
                     &branch[..=prefix_end],
                     proposal,
                     batches,
+                    None,
                 )?;
                 let counter = if started {
                     &mut self.execution.candidate_jobs.started
@@ -1397,7 +1412,7 @@ impl Replica {
 
     fn propose(&mut self) -> Result<()> {
         #[cfg(feature = "jolteon-proposal-pipeline")]
-        if self.proposal_pipeline.running() {
+        if self.publish_paced_proposal()? || self.proposal_pipeline.running() {
             return Ok(());
         }
         let Some((parent, tc)) = self.proposal_parent()? else {
@@ -1427,7 +1442,7 @@ impl Replica {
         #[cfg(feature = "jolteon-proposal-pipeline")]
         {
             let parent_id = parent_header.id(self.store.network()).unpack();
-            self.schedule_proposal(branch, batches, parent_id, at)
+            self.schedule_proposal(branch, batches, parent_id, at, None)
         }
         #[cfg(not(feature = "jolteon-proposal-pipeline"))]
         {

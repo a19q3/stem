@@ -410,8 +410,9 @@ impl PinnedView {
         branch: &[Arc<Prepared>],
         raw: &[bytes::Bytes],
         time: u64,
+        committing: bool,
     ) -> Result<Option<Prepared>> {
-        self.with_snapshot(|view| {
+        self.with_branch_snapshot(branch, committing, |view, branch| {
             let transactions = raw
                 .iter()
                 .cloned()
@@ -429,8 +430,9 @@ impl PinnedView {
         time: u64,
         max_bytes: u64,
         scan: &mut ProposalScan,
+        committing: bool,
     ) -> Result<Option<(Vec<Transaction>, Prepared)>> {
-        self.with_snapshot(|view| {
+        self.with_branch_snapshot(branch, committing, |view, branch| {
             view.on_branch(branch, |state| {
                 state.build_proposal_measured(
                     transactions,
@@ -443,19 +445,44 @@ impl PinnedView {
         })
     }
 
+    #[cfg(any(feature = "jolteon-admission-pipeline", test))]
     fn with_snapshot<T>(&self, task: impl FnOnce(&Store) -> Result<T>) -> Result<Option<T>> {
+        self.with_branch_snapshot(&[], false, |view, _| task(view))
+    }
+
+    fn with_branch_snapshot<T>(
+        &self,
+        branch: &[Arc<Prepared>],
+        committing: bool,
+        task: impl FnOnce(&Store, &[Arc<Prepared>]) -> Result<T>,
+    ) -> Result<Option<T>> {
         let snapshot = self.0.db.snapshot();
-        let tip = snapshot.get(TIP)?.context("missing pinned snapshot tip")?;
-        if tip.as_ref() != self.0.tip.encode() {
+        let tip = snapshot
+            .get(TIP)
+            .context(StateReadFault)?
+            .context("missing pinned snapshot tip")
+            .context(StateReadFault)?;
+        let skip = if tip.as_ref() == self.0.tip.encode() {
+            0
+        } else if committing
+            && branch.first().is_some_and(|first| {
+                first.parent == self.0.tip.id(&self.0.network)
+                    && tip.as_ref() == first.header().encode()
+            })
+        {
+            1
+        } else {
             return Ok(None);
-        }
+        };
         let mut options = ReadOptions::default();
         options.set_snapshot(&snapshot);
-        let mut view = self.0.read_view(&[]);
+        let mut view = self.0.read_view(&branch[..skip]);
+        // The accepted prefix is already in the snapshot.
+        view.branch.clear();
         // The private view and its options are dropped before the snapshot.
         // Its Live Cell cache and committed stake inputs are private to this view.
         view.read_options = Arc::new(options);
-        task(&view).map(Some)
+        task(&view, &branch[skip..]).map(Some)
     }
 }
 
@@ -3061,6 +3088,7 @@ mod pipeline_store_tests {
                     1002,
                     1024,
                     &mut ProposalScan::default(),
+                    false,
                 )?
                 .context("missing proposal snapshot")?;
             let reference = store.on_branch(&[ancestor], |view| view.prepare(&[], 1002, false))?;
@@ -3078,7 +3106,7 @@ mod pipeline_store_tests {
         assert!(old.with_snapshot(|_| Ok(()))?.is_none());
         #[cfg(feature = "jolteon-proposal-pipeline")]
         assert!(
-            old.build_proposal(&[], Vec::new(), 1002, 1024, &mut ProposalScan::default())?
+            old.build_proposal(&[], Vec::new(), 1002, 1024, &mut ProposalScan::default(), false)?
                 .is_none()
         );
         let fresh = store.pinned_view();
@@ -3086,6 +3114,47 @@ mod pipeline_store_tests {
             fresh.with_snapshot(|read| Ok(read.tip().clone()))?.as_ref(),
             Some(store.tip())
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-cross-block-pipeline")]
+    #[test]
+    fn late_worker_can_open_only_the_expected_durable_prefix() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut store = Store::open(home.path(), &spec(), Retention::Recent(2))?;
+        let pinned = store.pinned_view();
+        let first = Arc::new(store.prepare(&[], 1001, false)?);
+        let fork = Arc::new(store.prepare(&[], 1002, false)?);
+        let second = Arc::new(store.on_branch(std::slice::from_ref(&first), |view| {
+            view.prepare(&[], 1003, false)
+        })?);
+        let branch = [first.clone(), second.clone()];
+        let build = |branch: &[_], committing| {
+            pinned.build_proposal(
+                branch,
+                Vec::new(),
+                1004,
+                1024,
+                &mut ProposalScan::default(),
+                committing,
+            )
+        };
+        let (_, before) = build(&branch, true)?.context("missing old snapshot result")?;
+        store.commit_certified(&first, &[], &[])?;
+        assert!(build(&branch, false)?.is_none());
+        assert!(build(&[fork, second.clone()], true)?.is_none());
+
+        let (_, late) = build(&branch, true)?.context("exact prefix should rebase")?;
+        assert_eq!(before.header(), late.header());
+        assert_eq!(before.receipts(), late.receipts());
+        assert_eq!(before.batch.writes, late.batch.writes);
+        let follower = pinned
+            .prepare_candidate(&branch, &[], 1004, true)?
+            .context("Follower should open the same exact prefix")?;
+        assert_eq!(before.header(), follower.header());
+        assert_eq!(before.batch.writes, follower.batch.writes);
+        store.commit_certified(&second, &[], &[])?;
+        assert!(build(&branch, true)?.is_none());
         Ok(())
     }
 
@@ -3158,6 +3227,7 @@ mod pipeline_store_tests {
                 1002,
                 4096,
                 &mut scan,
+                false,
             )?
             .context("missing proposal snapshot")?;
         let expected = store.on_branch(&[parent], |view| {

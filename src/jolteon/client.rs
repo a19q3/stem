@@ -140,6 +140,16 @@ pub struct ProposalMetrics {
     pub started: u64,
     pub published: u64,
     pub stale: u64,
+    #[serde(default)]
+    pub stale_us: u64,
+    #[serde(default)]
+    pub commit_overlap_started: u64,
+    #[serde(default)]
+    pub commit_overlap_published: u64,
+    #[serde(default)]
+    pub commit_overlap_us: u64,
+    #[serde(default)]
+    pub rebased: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
@@ -147,10 +157,16 @@ pub struct CandidateMetrics {
     pub started: u64,
     pub applied: u64,
     pub stale: u64,
+    #[serde(default)]
+    pub stale_us: u64,
     pub invalid: u64,
     pub already_running: u64,
     #[serde(default)]
     pub rebased: u64,
+    #[serde(default)]
+    pub commit_overlap_applied: u64,
+    #[serde(default)]
+    pub commit_overlap_us: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize)]
