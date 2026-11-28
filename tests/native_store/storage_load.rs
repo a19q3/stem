@@ -273,7 +273,16 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         "payment funding requires a payment workload"
     );
     let funding = if load.prefund_payments {
-        funding_splits(&mut fixture, work)?
+        let cells = match std::env::var("STEM_STORAGE_FUNDED_CELLS") {
+            Ok(value) => value.parse::<usize>().context("invalid fixed funding size")?,
+            Err(std::env::VarError::NotPresent) => work,
+            Err(error) => return Err(error.into()),
+        };
+        ensure!(
+            (work..=2_000_000).contains(&cells),
+            "invalid fixed funding size"
+        );
+        funding_splits(&mut fixture, cells)?
     } else {
         Vec::new()
     };
@@ -412,12 +421,39 @@ fn sustained_storage(mode: Option<lineage_load::Mode>) -> Result<()> {
         )?;
     }
     if !funding.is_empty() {
-        let proof = finalize_funding(&fixture, &clients, &funding)
-            .context("finalize payment funding before the offer")?;
+        let proof = if let Some(path) = std::env::var_os("STEM_TEST_REUSE_FUNDING") {
+            ensure!(
+                topology.is_some(),
+                "reused funding requires external replicas"
+            );
+            let proof: Value = serde_json::from_slice(&fs::read(path)?)?;
+            let height = proof["height"].as_u64().context("missing funded height")?;
+            let header = proof["header"].as_str().context("missing funded Header")?;
+            let outputs: usize = funding.iter().map(|tx| tx.outputs().len()).sum();
+            ensure!(proof["outputs"] == outputs, "funded Cell count differs");
+            // The external preflight checks a recent shared finality proof on every
+            // replica. Only the archive necessarily retains the original funding height.
+            let archive = clients.last().context("no archive")?;
+            ensure!(
+                hex::encode(archive.header(height)?.encode()) == header,
+                "archive does not contain the expected funded Header"
+            );
+            proof
+        } else {
+            finalize_funding(&fixture, &clients, &funding)
+                .context("finalize payment funding before the offer")?
+        };
         fs::write(
             output.join("payment-funding.json"),
             serde_json::to_vec(&proof)?,
         )?;
+        if std::env::var_os("STEM_TEST_FUND_ONLY").is_some() {
+            ensure!(
+                topology.is_some(),
+                "fund-only fixture requires external replicas"
+            );
+            return Ok(());
+        }
     }
     let before = capture(&replicas, &clients, load.measured)?;
     let first_height = before

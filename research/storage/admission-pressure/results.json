@@ -1,0 +1,448 @@
+{
+  "binary_sha256": {
+    "measure_and_replay_harness": "9cae0eeea47a9380d88594652760547b1418f7d1433468566bcbb90053634458",
+    "replica": "5389761cedf5e85e5d088ab7f471105198248d3189cb61f14330c983922010c7",
+    "stem_lock": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e"
+  },
+  "comparison_window_us": [
+    20000000,
+    60000000
+  ],
+  "drain_cutoff_us": 95000000,
+  "funding_proof_sha256": "58828acabf325312a911b99a7d19c23a259ce2c7cc2ba7c39eabface651f6aec",
+  "genesis": {
+    "genesis_id": "05809761d4e82eea51764f8dbfc9f1222f827ba18cc0966f015f174a6c253ecc",
+    "network": "8989898989898989898989898989898989898989898989898989898989898989"
+  },
+  "offer_window_us": 60000000,
+  "plan": {
+    "genesis_sha256": "b22086da6308a3bbcd6439dbf3bdc8c109fed65fc61ab41c066f371921c96ee3",
+    "harness_sha256": "a496664c7ca72a1de3194c31138a4a7ba82541e7b317e76576738aa989e05780",
+    "lock_sha256": "db3499bb589af6e46c2e62fb5d53644b5d023cb003049eb6f52be12dc968ea8e",
+    "storage_settings": {
+      "BLOCK_CYCLES": 4000000000,
+      "BLOCK_TRANSACTIONS": 2048,
+      "CADENCE": 100,
+      "COMPLETE_VOLUME": 1,
+      "DRAIN": 35,
+      "FUNDED_CELLS": 1440000,
+      "PAUSE_ON_FULL": 0,
+      "PAYMENT_DATA_BYTES": 0,
+      "PREFUND_PAYMENTS": 1,
+      "RATE": 8500,
+      "READY_SENDERS": 1,
+      "REPLICAS": 4,
+      "REUSE_SUBMISSIONS": 1,
+      "SECONDS": 60,
+      "SENDERS": 256,
+      "SHARD_SENDERS": 0,
+      "VM_WORKERS": 2
+    },
+    "topology_sha256": "3a236c3568eab1ad45906c7a6652eb6bbd4c7aa364f446a25008a833223cc944"
+  },
+  "run_order_mib": [
+    16,
+    4,
+    4,
+    16
+  ],
+  "runs": [
+    {
+      "admitted_total": 416490,
+      "archive_sha256": "863491774f37d8aa480b9eec3fd316a4b4bced57b6c747fac513165a3ecd6d28",
+      "cap_bytes": 16777216,
+      "common_height": 779,
+      "control_queue_burst": 8,
+      "counts": {
+        "admission/checks": 509895,
+        "admission/client_capacity_rejections": 93254,
+        "admission/client_requests": 341446,
+        "admission/client_verification_us": 37859560,
+        "admission/relay_capacity_rejections": 211527,
+        "admission/relay_retry_attempts": 108896,
+        "admission/relay_verification_us": 34555405,
+        "admission/relayed_requests": 553047,
+        "execution/local_timeouts": 0,
+        "execution/proposal_scan/inspected": 320602,
+        "execution/proposal_scan/spent_in_parent": 117850
+      },
+      "cpu_seconds": 274.26,
+      "elapsed_us": 40000000,
+      "finalized_total": 414094,
+      "funded_header": "cd010000000000009a0f3022a201000023346c6bd6772e106431d579511f86795c98f7c9e6f92f031aaa094763254b5596bec5d9b8683732b63c18e7161a9bd88f9ff40698aa24e5cdeb4b123f51d2a1bc5da72c113174996f83e122d55510e5ffa46775b4428171156459343a988ebf600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c616703f7fb9597a58e452146c2bd34e15ab21e2b800e0f0cb62e14f818132e21877fc09bc50d7cc1cf934bb5f80cef3e62d4b606af6c8f7976cc7c69c191b4669",
+      "funded_height": 461,
+      "funded_outputs": 1440000,
+      "independent_replay": [
+        "Verified 510000 writes, 416490 acknowledgements, 414094 finalized payments, 309646 in the offer window (5160.77 TPS), at certified height 779",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 15.59s"
+      ],
+      "latency_count": 245296,
+      "latency_us": {
+        "50": 1561051,
+        "95": 53336013,
+        "99": 65855476
+      },
+      "observer_error_count": 0,
+      "offered_total": 510000,
+      "peak_sampled_pool_bytes_per_replica": 16777134,
+      "peak_sampled_pool_transactions_per_replica": 69327,
+      "peak_sampled_process_rss_kib": 1817336,
+      "pending_at_drain": 2396,
+      "pending_at_offer_end": 106824,
+      "pending_at_start": 64639,
+      "pending_peak": 109656,
+      "phases": {
+        "admission/client_queue": {
+          "count": 341446,
+          "elapsed_us": 4532517489,
+          "mean_ms": 13.274478216174739
+        },
+        "admission/client_service": {
+          "count": 341446,
+          "elapsed_us": 39720935,
+          "mean_ms": 0.11633152826508437
+        },
+        "execution/candidate_verify": {
+          "count": 300,
+          "elapsed_us": 72625000,
+          "mean_ms": 242.08333333333334
+        },
+        "execution/commit_jobs/persistence": {
+          "count": 400,
+          "elapsed_us": 17414277,
+          "mean_ms": 43.535692499999996
+        },
+        "execution/control_queue": {
+          "count": 2904,
+          "elapsed_us": 14264730,
+          "mean_ms": 4.912097107438017
+        },
+        "execution/proposal": {
+          "count": 99,
+          "elapsed_us": 12055090,
+          "mean_ms": 121.76858585858585
+        }
+      },
+      "proc_sample_window_us": [
+        19615516,
+        59635944
+      ],
+      "process_write_bytes": 11249528832,
+      "rejection_counts": {
+        "mempool capacity exceeded": 93510
+      },
+      "replayed_blocks": 206,
+      "run": "arm-1-16m",
+      "status_window_us": [
+        19811571,
+        59985463
+      ],
+      "timeout_intervals": [],
+      "wal_bytes_full_run": 5403941180,
+      "window": {
+        "acks": 246985,
+        "common": 204800,
+        "writes": 340259
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    },
+    {
+      "admitted_total": 347532,
+      "archive_sha256": "1f86fe78643a2cf843b3a8241c09039308d9cfd0798dc39611cc40910bf94ed4",
+      "cap_bytes": 4194304,
+      "common_height": 980,
+      "control_queue_burst": 8,
+      "counts": {
+        "admission/checks": 371168,
+        "admission/client_capacity_rejections": 127673,
+        "admission/client_requests": 340803,
+        "admission/client_verification_us": 33254415,
+        "admission/relay_capacity_rejections": 268745,
+        "admission/relay_retry_attempts": 101532,
+        "admission/relay_verification_us": 22560504,
+        "admission/relayed_requests": 456432,
+        "execution/local_timeouts": 0,
+        "execution/proposal_scan/inspected": 309197,
+        "execution/proposal_scan/spent_in_parent": 92109
+      },
+      "cpu_seconds": 261.14,
+      "elapsed_us": 40000000,
+      "finalized_total": 347532,
+      "funded_header": "cd010000000000009a0f3022a201000023346c6bd6772e106431d579511f86795c98f7c9e6f92f031aaa094763254b5596bec5d9b8683732b63c18e7161a9bd88f9ff40698aa24e5cdeb4b123f51d2a1bc5da72c113174996f83e122d55510e5ffa46775b4428171156459343a988ebf600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c616703f7fb9597a58e452146c2bd34e15ab21e2b800e0f0cb62e14f818132e21877fc09bc50d7cc1cf934bb5f80cef3e62d4b606af6c8f7976cc7c69c191b4669",
+      "funded_height": 461,
+      "funded_outputs": 1440000,
+      "independent_replay": [
+        "Verified 510000 writes, 347532 acknowledgements, 347532 finalized payments, 321816 in the offer window (5363.60 TPS), at certified height 980",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 15.58s"
+      ],
+      "latency_count": 212530,
+      "latency_us": {
+        "50": 1221645,
+        "95": 16699088,
+        "99": 37046633
+      },
+      "observer_error_count": 0,
+      "offered_total": 510000,
+      "peak_sampled_pool_bytes_per_replica": 4194102,
+      "peak_sampled_pool_transactions_per_replica": 17331,
+      "peak_sampled_process_rss_kib": 1712472,
+      "pending_at_drain": 0,
+      "pending_at_offer_end": 25694,
+      "pending_at_start": 30018,
+      "pending_peak": 30909,
+      "phases": {
+        "admission/client_queue": {
+          "count": 340803,
+          "elapsed_us": 3578014616,
+          "mean_ms": 10.498776759594254
+        },
+        "admission/client_service": {
+          "count": 340803,
+          "elapsed_us": 34868170,
+          "mean_ms": 0.10231180476697682
+        },
+        "execution/candidate_verify": {
+          "count": 315,
+          "elapsed_us": 75328528,
+          "mean_ms": 239.13818412698413
+        },
+        "execution/commit_jobs/persistence": {
+          "count": 422,
+          "elapsed_us": 19005527,
+          "mean_ms": 45.036793838862565
+        },
+        "execution/control_queue": {
+          "count": 2766,
+          "elapsed_us": 17741277,
+          "mean_ms": 6.4140553145336225
+        },
+        "execution/proposal": {
+          "count": 106,
+          "elapsed_us": 10922934,
+          "mean_ms": 103.04654716981132
+        }
+      },
+      "proc_sample_window_us": [
+        19549286,
+        59571346
+      ],
+      "process_write_bytes": 11638288384,
+      "rejection_counts": {
+        "mempool capacity exceeded": 127741
+      },
+      "replayed_blocks": 402,
+      "run": "arm-2-4m",
+      "status_window_us": [
+        19988292,
+        59990775
+      ],
+      "timeout_intervals": [],
+      "wal_bytes_full_run": 4518099001,
+      "window": {
+        "acks": 212764,
+        "common": 217088,
+        "writes": 340271
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    },
+    {
+      "admitted_total": 350407,
+      "archive_sha256": "d6a3ad41d3df0ef89b5c1a2b5bd2dfec9a55767819eaf18a75e28bba0d305407",
+      "cap_bytes": 4194304,
+      "common_height": 980,
+      "control_queue_burst": 8,
+      "counts": {
+        "admission/checks": 372841,
+        "admission/client_capacity_rejections": 126098,
+        "admission/client_requests": 339702,
+        "admission/client_verification_us": 33218880,
+        "admission/relay_capacity_rejections": 268838,
+        "admission/relay_retry_attempts": 102941,
+        "admission/relay_verification_us": 22965936,
+        "admission/relayed_requests": 458812,
+        "execution/local_timeouts": 0,
+        "execution/proposal_scan/inspected": 309940,
+        "execution/proposal_scan/spent_in_parent": 92852
+      },
+      "cpu_seconds": 263.86,
+      "elapsed_us": 40000000,
+      "finalized_total": 350407,
+      "funded_header": "cd010000000000009a0f3022a201000023346c6bd6772e106431d579511f86795c98f7c9e6f92f031aaa094763254b5596bec5d9b8683732b63c18e7161a9bd88f9ff40698aa24e5cdeb4b123f51d2a1bc5da72c113174996f83e122d55510e5ffa46775b4428171156459343a988ebf600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c616703f7fb9597a58e452146c2bd34e15ab21e2b800e0f0cb62e14f818132e21877fc09bc50d7cc1cf934bb5f80cef3e62d4b606af6c8f7976cc7c69c191b4669",
+      "funded_height": 461,
+      "funded_outputs": 1440000,
+      "independent_replay": [
+        "Verified 510000 writes, 350407 acknowledgements, 350407 finalized payments, 324208 in the offer window (5403.47 TPS), at certified height 980",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 15.38s"
+      ],
+      "latency_count": 213838,
+      "latency_us": {
+        "50": 1227026,
+        "95": 16818569,
+        "99": 36982103
+      },
+      "observer_error_count": 0,
+      "offered_total": 510000,
+      "peak_sampled_pool_bytes_per_replica": 4194102,
+      "peak_sampled_pool_transactions_per_replica": 17331,
+      "peak_sampled_process_rss_kib": 1724292,
+      "pending_at_drain": 0,
+      "pending_at_offer_end": 26177,
+      "pending_at_start": 29415,
+      "pending_peak": 31661,
+      "phases": {
+        "admission/client_queue": {
+          "count": 339702,
+          "elapsed_us": 3527390579,
+          "mean_ms": 10.383779250637323
+        },
+        "admission/client_service": {
+          "count": 339702,
+          "elapsed_us": 34864757,
+          "mean_ms": 0.10263335806088866
+        },
+        "execution/candidate_verify": {
+          "count": 318,
+          "elapsed_us": 76925078,
+          "mean_ms": 241.9027610062893
+        },
+        "execution/commit_jobs/persistence": {
+          "count": 424,
+          "elapsed_us": 18033936,
+          "mean_ms": 42.5328679245283
+        },
+        "execution/control_queue": {
+          "count": 2772,
+          "elapsed_us": 17199498,
+          "mean_ms": 6.204725108225109
+        },
+        "execution/proposal": {
+          "count": 106,
+          "elapsed_us": 10921272,
+          "mean_ms": 103.0308679245283
+        }
+      },
+      "proc_sample_window_us": [
+        19610948,
+        59631419
+      ],
+      "process_write_bytes": 11464359936,
+      "rejection_counts": {
+        "mempool capacity exceeded": 126162
+      },
+      "replayed_blocks": 404,
+      "run": "arm-3-4m",
+      "status_window_us": [
+        19991526,
+        59948168
+      ],
+      "timeout_intervals": [],
+      "wal_bytes_full_run": 4556392367,
+      "window": {
+        "acks": 213850,
+        "common": 217088,
+        "writes": 340000
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    },
+    {
+      "admitted_total": 414285,
+      "archive_sha256": "ca5a95eea7c460601c69efb9f6b1f535568af3890ce8a0aed37513fe23c1cfcb",
+      "cap_bytes": 16777216,
+      "common_height": 778,
+      "control_queue_burst": 8,
+      "counts": {
+        "admission/checks": 499234,
+        "admission/client_capacity_rejections": 95413,
+        "admission/client_requests": 340929,
+        "admission/client_verification_us": 37282143,
+        "admission/relay_capacity_rejections": 222067,
+        "admission/relay_retry_attempts": 108144,
+        "admission/relay_verification_us": 32547508,
+        "admission/relayed_requests": 552883,
+        "execution/local_timeouts": 0,
+        "execution/proposal_scan/inspected": 316092,
+        "execution/proposal_scan/spent_in_parent": 115388
+      },
+      "cpu_seconds": 269.91,
+      "elapsed_us": 40000000,
+      "finalized_total": 409997,
+      "funded_header": "cd010000000000009a0f3022a201000023346c6bd6772e106431d579511f86795c98f7c9e6f92f031aaa094763254b5596bec5d9b8683732b63c18e7161a9bd88f9ff40698aa24e5cdeb4b123f51d2a1bc5da72c113174996f83e122d55510e5ffa46775b4428171156459343a988ebf600e4c60023d3bd02446ca4280929a5f35d4d56ab812aaf2ad52b322c967e2c616703f7fb9597a58e452146c2bd34e15ab21e2b800e0f0cb62e14f818132e21877fc09bc50d7cc1cf934bb5f80cef3e62d4b606af6c8f7976cc7c69c191b4669",
+      "funded_height": 461,
+      "funded_outputs": 1440000,
+      "independent_replay": [
+        "Verified 510000 writes, 414285 acknowledgements, 409997 finalized payments, 305549 in the offer window (5092.48 TPS), at certified height 778",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 15.51s"
+      ],
+      "latency_count": 241770,
+      "latency_us": {
+        "50": 1586077,
+        "95": 53221231,
+        "99": 65656216
+      },
+      "observer_error_count": 0,
+      "offered_total": 510000,
+      "peak_sampled_pool_bytes_per_replica": 16777134,
+      "peak_sampled_pool_transactions_per_replica": 69327,
+      "peak_sampled_process_rss_kib": 1828224,
+      "pending_at_drain": 4288,
+      "pending_at_offer_end": 108708,
+      "pending_at_start": 66895,
+      "pending_peak": 110694,
+      "phases": {
+        "admission/client_queue": {
+          "count": 340929,
+          "elapsed_us": 4504770524,
+          "mean_ms": 13.213221884908588
+        },
+        "admission/client_service": {
+          "count": 340929,
+          "elapsed_us": 39125213,
+          "mean_ms": 0.11476058944824288
+        },
+        "execution/candidate_verify": {
+          "count": 297,
+          "elapsed_us": 71277844,
+          "mean_ms": 239.99274074074074
+        },
+        "execution/commit_jobs/persistence": {
+          "count": 396,
+          "elapsed_us": 17997630,
+          "mean_ms": 45.44856060606061
+        },
+        "execution/control_queue": {
+          "count": 2904,
+          "elapsed_us": 19458287,
+          "mean_ms": 6.700512052341598
+        },
+        "execution/proposal": {
+          "count": 98,
+          "elapsed_us": 11711833,
+          "mean_ms": 119.5085
+        }
+      },
+      "proc_sample_window_us": [
+        19580893,
+        59602146
+      ],
+      "process_write_bytes": 11174027264,
+      "rejection_counts": {
+        "mempool capacity exceeded": 95715
+      },
+      "replayed_blocks": 204,
+      "run": "arm-4-16m",
+      "status_window_us": [
+        19861758,
+        59971275
+      ],
+      "timeout_intervals": [],
+      "wal_bytes_full_run": 5352586211,
+      "window": {
+        "acks": 244565,
+        "common": 202752,
+        "writes": 340052
+      },
+      "workload_id": "3285be8868a8409b31cef97271067ffae2712f629354c48b427a742a0bc00462"
+    }
+  ],
+  "source_revision": "2b534a6eef0f34bf69a7ee92a6eabcc1d7c0f619"
+}

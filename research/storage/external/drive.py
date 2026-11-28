@@ -39,6 +39,8 @@ def main():
     routing.add_argument("--ready-senders", action="store_true", help="reserve equal senders per endpoint pulling from one shared queue")
     prepare.add_argument("--drain", type=int, default=15)
     prepare.add_argument("--data-bytes", type=int, default=0)
+    prepare.add_argument("--funded-cells", type=int,
+                         help="pre-fund this many payment Cells independently of the offered count")
     prepare.add_argument("--payment-type-groups", type=int, choices=range(13), default=0,
                          help="cycle through zero to this many Type Groups on independent payments")
     prepare.add_argument("--block-transactions", type=int, default=1024)
@@ -56,6 +58,9 @@ def main():
                     reuse_submissions=True, pause_on_full=False, shard_senders=False, ready_senders=True)
     measure = phases.add_parser("measure")
     measure.add_argument("--output", type=Path, required=True, help="new directory for this measurement")
+    funding = measure.add_mutually_exclusive_group()
+    funding.add_argument("--fund-only", action="store_true", help="prepare funded replicas and exit before offering load")
+    funding.add_argument("--reuse-funding", type=Path, help="require the funded Header recorded by a previous run")
     verify = phases.add_parser("verify")
     verify.add_argument("--report", type=Path, required=True)
     for phase in (prepare, v1, measure, verify):
@@ -91,6 +96,10 @@ def main():
             if args.data_bytes:
                 parser.error("mixed Type Groups use the fixture's canonical application data")
             settings.update(PREFUND_PAYMENTS=0, PAYMENT_TYPE_GROUPS=args.payment_type_groups)
+        if not v1_profile and args.funded_cells is not None:
+            if args.payment_type_groups or not args.rate * args.seconds <= args.funded_cells <= 2_000_000:
+                parser.error("funded Cells require ordinary payments and a count between offers and 2,000,000")
+            settings["FUNDED_CELLS"] = args.funded_cells
         plan = {"storage_settings": settings, "harness_sha256": harness_hash, "lock_sha256": lock_hash,
                 "topology_sha256": digest(topology)}
         if v1_profile:
@@ -105,6 +114,8 @@ def main():
             parser.error("contract, topology or genesis differs from the prepared trial")
         settings = plan["storage_settings"]
         if args.phase == "measure":
+            if (args.fund_only or args.reuse_funding) and not settings["PREFUND_PAYMENTS"]:
+                parser.error("funding options require the pre-funded payment workload")
             args.output.mkdir(mode=0o700)
             (args.output / "driver.json").write_text(json.dumps({"harness_sha256": harness_hash}) + "\n")
     with tempfile.TemporaryDirectory() as scratch:
@@ -112,6 +123,10 @@ def main():
         env.update({"STEM_STORAGE_" + k: str(v) for k, v in settings.items()})
         env.update(STEM_STORAGE_TOPOLOGY=str(topology), STEM_TEST_CONTRACT_DIR=str(args.contracts.resolve()),
                    STEM_TEST_EVIDENCE_ROOT=str(args.output.resolve()) if args.phase == "measure" else scratch)
+        if args.phase == "measure" and args.fund_only:
+            env["STEM_TEST_FUND_ONLY"] = "1"
+        if args.phase == "measure" and args.reuse_funding:
+            env["STEM_TEST_REUSE_FUNDING"] = str(args.reuse_funding.resolve())
         if args.phase == "verify":
             report = args.report.resolve()
             if report.suffix == ".xz":
@@ -129,7 +144,8 @@ def main():
         plan["genesis_sha256"] = digest(trial / "genesis.json")
         (trial / "trial.json").write_text(json.dumps(plan, indent=2) + "\n")
     elif args.phase == "measure":
-        report, = args.output.glob("stem-storage-*/report.json")
+        name = "payment-funding.json" if args.fund_only else "report.json"
+        report, = args.output.glob("stem-storage-*/" + name)
         print(report)
 
 

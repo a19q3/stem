@@ -71,3 +71,6 @@ payments still pending at drain. Each completed archive passed
 independent replay. A subsequent 4,750/s trial was stopped before
 completion and is excluded. The report retains the node's current
 admission policy and describes single-host behavior.
+
+The [mempool capacity comparison](admission-pressure/README.md) repeats the
+8,500/s overload point with both resident indexes and two local queue limits.

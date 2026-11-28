@@ -37,6 +37,12 @@ capacity and occupancy, cumulative hit and miss counts, and the subset of
 misses caused by a different parent. Hits include lookups whose cached cycle
 charge exceeds the current budget. Counters start at zero on process restart.
 
+The optional local `mempool_max_bytes` caps the encoded transactions retained
+in the mempool. It accepts 524,288 through 16,777,216 bytes and defaults to
+16,777,216. A full pool rejects new local and relayed submissions before
+transaction validation. Status reports the effective cap and separate counts
+of capacity rejections for each source.
+
 Set `--live-cell-index-mib MIB` to enable the optional resident Live Cell
 index. On startup the replica scans the durable Live Cell records and checks
 them against the committed Header's Cell root before using the index. The

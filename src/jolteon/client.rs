@@ -67,6 +67,14 @@ pub struct AdmissionMetrics {
     pub checks: u64,
     pub verification_us: u64,
     #[serde(default)]
+    pub client_verification_us: u64,
+    #[serde(default)]
+    pub relay_verification_us: u64,
+    #[serde(default)]
+    pub client_capacity_rejections: u64,
+    #[serde(default)]
+    pub relay_capacity_rejections: u64,
+    #[serde(default)]
     pub relay_retry_attempts: u64,
     #[serde(default)]
     pub client_queue: LatencyHistogram,
@@ -215,6 +223,8 @@ pub struct Status {
     pub invalid_messages: u64,
     pub mempool_transactions: usize,
     pub mempool_bytes: usize,
+    #[serde(default)]
+    pub mempool_max_bytes: Option<usize>,
     pub admission: Option<AdmissionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_pipeline: Option<AdmissionPipelineMetrics>,

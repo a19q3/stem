@@ -160,7 +160,7 @@ impl Replica {
             let response = self.admitted_client(id, raw);
             return self.admission_reply((reply, started), Ok(response));
         }
-        if let Err(error) = self.admission_capacity(raw.len()) {
+        if let Err(error) = self.admission_capacity(raw.len(), true) {
             return self.admission_reply((reply, started), Err(error));
         }
         if let Some(reply) = self.pipeline.queue(&self.store, id, raw, (reply, started)) {
@@ -186,7 +186,7 @@ impl Replica {
             .context("unexpected admission completion")?;
         self.pipeline.bytes -= pending.raw.len();
         self.pipeline.replies -= pending.replies.len();
-        self.record_admission_check(verification_us);
+        self.record_admission_check(true, verification_us);
         if matches!(checked, Ok(None)) {
             self.pipeline.metrics.snapshot_misses =
                 self.pipeline.metrics.snapshot_misses.saturating_add(1);
@@ -210,13 +210,13 @@ impl Replica {
         raw: Bytes,
     ) -> Result<serde_json::Value> {
         if !self.mempool.contains(&id) {
-            self.admission_capacity(raw.len())?;
+            self.admission_capacity(raw.len(), true)?;
             let current_tip: Hash32 = self.store.tip().id(self.store.network()).unpack();
             let tx = if tip == current_tip && !matches!(checked, Ok(None)) {
                 checked?.context("missing transaction from admission snapshot")?
             } else {
                 self.pipeline.metrics.rechecked = self.pipeline.metrics.rechecked.saturating_add(1);
-                self.check_admission(&raw)?
+                self.check_admission(&raw, true)?
             };
             self.mempool.insert(id, tx)?;
         }

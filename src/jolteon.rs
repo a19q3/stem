@@ -91,6 +91,9 @@ pub struct Config {
     /// Local successful script verifications retained by the LRU.
     #[serde(default)]
     pub verification_cache_entries: Option<usize>,
+    /// Maximum encoded bytes awaiting local proposal selection.
+    #[serde(default)]
+    pub mempool_max_bytes: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -232,6 +235,7 @@ struct Replica {
     certificate_experiment: certificate_experiment::Cache,
     requests: HashMap<Point, Instant>,
     mempool: Mempool,
+    mempool_max_bytes: usize,
     admission: AdmissionMetrics,
     #[cfg(feature = "jolteon-admission-pipeline")]
     pipeline: admission_pipeline::Pipeline,
@@ -243,6 +247,11 @@ struct Replica {
 }
 
 pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> Result<()> {
+    let mempool_max_bytes = config.mempool_max_bytes.unwrap_or(MAX_MEMPOOL_BYTES);
+    ensure!(
+        (stem_ledger::MAX_TRANSACTION_BYTES..=MAX_MEMPOOL_BYTES).contains(&mempool_max_bytes),
+        "invalid mempool byte limit"
+    );
     if let Some(entries) = config.verification_cache_entries {
         ensure!(
             (1..=MAX_VERIFICATION_CACHE_ENTRIES).contains(&entries),
@@ -497,6 +506,7 @@ pub fn run(store: Store, key: SigningKey, config: Config, initialize: bool) -> R
                 certificate_experiment: Default::default(),
                 requests: HashMap::new(),
                 mempool: Mempool::default(),
+                mempool_max_bytes,
                 admission: AdmissionMetrics::default(),
                 #[cfg(feature = "jolteon-admission-pipeline")]
                 pipeline,
@@ -1781,36 +1791,53 @@ impl Replica {
         if self.mempool.contains(&id) {
             return Ok(id);
         }
-        self.admission_capacity(raw.len())?;
-        let tx = self.check_admission(raw)?;
+        self.admission_capacity(raw.len(), client)?;
+        let tx = self.check_admission(raw, client)?;
         self.mempool.insert(id, tx)?;
         Ok(id)
     }
 
-    fn admission_capacity(&self, bytes: usize) -> Result<()> {
+    fn admission_capacity(&mut self, bytes: usize, client: bool) -> Result<()> {
         ensure!(
-            bytes <= stem_ledger::MAX_TRANSACTION_BYTES
-                && self.mempool.bytes().saturating_add(bytes) <= MAX_MEMPOOL_BYTES,
+            bytes <= stem_ledger::MAX_TRANSACTION_BYTES,
             "mempool capacity exceeded"
         );
+        if self.mempool.bytes().saturating_add(bytes) > self.mempool_max_bytes {
+            let rejected = if client {
+                &mut self.admission.client_capacity_rejections
+            } else {
+                &mut self.admission.relay_capacity_rejections
+            };
+            *rejected = rejected.saturating_add(1);
+            anyhow::bail!("mempool capacity exceeded");
+        }
         Ok(())
     }
 
-    fn check_admission(&mut self, raw: &Bytes) -> Result<Transaction> {
+    fn check_admission(&mut self, raw: &Bytes, client: bool) -> Result<Transaction> {
         let tx = Transaction::from_bytes(raw.clone())?;
         let started = Instant::now();
         let checked = self.store.check(&tx);
-        self.record_admission_check(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX));
+        self.record_admission_check(
+            client,
+            started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
+        );
         checked?;
         Ok(tx)
     }
 
-    fn record_admission_check(&mut self, verification_us: u64) {
+    fn record_admission_check(&mut self, client: bool, verification_us: u64) {
         self.admission.checks = self.admission.checks.saturating_add(1);
         self.admission.verification_us = self
             .admission
             .verification_us
             .saturating_add(verification_us);
+        let verification = if client {
+            &mut self.admission.client_verification_us
+        } else {
+            &mut self.admission.relay_verification_us
+        };
+        *verification = verification.saturating_add(verification_us);
     }
 
     fn admitted_client(&mut self, id: Hash32, body: Bytes) -> serde_json::Value {
@@ -1846,6 +1873,7 @@ impl Replica {
                     "invalid_messages": self.rejected,
                     "mempool_transactions": self.mempool.len(),
                     "mempool_bytes": self.mempool.bytes(),
+                    "mempool_max_bytes": self.mempool_max_bytes,
                     "admission": self.admission,
                     "execution": self.execution,
                     "verification_cache": self.store.verification_cache_stats(),
