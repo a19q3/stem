@@ -2455,7 +2455,7 @@ impl Store {
                 // original order before producing the single atomic batch.
                 let mut system_batch = Batch::default();
                 let (cell, (system, execution)) = rayon::join(
-                    || timed(|| self.finish_cells(&mut batch, &live, parallel)),
+                    || timed(|| self.finish_cells(&mut batch, live, parallel)),
                     || {
                         rayon::join(
                             || timed(|| self.finish_system(&mut system_batch, overlay, height, fees)),
@@ -2468,12 +2468,12 @@ impl Store {
                 result
             } else {
                 (
-                    timed(|| self.finish_cells(&mut batch, &live, parallel))?,
+                    timed(|| self.finish_cells(&mut batch, live, parallel))?,
                     timed(|| self.finish_system(&mut batch, overlay, height, fees))?,
                     build_execution()?,
                 )
             };
-        let ((cell_root, cell_phases), cells_time) = cells;
+        let ((live, cell_root, cell_phases), cells_time) = cells;
         let (system, system_time) = system;
         let ((execution_bytes, receipt_root), execution_time) = execution;
         let mut history = self.history.clone();
@@ -2509,6 +2509,11 @@ impl Store {
                 .is_some_and(|index| index.detach_inline_records(&mut live));
             (live, detached)
         };
+        #[cfg(feature = "native-compact-prepared-cell-delta")]
+        let live = {
+            self.check_preparation_cancelled()?;
+            live.with_index()
+        };
         Ok(Prepared {
             parent: self.tip.id(&self.network),
             next,
@@ -2518,7 +2523,7 @@ impl Store {
             validator_updates: system.validator_updates,
             committee_change: system.committee_change,
             stake_inputs: system.stake_inputs,
-            live: live.into(),
+            live,
             #[cfg(feature = "native-prepared-live-cell-ownership")]
             detached_live_records,
             batch,
@@ -2537,11 +2542,12 @@ impl Store {
     fn finish_cells(
         &self,
         batch: &mut Batch,
-        live: &LiveChanges,
+        live: LiveChanges,
         parallel: bool,
-    ) -> Result<(Byte32, CellCommitmentTiming)> {
+    ) -> Result<(PreparedCells, Byte32, CellCommitmentTiming)> {
         self.check_preparation_cancelled()?;
         let started = Instant::now();
+        let live = PreparedCells::from(live);
         let hash_change = |(point, cell): (&OutPoint, &Option<LiveCell>)| {
             let id = record::cell_key(&self.cells, point);
             let value = cell.as_ref().map(|cell| record::cell_value(&self.cells, point, cell));
@@ -2554,11 +2560,12 @@ impl Store {
             && live.len() >= 2 * HASH_GRAIN
             && rayon::current_num_threads() > 1
         {
-            // The write path pairs created IDs with the LiveChanges map.
-            // Collect through an indexed iterator in that order before sorting.
-            let entries: Vec<_> = live.iter().collect();
+            // Created IDs must follow the same OutPoint order as persistence.
+            #[cfg(feature = "native-compact-prepared-cell-delta")]
+            let entries = live.par_iter();
+            #[cfg(not(feature = "native-compact-prepared-cell-delta"))]
+            let entries = live.iter().collect::<Vec<_>>().into_par_iter();
             entries
-                .into_par_iter()
                 .with_min_len(HASH_GRAIN)
                 .map(hash_change)
                 .collect_into_vec(&mut cell_changes);
@@ -2568,7 +2575,7 @@ impl Store {
                 cell_changes.iter().filter_map(|(id, value)| value.as_ref().map(|_| *id)),
             );
         } else {
-            for change in live {
+            for change in live.iter() {
                 let (id, value) = hash_change(change);
                 #[cfg(feature = "native-prepared-cell-record-keys")]
                 if value.is_some() {
@@ -2631,6 +2638,7 @@ impl Store {
             (root, tree_done)
         };
         Ok((
+            live,
             cell_root.pack(),
             CellCommitmentTiming {
                 keys: keyed.duration_since(started),

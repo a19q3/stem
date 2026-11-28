@@ -7,6 +7,7 @@ use std::{
 
 use ckb_types::{packed::OutPoint, prelude::*};
 use hashbrown::HashTable;
+use rayon::prelude::*;
 use stem_ledger::LiveCell;
 
 use super::LiveChanges;
@@ -24,10 +25,19 @@ pub(super) struct PreparedCells {
 
 impl From<LiveChanges> for PreparedCells {
     fn from(changes: LiveChanges) -> Self {
-        let ordered: Vec<_> = changes.into_iter().collect();
+        Self {
+            ordered: changes.into_iter().collect(),
+            positions: None,
+        }
+    }
+}
+
+impl PreparedCells {
+    pub(super) fn with_index(mut self) -> Self {
+        let ordered = &self.ordered;
         let hash_position = |&index: &u32| hash(&ordered[index as usize].0);
         let mut positions = HashTable::new();
-        let positions = if (MIN_INDEX_ENTRIES..=MAX_INDEX_ENTRIES).contains(&ordered.len())
+        self.positions = if (MIN_INDEX_ENTRIES..=MAX_INDEX_ENTRIES).contains(&ordered.len())
             && positions.try_reserve(ordered.len(), hash_position).is_ok()
         {
             for (position, (point, _)) in ordered.iter().enumerate() {
@@ -37,22 +47,30 @@ impl From<LiveChanges> for PreparedCells {
         } else {
             None
         };
-        Self { ordered, positions }
+        self
     }
-}
 
-impl PreparedCells {
     pub(super) fn is_empty(&self) -> bool {
         self.ordered.is_empty()
     }
 
-    #[cfg(feature = "native-live-cell-parent-index")]
     pub(super) fn len(&self) -> usize {
         self.ordered.len()
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = (&OutPoint, &Option<LiveCell>)> {
         self.ordered.iter().map(|(point, cell)| (point, cell))
+    }
+
+    pub(super) fn par_iter(
+        &self,
+    ) -> impl IndexedParallelIterator<Item = (&OutPoint, &Option<LiveCell>)> {
+        self.ordered.par_iter().map(|(point, cell)| (point, cell))
+    }
+
+    #[cfg(feature = "native-prepared-live-cell-ownership")]
+    pub(super) fn values_mut(&mut self) -> impl Iterator<Item = &mut Option<LiveCell>> {
+        self.ordered.iter_mut().map(|(_, cell)| cell)
     }
 
     pub(super) fn keys(&self) -> impl Iterator<Item = &OutPoint> {
@@ -114,7 +132,7 @@ mod tests {
             let mut edits: LiveChanges = (0..len as u32).rev().map(|i| (point(i), None)).collect();
             edits.insert(point(1), Some(cell.clone()));
             let ordered = edits.keys().cloned().collect::<Vec<_>>();
-            let prepared = PreparedCells::from(edits);
+            let prepared = PreparedCells::from(edits).with_index();
             assert_eq!(prepared.positions.is_some(), indexed);
             assert_eq!(prepared.keys().cloned().collect::<Vec<_>>(), ordered);
             assert!(prepared.get(&point(len as u32)).is_none());

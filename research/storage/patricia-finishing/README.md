@@ -200,13 +200,21 @@ the same changes to the selected authenticated-state backend. Explicit
 serial preparation keeps the serial hash path. Both native Patricia
 and experimental JMT use the same prehash stage.
 
+With `native-compact-prepared-cell-delta`, the worker pool traverses
+contiguous slices of the same OutPoint-ordered array used by the durable
+writer. The Cell commitment can build that array alongside the System
+commitment and receipt encoding when the commitment pipeline is enabled.
+The position table for branch lookups is built after the commitment
+succeeds. `cell_keys` includes building the array, hashing and sorting.
+
 Compare `prepared-cell-keys` and `parallel-cell-hashes` at identical
 worker, state, block and network budgets. Record `cell_keys`,
 `cell_tree`, `cell_batch`, candidate preparation, total validator CPU,
 peak RSS, and finality across sustained payments and mixed contracts.
 Include one worker and blocks below the threshold, plus churn consisting
-mostly of deletions. The temporary array stores borrowed references
-to the records. Parallel scheduling and that array can cost
+mostly of deletions. Compare the combined `compact-parallel-cell-hashes`
+arm against both individual arms. The map-only path allocates a temporary
+reference array. Parallel scheduling and collecting references can cost
 more than they save for small records, skewed payloads or contention
 with VM and state work. The cutoff and grain are experimental.
 
