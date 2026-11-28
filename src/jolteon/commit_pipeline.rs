@@ -11,23 +11,65 @@ use stem_stake::jolteon::Point;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{CommitWindow, Incoming, Replica, can_vote_at, record_commit_span, transport::Inbox, wire};
-use crate::native_store::{CertifiedWriteTiming, Prepared};
+use crate::native_store::{CertifiedWriteCache, CertifiedWriteTiming, Prepared};
+#[cfg(feature = "jolteon-prebuilt-state-write")]
+use {
+    crate::native_store::Store,
+    std::sync::{
+        Weak,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+type Persist = Box<dyn FnOnce(&mut CertifiedWriteCache) -> Result<CertifiedWriteTiming> + Send>;
 
 struct Write {
-    persist: Box<dyn FnOnce() -> Result<CertifiedWriteTiming> + Send>,
+    persist: Persist,
     done: oneshot::Sender<Result<CertifiedWriteTiming>>,
     window: Option<CommitWindow>,
 }
 
-pub(super) struct Writer(mpsc::Sender<Write>);
+enum Job {
+    Commit(Write),
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    Prebuild {
+        build: Box<dyn FnOnce(&mut CertifiedWriteCache) + Send>,
+        pending: Arc<AtomicBool>,
+    },
+}
+
+pub(super) struct Writer {
+    sender: mpsc::Sender<Job>,
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    prebuilding: Arc<AtomicBool>,
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    last_prebuilt: Weak<Prepared>,
+}
 
 impl Writer {
     pub(super) fn start() -> Result<Self> {
-        let (sender, mut jobs) = mpsc::channel::<Write>(1);
+        // Always leave room for the certified write even when the one
+        // optional prebuild is queued.
+        let capacity = 1 + usize::from(cfg!(feature = "jolteon-prebuilt-state-write"));
+        let (sender, mut jobs) = mpsc::channel::<Job>(capacity);
         thread::Builder::new().name("stem-commit".into()).spawn(move || {
+            let mut cache = CertifiedWriteCache::default();
             while let Some(job) = jobs.blocking_recv() {
+                let job = match job {
+                    Job::Commit(write) => write,
+                    #[cfg(feature = "jolteon-prebuilt-state-write")]
+                    Job::Prebuild { build, pending } => {
+                        // At most one prebuild is outstanding. A queued
+                        // certified write takes precedence over starting it.
+                        if jobs.is_empty() {
+                            build(&mut cache);
+                        }
+                        pending.store(false, Ordering::Release);
+                        continue;
+                    }
+                };
                 let start = Instant::now();
-                let result = (job.persist)();
+                let result = (job.persist)(&mut cache);
                 let elapsed = start.elapsed();
                 if let Some(window) = job.window {
                     record_commit_span(&window, (start, elapsed));
@@ -37,27 +79,68 @@ impl Writer {
                 }
             }
         })?;
-        Ok(Self(sender))
+        Ok(Self {
+            sender,
+            #[cfg(feature = "jolteon-prebuilt-state-write")]
+            prebuilding: Arc::default(),
+            #[cfg(feature = "jolteon-prebuilt-state-write")]
+            last_prebuilt: Weak::new(),
+        })
+    }
+
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    fn prebuild(&mut self, store: &Store, prepared: &Arc<Prepared>) -> bool {
+        let candidate = Arc::downgrade(prepared);
+        if self.last_prebuilt.ptr_eq(&candidate) || self.prebuilding.load(Ordering::Acquire) {
+            return false;
+        }
+        let Some(build) = store.prebuild_certified_state(Arc::clone(prepared)) else {
+            return false;
+        };
+        self.prebuilding.store(true, Ordering::Relaxed);
+        let job = Job::Prebuild {
+            build: Box::new(build),
+            pending: Arc::clone(&self.prebuilding),
+        };
+        if self.sender.try_send(job).is_err() {
+            self.prebuilding.store(false, Ordering::Relaxed);
+            return false;
+        }
+        self.last_prebuilt = candidate;
+        true
     }
 
     fn submit(
         &self,
-        persist: impl FnOnce() -> Result<CertifiedWriteTiming> + Send + 'static,
+        persist: impl FnOnce(&mut CertifiedWriteCache) -> Result<CertifiedWriteTiming> + Send + 'static,
         window: Option<CommitWindow>,
     ) -> Result<oneshot::Receiver<Result<CertifiedWriteTiming>>> {
         let (done, completion) = oneshot::channel();
-        self.0
-            .try_send(Write {
+        self.sender
+            .try_send(Job::Commit(Write {
                 persist: Box::new(persist),
                 done,
                 window,
-            })
+            }))
             .map_err(|_| anyhow!("certified writer is unavailable"))?;
         Ok(completion)
     }
 }
 
 impl Replica {
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    pub(super) fn prebuild_certified_state(&mut self) {
+        if let Some(prepared) = self
+            .candidates
+            .get(&self.high.point)
+            .and_then(|entry| entry.execution.as_ref())
+            && self.commit_writer.prebuild(&self.store, prepared)
+        {
+            let metrics = &mut self.execution.commit_jobs;
+            metrics.state_prebuilds = metrics.state_prebuilds.saturating_add(1);
+        }
+    }
+
     pub(super) async fn write_certified(
         &mut self,
         inbox: &mut Inbox,
@@ -89,6 +172,10 @@ impl Replica {
                     let timing = result.context("certified writer stopped")??;
                     let metrics = &mut self.execution.commit_jobs;
                     metrics.persistence.observe(timing.persistence);
+                    #[cfg(feature = "jolteon-prebuilt-state-write")]
+                    if let Some(elapsed) = timing.reused_state_build {
+                        metrics.reused_state_build.observe(elapsed);
+                    }
                     if let Some(elapsed) = timing.cell_node_publication {
                         metrics.cell_node_publication.observe(elapsed);
                     }

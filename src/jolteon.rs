@@ -1647,6 +1647,8 @@ impl Replica {
         if self.handoff_tip.is_some() || self.recovery.active {
             return Ok(());
         }
+        #[cfg(feature = "jolteon-prebuilt-state-write")]
+        self.prebuild_certified_state();
         if let Some(&point) = self.preferred.get(&self.view) {
             // Invalid candidate execution is a view failure. The pacemaker still runs.
             if let Err(error) = self.vote_for(point) {
