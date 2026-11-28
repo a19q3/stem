@@ -48,13 +48,6 @@ publish first and repeated relay metrics in local status. Each replica
 tracks up to 524,288 signed-wire identities and reports overflow. The
 measurement adds a bounded in-memory table and defaults to disabled.
 
-`relay_admission_worker` is an opt-in scheduling experiment. It validates
-peer-relayed transactions on one background thread using a pinned committed
-snapshot. The pending queue holds up to 128 jobs and 4 MiB of encoded
-transactions. A full queue uses the inline path. The Replica rechecks the
-committed Header, epoch and pool capacity before using a result. The status
-`relay_worker` block reports work queued, completed, rechecked and inserted.
-
 Set `--live-cell-index-mib MIB` to enable the optional resident Live Cell
 index. On startup the replica scans the durable Live Cell records and checks
 them against the committed Header's Cell root before using the index. The

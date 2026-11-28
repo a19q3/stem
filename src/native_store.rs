@@ -390,13 +390,19 @@ pub struct Store {
     cell_nodes: Option<Arc<NodeIndex>>,
 }
 
+#[cfg(any(
+    feature = "jolteon-admission-pipeline",
+    feature = "jolteon-candidate-pipeline",
+    feature = "jolteon-proposal-pipeline"
+))]
 pub(crate) struct PinnedView(Store);
 
+#[cfg(any(
+    feature = "jolteon-admission-pipeline",
+    feature = "jolteon-candidate-pipeline",
+    feature = "jolteon-proposal-pipeline"
+))]
 impl PinnedView {
-    pub(crate) fn check_relay(&self, tx: &Transaction) -> Result<Option<()>> {
-        self.with_snapshot(|view| view.check(tx).map(|_| ()))
-    }
-
     #[cfg(feature = "jolteon-admission-pipeline")]
     pub(crate) fn check(&self, raw: bytes::Bytes) -> Result<Option<Transaction>> {
         self.with_snapshot(|view| {
@@ -447,6 +453,7 @@ impl PinnedView {
         })
     }
 
+    #[cfg(any(feature = "jolteon-admission-pipeline", test))]
     fn with_snapshot<T>(&self, task: impl FnOnce(&Store) -> Result<T>) -> Result<Option<T>> {
         self.with_branch_snapshot(&[], false, |view, _| task(view))
     }
@@ -1105,6 +1112,11 @@ impl Store {
         }
     }
 
+    #[cfg(any(
+        feature = "jolteon-admission-pipeline",
+        feature = "jolteon-candidate-pipeline",
+        feature = "jolteon-proposal-pipeline"
+    ))]
     pub(crate) fn pinned_view(&self) -> PinnedView {
         let mut view = self.read_view(&[]);
         view.live_cache = Arc::default();

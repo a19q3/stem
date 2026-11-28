@@ -114,3 +114,6 @@ reuse for repeated relay checks has negligible measured headroom here.
 Separately test a drain with steady Cell Node Index residency before
 using 95-second totals to qualify an overload policy. The observations
 cover single-host payments near 8,500 writes/s.
+
+The [fixed-core follow-up](../relay-scheduling/README.md) measures first
+relay verification off the Replica and tests reserved CPU placement.
