@@ -169,3 +169,33 @@ for shared direct and group dependencies. They also cover a group
 consumed earlier in the same block or on the speculative parent,
 including Leader selection under a dependency conflict. Runtime
 regressions and performance measurements remain pending.
+
+## Inline Cell resolution bookkeeping
+
+The ordinary resolver inserts consumed inputs and resolved Code OutPoints
+into two hash sets. It also indexes every Script Group in a sorted map.
+`native-inline-cell-resolution` keeps up to four keys in each set without
+allocating a table. It promotes to the same hash-set representation for
+larger sets, including expanded Dep Groups. A sole Script Group is built
+directly. On a second distinct group, the builder moves to the original
+map, keyed by kind and exact packed Script bytes. The resolver still
+distinguishes Lock and Type groups with the same Script.
+
+For a one-input, one-Code, one-Lock payment these changes remove two
+transient hash tables and the grouping tree. The final inputs, code and
+groups still use the existing resolved representation. Exact dependency
+lookup and commitment order, duplicate and consumed-OutPoint checks,
+logical reads, Cell byte charges and Script Group ordering continue
+through the same paths. Ledger fixtures exercise a Dep Group that
+exceeds the inline limit, duplicate and consumed checks after promotion,
+and canonical group indices after the sole group moves to the map.
+
+Build `cell-execution` and `inline-resolution` at the same revision.
+Compare resolved payment and heterogeneous Type Group blocks on pinned
+parents with the same Cell and VM cache budgets. Include large Dep Groups
+and transactions with many distinct scripts. Report allocation counts,
+resolver and Script Group CPU and wall times, exact receipts and
+independent replay. The linear scan and promotion add work on larger
+sets. The static allocation difference in the ordinary case does not
+measure block or network performance. Regression targets were compiled.
+Runtime checks, replay and performance measurements remain pending.
