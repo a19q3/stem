@@ -24,11 +24,11 @@ struct State {
 struct Generation {
     height: u64,
     header: [u8; 32],
-    cells: Arc<Mutex<LiveCache>>,
+    cells: Arc<LiveCache>,
 }
 
 impl PinnedCellCache {
-    pub(super) fn acquire(&self, header: &Header, network: &Byte32) -> Arc<Mutex<LiveCache>> {
+    pub(super) fn acquire(&self, header: &Header, network: &Byte32) -> Arc<LiveCache> {
         let height = header.context.height;
         let id = header.id(network).unpack();
         let mut state = self.state.lock().expect("pinned Cell cache");
@@ -45,7 +45,7 @@ impl PinnedCellCache {
                 return Arc::default();
             }
         }
-        let cells = Arc::new(Mutex::new(LiveCache::default()));
+        let cells = Arc::new(LiveCache::default());
         state.latest = Some(Generation {
             height,
             header: id,
@@ -68,8 +68,7 @@ impl PinnedCellCache {
             // Its view must remain valid after this tip is installed.
             return;
         };
-        let cells = cells.get_mut().expect("pinned Live Cell records");
-        if !cells.records.is_empty() {
+        if !prepared.live.is_empty() {
             cells.invalidate(prepared.live.keys());
         }
         current.height = prepared.next.context.height;
@@ -80,10 +79,8 @@ impl PinnedCellCache {
     pub(super) fn status(&self) -> PinnedCellCacheStatus {
         let state = self.state.lock().expect("pinned Cell cache");
         let generation = state.latest.as_ref();
-        let (entries, record_bytes) = generation.map_or((0, 0), |current| {
-            let cells = current.cells.lock().expect("pinned Live Cell records");
-            (cells.records.len(), cells.bytes)
-        });
+        let (entries, record_bytes, capacity_flushes) =
+            generation.map_or((0, 0, 0), |current| current.cells.totals());
         PinnedCellCacheStatus {
             retained_height: generation.map(|current| current.height),
             entries,
@@ -92,6 +89,8 @@ impl PinnedCellCache {
             private_acquisitions: state.private_acquisitions,
             generations: state.generations,
             carried_forward: state.carried_forward,
+            shards: LiveCache::SHARDS,
+            capacity_flushes,
         }
     }
 }

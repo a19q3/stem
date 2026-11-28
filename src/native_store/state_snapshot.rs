@@ -228,7 +228,7 @@ impl Store {
         )?;
         self.tip = image.header;
         self.stake_inputs = Arc::default();
-        self.live_cache.lock().expect("Live Cell cache").clear();
+        self.live_cache.clear();
         self.history = frontier;
         if let Some(index) = self.live_index.take() {
             let (limit, layout, workers) = index.retire();

@@ -7,7 +7,7 @@ use std::{
     num::NonZeroUsize,
     ops::Range,
     path::Path,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -42,7 +42,9 @@ mod keeper;
 pub use keeper::{KeeperPolicy, KeeperTimePolicy};
 mod lineage;
 pub use stem_ledger::lineage::LineageProof;
+mod live_cache;
 mod live_index;
+use live_cache::LiveCache;
 pub use live_index::{LiveCellIndexLayout, LiveCellIndexStatus};
 use live_index::IndexView;
 mod node_index;
@@ -556,7 +558,7 @@ pub struct Store {
     fees: ResourceFees,
     cache: Arc<VerificationCache>,
     branch: Vec<Arc<Prepared>>,
-    live_cache: Arc<Mutex<LiveCache>>,
+    live_cache: Arc<LiveCache>,
     #[cfg(feature = "native-shared-pinned-cell-cache")]
     pinned_cell_cache: Arc<pinned_cell_cache::PinnedCellCache>,
     live_index: Option<IndexView>,
@@ -724,45 +726,10 @@ pub struct PinnedCellCacheStatus {
     pub private_acquisitions: u64,
     pub generations: u64,
     pub carried_forward: u64,
-}
-
-#[derive(Default)]
-struct LiveCache {
-    records: HashMap<OutPoint, LiveCell>,
-    bytes: usize,
-}
-
-impl LiveCache {
-    fn insert(&mut self, point: OutPoint, cell: LiveCell) {
-        const MAX_BYTES: usize = 16 * 1024 * 1024;
-        const MAX_ITEMS: usize = 4096;
-        if self.records.contains_key(&point) {
-            return;
-        }
-        let bytes = Self::record_bytes(&cell);
-        if self.bytes + bytes > MAX_BYTES || self.records.len() == MAX_ITEMS {
-            self.clear();
-        }
-        self.bytes += bytes;
-        self.records.insert(point, cell);
-    }
-
-    fn invalidate<'a>(&mut self, points: impl Iterator<Item = &'a OutPoint>) {
-        for point in points {
-            if let Some(cell) = self.records.remove(point) {
-                self.bytes -= Self::record_bytes(&cell);
-            }
-        }
-    }
-
-    fn record_bytes(cell: &LiveCell) -> usize {
-        cell.cell.as_slice().len() + Origin::LEN + OutPoint::TOTAL_SIZE
-    }
-
-    fn clear(&mut self) {
-        self.records.clear();
-        self.bytes = 0;
-    }
+    #[serde(default)]
+    pub shards: usize,
+    #[serde(default)]
+    pub capacity_flushes: u64,
 }
 
 type LiveChanges = BTreeMap<OutPoint, Option<LiveCell>>;
@@ -1818,10 +1785,7 @@ impl Store {
             .map(|bytes| Self::decode_live_cell(point, &bytes))
             .transpose()?;
         if let Some(cell) = &found {
-            self.live_cache
-                .lock()
-                .expect("Live Cell cache")
-                .insert(point.clone(), cell.clone());
+            self.live_cache.insert(point.clone(), cell.clone());
         }
         Ok(found)
     }
@@ -1834,12 +1798,7 @@ impl Store {
     }
 
     fn cached_live_cell(&self, point: &OutPoint) -> Option<LiveCell> {
-        self.live_cache
-            .lock()
-            .expect("Live Cell cache")
-            .records
-            .get(point)
-            .cloned()
+        self.live_cache.get(point)
     }
 
     fn live_cell_key(&self, point: &OutPoint) -> [u8; 34] {
@@ -3616,10 +3575,7 @@ impl Store {
         self.tip = prepared.next.clone();
         self.stake_inputs = Arc::clone(&prepared.stake_inputs);
         if !prepared.live.is_empty() {
-            self.live_cache
-                .lock()
-                .expect("Live Cell cache")
-                .invalidate(prepared.live.keys());
+            self.live_cache.invalidate(prepared.live.keys());
         }
     }
 }
