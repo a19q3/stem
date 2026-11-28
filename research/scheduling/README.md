@@ -233,3 +233,49 @@ early-stop case. A shared lock on dependency reads could cost more
 than the shorter startup saves, especially at high worker counts
 and on VM-cache hits. Runtime regression, replay and performance
 comparisons remain pending.
+
+### Retiring settled projection edits
+
+Add `native-reclaim-cell-projection` to the rolling build to fold actual
+accepted Cell edits into a shared settled layer. The allocation still
+keeps the authoritative candidate delta through commitment. The
+additional speculative history now needs only the entries the active
+worker suffix can still observe. A fold publishes canonical rows and
+tombstones under the same lock that prunes the declaration history.
+Both ordered and worker lookups check this layer before the original
+run base. Workers first consider declarations strictly before their
+own position. Jobs that already observed a declaration retain their
+recorded source positions and still check them before reuse.
+
+The coordinator folds at intervals of the initial job window.
+There must be no unsettled position before the chosen boundary. A
+worker-adopted write or an explicitly certified ordered write agrees
+with its projection. A skipped Leader candidate published no edits.
+An outstanding worker that observed a skipped declaration still
+fails the source check. A worker that reads after pruning sees the
+actual accepted prefix in its place. If an ordered success did not
+certify its ordinary Cell edits, the coordinator abandons the
+remaining speculative results and stops launching jobs in that run.
+The Leader can finish the inspected suffix in order. The Follower
+returns to its ordinary block-preparation loop at that boundary.
+
+Compare two same-source builds enabling both rolling roles. Enable
+`native-incremental-cell-projection,native-reuse-ordered-cell-writes`
+in the control. Add `native-reclaim-cell-projection` in the candidate.
+Keep the parent, workers, Cell and VM caches, and all configured
+resource limits fixed. Use full payment blocks, dependent spends
+spanning multiple folds and Leader sweeps with rejected early spends.
+Check selected bytes, exact Headers, ordered receipts, authenticated
+roots and final durable journals against an independent reference.
+
+Use `peak_projection_edits` and `retired_projection_edits` to measure
+speculative metadata retention, and `projection_barriers` to measure
+uncertified ordered settlements that end speculation. Also record
+`projection_reclaim_us`, process CPU and peak RSS alongside settled
+wall time and finality. Peak edit count covers the speculative
+history, excluding the canonical delta and the temporary list used
+to publish one transaction. The extra index lookups, lock, pruning
+and final map merge can offset lower speculative retention. The
+compiled fixtures cover an output read after its declaration retires
+and a late replacement spend after an earlier candidate is skipped.
+Runtime regressions, replay and performance comparisons are pending.

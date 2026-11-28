@@ -25,6 +25,17 @@ pub(super) use dependencies::DependencyReads;
 #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
 mod rolling;
 
+#[cfg(all(
+    feature = "native-incremental-cell-projection",
+    any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
+))]
+mod incremental;
+#[cfg(all(
+    feature = "native-incremental-cell-projection",
+    any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
+))]
+use incremental::IncrementalProjection;
+
 const MAX_WINDOW: usize = u32::BITS as usize;
 const MAX_DECLARED_EDITS: usize = 64;
 pub(super) const MAX_SPECULATIVE_READ_BYTES: usize = 4 * 1024 * 1024;
@@ -91,6 +102,11 @@ fn record(writes: &mut Writes, point: OutPoint, edit: Write) {
 pub(super) struct PrecedingCells<'a> {
     base: &'a LiveChanges,
     projection: Option<ProjectedPrefix<'a>>,
+    #[cfg(all(
+        feature = "native-reclaim-cell-projection",
+        any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
+    ))]
+    settled: Option<&'a std::sync::RwLock<IncrementalProjection>>,
     /// The ordered coordinator can certify its exact published Cell writes.
     #[cfg(feature = "native-reuse-ordered-cell-writes")]
     pub(super) ordered_writes: Option<&'a Cell<bool>>,
@@ -105,7 +121,7 @@ enum Projection<'a> {
         feature = "native-incremental-cell-projection",
         any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
     ))]
-    Incremental(&'a std::sync::RwLock<Writes>),
+    Incremental(&'a std::sync::RwLock<IncrementalProjection>),
 }
 
 struct ProjectedPrefix<'a> {
@@ -137,13 +153,26 @@ impl PrecedingCells<'_> {
     ) -> Option<T> {
         let base = || self.base.get(point).map(Option::as_ref);
         let Some(prefix) = &self.projection else {
+            #[cfg(all(
+                feature = "native-reclaim-cell-projection",
+                any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
+            ))]
+            if let Some(settled) = self.settled {
+                let state = settled.read().expect("Cell projection");
+                if let Some(record) = state.settled.get(point) {
+                    return Some(use_record(record.as_ref()));
+                }
+            }
             return base().map(use_record);
         };
         if prefix.position == 0 {
             return base().map(use_record);
         }
-        let from_projection = |writes: &Writes| {
+        let from_projection = |writes: &Writes, settled: Option<&LiveChanges>| {
             let Some(edit) = prefix.previous(writes, point) else {
+                if let Some(record) = settled.and_then(|edits| edits.get(point)) {
+                    return Some(use_record(record.as_ref()));
+                }
                 return base().map(use_record);
             };
             match prefix.sources {
@@ -154,13 +183,18 @@ impl PrecedingCells<'_> {
             Some(use_record(edit.cell.as_ref()))
         };
         match prefix.writes {
-            Projection::Complete(writes) => from_projection(writes),
+            Projection::Complete(writes) => from_projection(writes, None),
             #[cfg(all(
                 feature = "native-incremental-cell-projection",
                 any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
             ))]
             Projection::Incremental(writes) => {
-                from_projection(&writes.read().expect("Cell projection"))
+                let state = writes.read().expect("Cell projection");
+                #[cfg(feature = "native-reclaim-cell-projection")]
+                let settled = Some(&state.settled);
+                #[cfg(not(feature = "native-reclaim-cell-projection"))]
+                let settled = None;
+                from_projection(&state.writes, settled)
             }
         }
     }
@@ -467,6 +501,11 @@ impl Store {
                         position,
                         sources: Sources::Window(&dependencies),
                     }),
+                    #[cfg(all(
+                        feature = "native-reclaim-cell-projection",
+                        any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution")
+                    ))]
+                    settled: None,
                     #[cfg(feature = "native-reuse-ordered-cell-writes")]
                     ordered_writes: None,
                     #[cfg(feature = "native-shared-cell-deps")]

@@ -200,6 +200,10 @@ pub struct CellStreamStats {
     pub ordered_declarations: u64,
     pub projected_transactions: u64,
     pub projection_us: u64,
+    pub peak_projection_edits: u64,
+    pub retired_projection_edits: u64,
+    pub projection_reclaim_us: u64,
+    pub projection_barriers: u64,
     pub first_submit_us: u64,
     pub refilled_jobs: u64,
     pub discarded_jobs: u64,
@@ -248,6 +252,12 @@ impl CellStreamStats {
         self.projected_transactions = self.projected_transactions
             .saturating_add(other.projected_transactions);
         self.projection_us = self.projection_us.saturating_add(other.projection_us);
+        self.peak_projection_edits = self.peak_projection_edits.max(other.peak_projection_edits);
+        self.retired_projection_edits = self.retired_projection_edits
+            .saturating_add(other.retired_projection_edits);
+        self.projection_reclaim_us = self.projection_reclaim_us
+            .saturating_add(other.projection_reclaim_us);
+        self.projection_barriers = self.projection_barriers.saturating_add(other.projection_barriers);
         self.first_submit_us = self.first_submit_us.saturating_add(other.first_submit_us);
         self.refilled_jobs = self.refilled_jobs.saturating_add(other.refilled_jobs);
         self.discarded_jobs = self.discarded_jobs.saturating_add(other.discarded_jobs);
@@ -769,6 +779,7 @@ struct ProposalProgress {
 enum ProposalStep {
     Reused,
     Ordered,
+    Skipped,
     Stop,
 }
 
@@ -2678,10 +2689,10 @@ impl Store {
         let started = Instant::now();
         let len = tx.as_slice().len();
         if len as u64 > budget.bytes || lineage::minimum_reads(tx) > budget.reads {
-            return Ok(ProposalStep::Ordered);
+            return Ok(ProposalStep::Skipped);
         }
         let Some(next_wire) = progress.wire_bytes.checked_sub(proposal_entry_bytes(len)) else {
-            return Ok(ProposalStep::Ordered);
+            return Ok(ProposalStep::Skipped);
         };
         // Without Header Deps the VM has no origin-based Header to load.
         // Ordinary calls and single Lineage commands see the same height
@@ -2750,6 +2761,7 @@ impl Store {
                         );
                     }
                 }
+                return Ok(ProposalStep::Skipped);
             }
         }
         Ok(if reused { ProposalStep::Reused } else { ProposalStep::Ordered })
@@ -4416,6 +4428,60 @@ mod pipeline_store_tests {
                 stats.projected_transactions,
                 if cfg!(feature = "native-incremental-cell-projection") { 2 } else { 4 },
             );
+        }
+        #[cfg(all(
+            feature = "native-reclaim-cell-projection",
+            feature = "native-rolling-leader-execution",
+            feature = "native-rolling-cell-execution"
+        ))]
+        {
+            let rejected = sign(Transaction::new(
+                vec![CellDep::new_builder().out_point(code_point.clone()).build()],
+                vec![],
+                vec![
+                    CellInput::new(points[0].clone(), None),
+                    CellInput::new(points[2].clone(), None),
+                ],
+                vec![reserve.clone()],
+                vec![],
+            )?)?;
+            let dependent = |tx: &Transaction| signed(&OutPoint::new(tx.id(&spec.network), 0));
+            let child_a = dependent(&first)?;
+            let child_b = dependent(&second)?;
+            let child_c = dependent(&third)?;
+
+            // A late worker consumes an output already transferred out of
+            // the projection. It must still resolve the original Cell.
+            let accepted = [
+                first.clone(), second.clone(), third.clone(), fourth.clone(),
+                child_b.clone(), child_c.clone(), dependent(&fourth)?, child_a.clone(),
+            ];
+            let serial = store.prepare(&accepted, 1001, false)?;
+            let follower = workers.install(|| store.prepare(&accepted, 1001, true))?;
+            assert_eq!(follower.header(), serial.header());
+            assert_eq!(follower.receipts(), serial.receipts());
+            assert_same_batch_writes(&follower.batch, &serial.batch);
+            assert_eq!(follower.cell_stream().fallbacks, 0);
+            assert!(follower.cell_stream().retired_projection_edits > 0);
+
+            // The skipped candidate had declared a spend of the original
+            // input. The later Leader can use it once that declaration retires.
+            let run = [&rejected, &second, &third, &fourth, &child_b, &child_c, &first, &child_a];
+            let expected = [&second, &third, &fourth, &child_b, &child_c, &first, &child_a];
+            let mut scan = ProposalScan::default();
+            let (selected, leader) = workers.install(|| {
+                store.build_proposal_measured(run, 1001, 16 * 1024, &mut scan, None)
+            })?;
+            assert_eq!(
+                selected.iter().map(Transaction::as_slice).collect::<Vec<_>>(),
+                expected.iter().map(|tx| tx.as_slice()).collect::<Vec<_>>(),
+            );
+            let serial = store.prepare(&selected, 1001, false)?;
+            assert_eq!(leader.header(), serial.header());
+            assert_eq!(leader.receipts(), serial.receipts());
+            assert_same_batch_writes(&leader.batch, &serial.batch);
+            assert_eq!(scan.rolling_cells.fallbacks, 1);
+            assert!(scan.rolling_cells.retired_projection_edits > 0);
         }
         #[cfg(all(
             feature = "native-reuse-ordered-cell-writes",

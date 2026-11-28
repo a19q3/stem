@@ -24,7 +24,7 @@ use super::{
     Receipt, Result, Sources, Store, Transaction,
 };
 #[cfg(feature = "native-incremental-cell-projection")]
-use super::{Writes, declared_writes, record};
+use super::{IncrementalProjection, declared_writes};
 #[cfg(feature = "native-incremental-cell-projection")]
 use std::sync::RwLock;
 use crate::native_store::{CellStreamStats, ProposalStep};
@@ -291,7 +291,7 @@ impl Store {
         #[cfg(not(feature = "native-incremental-cell-projection"))]
         let projected = Projection::Complete(&writes);
         #[cfg(feature = "native-incremental-cell-projection")]
-        let writes = RwLock::new(Writes::with_capacity(depth.saturating_mul(2)));
+        let writes = RwLock::new(IncrementalProjection::new(depth.saturating_mul(2)));
         #[cfg(feature = "native-incremental-cell-projection")]
         let projected = Projection::Incremental(&writes);
         #[cfg(feature = "native-incremental-cell-projection")]
@@ -312,6 +312,8 @@ impl Store {
         let canonical = PrecedingCells {
             base: prior,
             projection: None,
+            #[cfg(feature = "native-reclaim-cell-projection")]
+            settled: Some(&writes),
             #[cfg(feature = "native-reuse-ordered-cell-writes")]
             ordered_writes: Some(&ordered_writes),
             #[cfg(feature = "native-shared-cell-deps")]
@@ -327,11 +329,19 @@ impl Store {
         let mut in_flight = 0;
         let mut submitted = 0;
         let mut prefix = 0;
+        #[cfg(feature = "native-reclaim-cell-projection")]
+        let mut retired_prefix = 0;
+        #[cfg(feature = "native-reclaim-cell-projection")]
+        let mut reclaim_elapsed = Duration::ZERO;
+        #[cfg(feature = "native-reclaim-cell-projection")]
+        let mut force_ordered = false;
         let result = rayon::in_place_scope_fifo(|scope| {
             let result = (|| -> Result<(usize, bool)> {
                 while prefix < count {
                     self.check_preparation_cancelled()?;
                     let funded = self.cell_window_limit(width, *budget);
+                    #[cfg(feature = "native-reclaim-cell-projection")]
+                    let funded = if force_ordered { 0 } else { funded };
                     while submitted < count
                         && submitted - prefix < funded
                         && in_flight < in_flight_limit
@@ -350,8 +360,10 @@ impl Store {
                                 }
                                 let mut rows = writes.write().expect("Cell projection");
                                 for (point, edit) in declarations.drain(..) {
-                                    record(&mut rows, point, edit);
+                                    rows.add(point, edit);
                                 }
+                                stats.peak_projection_edits =
+                                    stats.peak_projection_edits.max(rows.len() as u64);
                             }
                             projection_elapsed += projecting.elapsed();
                             projected_prefix = position;
@@ -375,6 +387,8 @@ impl Store {
                                         position,
                                         sources: Sources::Run(&sources),
                                     }),
+                                    #[cfg(feature = "native-reclaim-cell-projection")]
+                                    settled: None,
                                     #[cfg(feature = "native-reuse-ordered-cell-writes")]
                                     ordered_writes: None,
                                     #[cfg(feature = "native-shared-cell-deps")]
@@ -450,9 +464,33 @@ impl Store {
                         published[prefix] = true;
                         stats.ordered_declarations += 1;
                     }
+                    #[cfg(feature = "native-reclaim-cell-projection")]
+                    if matches!(step, ProposalStep::Ordered) && !published[prefix] && !force_ordered {
+                        // A successful ordered transaction whose Cell effects
+                        // were not certified cannot be represented by the
+                        // declarations used by in-flight jobs.
+                        force_ordered = true;
+                        stats.projection_barriers += 1;
+                        stats.discarded_jobs += (submitted - prefix - 1) as u64;
+                        cancelled.store(true, Ordering::Relaxed);
+                        submitted = prefix + 1;
+                        ready.iter_mut().for_each(|slot| *slot = None);
+                    }
                     prefix += 1;
                     if matches!(step, ProposalStep::Stop) {
                         return Ok((prefix, true));
+                    }
+                    #[cfg(feature = "native-reclaim-cell-projection")]
+                    if !force_ordered && prefix < count && prefix - retired_prefix >= depth {
+                        // Every outstanding position is >= prefix. A read
+                        // that already saw a rejected declaration still
+                        // checks its source against the published flags.
+                        let clearing = Instant::now();
+                        let delta = std::mem::take(&mut overlay.live);
+                        let retired = writes.write().expect("Cell projection").advance(prefix, delta);
+                        stats.retired_projection_edits += retired as u64;
+                        retired_prefix = prefix;
+                        reclaim_elapsed += clearing.elapsed();
                     }
                 }
                 Ok((prefix, false))
@@ -467,6 +505,14 @@ impl Store {
         drop(canonical);
         #[cfg(feature = "native-incremental-cell-projection")]
         stats.record_projection(projected_prefix, projection_elapsed);
+        #[cfg(feature = "native-reclaim-cell-projection")]
+        {
+            let state = writes.into_inner().expect("Cell projection");
+            base.extend(state.settled);
+            stats.projection_reclaim_us = stats.projection_reclaim_us.saturating_add(
+                u64::try_from(reclaim_elapsed.as_micros()).unwrap_or(u64::MAX),
+            );
+        }
         base.extend(std::mem::take(&mut overlay.live));
         overlay.live = base;
         stats.elapsed_us = stats
