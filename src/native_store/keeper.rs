@@ -13,7 +13,10 @@ use stem_ledger::{
     keeper::{self, Action, AgendaEntry, Reservation, Schedule, Trigger},
 };
 
-use super::{Budget, Limits, Overlay, Proof, StateReadFault, Store, charge, lineage};
+use super::{Budget, KeeperWakeMetrics, Limits, Overlay, Proof, StateReadFault, Store, charge, lineage};
+
+#[cfg(feature = "native-keeper-parallel-preparation")]
+mod wake_preparation;
 
 const CONFIG: &[u8] = b"keeper/policy";
 const QUEUE: &[u8] = b"keeper/due/";
@@ -648,15 +651,31 @@ impl Store {
         origin: &Origin,
         budget: &mut Budget,
         overlay: &mut Overlay,
-    ) -> Result<Vec<Receipt>> {
+        parallel: bool,
+    ) -> Result<(Vec<Receipt>, KeeperWakeMetrics)> {
         if due.commands.is_empty() {
-            return Ok(vec![]);
+            return Ok((vec![], KeeperWakeMetrics::default()));
         }
+        #[cfg(feature = "native-keeper-parallel-preparation")]
+        let workers = if parallel && due.commands.len() > 1 {
+            rayon::current_num_threads()
+        } else {
+            1
+        };
+        #[cfg(feature = "native-keeper-parallel-preparation")]
+        let mut preparation = wake_preparation::WakePreparation::default();
+        #[cfg(feature = "native-keeper-parallel-preparation")]
+        let mut metrics = KeeperWakeMetrics::default();
+        #[cfg(not(feature = "native-keeper-parallel-preparation"))]
+        let metrics = {
+            let _ = parallel;
+            KeeperWakeMetrics::default()
+        };
         let slot = self.keeper.expect("Keeper is enabled").slot(self.limits);
         let mut receipts = Vec::with_capacity(due.commands.len());
         overlay.keeper.running = true;
         overlay.keeper.agenda = due.agenda.clone();
-        for command in &due.commands {
+        for (position, command) in due.commands.iter().enumerate() {
             let point = fee_point(command);
             let schedule = command.keeper_schedule().context(StateReadFault)?;
             let fees = fee_inputs(command);
@@ -673,13 +692,21 @@ impl Store {
                 );
             }
             let mut remaining = wake_budget(slot, command)?;
+            #[cfg(feature = "native-keeper-parallel-preparation")]
+            let materialized =
+                preparation.take(self, &due.commands, position, block, overlay, slot, workers, &mut metrics);
+            #[cfg(not(feature = "native-keeper-parallel-preparation"))]
+            let materialized = {
+                let _ = position;
+                None
+            };
             let (mut receipt, may_retry) = match self.stage(
                 command,
                 block,
                 origin,
                 &mut remaining,
                 overlay,
-                None,
+                materialized,
                 |resolved, limit| self.cache.verify(resolved, limit, false),
             ) {
                 Ok(receipt) => (receipt, false),
@@ -745,7 +772,7 @@ impl Store {
             )?;
         }
         overlay.keeper.running = false;
-        Ok(receipts)
+        Ok((receipts, metrics))
     }
 }
 

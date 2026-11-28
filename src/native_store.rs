@@ -136,6 +136,7 @@ pub struct ProposalScan {
     pub parallel_cell_reused: u64,
     pub parallel_cell_fallback: u64,
     pub parallel_cell_us: u64,
+    pub keeper_wakes: KeeperWakeMetrics,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -146,6 +147,30 @@ pub struct LineageSchedule {
     pub parallel_waves: u64,
     pub parallel_commands: u64,
     pub serial_commands: u64,
+    pub lookahead_commands: u64,
+    pub lookahead_reused: u64,
+    pub lookahead_fallbacks: u64,
+    pub keeper_wakes: KeeperWakeMetrics,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct KeeperWakeMetrics {
+    pub access_us: u64,
+    pub materialize_us: u64,
+    pub jobs: u64,
+    pub reused: u64,
+    pub fallbacks: u64,
+}
+
+impl KeeperWakeMetrics {
+    fn record(&mut self, other: Self) {
+        self.access_us = self.access_us.saturating_add(other.access_us);
+        self.materialize_us = self.materialize_us.saturating_add(other.materialize_us);
+        self.jobs = self.jobs.saturating_add(other.jobs);
+        self.reused = self.reused.saturating_add(other.reused);
+        self.fallbacks = self.fallbacks.saturating_add(other.fallbacks);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -181,6 +206,10 @@ impl LineageSchedule {
         self.parallel_waves = self.parallel_waves.saturating_add(other.parallel_waves);
         self.parallel_commands = self.parallel_commands.saturating_add(other.parallel_commands);
         self.serial_commands = self.serial_commands.saturating_add(other.serial_commands);
+        self.lookahead_commands = self.lookahead_commands.saturating_add(other.lookahead_commands);
+        self.lookahead_reused = self.lookahead_reused.saturating_add(other.lookahead_reused);
+        self.lookahead_fallbacks = self.lookahead_fallbacks.saturating_add(other.lookahead_fallbacks);
+        self.keeper_wakes.record(other.keeper_wakes);
     }
 }
 
@@ -210,6 +239,7 @@ impl ProposalScan {
         self.parallel_cell_reused = self.parallel_cell_reused.saturating_add(scan.parallel_cell_reused);
         self.parallel_cell_fallback = self.parallel_cell_fallback.saturating_add(scan.parallel_cell_fallback);
         self.parallel_cell_us = self.parallel_cell_us.saturating_add(scan.parallel_cell_us);
+        self.keeper_wakes.record(scan.keeper_wakes);
     }
 }
 
@@ -1646,7 +1676,8 @@ impl Store {
             self.capacity,
         )?;
         let origin = Origin::new(&self.network, block.candidate());
-        let mut receipts = self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay)?;
+        let (mut receipts, keeper_wakes) =
+            self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay, parallel)?;
         let mut fees = receipts
             .iter()
             .try_fold(0u64, |sum, receipt| sum.checked_add(receipt.fee))
@@ -1662,7 +1693,7 @@ impl Store {
         let prefetch_cells = cfg!(feature = "native-candidate-cell-prefetch")
             && width > 1
             && !self.live_index.as_ref().is_some_and(IndexView::resident);
-        let mut lineage_schedule = LineageSchedule::default();
+        let mut lineage_schedule = LineageSchedule { keeper_wakes, ..LineageSchedule::default() };
         #[cfg(feature = "native-rolling-cell-execution")]
         let mut cell_stream = CellStreamStats::default();
         // Account for previous validation before admitting a dynamic wave.
@@ -1673,6 +1704,17 @@ impl Store {
             let lineage = segment[0].has_lineage_command();
             let mut prefetch_remaining = 0usize;
             while !segment.is_empty() {
+                #[cfg(feature = "native-lineage-dependency-lookahead")]
+                if lineage && width > 1 {
+                    let count = self.prepare_lineage_lookahead(
+                        segment, &block, &origin, width, &mut budget, &mut overlay,
+                        &mut receipts, &mut fees, &mut lineage_schedule,
+                    )?;
+                    if count != 0 {
+                        segment = &segment[count..];
+                        continue;
+                    }
+                }
                 if cfg!(feature = "native-dependency-execution") && width > 1 && !lineage {
                     #[cfg(feature = "native-rolling-cell-execution")]
                     let count = self.prepare_cell_run(
@@ -2202,7 +2244,9 @@ impl Store {
         )?;
         let origin = Origin::new(&self.network, block.candidate());
         let due = self.due(block.candidate().height, &mut budget)?;
-        let mut receipts = self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay)?;
+        let (mut receipts, keeper_wakes) =
+            self.run_keeper(&due, &block, &origin, &mut budget, &mut overlay, true)?;
+        scan.keeper_wakes = keeper_wakes;
         let mut reusable = due.commands.is_empty();
         let mut selected = Vec::new();
         let mut cycle_rejections = 0;

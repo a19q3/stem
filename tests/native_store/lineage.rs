@@ -965,7 +965,7 @@ fn measure_dynamic_lineage_updates() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "native-lineage-ready-prefix")]
+#[cfg(any(feature = "native-lineage-ready-prefix", feature = "native-lineage-dependency-lookahead"))]
 #[test]
 fn lineage_prefix_keeps_live_dependencies_versions_and_fee_only_rollback() -> Result<()> {
     use ckb_types::{core::DepType, packed::OutPointVec};
@@ -1075,7 +1075,7 @@ fn lineage_prefix_keeps_live_dependencies_versions_and_fee_only_rollback() -> Re
     Ok(())
 }
 
-#[cfg(feature = "native-lineage-ready-prefix")]
+#[cfg(any(feature = "native-lineage-ready-prefix", feature = "native-lineage-dependency-lookahead"))]
 #[test]
 fn lineage_prefix_resolves_exact_heads_on_the_selected_parent() -> Result<()> {
     use std::sync::Arc;

@@ -22,6 +22,11 @@ use stem_vm::executor;
 
 use super::{Budget, Header, Proof, Store};
 
+#[cfg(feature = "native-lineage-dependency-lookahead")]
+mod lookahead;
+#[cfg(any(feature = "native-lineage-dependency-lookahead", feature = "native-keeper-parallel-preparation"))]
+pub(super) mod access_plan;
+
 pub(super) type Heads = BTreeMap<Byte32, Option<Head>>;
 
 pub(super) fn changes(
@@ -144,7 +149,7 @@ fn executor(resolved: &ResolvedTransaction, data: &[u8]) -> Result<Byte32> {
     Ok(code)
 }
 
-fn current_head(store: &Store, stage: &Heads, id: &Byte32) -> Result<Option<Head>> {
+pub(super) fn current_head(store: &Store, stage: &Heads, id: &Byte32) -> Result<Option<Head>> {
     match stage.get(id) {
         Some(value) => Ok(value.clone()),
         None => store

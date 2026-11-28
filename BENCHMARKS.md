@@ -2348,6 +2348,14 @@ Reproduce the live checks with `keeper_load::sustained_keeper_load`, 24 payments
 
 **Decision.** Use the borrowed reader. The full timed agenda has 1,988 canonical bytes and is decoded faster, while the hard cap and existing per-block wake shares govern the observed pressure case. Larger research cardinalities would require a separate consensus limit decision and a bounded indexed scheduler. The current consolidation keeps the validated agenda size and execution order.
 
+#### Parallel preparation of independent due commands
+
+`native-keeper-parallel-preparation` lets both Leader selection and Follower preparation use the existing worker pool to materialize independent one-shot Keeper commands. It uses the Lineage Cell access planner and the exact Keeper slot budget of each command. It can prepare a timed wake beyond an earlier same-Head height conflict, but reservations, final validation, fees, skips, retries, receipts and queue writes still settle in the existing due order. Atomic and retry-bound jobs, expired entries and commands with Dep Groups retain ordered staging. This option uses the existing agenda bounds and durable records.
+
+`execution.candidate_lineage.keeper_wakes` reports Follower planning and worker wall time, attempted jobs, reused materializations and fallbacks. `execution.proposal_scan.keeper_wakes` records the Leader's selection pass. The compiled block fixture compares serial replay, the Leader and the Follower at a height with two dependent height wakes and an independent timed wake, including Header, receipts and Head and reservation state.
+
+Runtime checks and performance qualification are pending. For a fixed-state comparison, compile the native Store test target with and without the feature, then run `keeper::measure_keeper_slots` with `STEM_KEEPER_BENCH_WORKERS=4`. Match `STEM_KEEPER_BENCH_HEADS=4` for independent work and `STEM_KEEPER_BENCH_HEADS=1` for the shared-Head control. Compare identical slot budgets and charged cycles. Measure due preparation and finality alongside planning time, worker CPU and retries under mixed ordinary payments. Small or dependent bursts may pay planning costs with few reusable results, and the Leader still repeats due execution during full proposal replay.
+
 ## CKB checkpoint publisher handoff
 
 Revision `01df462` ran two publishers with separate fee keys and
