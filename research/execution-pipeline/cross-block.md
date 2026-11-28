@@ -171,3 +171,47 @@ entries may gain less, and relay or removal churn can move costs back onto
 the Replica. Compile-checked regression targets cover ordering, snapshot
 isolation through removal and expiry, insertion and relay updates. Runtime
 validation and performance measurements remain pending.
+
+## Prebuilding the certified state WriteBatch
+
+The state writes for an executed block are available before the finality
+journal and retired proposal ranges are known. With
+`jolteon-prebuilt-state-write`, the Replica can queue assembly of the
+state prefix for the executed high-QC block after installing its direct
+parent. The writer keeps one optional prefix on its own thread. It
+assembles the created Live Cell rows, prepared node edits, and Header and
+execution rows while the Replica can work on the successor. The queue
+leaves space for the certified write. The writer skips an unstarted
+prebuild when a certified write is already queued. A prebuild never
+invokes RocksDB's write or installs a state view.
+
+A finality request consumes a prefix only for the exact prepared object
+and after the usual committed-parent check. A miss discards any other
+prefix and assembles the state writes in the ordinary path. The certified
+writer appends fresh consensus records, proposal deduplication checks and
+retirement ranges, then submits one synchronous WAL batch in the
+original write order. State publication and acknowledgement follow the
+existing durable path. Both state engines and both Patricia journal
+layouts use the same assembly entry point.
+
+The earlier [critical-path probe](../critical-path/README.md#ranked-bottlenecks)
+measured 2.54 ms of mean batch assembly per measured write in sustained
+payments and 0.66 ms in mixed contracts. This option moves some assembly
+earlier and retains one extra encoded batch. It can waste work when the
+certified branch changes, and an active prebuild may delay a commit that
+arrives before assembly finishes. Compare the full commit interval
+alongside writer service time. The latter begins when the writer handles
+the certified request and excludes time spent waiting for a prebuild.
+
+Build the same revision on both arms and toggle only
+`jolteon-prebuilt-state-write`. Use the same state engine, journal
+layout, writer-side publication, signed workload and budgets. Record
+`commit_jobs.state_prebuilds`, the
+`commit_jobs.reused_state_build` histogram for consumed prefixes,
+durable write and finality latency, queueing, process CPU and peak RSS.
+Handle misses separately from reused work and compare WAL and finality
+records through the independent replay and recovery fixtures. The
+compile-checked regressions cover exact-prefix reuse, a sibling miss,
+large Cell and node writes, and the durable visibility boundary across
+an old snapshot. Runtime validation and performance measurements remain
+pending.

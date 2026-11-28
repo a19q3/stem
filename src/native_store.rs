@@ -761,6 +761,29 @@ pub(crate) struct CellCommitmentTiming {
 pub(crate) struct CertifiedWriteTiming {
     pub(crate) persistence: Duration,
     pub(crate) cell_node_publication: Option<Duration>,
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    pub(crate) reused_state_build: Option<Duration>,
+}
+
+#[cfg(feature = "jolteon-commit-pipeline")]
+#[derive(Default)]
+pub(crate) struct CertifiedWriteCache {
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    state: Option<CachedStateWrite>,
+}
+
+#[cfg(feature = "jolteon-prebuilt-state-write")]
+struct CachedStateWrite {
+    candidate: std::sync::Weak<Prepared>,
+    prefix: WritePrefix,
+    build: Duration,
+}
+
+#[cfg(feature = "jolteon-prebuilt-state-write")]
+impl CertifiedWriteCache {
+    fn take(&mut self, prepared: &Arc<Prepared>) -> Option<CachedStateWrite> {
+        self.state.take().filter(|state| state.candidate.ptr_eq(&Arc::downgrade(prepared)))
+    }
 }
 
 struct Overlay {
@@ -3452,13 +3475,37 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    pub(crate) fn prebuild_certified_state(
+        &self,
+        prepared: Arc<Prepared>,
+    ) -> Option<impl FnOnce(&mut CertifiedWriteCache) + Send + 'static> {
+        self.check_commit_parent(&prepared).ok()?;
+        let cells = self.cells.clone();
+        let measured = self.metrics.is_some();
+        Some(move |cache: &mut CertifiedWriteCache| {
+            cache.state = None;
+            let started = Instant::now();
+            if let Ok((prefix, proposals)) =
+                assemble_write_prefix(&prepared.batch, Some((&cells, &prepared.live)), measured)
+                && proposals.is_empty()
+            {
+                cache.state = Some(CachedStateWrite {
+                    candidate: Arc::downgrade(&prepared),
+                    prefix,
+                    build: started.elapsed(),
+                });
+            }
+        })
+    }
+
     #[cfg(feature = "jolteon-commit-pipeline")]
     pub(crate) fn certified_write(
         &self,
         prepared: Arc<Prepared>,
         records: Vec<(Vec<u8>, Vec<u8>)>,
         retired: Vec<Range<Vec<u8>>>,
-    ) -> Result<impl FnOnce() -> Result<CertifiedWriteTiming> + Send + 'static> {
+    ) -> Result<impl FnOnce(&mut CertifiedWriteCache) -> Result<CertifiedWriteTiming> + Send + 'static> {
         self.check_commit_parent(&prepared)?;
         let db = Arc::clone(&self.db);
         let cells = self.cells.clone();
@@ -3468,16 +3515,24 @@ impl Store {
         } else {
             None
         };
-        Ok(move || {
+        Ok(move |_cache: &mut CertifiedWriteCache| {
             let started = Instant::now();
-            sync_with_consensus(
-                &db,
-                &prepared.batch,
-                Some((&cells, &prepared.live)),
-                &records,
-                &retired,
-                metrics.as_deref().map(|m| (m, Purpose::Finality)),
-            )?;
+            let measured = metrics.as_deref().map(|m| (m, Purpose::Finality));
+            #[cfg(feature = "jolteon-prebuilt-state-write")]
+            let cached = _cache.take(&prepared);
+            #[cfg(feature = "jolteon-prebuilt-state-write")]
+            let reused_state_build = cached.as_ref().map(|state| state.build);
+            #[cfg(feature = "jolteon-prebuilt-state-write")]
+            let prefix = cached.map(|state| (state.prefix, BTreeSet::new()));
+            #[cfg(not(feature = "jolteon-prebuilt-state-write"))]
+            let prefix = None;
+            let (prefix, proposals) = match prefix {
+                Some(parts) => parts,
+                None => assemble_write_prefix(
+                    &prepared.batch, Some((&cells, &prepared.live)), measured.is_some(),
+                )?,
+            };
+            persist_write(&db, prefix, proposals, &records, &retired, measured)?;
             let persistence = started.elapsed();
             let cell_node_publication = cell_nodes.as_ref().map(|index| {
                 let started = Instant::now();
@@ -3488,6 +3543,8 @@ impl Store {
             Ok(CertifiedWriteTiming {
                 persistence,
                 cell_node_publication,
+                #[cfg(feature = "jolteon-prebuilt-state-write")]
+                reused_state_build,
             })
         })
     }
@@ -3740,6 +3797,11 @@ impl Batch {
     }
 }
 
+struct WritePrefix {
+    raw: WriteBatch,
+    bytes: Option<BatchBytes>,
+}
+
 fn sync_with_consensus(
     db: &DB,
     batch: &Batch,
@@ -3748,8 +3810,17 @@ fn sync_with_consensus(
     retired: &[Range<Vec<u8>>],
     measured: Option<(&StorageMetrics, Purpose)>,
 ) -> Result<()> {
+    let (prefix, proposals) = assemble_write_prefix(batch, live, measured.is_some())?;
+    persist_write(db, prefix, proposals, records, retired, measured)
+}
+
+fn assemble_write_prefix<'a>(
+    batch: &'a Batch,
+    live: Option<(&Patricia, &LiveChanges)>,
+    measured: bool,
+) -> Result<(WritePrefix, BTreeSet<&'a [u8]>)> {
     let mut raw = WriteBatch::default();
-    let mut bytes = measured.map(|_| BatchBytes::new(raw.size_in_bytes()));
+    let mut bytes = measured.then(|| BatchBytes::new(raw.size_in_bytes()));
     // Finality keeps created records first, in the original batch order.
     if let Some((tree, changes)) = live {
         let mut encoded = Vec::new();
@@ -3787,6 +3858,18 @@ fn sync_with_consensus(
     #[cfg(not(feature = "native-verified-cell-journal"))]
     let remaining = batch.writes.as_slice();
     append_journal_rows(&mut raw, &mut bytes, remaining, &mut proposals)?;
+    Ok((WritePrefix { raw, bytes }, proposals))
+}
+
+fn persist_write<'a>(
+    db: &DB,
+    prefix: WritePrefix,
+    mut proposals: BTreeSet<&'a [u8]>,
+    records: &'a [(Vec<u8>, Vec<u8>)],
+    retired: &[Range<Vec<u8>>],
+    measured: Option<(&StorageMetrics, Purpose)>,
+) -> Result<()> {
+    let WritePrefix { mut raw, mut bytes } = prefix;
     for (key, value) in records {
         let storage_key = index_key(b'j', key);
         // A prior synchronous write already made this body durable. Preserve
@@ -4988,10 +5071,21 @@ mod pipeline_store_tests {
         let write = store.certified_write(Arc::clone(&prepared), records.clone(), vec![])?;
         assert!(store.header(1)?.is_none());
         assert!(store.consensus_record(b"state")?.is_none());
+        #[cfg(feature = "jolteon-prebuilt-state-write")]
+        let prebuild = store.prebuild_certified_state(Arc::clone(&prepared)).unwrap();
         let snapshot = pinned.with_snapshot(|view| {
-            std::thread::spawn(write)
+            let timing = std::thread::spawn(move || {
+                let mut cache = CertifiedWriteCache::default();
+                #[cfg(feature = "jolteon-prebuilt-state-write")]
+                prebuild(&mut cache);
+                write(&mut cache)
+            })
                 .join()
                 .map_err(|_| anyhow::anyhow!("certified write panicked"))??;
+            #[cfg(feature = "jolteon-prebuilt-state-write")]
+            assert!(timing.reused_state_build.is_some());
+            #[cfg(not(feature = "jolteon-prebuilt-state-write"))]
+            let _ = timing;
             assert!(view.header(1)?.is_none());
             assert!(view.consensus_record(b"state")?.is_none());
             Ok(view.tip().clone())
@@ -5005,6 +5099,27 @@ mod pipeline_store_tests {
         let reopened = Store::open(home.path(), &spec, Retention::Archive)?;
         assert_eq!(reopened.tip().context.height, 1);
         assert_eq!(reopened.consensus_record(b"state")?.unwrap(), records[0].1);
+        Ok(())
+    }
+
+    #[cfg(feature = "jolteon-prebuilt-state-write")]
+    #[test]
+    fn unselected_state_prefix_cannot_be_persisted_by_another_candidate() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut store = Store::open(home.path(), &spec(), Retention::Archive)?;
+        let speculative = Arc::new(store.prepare(&[], 1001, false)?);
+        let certified = Arc::new(store.prepare(&[], 1002, false)?);
+        let mut cache = CertifiedWriteCache::default();
+        store.prebuild_certified_state(Arc::clone(&speculative)).unwrap()(&mut cache);
+        assert!(cache.state.is_some());
+        assert!(store.header(1)?.is_none());
+
+        let write = store.certified_write(Arc::clone(&certified), Vec::new(), Vec::new())?;
+        assert!(write(&mut cache)?.reused_state_build.is_none());
+        assert!(cache.state.is_none());
+        assert_eq!(store.header(1)?.as_ref(), Some(certified.header()));
+        store.install_durable_tip(&certified, false);
+        assert!(store.prebuild_certified_state(speculative).is_none());
         Ok(())
     }
 
@@ -5125,11 +5240,20 @@ mod pipeline_store_tests {
             let next: Key = parallel.header().state.cell_root.unpack();
             let parallel = Arc::new(parallel);
             let write = store.certified_write(Arc::clone(&parallel), Vec::new(), Vec::new())?;
+            #[cfg(feature = "jolteon-prebuilt-state-write")]
+            let prebuild = store.prebuild_certified_state(Arc::clone(&parallel)).unwrap();
             let from_snapshot = pinned
                 .with_snapshot(|old| {
-                    let timing = std::thread::spawn(write)
+                    let timing = std::thread::spawn(move || {
+                        let mut cache = CertifiedWriteCache::default();
+                        #[cfg(feature = "jolteon-prebuilt-state-write")]
+                        prebuild(&mut cache);
+                        write(&mut cache)
+                    })
                         .join()
                         .map_err(|_| anyhow::anyhow!("certified write panicked"))??;
+                    #[cfg(feature = "jolteon-prebuilt-state-write")]
+                    assert!(timing.reused_state_build.is_some());
                     assert_eq!(
                         timing.cell_node_publication.is_some(),
                         cfg!(feature = "jolteon-resident-node-publication"),

@@ -138,6 +138,10 @@ pub struct CommitMetrics {
     #[serde(default)]
     pub persistence: LatencyHistogram,
     #[serde(default)]
+    pub state_prebuilds: u64,
+    #[serde(default)]
+    pub reused_state_build: LatencyHistogram,
+    #[serde(default)]
     pub cell_node_publication: LatencyHistogram,
 }
 

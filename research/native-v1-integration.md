@@ -23,6 +23,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Lineage and Keeper | `45028dc` | Independent Head lookahead and one-shot wake preparation [Keeper notes](../BENCHMARKS.md#parallel-preparation-of-independent-due-commands) |
 | Certificates and votes | `34e4743` | Shared direct frames and exact current-certificate reuse [Communication notes](certificates/README.md#sharing-certificates-and-direct-vote-frames) |
 | Resident Patricia publication | `0eba67f` | Publish on the certified writer after WAL sync or on the Replica when it installs the durable tip [Resident Patricia notes](storage/resident-patricia.md) |
+| Prebuilt finality state writes | `jolteon-prebuilt-state-write` | Assemble one certified state prefix before the atomic finality write [Comparison notes](execution-pipeline/cross-block.md#prebuilding-the-certified-state-writebatch) |
 | Verified resident nodes | `native-verified-cell-nodes` | Authenticate decoded nodes at cache insertion and reuse them by content ID [Comparison notes](storage/resident-patricia.md#verified-decoded-resident-nodes) |
 | Compact write journal | `native-compact-write-journal` | Inline short row keys and index positions without copying keys [Comparison notes](storage/patricia-finishing/README.md#compact-prepared-write-journal) |
 | Generated Cell node journals | `native-verified-cell-journal` | Reuse generated nodes through speculative reads, WAL encoding and resident publication [Comparison notes](storage/resident-patricia.md#generated-cell-node-journals) |
@@ -56,6 +57,7 @@ pre_quorum=jolteon-pre-quorum-proposal
 shared_proposal_snapshot=jolteon-shared-proposal-snapshot
 contracts=native-lineage-dependency-lookahead,native-keeper-parallel-preparation
 publication=jolteon-resident-node-publication
+prebuilt_state_write=jolteon-prebuilt-state-write
 parent_cells=native-live-cell-parent-index
 inline_outpoints=native-inline-outpoint-index
 verified_nodes=native-verified-cell-nodes
@@ -91,6 +93,7 @@ build pre-quorum --features "$exact_prefix,$cancellation,$pre_quorum"
 build shared-proposal-snapshot --features "$pre_quorum,$shared_proposal_snapshot"
 build contract-execution --features "$contracts"
 build publication --features "$publication"
+build prebuilt-state-write --features "$prebuilt_state_write"
 build prior-durable-cells --features "$parent_cells"
 build inline-outpoints --features "$inline_outpoints"
 build verified-nodes --features "$verified_nodes"
@@ -100,7 +103,7 @@ build node-publication-control --features "$verified_journal,$publication"
 build node-publication-stream --features "$verified_journal,$publication,$stream_node_publication"
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
-build combined --features "$cells,$dependencies,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$publication,$parent_cells,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$certificates"
+build combined --features "$cells,$dependencies,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$contracts,$publication,$prebuilt_state_write,$parent_cells,$inline_outpoints,$verified_journal,$compact_patricia_journal,$stream_node_publication,$compact_journal,$certificates"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
