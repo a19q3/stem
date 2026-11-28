@@ -45,6 +45,7 @@ native-rolling-cell-execution = ["native-dependency-execution"]
 native-rolling-leader-execution = ["native-leader-dependency-execution"]
 native-reuse-ordered-cell-writes = []
 native-incremental-cell-projection = []
+native-reclaim-cell-projection = ["native-incremental-cell-projection", "native-reuse-ordered-cell-writes"]
 native-execution-material-cache = ["stem-ledger/execution-material-cache"]
 
 [dependencies]
