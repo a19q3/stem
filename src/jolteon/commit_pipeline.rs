@@ -11,7 +11,7 @@ use stem_stake::jolteon::Point;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{CommitWindow, Incoming, Replica, can_vote_at, record_commit_span, transport::Inbox, wire};
-use crate::native_store::{CertifiedWriteCache, CertifiedWriteTiming, Prepared};
+use crate::native_store::{CertifiedWriteCache, CertifiedWriteTiming, ConsensusRecord, Prepared};
 #[cfg(feature = "jolteon-prebuilt-state-write")]
 use {
     crate::native_store::Store,
@@ -145,7 +145,7 @@ impl Replica {
         &mut self,
         inbox: &mut Inbox,
         prepared: Arc<Prepared>,
-        records: Vec<(Vec<u8>, Vec<u8>)>,
+        records: Vec<ConsensusRecord>,
         retired: Vec<Range<Vec<u8>>>,
         descendants: Option<(&[Point], &[Arc<Prepared>])>,
         window: Option<CommitWindow>,
@@ -226,7 +226,7 @@ impl Replica {
         let Some(peer) = self.directory.sender(event) else {
             return false;
         };
-        let Ok(proposal) = wire::canonical_bytes::<wire::Proposal>(frame.body.clone()) else {
+        let Ok(proposal) = wire::ProposalBody::decode(frame.body.clone()) else {
             return false;
         };
         if proposal.view != self.view
