@@ -534,3 +534,42 @@ The regression fixture checks a cached miss and a speculative creation,
 exclusive reuse across finalization, an overlapping old snapshot, and
 refreshing the exact new view. Runtime checks, independent replay and
 performance measurements are pending.
+
+## Sharing unchanged rows across a durable transition
+
+`native-pinned-cell-cache-inheritance` lets a new pinned Header borrow
+unmodified cache entries from its immediate predecessor. The existing
+in-place transition still applies when the bank has no readers. With
+an overlapping reader, the new generation gets its own primary cache
+and a shared reference to the preceding primary bank. The transition
+builds an exact exclusion set from the committed block's changed
+OutPoints. Up to 16,384 changes can use inheritance. Larger transitions
+or ones unable to reserve the exclusion set start with a cold cache.
+
+A rebased worker can initialize that generation as soon as its database
+snapshot matches the exact certified prefix, including before the
+Replica installs the Header. The transition checks the parent Header
+and consecutive heights. Snapshot replacements and nonadjacent jumps
+start a separate generation. Branch effects and the resident index
+are consulted before the primary cache. An unchanged preceding record
+or confirmed absence is promoted on first use. Ancestors of the
+preceding bank are outside this lookup, so the latest generation
+holds at most two banks. Older readers retain the banks they already
+hold until their snapshots finish.
+
+Compare `shared-pinned-cells` with `inherited-pinned-cells`, and
+`pinned-cell-absences` with `inherited-pinned-absences`. Use the same
+parent depths, overlap, worker affinity, resident budgets and signed
+workloads. Include long Code Dep reuse, high Cell churn, rebases before
+tip installation, and a control with no overlap. Measure
+`pinned_cell_cache.inherited_generations`, `inheritance_hits` for the
+retained generation, physical reads, queue waits and peak memory.
+Constructing the exclusion set adds CPU to generation installation.
+A cold miss can probe both banks and contend with an earlier reader.
+Peak memory can include an extra bank and the exclusion set.
+
+The compiled regression covers a rebase after the certified write and
+before installation, changed and unchanged OutPoints, confirmed misses,
+old-snapshot isolation, promotion, and a second overlapping transition
+that reads only its immediate predecessor. Runtime tests, replay and
+performance results are pending.

@@ -26,6 +26,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
 | Rolling dependency hints | `native-rolling-dependency-hints` | Refresh parent lookup plans when the dependency mix changes [Resolver notes](follower-preparation/README.md#refreshing-dependency-hints-during-rolling-preparation) |
 | Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
+| Pinned Cell cache inheritance | `native-pinned-cell-cache-inheritance` | Reuse unchanged decoded records across one exact durable transition [Comparison notes](storage/live-cell-index.md#sharing-unchanged-rows-across-a-durable-transition) |
 | Pinned Cell absence cache | `native-pinned-cell-absence-cache` | Reuse successful misses on the same exact durable snapshot [Comparison notes](storage/live-cell-index.md#retaining-confirmed-misses-in-pinned-cell-snapshots) |
 | Sharded decoded Live Cell cache | `native-sharded-live-cache` | Separate locks and capacity flushes across the same total allowance [Comparison notes](storage/live-cell-index.md#sharded-decoded-live-cell-caches) |
 | Prior durable Live Cell view | `native-live-cell-parent-index` | Keep overlapping workers on resident reads through one tip advance [Index comparison notes](storage/live-cell-index.md#keeping-the-prior-durable-header-resident) |
@@ -112,6 +113,7 @@ moved_parent_cells=native-live-cell-move-previous
 pinned_index_try_read=native-pinned-index-try-read
 inline_cell_ownership=native-prepared-live-cell-ownership
 pinned_cache=native-shared-pinned-cell-cache
+pinned_inheritance=native-pinned-cell-cache-inheritance
 pinned_absences=native-pinned-cell-absence-cache
 sharded_cache=native-sharded-live-cache
 inline_outpoints=native-inline-outpoint-index
@@ -180,7 +182,9 @@ build reuse-write-buffer --features "$reuse_write_buffer"
 build prior-durable-cells --features "$parent_cells"
 build moved-before-images --features "$moved_parent_cells"
 build shared-pinned-cells --features "$pinned_cache"
+build inherited-pinned-cells --features "$pinned_cache,$pinned_inheritance"
 build pinned-cell-absences --features "$pinned_cache,$pinned_absences"
+build inherited-pinned-absences --features "$pinned_cache,$pinned_inheritance,$pinned_absences"
 build sharded-pinned-cells --features "$pinned_cache,$sharded_cache"
 build inline-outpoints --features "$inline_outpoints"
 build verified-nodes --features "$verified_nodes"
@@ -196,7 +200,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$compact_prepared_cells,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$pinned_absences,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$compact_prepared_cells,$parallel_cell_hashes,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$moved_parent_cells,$pinned_index_try_read,$inline_cell_ownership,$pinned_cache,$pinned_inheritance,$pinned_absences,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
