@@ -24,6 +24,10 @@ use super::DependencyReadStats;
 pub(super) use dependencies::DependencyReads;
 #[cfg(any(feature = "native-rolling-cell-execution", feature = "native-rolling-leader-execution"))]
 mod rolling;
+#[cfg(feature = "native-reuse-rolling-parent-reads")]
+mod parent_reads;
+#[cfg(feature = "native-reuse-rolling-parent-reads")]
+use parent_reads::ParentReads;
 
 #[cfg(all(
     feature = "native-incremental-cell-projection",
@@ -112,6 +116,8 @@ pub(super) struct PrecedingCells<'a> {
     pub(super) ordered_writes: Option<&'a Cell<bool>>,
     #[cfg(feature = "native-shared-cell-deps")]
     dependencies: dependencies::HintReader<'a>,
+    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+    parent_reads: Option<&'a std::cell::RefCell<ParentReads>>,
 }
 
 #[derive(Clone, Copy)]
@@ -144,6 +150,27 @@ impl PrecedingCells<'_> {
     #[cfg(feature = "native-shared-cell-deps")]
     pub(super) fn parent_hint(&self, point: &OutPoint) -> Option<&Option<LiveCell>> {
         self.dependencies.get(point)
+    }
+
+    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+    pub(super) fn read_parent(
+        &self,
+        point: &OutPoint,
+        load: impl FnOnce() -> Result<Option<LiveCell>>,
+    ) -> Result<Option<LiveCell>> {
+        let Some(reads) = self.parent_reads else {
+            return load();
+        };
+        if self.is_speculative() {
+            let row = load()?;
+            reads.borrow_mut().remember(point, &row);
+            return Ok(row);
+        }
+        let row = reads.borrow_mut().replay(point);
+        match row {
+            Some(row) => Ok(row),
+            None => load(),
+        }
     }
 
     pub(super) fn get<T>(
@@ -544,6 +571,8 @@ impl Store {
                     ordered_writes: None,
                     #[cfg(feature = "native-shared-cell-deps")]
                     dependencies: shared.reader(),
+                    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+                    parent_reads: None,
                 };
                 let effects = self.execute_cell_trial(
                     tx.borrow(),

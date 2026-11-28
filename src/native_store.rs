@@ -239,6 +239,8 @@ pub struct CellStreamStats {
     pub discarded_jobs: u64,
     pub peak_outstanding: u64,
     pub elapsed_us: u64,
+    pub retry_parent_records: u64,
+    pub retry_parent_hits: u64,
     pub dependency_reads: DependencyReadStats,
 }
 
@@ -308,6 +310,8 @@ impl CellStreamStats {
         self.discarded_jobs = self.discarded_jobs.saturating_add(other.discarded_jobs);
         self.peak_outstanding = self.peak_outstanding.max(other.peak_outstanding);
         self.elapsed_us = self.elapsed_us.saturating_add(other.elapsed_us);
+        self.retry_parent_records = self.retry_parent_records.saturating_add(other.retry_parent_records);
+        self.retry_parent_hits = self.retry_parent_hits.saturating_add(other.retry_parent_hits);
         self.dependency_reads.record(other.dependency_reads);
     }
 }
@@ -567,6 +571,8 @@ pub enum Retention {
 pub struct Store {
     db: Arc<DB>,
     read_options: Arc<ReadOptions>,
+    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+    pinned_parent_reads: bool,
     metrics: Option<Arc<StorageMetrics>>,
     network: Byte32,
     chain_id: String,
@@ -757,6 +763,10 @@ impl PinnedView {
         // The private view and its options are dropped before the snapshot.
         // Cell caches belong to the verified snapshot's committed Header.
         view.read_options = Arc::new(options);
+        #[cfg(feature = "native-reuse-rolling-parent-reads")]
+        {
+            view.pinned_parent_reads = true;
+        }
         #[cfg(feature = "native-pinned-index-try-read")]
         if let Some(index) = &mut view.live_index {
             index.allow_pinned_snapshot_fallback();
@@ -1359,6 +1369,8 @@ impl Store {
         Ok(Self {
             db: Arc::new(db),
             read_options: Arc::new(ReadOptions::default()),
+            #[cfg(feature = "native-reuse-rolling-parent-reads")]
+            pinned_parent_reads: false,
             metrics,
             network,
             chain_id: spec.chain_id.clone(),
@@ -1558,6 +1570,8 @@ impl Store {
         Self {
             db: self.db.clone(),
             read_options: self.read_options.clone(),
+            #[cfg(feature = "native-reuse-rolling-parent-reads")]
+            pinned_parent_reads: self.pinned_parent_reads,
             metrics: self.metrics.clone(),
             network: self.network.clone(),
             chain_id: self.chain_id.clone(),
@@ -3455,7 +3469,13 @@ impl Store {
             }
             match prefetched_cells.get(point) {
                 Some(cell) => Ok(cell.clone()),
-                None => self.live_cell(point),
+                None => {
+                    #[cfg(feature = "native-reuse-rolling-parent-reads")]
+                    if let Some(view) = preceding {
+                        return view.read_parent(point, || self.live_cell(point));
+                    }
+                    self.live_cell(point)
+                }
             }
         };
         let speculative = preceding.is_some_and(PrecedingCells::is_speculative);
@@ -5122,6 +5142,22 @@ mod pipeline_store_tests {
                 if cfg!(feature = "native-incremental-cell-projection") { 3 } else { 4 },
             );
 
+            #[cfg(feature = "native-reuse-rolling-parent-reads")]
+            {
+                let run = [missing.clone(), first.clone(), second.clone(), third.clone()];
+                let mut scan = ProposalScan::default();
+                let pin = store.pinned_view();
+                let (selected, proposal) = workers.install(|| pin.with_snapshot(|view| {
+                    view.build_proposal_measured(run.iter(), 1001, 16 * 1024, &mut scan, None)
+                }))?.context("missing pinned Leader snapshot")?;
+                assert_eq!(selected.len(), 3);
+                assert!(scan.rolling_cells.retry_parent_hits > 0);
+                let serial = store.prepare(&selected, 1001, false)?;
+                assert_eq!(proposal.header(), serial.header());
+                assert_eq!(proposal.receipts(), serial.receipts());
+                assert_same_batch_writes(&proposal.batch, &serial.batch);
+            }
+
             #[cfg(feature = "native-leader-tail-cycle-shares")]
             {
                 let max = reference.receipts().iter().map(|receipt| receipt.cycles).max()
@@ -5381,6 +5417,17 @@ mod pipeline_store_tests {
             assert_same_batch_writes(&prepared.batch, &serial.batch);
             let stats = prepared.cell_stream();
             assert_eq!((stats.jobs, stats.fallbacks, stats.reused, stats.ordered_declarations), (4, 1, 3, 1));
+            #[cfg(feature = "native-reuse-rolling-parent-reads")]
+            {
+                let pin = store.pinned_view();
+                let pinned = workers.install(|| pin.with_snapshot(|view| {
+                    view.prepare(&candidate, 1001, true)
+                }))?.context("missing pinned Follower snapshot")?;
+                assert!(pinned.cell_stream().retry_parent_hits > 0);
+                assert_eq!(pinned.header(), serial.header());
+                assert_eq!(pinned.receipts(), serial.receipts());
+                assert_same_batch_writes(&pinned.batch, &serial.batch);
+            }
         }
         #[cfg(feature = "native-rolling-cell-execution")]
         {

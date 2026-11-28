@@ -438,3 +438,35 @@ or when workers have already completed their reads.
 Compile coverage includes successive masked edits on the same OutPoint
 and a replacement followed by its dependent spend. Runtime regressions,
 independent replay and performance measurements are pending.
+
+### Reusing parent reads during ordered retry
+
+`native-reuse-rolling-parent-reads` lets each rolling Leader or Follower
+trial retain up to eight successful parent-view lookups, including
+absence. Present records have a combined 64 KiB logical byte limit.
+The worker attaches the results to its completion even if a later stage
+fails. The coordinator gives that memo to the same transaction's ordered
+retry and drops it at settlement. Capture is enabled only for a validated
+pinned snapshot. The fixed-window path retains its existing behavior.
+
+Candidate writes and deletions are resolved before reading a parent
+record. Shared dependency hints and bounded prefetch still take
+precedence. The memo never records projected writes or read errors.
+Ordered resolution still performs authorization, checks the actual
+accepted prefix and charges all reads, bytes, and cycles as before.
+
+Compare `rolling-retry-control` against `rolling-retry-parent-reads`
+with identical pinned pipelines, workers, signed workloads, and proof
+and storage settings. The rolling Leader and Follower metrics expose
+`retry_parent_records` from attempts that reach ordered settlement and
+`retry_parent_hits` for actual reused lookups. Measure successful-trial
+cost, fallback CPU and wall time, allocations, and peak RSS. Include
+mostly adopted runs and runs with rejected candidates, resource fallback,
+and partial VM-cache hits. Capture costs accrue even when trials are
+adopted. Few retries or an already warm parent cache can limit savings.
+
+The compile-checked Leader fixture exercises a confirmed missing input.
+The Follower fixture crosses the speculative byte limit and checks
+positive parent reuse during ordered retry. Both compare Header,
+receipts and durable batches with serial execution. Runtime tests,
+independent replay and performance results are pending.
