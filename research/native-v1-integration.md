@@ -28,6 +28,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
 | Sharded decoded Live Cell cache | `native-sharded-live-cache` | Separate locks and capacity flushes across the same total allowance [Comparison notes](storage/live-cell-index.md#sharded-decoded-live-cell-caches) |
 | Prior durable Live Cell view | `native-live-cell-parent-index` | Keep overlapping workers on resident reads through one tip advance [Index comparison notes](storage/live-cell-index.md#keeping-the-prior-durable-header-resident) |
+| Pinned Live Cell contention fallback | `native-pinned-index-try-read` | Continue through an authenticated disk snapshot while index publication holds the write lock [Comparison notes](storage/live-cell-index.md#letting-pinned-readers-proceed-during-publication) |
 | Fixed-width resident OutPoints | `native-inline-outpoint-index` | Keep full packed keys in table buckets [Index comparison notes](storage/live-cell-index.md#fixed-width-resident-outpoint-keys) |
 | Parallel resident recovery | `--live-cell-recovery-workers` | Validate and hash bounded row batches before the ordered authenticated fold [Comparison notes](storage/live-cell-index.md#bounded-parallel-index-recovery) |
 | Resident Lock and TypeSet sharing | `a19ba05` | Inline and interned resident Live Cells at the same memory limit [Layout notes](storage/live-cell-index.md#resident-lock-and-typeset-sharing) |
@@ -100,6 +101,7 @@ prepared_cell_keys=native-prepared-cell-record-keys
 vectored_cell_writes=native-vectored-cell-writes
 reuse_write_buffer=jolteon-reuse-write-buffer
 parent_cells=native-live-cell-parent-index
+pinned_index_try_read=native-pinned-index-try-read
 pinned_cache=native-shared-pinned-cell-cache
 sharded_cache=native-sharded-live-cache
 inline_outpoints=native-inline-outpoint-index
@@ -156,6 +158,7 @@ build leader-lineage --features "$contracts,$rolling_lineage,$leader_lineage"
 build keeper-prefix --features "$contracts,$keeper_prefix"
 build publication --features "$publication"
 build cell-publication --features "$cell_publication"
+build pinned-index-contention --features "$cell_publication,$pinned_index_try_read"
 build prebuilt-state-write --features "$prebuilt_state_write"
 build prepared-cell-keys --features "$prepared_cell_keys"
 build vectored-cell-writes --features "$vectored_cell_writes"
@@ -177,7 +180,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$rolling_dependency_hints,$inline_resolution,$owned_cell_reads,$lazy_cell_digests,$rolling_leader,$tail_cycle_shares,$compact_trial_edits,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$cell_publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_index_try_read,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$frontier_edit,$hot_cell_nodes,$batched_proofs,$batched_proof_records,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.

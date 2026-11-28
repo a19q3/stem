@@ -747,6 +747,10 @@ impl PinnedView {
         // The private view and its options are dropped before the snapshot.
         // Cell caches belong to the verified snapshot's committed Header.
         view.read_options = Arc::new(options);
+        #[cfg(feature = "native-pinned-index-try-read")]
+        if let Some(index) = &mut view.live_index {
+            index.allow_pinned_snapshot_fallback();
+        }
         let result = task(&view, &branch[skip..])?;
         view.check_preparation_cancelled()?;
         Ok(Some(result))
@@ -5808,6 +5812,69 @@ mod pipeline_store_tests {
         let reopened = Store::open(home.path(), &spec, Retention::Archive)?;
         assert_eq!(reopened.tip().context.height, 1);
         assert_eq!(reopened.consensus_record(b"state")?.unwrap(), records[0].1);
+        Ok(())
+    }
+
+    #[cfg(feature = "native-pinned-index-try-read")]
+    #[test]
+    fn pinned_live_cell_readers_progress_while_the_index_is_locked() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut spec = spec();
+        let spent = OutPoint::new([53; 32].pack(), 0);
+        let created = OutPoint::new([53; 32].pack(), 1);
+        let cell = Cell::new(
+            20_000_000_000, ckb_types::packed::Script::default(), vec![], bytes::Bytes::new(),
+        )?;
+        spec.development_cells = vec![(spent.clone(), cell.clone())];
+        let mut store = Store::open(home.path(), &spec, Retention::Archive)?;
+        store.enable_live_cell_index(NonZeroUsize::new(2).unwrap())?;
+        let pinned = store.pinned_view();
+        let context = HeaderContext::after(
+            &spec.network, store.tip(), 1001, Tree::transactions(spec.network.clone(), &[])?.root(),
+        )?;
+        let mut overlay = store.overlay(None);
+        overlay.live.insert(spent.clone(), None);
+        overlay.live.insert(created.clone(), Some(LiveCell {
+            cell, origin: Origin::new(&spec.network, &context),
+        }));
+        let prepared = Arc::new(store.finish_block(context, overlay, &[], vec![], 0, 0, false)?);
+        pinned.with_snapshot(|old| {
+            store.commit_certified(&prepared, &[], &[])?;
+            let rebased = pinned.with_branch_snapshot(std::slice::from_ref(&prepared), true, |new, rest| {
+                assert!(rest.is_empty());
+                assert_eq!(new.tip(), prepared.header());
+                let index = store.live_index.as_ref().expect("resident index");
+                let old_spent = &spent;
+                let new_cell = &created;
+                let has_cell = |view: &Store, point: &OutPoint| {
+                    view.live_cell(point).map(|record| record.is_some())
+                };
+                let rows = std::thread::scope(|scope| {
+                    let (done, receive) = std::sync::mpsc::channel();
+                    index.while_publishing_for_test(|| {
+                        scope.spawn(move || {
+                            let result = (|| {
+                                assert!(!old.live_index.as_ref().unwrap().resident());
+                                assert!(!new.live_index.as_ref().unwrap().resident());
+                                Ok::<_, anyhow::Error>([
+                                    has_cell(old, old_spent)?,
+                                    has_cell(old, new_cell)?,
+                                    has_cell(new, old_spent)?,
+                                    has_cell(new, new_cell)?,
+                                ])
+                            })();
+                            let _ = done.send(result);
+                        });
+                        receive.recv_timeout(Duration::from_secs(5))
+                    })
+                }).context("snapshot read waited on Live Cell publication")??;
+                assert_eq!(rows, [true, false, false, true]);
+                Ok(())
+            })?;
+            assert!(rebased.is_some());
+            Ok(())
+        })?.context("missing original snapshot")?;
+        assert_eq!(store.live_cell_index_status().unwrap().snapshot_contention_fallbacks, 4);
         Ok(())
     }
 

@@ -82,6 +82,8 @@ pub struct LiveCellIndexStatus {
     pub absent: u64,
     pub fallbacks: u64,
     #[serde(default)]
+    pub snapshot_contention_fallbacks: u64,
+    #[serde(default)]
     pub layout: LiveCellIndexLayout,
     #[serde(default)]
     pub descriptors: usize,
@@ -337,6 +339,8 @@ struct Index {
     hits: AtomicU64,
     absent: AtomicU64,
     fallbacks: AtomicU64,
+    #[cfg(feature = "native-pinned-index-try-read")]
+    snapshot_contention_fallbacks: AtomicU64,
     #[cfg(feature = "native-live-cell-parent-index")]
     previous_header_lookups: AtomicU64,
 }
@@ -345,6 +349,8 @@ struct Index {
 pub(super) struct IndexView {
     index: Arc<Index>,
     header: Key,
+    #[cfg(feature = "native-pinned-index-try-read")]
+    allow_snapshot_fallback: bool,
 }
 
 struct RecoveryRow {
@@ -478,11 +484,20 @@ impl IndexView {
                 hits: AtomicU64::new(0),
                 absent: AtomicU64::new(0),
                 fallbacks: AtomicU64::new(0),
+                #[cfg(feature = "native-pinned-index-try-read")]
+                snapshot_contention_fallbacks: AtomicU64::new(0),
                 #[cfg(feature = "native-live-cell-parent-index")]
                 previous_header_lookups: AtomicU64::new(0),
             }),
             header,
+            #[cfg(feature = "native-pinned-index-try-read")]
+            allow_snapshot_fallback: false,
         })
+    }
+
+    #[cfg(feature = "native-pinned-index-try-read")]
+    pub(super) fn allow_pinned_snapshot_fallback(&mut self) {
+        self.allow_snapshot_fallback = true;
     }
 
     pub(super) fn at_header(&mut self, header: Key) {
@@ -503,14 +518,30 @@ impl IndexView {
         (self.index.limit_bytes, self.index.layout, self.index.recovery_workers)
     }
 
+    fn read_state(&self) -> Option<std::sync::RwLockReadGuard<'_, State>> {
+        #[cfg(feature = "native-pinned-index-try-read")]
+        if self.allow_snapshot_fallback {
+            return match self.index.state.try_read() {
+                Ok(state) => Some(state),
+                Err(std::sync::TryLockError::WouldBlock) => None,
+                Err(std::sync::TryLockError::Poisoned(_)) => panic!("Live Cell index"),
+            };
+        }
+        Some(self.index.state.read().expect("Live Cell index"))
+    }
+
     pub(super) fn resident(&self) -> bool {
-        let state = self.index.state.read().expect("Live Cell index");
-        state.covers(self.header) && state.records.is_some()
+        self.read_state().is_some_and(|state| state.covers(self.header) && state.records.is_some())
     }
 
     /// An inner None is authoritative absence at this exact indexed Header.
     pub(super) fn lookup(&self, point: &OutPoint) -> Result<Option<Option<LiveCell>>> {
-        let state = self.index.state.read().expect("Live Cell index");
+        let Some(state) = self.read_state() else {
+            self.index.fallbacks.fetch_add(1, Ordering::Relaxed);
+            #[cfg(feature = "native-pinned-index-try-read")]
+            self.index.snapshot_contention_fallbacks.fetch_add(1, Ordering::Relaxed);
+            return Ok(None);
+        };
         if state.covers(self.header)
             && let Some(records) = &state.records
         {
@@ -604,6 +635,12 @@ impl IndexView {
         drop(retired);
     }
 
+    #[cfg(all(test, feature = "native-pinned-index-try-read"))]
+    pub(super) fn while_publishing_for_test<T>(&self, task: impl FnOnce() -> T) -> T {
+        let _state = self.index.state.write().expect("Live Cell index");
+        task()
+    }
+
     pub(super) fn status(&self) -> LiveCellIndexStatus {
         let state = self.index.state.read().expect("Live Cell index");
         self.status_from(&state)
@@ -645,6 +682,10 @@ impl IndexView {
             hits: self.index.hits.load(Ordering::Relaxed),
             absent: self.index.absent.load(Ordering::Relaxed),
             fallbacks: self.index.fallbacks.load(Ordering::Relaxed),
+            #[cfg(feature = "native-pinned-index-try-read")]
+            snapshot_contention_fallbacks: self.index.snapshot_contention_fallbacks.load(Ordering::Relaxed),
+            #[cfg(not(feature = "native-pinned-index-try-read"))]
+            snapshot_contention_fallbacks: 0,
             layout: self.index.layout,
             descriptors: state.records.as_ref().map_or(0, Records::distinct_descriptors),
             previous_header_bytes,
