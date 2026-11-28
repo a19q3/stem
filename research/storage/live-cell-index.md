@@ -467,7 +467,9 @@ measurements are pending.
 Live Cell changes in OutPoint order as the Cell commitment begins. The
 hash stage, branch readers, Live Cell publication, and the durable writer
 share that array. After successful commitment, candidates with 128–16,384
-changes get a bounded hash table of 32-bit array positions. Lookup verifies the full OutPoint,
+changes get a bounded hash table of 32-bit array positions. With cache
+inheritance enabled, the speculative lookup shares the bounded packed
+OutPoint index used for inheritance, including shorter blocks. Lookup verifies the full OutPoint,
 and reuses one point hash across indexed ancestors. Smaller or larger
 candidates and candidates that cannot reserve the index use binary
 search over the same array. Freezing moves existing record buffers.
@@ -541,10 +543,14 @@ performance measurements are pending.
 unmodified cache entries from its immediate predecessor. The existing
 in-place transition still applies when the bank has no readers. With
 an overlapping reader, the new generation gets its own primary cache
-and a shared reference to the preceding primary bank. The transition
-builds an exact exclusion set from the committed block's changed
-OutPoints. Up to 16,384 changes can use inheritance. Larger transitions
-or ones unable to reserve the exclusion set start with a cold cache.
+and a shared reference to the preceding primary bank. The candidate
+prepares an exact index of its changed OutPoints after commitment
+construction. Cache installation takes a shared reference to this index.
+With the compact prepared delta enabled, branch lookup uses the same
+position table. The shared index stores fixed-width keys and positions
+independently of the candidate's Cell and transaction buffers. Up to
+16,384 changes can use inheritance. Larger transitions or ones unable
+to reserve the index start with a cold cache.
 
 A rebased worker can initialize that generation as soon as its database
 snapshot matches the exact certified prefix, including before the
@@ -558,18 +564,22 @@ holds at most two banks. Older readers retain the banks they already
 hold until their snapshots finish.
 
 Compare `shared-pinned-cells` with `inherited-pinned-cells`, and
-`pinned-cell-absences` with `inherited-pinned-absences`. Use the same
+`pinned-cell-absences` with `inherited-pinned-absences`. Use
+`indexed-inherited-pinned-cells` to exercise the shared index. Hold
 parent depths, overlap, worker affinity, resident budgets and signed
 workloads. Include long Code Dep reuse, high Cell churn, rebases before
 tip installation, and a control with no overlap. Measure
 `pinned_cell_cache.inherited_generations`, `inheritance_hits` for the
 retained generation, physical reads, queue waits and peak memory.
-Constructing the exclusion set adds CPU to generation installation.
+Index construction is included in total commitment time. It adds work
+before voting even when no successor uses inheritance. The packed key
+array costs 36 bytes per changed OutPoint, plus the position table.
 A cold miss can probe both banks and contend with an earlier reader.
-Peak memory can include an extra bank and the exclusion set.
+Peak memory can include an extra bank and the retained index.
 
 The compiled regression covers a rebase after the certified write and
-before installation, changed and unchanged OutPoints, confirmed misses,
-old-snapshot isolation, promotion, and a second overlapping transition
-that reads only its immediate predecessor. Runtime tests, replay and
+before installation, identity with the candidate's prepared index,
+changed and unchanged OutPoints, confirmed misses, old-snapshot
+isolation, promotion, and a second overlapping transition that reads
+only its immediate predecessor. Runtime tests, replay and
 performance results are pending.

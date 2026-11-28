@@ -26,7 +26,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Shared Cell dependency reads | `native-shared-cell-deps` | Reuse bounded parent lookups across ordinary Leader and Follower windows [Resolver notes](follower-preparation/README.md#shared-dependency-reads) |
 | Rolling dependency hints | `native-rolling-dependency-hints` | Refresh parent lookup plans when the dependency mix changes [Resolver notes](follower-preparation/README.md#refreshing-dependency-hints-during-rolling-preparation) |
 | Shared pinned Cell cache | `native-shared-pinned-cell-cache` | Share bounded decoded Cell records across workers on the same committed Header [Comparison notes](storage/live-cell-index.md#sharing-the-pinned-live-cell-cache) |
-| Pinned Cell cache inheritance | `native-pinned-cell-cache-inheritance` | Reuse unchanged decoded records across one exact durable transition [Comparison notes](storage/live-cell-index.md#sharing-unchanged-rows-across-a-durable-transition) |
+| Pinned Cell cache inheritance | `native-pinned-cell-cache-inheritance` | Reuse unchanged decoded records using the candidate’s prepared OutPoint index [Comparison notes](storage/live-cell-index.md#sharing-unchanged-rows-across-a-durable-transition) |
 | Pinned Cell absence cache | `native-pinned-cell-absence-cache` | Reuse successful misses on the same exact durable snapshot [Comparison notes](storage/live-cell-index.md#retaining-confirmed-misses-in-pinned-cell-snapshots) |
 | Sharded decoded Live Cell cache | `native-sharded-live-cache` | Separate locks and capacity flushes across the same total allowance [Comparison notes](storage/live-cell-index.md#sharded-decoded-live-cell-caches) |
 | Prior durable Live Cell view | `native-live-cell-parent-index` | Keep overlapping workers on resident reads through one tip advance [Index comparison notes](storage/live-cell-index.md#keeping-the-prior-durable-header-resident) |
@@ -183,6 +183,7 @@ build prior-durable-cells --features "$parent_cells"
 build moved-before-images --features "$moved_parent_cells"
 build shared-pinned-cells --features "$pinned_cache"
 build inherited-pinned-cells --features "$pinned_cache,$pinned_inheritance"
+build indexed-inherited-pinned-cells --features "$pinned_cache,$pinned_inheritance,$compact_prepared_cells"
 build pinned-cell-absences --features "$pinned_cache,$pinned_absences"
 build inherited-pinned-absences --features "$pinned_cache,$pinned_inheritance,$pinned_absences"
 build sharded-pinned-cells --features "$pinned_cache,$sharded_cache"
