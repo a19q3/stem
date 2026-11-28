@@ -42,6 +42,7 @@ native-segmented-patricia-journal = ["native-compact-patricia-journal", "stem-le
 native-stream-node-publication = ["native-verified-cell-journal"]
 native-compact-write-journal = []
 native-prepared-cell-record-keys = []
+native-vectored-cell-writes = []
 native-candidate-cell-prefetch = []
 native-shared-pinned-cell-cache = ["jolteon-cross-block-pipeline"]
 native-sharded-live-cache = []

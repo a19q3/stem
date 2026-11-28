@@ -8,12 +8,14 @@ use crate::{
     patricia::{Key, Patricia, Proof},
 };
 
-fn cell_parts<'a>(
-    point: &'a OutPoint,
-    origin: &'a [u8; Origin::LEN],
-    cell: &'a Cell,
-) -> [&'a [u8]; 3] {
-    [point.as_slice(), origin, cell.as_slice()]
+/// Borrow the three consecutive parts of the canonical Live Cell record.
+pub fn with_cell_parts<T>(
+    point: &OutPoint,
+    record: &LiveCell,
+    use_parts: impl FnOnce([&[u8]; 3]) -> T,
+) -> T {
+    let origin = record.origin.encode();
+    use_parts([point.as_slice(), &origin, record.cell.as_slice()])
 }
 
 pub fn encode_cell(point: &OutPoint, record: &LiveCell) -> Vec<u8> {
@@ -24,13 +26,13 @@ pub fn encode_cell(point: &OutPoint, record: &LiveCell) -> Vec<u8> {
 
 /// Replace a scratch buffer with the canonical Live Cell record.
 pub fn encode_cell_into(point: &OutPoint, record: &LiveCell, bytes: &mut Vec<u8>) {
-    let origin = record.origin.encode();
-    let parts = cell_parts(point, &origin, &record.cell);
-    bytes.clear();
-    bytes.reserve(parts.iter().map(|part| part.len()).sum());
-    for part in parts {
-        bytes.extend_from_slice(part);
-    }
+    with_cell_parts(point, record, |parts| {
+        bytes.clear();
+        bytes.reserve(parts.iter().map(|part| part.len()).sum());
+        for part in parts {
+            bytes.extend_from_slice(part);
+        }
+    });
 }
 
 pub fn decode_cell(bytes: &[u8]) -> Result<(OutPoint, LiveCell)> {
@@ -61,7 +63,7 @@ pub fn cell_key(tree: &Patricia, point: &OutPoint) -> Key {
 }
 
 pub fn cell_value(tree: &Patricia, point: &OutPoint, record: &LiveCell) -> Key {
-    tree.value_hash_parts(&cell_parts(point, &record.origin.encode(), &record.cell))
+    with_cell_parts(point, record, |parts| tree.value_hash_parts(&parts))
 }
 
 pub fn verify_cell(

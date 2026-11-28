@@ -35,6 +35,7 @@ use stem_vm::VerificationCache;
 mod bridge;
 mod cell_execution;
 mod cell_query;
+mod cell_write;
 pub use cell_query::{CellPage, ScriptQuery, find_cells};
 mod history_index;
 pub use history_index::HistoryIndex;
@@ -4024,8 +4025,7 @@ fn assemble_write_prefix<'a>(
                 #[cfg(feature = "native-prepared-cell-record-keys")]
                 let id = *ids.next().context("missing prepared Cell record key")?;
                 let key = state_key(STATE_RECORD, Namespace::Cells, &id);
-                record::encode_cell_into(point, cell, &mut encoded);
-                raw.put(key, &encoded)?;
+                cell_write::put_record(&mut raw, &key, point, cell, &mut encoded)?;
                 if let Some(bytes) = &mut bytes {
                     bytes.add(&key, raw.size_in_bytes());
                 }

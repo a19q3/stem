@@ -37,6 +37,7 @@ The retired experimental outputs remain in their original reports. This branch s
 | Prebuilt finality state writes | `jolteon-prebuilt-state-write` | Assemble one certified state prefix before the atomic finality write [Comparison notes](execution-pipeline/cross-block.md#prebuilding-the-certified-state-writebatch) |
 | Verified resident nodes | `native-verified-cell-nodes` | Authenticate decoded nodes at cache insertion and reuse them by content ID [Comparison notes](storage/resident-patricia.md#verified-decoded-resident-nodes) |
 | Prepared Cell record keys | `native-prepared-cell-record-keys` | Reuse created Cell keys from the commitment on finality [Comparison notes](storage/patricia-finishing/README.md#reducing-certified-batch-construction-work) |
+| Vectored Cell writes | `native-vectored-cell-writes` | Append large canonical records without a contiguous scratch copy [Comparison notes](storage/patricia-finishing/README.md#vectored-writes-for-large-cell-records) |
 | Reuse certified writer buffer | `jolteon-reuse-write-buffer` | Clear and recycle a bounded write buffer on the existing writer [Comparison notes](storage/patricia-finishing/README.md#reducing-certified-batch-construction-work) |
 | Compact write journal | `native-compact-write-journal` | Inline short row keys and index positions without copying keys [Comparison notes](storage/patricia-finishing/README.md#compact-prepared-write-journal) |
 | Generated Cell node journals | `native-verified-cell-journal` | Reuse generated nodes through speculative reads, WAL encoding and resident publication [Comparison notes](storage/resident-patricia.md#generated-cell-node-journals) |
@@ -80,6 +81,7 @@ keeper_prefix=native-reuse-keeper-proposal-prefix
 publication=jolteon-resident-node-publication
 prebuilt_state_write=jolteon-prebuilt-state-write
 prepared_cell_keys=native-prepared-cell-record-keys
+vectored_cell_writes=native-vectored-cell-writes
 reuse_write_buffer=jolteon-reuse-write-buffer
 parent_cells=native-live-cell-parent-index
 pinned_cache=native-shared-pinned-cell-cache
@@ -129,6 +131,7 @@ build keeper-prefix --features "$contracts,$keeper_prefix"
 build publication --features "$publication"
 build prebuilt-state-write --features "$prebuilt_state_write"
 build prepared-cell-keys --features "$prepared_cell_keys"
+build vectored-cell-writes --features "$vectored_cell_writes"
 build reuse-write-buffer --features "$reuse_write_buffer"
 build prior-durable-cells --features "$parent_cells"
 build shared-pinned-cells --features "$pinned_cache"
@@ -143,7 +146,7 @@ build node-publication-stream --features "$verified_journal,$publication,$stream
 build compact-journal --features "$compact_journal"
 build certificate-reuse --features "$certificates"
 build retained-quorums --features "$retained_quorums"
-build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
+build combined --features "$cells,$dependencies,$inline_resolution,$rolling_leader,$parent_spend_reuse,$ordered_cells,$incremental_projection,$mask_rejected,$reclaim_projection,$rolling_groups,$trace_cycles,$exact_prefix,$cancellation,$pre_quorum,$shared_proposal_snapshot,$shared_proposal_bytes,$contracts,$lineage_reads,$rolling_lineage,$leader_lineage,$keeper_prefix,$publication,$prebuilt_state_write,$prepared_cell_keys,$vectored_cell_writes,$reuse_write_buffer,$parent_cells,$pinned_cache,$sharded_cache,$inline_outpoints,$verified_journal,$segmented_patricia_journal,$stream_node_publication,$compact_journal,$retained_quorums"
 ```
 
 Use the same launcher, funded-state copies, signed workload, CPUs, VM workers, retention, block limits and storage configuration in every arm of a comparison. Test the build features with existing runtime settings held fixed. Compare inline and interned Live Cells by adding only `--live-cell-index-intern-scripts` to the same binary with `--live-cell-index-mib` set. Keep the node index budget fixed while comparing publication. For a group that improves results, vary one component at a time before selecting a default. Record the effective flags, runtime budget, executable fingerprint, genesis digest and signed-corpus digest for every run.
